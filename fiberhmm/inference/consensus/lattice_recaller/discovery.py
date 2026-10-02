@@ -6,7 +6,6 @@ lattice_ps09.py). Channels are labels, never features: calls from every channel 
 from __future__ import annotations
 
 import hashlib
-from collections import defaultdict
 
 import numpy as np
 from sklearn.cluster import KMeans
@@ -49,12 +48,18 @@ def _fit(X, k, seed):
 
 
 def prediction_strength(X, groups, k, seed, splits):
-    """Worst-cluster prediction strength averaged over molecule split-halves, and per-cluster values keyed by centroid."""
-    per = defaultdict(list); worst = []
+    """Worst-cluster prediction strength averaged over molecule split-halves, and each split's per-cluster values.
+
+    In split b the molecules are hashed into halves A and T (molecule-level, so a molecule's calls stay together);
+    k-means is fitted on each, and test cluster j's strength is the fraction of its call pairs that A's fit also puts
+    together. Returns (mean over splits of the worst cluster, splits), where splits holds one (test_rows, test_labels,
+    strengths) triple per split: the indices into X of T's calls, their T-cluster labels and the k strengths. The
+    triples let cluster_stability average a final cluster's strength over every split."""
+    worst, detail = [], []
     for b in range(splits):
         h = np.array([split_half(g, f's{seed}b{b}') for g in groups]); A, T = X[h == 0], X[h == 1]
         if len(A) < k or len(T) < k:
-            return 0.0, {}
+            return 0.0, []
         _, pa = _fit(A, k, seed); _, pt = _fit(T, k, seed)
         lt = pt(T); la = pa(T); ps = []
         for j in range(k):
@@ -64,32 +69,49 @@ def prediction_strength(X, groups, k, seed, splits):
             same = la[idx][:, None] == la[idx][None, :]; n = len(idx)
             ps.append((same.sum() - n)/(n*(n - 1)))
         worst.append(min(ps))
-        cent = np.array([T[lt == j].mean(0) if (lt == j).any() else [np.nan, np.nan] for j in range(k)])
-        for j in range(k):
-            per[tuple(np.round(cent[j]).astype(int))].append(ps[j])
-    return float(np.mean(worst)), per
+        detail.append((np.flatnonzero(h == 1), lt, np.asarray(ps, float)))
+    return float(np.mean(worst)), detail
+
+
+def cluster_stability(members, splits):
+    """A final cluster's prediction strength, averaged over every split-half.
+
+    members: indices into X of the cluster's calls; splits: prediction_strength's per-split triples. In each split the
+    cluster's calls that fall in the test half are matched to the test-half clusters holding them, and the split's
+    value is those clusters' strengths weighted by the share of the cluster's calls each holds (one test cluster
+    holding them all: its strength). Splits where none of the cluster's calls are in the test half carry no evidence
+    and are skipped; a cluster with no held-out calls in any split scores 0. The value is independent of call order,
+    of how each split's k-means numbers its clusters and of the order of the splits.
+
+    (Up to 3.0.0 a cluster took the values of the single rounded test-half centroid nearest its own; centroids rarely
+    coincide across splits, so in practice one split decided it.)"""
+    members = np.asarray(members, dtype=np.int64); vals = []
+    for rows, labels, ps in splits:
+        held = labels[np.isin(rows, members)]
+        if len(held):
+            vals.append(float(np.bincount(held, minlength=len(ps)) @ ps)/len(held))
+    return float(np.mean(vals)) if vals else 0.0
 
 
 def nominate(units, opt):
-    """Candidates at the chosen k: the largest k <= kmax with prediction strength >= stringency."""
+    """Candidates at the chosen k: the largest k <= kmax with prediction strength >= stringency, each with its
+    split-averaged stability (cluster_stability; 1.0 when k = 1)."""
     X, meta = features(units, opt.censor_bp)
     if len(X) < 2:
         return [], 0, []
     groups = [units[m[0]]['uid'] for m in meta]
     kmax = max(2, min(opt.kmax, len(X)//(2*MIN_MOLECULES)))
-    choice = [(k, prediction_strength(X, groups, k, opt.seed, opt.prediction_splits)[0]) for k in range(1, kmax + 1)]
+    scored = {k: prediction_strength(X, groups, k, opt.seed, opt.prediction_splits) for k in range(1, kmax + 1)}
+    choice = [(k, scored[k][0]) for k in range(1, kmax + 1)]
     ok = [k for k, ps in choice if ps >= opt.stringency]; k = max(ok) if ok else 1
     _, pred = _fit(X, k, opt.seed); lab = pred(X)
-    per = prediction_strength(X, groups, k, opt.seed, opt.prediction_splits)[1] if k > 1 else {}
     cands = []
     for j in range(k):
         idx = np.where(lab == j)[0]
         if len(idx) < opt.minimum_candidate_calls:
             continue
-        cen = X[idx].mean(0)
-        key = min(per, key=lambda t: abs(t[0] - cen[0]) + abs(t[1] - cen[1])) if per else None
         cands.append(dict(id=f'c{j}', members=[f'c{j}'], calls=[meta[i] for i in idx], X=X[idx],
-                          stability=float(np.mean(per[key])) if key else 1.0))
+                          stability=cluster_stability(idx, scored[k][1]) if k > 1 else 1.0))
     return cands, k, choice
 
 
