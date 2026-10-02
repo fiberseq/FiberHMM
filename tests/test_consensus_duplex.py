@@ -44,10 +44,19 @@ def test_joint_encoder_uses_both_channels_and_coverage_masks(tmp_path):
 
 def test_joint_bam_is_one_unit_with_both_lattices_and_provenance(tmp_path):
     p=tmp_path/'joint.bam';joint_bam(p)
+    # Without CpG-aware scoring every C/G target of both channels is an opportunity.
+    raw=load_bam_payload([dict(dataset_id='d',paths=[str(p)])],dict(chrom='chr1',start=120,end=220),
+        parse_options({'input':{'correct_native':False,'ddda_m5c_correction':False},'cr':{'engine':'staged_native_families'}}))
+    assert len(raw['strata'][0]['units'][0]['positions'])==100
     result=load_bam_payload([dict(dataset_id='d',paths=[str(p)])],dict(chrom='chr1',start=120,end=220),
         parse_options({'input':{'correct_native':False},'cr':{'engine':'staged_native_families'}}))
     source=result['strata'][0];u,=source['units']
-    assert u['strand']=='BOTH' and len(u['positions'])==100
+    # The default, as fiberhmm-merge's joint recall: no ddda_ucg island, so the
+    # fixture's CpG observations (half of 'CYGR' repeats) carry no opportunity.
+    assert u['strand']=='BOTH' and len(u['positions'])==50
+    assert not any((c%64)//16==3 for c in u['contexts'])
+    assert source['model_manifest']['cpg_mask_policy']=='unmethylated-only'
+    assert source['model_manifest']['m5c_conditioned_opportunities']==50
     assert u['physical_source_names']==['ct','ga']
     assert u['pairing_method']=='D' and u['pairing_model']=='ddda-duplex-v1'
     assert u['provenance']['complementary_strands_paired']

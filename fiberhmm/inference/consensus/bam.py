@@ -323,6 +323,7 @@ def _load_payload_once(state,request,options,progress):
             units=[evidence_unit(read,model,dsid,projections.get(_projection_member_key(read),[]),start,end,dataset_ordinal=ordinal)
                    for read in representatives]
             use_m5c=chemistry=='ddda' and options['input'].ddda_m5c_correction
+            cpg_policy=options['input'].ddda_cpg_mask_policy
             if use_m5c and ds.data_type!='bam' and ds.available_layers.get('ddda_mcg'):
                 raise ValueError('Tagged DddA mCG conditioning currently needs BAM query coordinates; use BAM or explicitly disable that input option')
             minimum_llr=None
@@ -373,7 +374,7 @@ def _load_payload_once(state,request,options,progress):
                             # Identical SAM records may be distinct retained evidence
                             # units. Replay every unit; never collapse them in this lookup.
                             for read,u in lookup[key]:
-                                if use_m5c:condition_unit_on_m5c(alignment,u)
+                                if use_m5c:condition_unit_on_m5c(alignment,u,cpg_policy)
                                 if options['input'].correct_native:
                                     if options['cr'].engine in STAGED_LIKE and chemistry.startswith('hia5') and options['families'].recall_hia5_nucleosomes:
                                         from fiberhmm.inference.consensus.upstream_recall import (recall_hia5_alignment,install_recall,
@@ -401,7 +402,7 @@ def _load_payload_once(state,request,options,progress):
                                             minimum_nfr_length=options['input'].minimum_nfr_length,boundary_clipping_is_scope_not_quality=True)
                                     calls=replay_alignment(alignment,replay_unit,model,preset['strand_mode'],mode,context_size,preset.get('prob_threshold'),
                                         minimum_llr,minimum_opportunities=options['input'].native_minimum_opportunities,
-                                        minimum_nfr_length=options['input'].minimum_nfr_length,use_m5c=use_m5c,
+                                        minimum_nfr_length=options['input'].minimum_nfr_length,use_m5c=use_m5c,cpg_mask_policy=cpg_policy,
                                         maximum_alignment_gap_bp=int(getattr(options['input'],'native_maximum_alignment_gap_bp',0)),
                                         circular=circular_calls)
                                     u['native_multi_interval_calls']=calls;u['native_multi_interval_tf_intervals']=[c['interval'] for c in calls]
@@ -446,6 +447,8 @@ def _load_payload_once(state,request,options,progress):
                     native_minimum_opportunities=options['input'].native_minimum_opportunities,
                     upstream_nuc_tf_recall=any('upstream_nuc_tf_recall' in u for u in units),
                     upstream_nuc_tf_settings=next((u['upstream_nuc_tf_recall']['settings'] for u in units if 'upstream_nuc_tf_recall' in u),None),
-                    m5c_conditioned_opportunities=sum(u['provenance'].get('native_m5c_conditioned_opportunities',0) for u in units)),
+                    # DddA only, so DddB/Hia5 manifests (and their digests) are unchanged.
+                    **(dict(cpg_mask_policy=cpg_policy if use_m5c else 'off') if chemistry=='ddda' else {}),
+                    m5c_conditioned_opportunities=sum(u['provenance'].get('native_m5c_excluded_opportunities',0) for u in units)),
                 evidence_units=dict(**collapse,physical_duplex_independence_established=bool(units) and all(u.get('physical_source_names') for u in units),joint_duplex_units=sum(bool(u.get('physical_source_names')) for u in units)),load=diagnostics))
     return dict(region=dict(chrom=chrom,start=start,end=end),strata=strata)
