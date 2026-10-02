@@ -107,7 +107,9 @@ demo data, `recall-tfs` with identical settings changes the TF calls on 370 of
 `fiberhmm-call` on the BAM instead: it re-runs the HMM, gives the same calls
 on its own output, and keeps the `ddda_ucg`/`ddda_mcg` island calls, so it
 also re-calls DddA after `fiberhmm-tag-m5c`. Hia5 and DddB recalls of
-`fiberhmm-call` output reproduce the call.
+`fiberhmm-call` output reproduce the call at the call's ML threshold: for Hia5
+PacBio pass `--prob-threshold 128`, since the recallers default to 125 where
+`fiberhmm-call` uses 128 (see [Options that differ](#options-that-differ-from-fiberhmm-call)).
 
 ## Options that differ from `fiberhmm-call`
 

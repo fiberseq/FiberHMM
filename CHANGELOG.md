@@ -346,8 +346,10 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   does not keep; on the demo, TF calls change on 370 of 377 reads). The
   recallers now warn on such input, and the CpG-island workflow re-runs
   `fiberhmm-call` on the `fiberhmm-tag-m5c` output instead of
-  `fiberhmm-recall-tfs`. The DddA radial recaller no longer fails on reads
-  shorter than 41 bp.
+  `fiberhmm-recall-tfs`. Hia5 and DddB recalls reproduce the call at the
+  call's ML threshold (for Hia5 PacBio pass `--prob-threshold 128`; see
+  Known issues). The DddA radial recaller no longer fails on reads shorter
+  than 41 bp.
 - **Input checks.** An explicit `--seq` that the reads' MM specs contradict
   (for example `--seq pacbio` on Nanopore reads, ~100× more TF calls) now
   stops `call`, `apply`, `recall-tfs`/`-nucs` and `posteriors` with exit 2;

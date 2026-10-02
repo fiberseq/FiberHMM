@@ -583,9 +583,17 @@ def _refuse_mismatched_seq(args, evidence, *, tool, enzyme, explicit):
     # Otherwise MM specs are direct evidence, and header records back them up
     # when no read carries an informative spec.
     if evidence.declared_platform:
-        observed = evidence.declared_platform
-        source = "FIBERHMM-CHEMISTRY declaration"
-    elif evidence.mm_platform:
+        if evidence.declared_platform != explicit:
+            # The chemistry reconciliation (ChemistryConflictError, with
+            # --replace-chemistry as the way out) handles a declared conflict.
+            print(
+                f"WARNING: --seq {explicit} was given, but the input declares "
+                f"--seq {evidence.declared_platform} (FIBERHMM-CHEMISTRY "
+                "declaration).",
+                file=sys.stderr,
+            )
+        return
+    if evidence.mm_platform:
         observed, source = evidence.mm_platform, evidence.mm_source
     elif evidence.platform and not evidence.conflict:
         observed, source = evidence.platform, evidence.source

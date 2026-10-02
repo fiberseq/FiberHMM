@@ -88,16 +88,15 @@ def _declare(tmp_path, source, platform):
 
 def test_a_chemistry_declaration_decides_like_the_auto_path(tmp_path):
     """A sample without T-a calls does not prove Nanopore origin: a header
-    declaring PacBio accepts --seq pacbio (as omitting --seq does) and
-    refuses --seq nanopore."""
+    declaring PacBio accepts --seq pacbio (as omitting --seq does). A
+    disagreeing --seq only warns here; the chemistry reconciliation refuses
+    it (with --replace-chemistry as the way out)."""
     source = _bam(tmp_path, "ont", mm_style="nanopore")
     declared = _declare(tmp_path, source, "pacbio")
     args = _args(seq="pacbio")
     resolve_platform_argument(args, declared, tool="t")
     assert args.seq == "pacbio"
-    with pytest.raises(SystemExit) as exc:
-        resolve_platform_argument(_args(seq="nanopore"), declared, tool="t")
-    assert exc.value.code == 2
+    resolve_platform_argument(_args(seq="nanopore"), declared, tool="t")
     args = _args()
     resolve_platform_argument(args, declared, tool="t")
     assert args.seq == "pacbio"
