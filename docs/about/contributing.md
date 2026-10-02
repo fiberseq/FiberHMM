@@ -67,7 +67,8 @@ Run from a clean checkout of the release commit.
 
 1. **Version.** `pyproject.toml` has the new version, and
    `python -c "import fiberhmm; print(fiberhmm.__version__)"` prints it. The
-   top `CHANGELOG.md` entry names it.
+   top `CHANGELOG.md` entry names it, and `CITATION.cff` has the same
+   `version` (`tests/test_packaging.py` checks it).
 2. **Docs in sync.** `python tools/gen_cli_reference.py --check` exits 0 and
    `mkdocs build --strict` succeeds.
    **Advisories.** Every change in this release that alters results has an

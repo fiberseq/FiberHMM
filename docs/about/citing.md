@@ -15,6 +15,9 @@ and the repository:
 }
 ```
 
+The repository's `CITATION.cff` carries the same metadata (GitHub's "Cite
+this repository").
+
 The citation of the accompanying publication will be added here when it is
 available.
 
