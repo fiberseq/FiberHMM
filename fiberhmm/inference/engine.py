@@ -200,9 +200,14 @@ def _extract_footprints_from_states(states: np.ndarray, confidence: Optional[np.
                 result['msp_sizes'] = msp_sizes_arr
 
                 if with_scores and confidence is not None:
+                    # aq = mean P(accessible) over the MSP. ``confidence`` is
+                    # the posterior of the decoded state, so P(accessible) is
+                    # ``confidence`` at accessible (state 1) positions and
+                    # ``1 - confidence`` inside small footprints the MSP spans.
+                    p_accessible = np.where(states == 1, confidence, 1.0 - confidence)
                     msp_scores = np.zeros(len(msp_starts_arr), dtype=np.float32)
                     for i, (s, sz) in enumerate(zip(msp_starts_arr, msp_sizes_arr)):
-                        msp_scores[i] = np.mean(1.0 - confidence[s:s+sz])
+                        msp_scores[i] = np.mean(p_accessible[s:s+sz])
                     result['msp_scores'] = msp_scores
 
     return result
@@ -313,7 +318,7 @@ def predict_footprints_and_msps(model: FiberHMM, encoded_read: np.ndarray,
             'footprint_scores': per-footprint confidence (if with_scores)
             'msp_starts': query positions where MSPs start
             'msp_sizes': MSP lengths
-            'msp_scores': per-MSP confidence (if with_scores)
+            'msp_scores': per-MSP mean P(accessible) (if with_scores)
             'states': raw HMM state array
             'posteriors': P(footprint) per position (if return_posteriors)
     """

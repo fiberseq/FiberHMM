@@ -14,7 +14,7 @@ every tag FiberHMM writes.
 | `ns` / `nl` | nucleosome starts and lengths (0-based, [molecular frame](coordinates.md)) |
 | `as` / `al` | MSP starts and lengths |
 | `nq` | one byte per nucleosome (below) |
-| `aq` | one byte per MSP: HMM posterior mean ×255, only from `fiberhmm-apply --scores` |
+| `aq` | one byte per MSP: mean HMM posterior P(accessible) over the MSP ×255 (high = confidently accessible), only from `fiberhmm-apply --scores` |
 
 TF calls are **not** in `ns`/`nl` by default, only in `MA`/`AQ`. For a tool
 that reads only the legacy tags, `--downstream-compat` writes TF calls into
