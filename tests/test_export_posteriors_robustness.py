@@ -302,3 +302,16 @@ def test_output_cannot_be_the_input(tmp_path, monkeypatch, capsys):
                     "-o", bam, "--format", "tsv")
     assert code == 2 and "same file as --input" in capsys.readouterr().err
     assert Path(bam).read_bytes() == before
+
+
+def test_output_cannot_be_the_bundled_model(tmp_path, monkeypatch, capsys):
+    import fiberhmm.models as models
+
+    bam = _bam(tmp_path / "in.bam", [(0, 1_000)])
+    bundled = tmp_path / "bundled.json"
+    bundled.write_text("{}")
+    monkeypatch.setattr(models, "get_model_path", lambda *a, **k: str(bundled))
+    code = _run_cli(monkeypatch, "-i", bam, "--enzyme", "hia5", "--seq", "pacbio",
+                    "-o", bundled, "--format", "tsv")
+    assert code == 2 and "same file as --model" in capsys.readouterr().err
+    assert bundled.read_text() == "{}"

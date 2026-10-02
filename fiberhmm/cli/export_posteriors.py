@@ -1129,12 +1129,6 @@ def main():
         except PosteriorInputError as exc:
             parser.error(str(exc))
 
-    from fiberhmm.cli.common import refuse_path_aliases
-    refuse_path_aliases('fiberhmm-posteriors',
-                        inputs={'--input': args.input, '--model': args.model,
-                                '--daf-snp-mask': args.daf_snp_mask},
-                        outputs={'--output': args.output})
-
     using_bundled_model = args.model is None
     model_path = args.model
     # A missing --seq is inferred from the input (and refused on conflicting
@@ -1152,6 +1146,12 @@ def main():
         except (KeyError, FileNotFoundError) as e:
             parser.error(str(e))
         print(f"Using bundled model: {model_path}", file=sys.stderr)
+
+    from fiberhmm.cli.common import refuse_path_aliases
+    refuse_path_aliases('fiberhmm-posteriors',
+                        inputs={'--input': args.input, '--model': model_path,
+                                '--daf-snp-mask': args.daf_snp_mask},
+                        outputs={'--output': args.output})
 
     _, _, model_mode = load_model_with_metadata(model_path, normalize=False)
     from fiberhmm.models import get_metadata_mode_aliases, get_observation_mode

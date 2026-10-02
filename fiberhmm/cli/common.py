@@ -584,31 +584,35 @@ def _location_key(path: str):
     return (st.st_dev, st.st_ino, tuple(reversed(rest)))
 
 
-def _ancestor_keys(path: str):
-    """Location keys of ``path`` and every directory above it.
+def _is_inside(path: str, dir_key) -> bool:
+    """Whether ``path`` is, or lies anywhere below, the directory ``dir_key``.
 
-    Both the resolved file and the link itself (resolved parent, literal
-    name) are considered: deleting a directory removes a symlink entry in it,
-    and atomic writers replace such an entry rather than its target.
+    Checked on the resolved path (the file and every directory above it) and
+    on the literal path: an entry (a symlink, or a directory reached through
+    one) whose containing directory is the deleted one disappears with it.
     """
     import os
 
     absolute = os.path.abspath(os.path.expanduser(path))
-    starts = {
-        os.path.realpath(absolute),
-        os.path.join(os.path.realpath(os.path.dirname(absolute)),
-                     os.path.basename(absolute)),
-    }
-    keys = set()
-    for start in starts:
-        current = start
-        while True:
-            keys.add(_location_key(current))
-            parent = os.path.dirname(current)
-            if parent == current:
-                break
-            current = parent
-    return keys
+    current = os.path.realpath(absolute)
+    while True:
+        if _location_key(current) == dir_key:
+            return True
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    current = absolute
+    while True:
+        parent = os.path.dirname(current)
+        if parent == current:
+            return False
+        if _location_key(parent) == dir_key:
+            return True
+        current = parent
+
+
+_BAM_LIKE = ('.bam', '.cram')
 
 
 def find_path_aliases(*, inputs=(), outputs=(), deleted_dirs=(),
@@ -619,10 +623,14 @@ def find_path_aliases(*, inputs=(), outputs=(), deleted_dirs=(),
     to a path or a list of paths, or are ``(label, path)`` pairs. An output is
     refused when it is the same file as an input, as an index beside an input
     (``.bai/.csi/.crai/.tbi/.fai/.gzi``, when ``protect_input_sidecars``), or
-    as another output. Any input or output inside a directory in
-    ``deleted_dirs`` (or naming it) is refused too.
+    as another output -- including the index that publishing a ``.bam``/
+    ``.cram`` output writes or removes beside it. Any input (or input index)
+    or output inside a directory in ``deleted_dirs`` (or naming it) is refused
+    too.
     """
     import os
+
+    from fiberhmm.inference.bam_output import index_paths_for
 
     inputs = _labelled_paths(inputs)
     outputs = _labelled_paths(outputs)
@@ -630,8 +638,6 @@ def find_path_aliases(*, inputs=(), outputs=(), deleted_dirs=(),
 
     protected = [(label, path, _location_key(path), None) for label, path in inputs]
     if protect_input_sidecars:
-        from fiberhmm.inference.bam_output import index_paths_for
-
         for label, path in inputs:
             sidecars = list(index_paths_for(path))
             sidecars += [path + suffix for suffix in ('.fai', '.gzi')]
@@ -639,7 +645,22 @@ def find_path_aliases(*, inputs=(), outputs=(), deleted_dirs=(),
                 if os.path.exists(sidecar):
                     protected.append((label, sidecar, _location_key(sidecar), path))
 
+    # Indexes a BAM/CRAM output's publication writes or deletes beside it.
+    implied = []
+    for label, path in outputs:
+        if path.lower().endswith(_BAM_LIKE):
+            for index in dict.fromkeys(index_paths_for(path)):
+                implied.append((label, path, index, _location_key(index)))
+
     problems = []
+    for in_label, in_path, key, owner in protected:
+        hit = next((i for i in implied if i[3] == key), None)
+        if hit is not None:
+            problems.append(
+                f"{in_label} {in_path} is where {hit[0]} {hit[1]} keeps its index "
+                f"({hit[2]}); publishing the output would replace or delete it. "
+                "Choose a different output path")
+
     seen_outputs = []
     for out_label, out_path in outputs:
         key = _location_key(out_path)
@@ -663,13 +684,20 @@ def find_path_aliases(*, inputs=(), outputs=(), deleted_dirs=(),
                 f"{earlier[0]} and {out_label} name the same file ({earlier[1]}, "
                 f"{out_path}); each output needs its own path")
             continue
+        hit = next((i for i in implied if i[3] == key and i[1] != out_path), None)
+        if hit is not None:
+            problems.append(
+                f"{out_label} {out_path} is the index ({hit[2]}) that publishing "
+                f"{hit[0]} {hit[1]} replaces or deletes; choose a different path")
+            continue
         seen_outputs.append((out_label, out_path, key))
 
     for dir_label, directory in deleted_dirs:
         dir_key = _location_key(directory)
-        for kind, label, path in ([('input', *item) for item in inputs]
-                                  + [('output', *item) for item in outputs]):
-            if dir_key in _ancestor_keys(path):
+        candidates = ([('input', label, path) for label, path, _k, _o in protected]
+                      + [('output', label, path) for label, path in outputs])
+        for kind, label, path in candidates:
+            if _is_inside(path, dir_key):
                 problems.append(
                     f"{kind} {label} {path} is inside {dir_label} {directory}, "
                     "which is deleted when the run finishes; choose a path "

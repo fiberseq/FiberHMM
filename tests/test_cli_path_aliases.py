@@ -387,3 +387,99 @@ def test_recall_refuses_in_place(tmp_path, monkeypatch, capsys, entry):  # M7
                       "--enzyme", "ddda"])
     assert code == 2 and "same file as --in-bam" in capsys.readouterr().err
     assert _digest(bam) == before
+
+
+# ---------------------------------------------------------------------------
+# Review follow-ups: implied index files, generated files, kept work dirs
+# ---------------------------------------------------------------------------
+
+def test_sidecar_cannot_be_the_index_a_bam_output_publishes(tmp_path):
+    out = tmp_path / "out.bam"
+    for index in ("out.bam.bai", "out.bai", "out.bam.csi"):
+        problems = find_path_aliases(outputs={"--output": str(out),
+                                              "--stats-tsv": str(tmp_path / index)})
+        assert problems and "replaces or deletes" in problems[0]
+    # a TSV output has no index
+    assert find_path_aliases(outputs={"--output": str(tmp_path / "p.tsv.gz"),
+                                      "--stats": str(tmp_path / "p.tsv.gz.bai")}) == []
+
+
+def test_dedup_refuses_stats_tsv_at_the_output_index(tmp_path, monkeypatch, capsys):
+    from fiberhmm.cli import dedup
+
+    bam = _daf_bam(tmp_path)
+    code = _run_main(monkeypatch, dedup.main,
+                     ["fiberhmm-dedup", "-i", str(bam), "-o", str(tmp_path / "o.bam"),
+                      "--stats-tsv", str(tmp_path / "o.bam.bai")])
+    assert code == 2 and "--stats-tsv" in capsys.readouterr().err
+
+
+def test_input_index_inside_a_deleted_directory_is_refused(tmp_path):
+    work = tmp_path / "work"
+    work.mkdir()
+    bam = tmp_path / "in.bam"
+    bam.write_text("x")
+    (work / "in.bam.bai").write_text("i")
+    (tmp_path / "in.bam.bai").symlink_to(work / "in.bam.bai")
+    problems = find_path_aliases(inputs={"--input": str(bam)},
+                                 deleted_dirs={"--work-dir": str(work)})
+    assert problems and "inside --work-dir" in problems[0]
+
+
+def test_path_through_a_symlink_inside_a_deleted_directory_is_refused(tmp_path):
+    work = tmp_path / "work"
+    work.mkdir()
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "in.bam").write_text("x")
+    (work / "link").symlink_to(data)
+    assert find_path_aliases(inputs={"--input": str(work / "link" / "in.bam")},
+                             deleted_dirs={"--work-dir": str(work)})
+    assert find_path_aliases(inputs={"--input": str(data / "in.bam")},
+                             deleted_dirs={"--work-dir": str(work)}) == []
+
+
+def _call_args(monkeypatch, *argv):
+    from fiberhmm.cli import call as cli
+
+    monkeypatch.setattr(sys, "argv", ["fiberhmm-call", *map(str, argv)])
+    return cli, cli.parse_args()
+
+
+def test_call_keep_work_dir_allows_output_inside_it(tmp_path, monkeypatch):
+    work = tmp_path / "work"
+    cli, args = _call_args(monkeypatch, "-i", tmp_path / "in.bam", "--enzyme", "hia5",
+                           "--region-parallel", "--work-dir", work,
+                           "--keep-work-dir", "-o", work / "calls.bam")
+    cli._refuse_call_path_aliases(args, "model.json", "model.json")  # no exit
+
+
+def test_call_generated_snp_and_qc_files_cannot_overwrite_inputs(
+        tmp_path, monkeypatch, capsys):
+    model = tmp_path / "run.json"
+    model.write_text("{}")
+    cli, args = _call_args(monkeypatch, "-i", tmp_path / "in.bam", "-m", model,
+                           "-o", tmp_path / "calls.bam",
+                           "--daf-snp-output-prefix", tmp_path / "run")
+    with pytest.raises(SystemExit) as caught:
+        cli._refuse_call_path_aliases(args, str(model), str(model))
+    assert caught.value.code == 2
+    assert "--daf-snp-output-prefix" in capsys.readouterr().err
+
+    cli, args = _call_args(monkeypatch, "-i", tmp_path / "in.bam", "-m", model,
+                           "-o", tmp_path / "calls.bam",
+                           "--qc-output-prefix", tmp_path / "run.qc")
+    model2 = tmp_path / "run.qc.qc.json"
+    model2.write_text("{}")
+    with pytest.raises(SystemExit):
+        cli._refuse_call_path_aliases(args, str(model2), str(model2))
+
+
+def test_call_bundled_model_is_protected(tmp_path, monkeypatch, capsys):
+    cli, args = _call_args(monkeypatch, "-i", tmp_path / "in.bam", "--enzyme", "hia5",
+                           "-o", tmp_path / "x.json", "--no-qc")
+    bundled = tmp_path / "x.json"
+    bundled.write_text("{}")
+    with pytest.raises(SystemExit):
+        cli._refuse_call_path_aliases(args, str(bundled), str(bundled))
+    assert "same file as --model" in capsys.readouterr().err
