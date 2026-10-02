@@ -785,8 +785,16 @@ def _smoothed_deam_rate(
     def estimate(width):
         width = max(1, int(width))
         kernel = np.ones(width, dtype=np.float64)
-        numerator = np.convolve(observed.astype(np.float64), kernel, 'same')
-        denominator = np.convolve(opportunity.astype(np.float64), kernel, 'same')
+        # Centred window sums clipped to the read. np.convolve(..., 'same')
+        # returns max(len(read), width) values, so a read shorter than the
+        # window (< 41 bp) broke the shapes below; this slice of the full
+        # convolution equals 'same' whenever the read is the longer one.
+        offset = (width - 1) // 2
+        length = observed.shape[0]
+        numerator = np.convolve(
+            observed.astype(np.float64), kernel, 'full')[offset:offset + length]
+        denominator = np.convolve(
+            opportunity.astype(np.float64), kernel, 'full')[offset:offset + length]
         rate = np.full(denominator.shape, np.nan, dtype=np.float64)
         supported = denominator >= required
         rate[supported] = (

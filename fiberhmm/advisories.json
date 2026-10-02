@@ -169,7 +169,7 @@
    "artifact": "calls",
    "title": "fiberhmm-tag-m5c wrote no unmethylated-island (ddda_ucg) spans",
    "reason": "Before 3.0 fiberhmm-tag-m5c did not write unmethylated whole-island calls as ddda_ucg, so fiberhmm-recall-tfs --use-m5c masked every CpG instead of exempting confident unmethylated islands.",
-   "fix": "Re-run fiberhmm-tag-m5c with FiberHMM >= 3.0, then fiberhmm-recall-tfs --use-m5c.",
+   "fix": "Re-run fiberhmm-tag-m5c with FiberHMM >= 3.0, then fiberhmm-call again on the tagged BAM (a recall does not reproduce DddA calls).",
    "fixed_in": {
     "version": "3.0.0",
     "commit": "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba"

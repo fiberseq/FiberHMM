@@ -40,6 +40,8 @@ def _programs(path, program):
 
 @pytest.fixture(scope="module")
 def pacbio_bam(tmp_path_factory):
+    # A+a-only (Nanopore-style) MM specs: the --seq pacbio runs below pass
+    # --force-seq, since an explicit --seq is checked against the reads.
     path = tmp_path_factory.mktemp("docbugs") / "pacbio.bam"
     make_synthetic_bam(str(path), n_reads=4, read_length=1500, n_chroms=1,
                        chrom_length=20_000, seed=5)
@@ -54,7 +56,7 @@ def test_call_and_recall_banners_and_pg_are_current(tmp_path, pacbio_bam):
     calls = tmp_path / "calls.bam"
     result = _run_cli(
         "fiberhmm.cli.call", "-i", pacbio_bam, "-o", calls, "--enzyme", "hia5",
-        "--seq", "pacbio", "--no-qc", "--no-recall-nucs", "-c", "1",
+        "--seq", "pacbio", "--force-seq", "--no-qc", "--no-recall-nucs", "-c", "1",
         "--io-threads", "1", "--min-read-length", "0",
     )
     assert result.returncode == 0, result.stderr
@@ -67,7 +69,7 @@ def test_call_and_recall_banners_and_pg_are_current(tmp_path, pacbio_bam):
     recalled = tmp_path / "recalled.bam"
     result = _run_cli(
         "fiberhmm.cli.recall_tfs", "-i", calls, "-o", recalled, "--enzyme", "hia5",
-        "--seq", "pacbio", "-c", "1",
+        "--seq", "pacbio", "--force-seq", "-c", "1",
     )
     assert result.returncode == 0, result.stderr
     assert "BETA" not in result.stderr and "(beta)" not in result.stderr
@@ -91,7 +93,7 @@ def _posteriors_run(monkeypatch, tmp_path, *argv):
 
 @pytest.mark.parametrize("argv, expected", [
     (("--enzyme", "hia5", "--seq", "nanopore"), 248),
-    (("--enzyme", "hia5", "--seq", "pacbio"), 128),
+    (("--enzyme", "hia5", "--seq", "pacbio", "--force-seq"), 128),
     (("--enzyme", "hia5", "--seq", "nanopore", "--prob-threshold", "100"), 100),
     (("--enzyme", "dddb"), 128),
 ])
@@ -234,7 +236,7 @@ def test_call_creates_a_missing_output_directory(tmp_path, pacbio_bam, parallel)
     out = tmp_path / "new" / "nested" / "calls.bam"
     result = _run_cli(
         "fiberhmm.cli.call", "-i", pacbio_bam, "-o", out, "--enzyme", "hia5",
-        "--seq", "pacbio", "--no-qc", "--no-recall-nucs", "--io-threads", "1",
+        "--seq", "pacbio", "--force-seq", "--no-qc", "--no-recall-nucs", "--io-threads", "1",
         "--min-read-length", "0", *parallel,
     )
     assert result.returncode == 0, result.stderr
@@ -246,11 +248,11 @@ def test_recall_creates_a_missing_output_directory(tmp_path, pacbio_bam):
     calls = tmp_path / "calls.bam"
     assert _run_cli(
         "fiberhmm.cli.call", "-i", pacbio_bam, "-o", calls, "--enzyme", "hia5",
-        "--seq", "pacbio", "--no-qc", "--no-recall-nucs", "-c", "1",
+        "--seq", "pacbio", "--force-seq", "--no-qc", "--no-recall-nucs", "-c", "1",
         "--io-threads", "1", "--min-read-length", "0").returncode == 0
     out = tmp_path / "new" / "recalled.bam"
     result = _run_cli("fiberhmm.cli.recall_tfs", "-i", calls, "-o", out,
-                      "--enzyme", "hia5", "--seq", "pacbio", "-c", "1")
+                      "--enzyme", "hia5", "--seq", "pacbio", "--force-seq", "-c", "1")
     assert result.returncode == 0, result.stderr
     assert out.exists()
 
@@ -313,7 +315,7 @@ def test_apply_on_stdin_with_a_custom_model_refuses_late_inheritance(tmp_path, p
 
     outdir = tmp_path / "apply"
     assert _run_cli("fiberhmm.cli.apply", "-i", pacbio_bam, "--enzyme", "hia5",
-                    "--seq", "pacbio", "-o", outdir, "-c", "1",
+                    "--seq", "pacbio", "--force-seq", "-o", outdir, "-c", "1",
                     "--min-read-length", "0").returncode == 0
     env = dict(os.environ, FIBERHMM_NO_UPDATE_CHECK="1")
     env["PYTHONPATH"] = str(REPO_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
@@ -331,6 +333,6 @@ def test_apply_on_stdin_with_a_custom_model_refuses_late_inheritance(tmp_path, p
 def test_posteriors_creates_a_missing_output_directory(tmp_path, pacbio_bam):
     out = tmp_path / "new" / "posteriors.tsv.gz"
     result = _run_cli("fiberhmm.cli.export_posteriors", "-i", pacbio_bam,
-                      "--enzyme", "hia5", "--seq", "pacbio", "-o", out, "-c", "1")
+                      "--enzyme", "hia5", "--seq", "pacbio", "--force-seq", "-o", out, "-c", "1")
     assert result.returncode == 0, result.stderr
     assert out.exists()

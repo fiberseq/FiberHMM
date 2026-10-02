@@ -429,7 +429,7 @@ Examples:
         ensure_parent_dir(args.output)
         if args.stats_tsv:
             ensure_parent_dir(args.stats_tsv)
-    run_dedup(
+    stats = run_dedup(
         in_bam=args.input, out_bam=args.output,
         min_jaccard=args.min_jaccard, min_deam=args.min_deam,
         ignore_strand=args.ignore_strand, k=args.num_hashes, bands=args.bands,
@@ -437,6 +437,10 @@ Examples:
         stats_tsv=args.stats_tsv, io_threads=args.io_threads,
         max_end_diff=args.max_end_diff,
     )
+    if stats is None:
+        # Nothing was written; exiting 0 let an older output look current.
+        print(f"Error: no output written to {args.output}.", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == '__main__':

@@ -354,6 +354,45 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   `fiberhmm-strand-rescue` names a `--region` contig the BAM lacks (exit 2).
   The SNP report's per-call `amplicon_ids` no longer collapse when two
   amplicons swap places during renumbering.
+- **`fiberhmm-extract` keeps intervals with clipped or inserted edges.** An
+  interval whose first or last base was soft-clipped or an insertion was
+  dropped from every BED/bigBed track: on minimap2 ONT/DAF alignments 11–16%
+  of MSPs (every terminal MSP of a soft-clipped read), 1–7% of nucleosomes
+  and about a quarter of TF calls. Such intervals now span their aligned
+  bases; only intervals with no aligned base are dropped. Tracks, counts and
+  aggregates built from extract output gain these features; features that
+  were already extracted are unchanged. The BAM tags and FiberBrowser are
+  unaffected. Extract also uses an existing CSI index and indexes an
+  unindexed BAM into a temporary file instead of writing a `.bai` next to it.
+- **MSP `aq` is a confidence.** `fiberhmm-apply --scores` wrote
+  `aq` = mean P(footprint) over each MSP, so confidently accessible MSPs
+  scored near 0 (demo median 5). It is now mean P(accessible) ×255 (demo
+  median 249), as documented. Extract MSP BED scores and `blockAq` change
+  with it; `fiberhmm-call` writes no `aq`.
+- **Recall of `--no-legacy-tags` output.** `fiberhmm-recall-tfs` on a BAM
+  whose footprints are only in `MA` deleted every annotation and exited 0;
+  `-recall-nucs` left it unchanged. Both now read the `MA` footprints and give
+  the same result as on the same call with legacy tags.
+- **DddA re-calls.** A recall of DddA `fiberhmm-call` output does not
+  reproduce the call (its TF scan space comes from HMM footprints the output
+  does not keep; on the demo, TF calls change on 370 of 377 reads). The
+  recallers now warn on such input, and the CpG-island workflow re-runs
+  `fiberhmm-call` on the `fiberhmm-tag-m5c` output instead of
+  `fiberhmm-recall-tfs`. Hia5 and DddB recalls reproduce the call at the
+  call's ML threshold (for Hia5 PacBio pass `--prob-threshold 128`; see
+  Known issues). The DddA radial recaller no longer fails on reads shorter
+  than 41 bp.
+- **Input checks.** An explicit `--seq` that the reads' MM specs contradict
+  (for example `--seq pacbio` on Nanopore reads, ~100× more TF calls) now
+  stops `call`, `apply`, `recall-tfs`/`-nucs` and `posteriors` with exit 2;
+  `--force-seq` keeps it. Hia5 on reads without m6A calls stops instead of
+  writing no footprints. A missing or non-BAM input, a JSON that is not a
+  model, and bad `fiberhmm-consensus --region` values are one-line errors
+  (exit 2) instead of tracebacks; `--prob-threshold` must be 0–255;
+  `--chroms`/`--skip-scaffolds` need `--region-parallel`; `.sam`/`.cram`
+  output names are refused; a custom `-m` of the other assay than
+  `--enzyme` is refused; `fiberhmm-merge` accepts an empty BAM, and
+  `fiberhmm-dedup` exits 1 when it writes nothing.
 
 ### Changed defaults
 

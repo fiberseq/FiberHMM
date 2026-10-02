@@ -396,7 +396,11 @@ def test_ddda_mode_surfaces_whole_genome_mcg_hint(capsys):
     message = capsys.readouterr().err
     assert "fiberhmm-tag-m5c" in message
     assert "one state per complete CpG island" in message
-    assert "fiberhmm-recall-tfs --use-m5c" in message
+    # A recall of DddA call output does not reproduce the call (its TF scan
+    # space comes from HMM baseline footprints the output does not keep), so
+    # the tagged BAM is called again rather than passed to recall-tfs.
+    assert "call mcg.bam again with fiberhmm-call" in message
+    assert "recall-tfs" not in message
 
 
 def test_integrated_ddda_mcg_is_retired_in_favor_of_whole_islands(capsys, tmp_path):

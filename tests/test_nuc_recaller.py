@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from fiberhmm.inference.circular import project_center_nuc_calls
 from fiberhmm.inference.nuc_recaller import (
@@ -1350,3 +1351,68 @@ def test_exclude_nucleosomes_from_msps_removes_expanded_overlap():
     )
 
     assert result == [(0, 80), (160, 60)]
+
+
+@pytest.mark.parametrize("length", [1, 20, 30, 40])
+def test_ddda_density_rate_on_reads_shorter_than_the_window(length):
+    """Reads under 41 bp crashed the DddA radial recaller (shape mismatch)."""
+    opportunity = np.ones(length, dtype=bool)
+    deaminated = np.zeros(length, dtype=bool)
+    deaminated[::2] = True
+
+    rate = _smoothed_deam_rate(opportunity, deaminated)
+
+    assert rate.shape == (length,)
+    # The same molecule embedded in a long read with no evidence around it
+    # gives the same windowed rate inside the molecule.
+    pad = 60
+    long_opp = np.zeros(length + 2 * pad, dtype=bool)
+    long_deam = np.zeros(length + 2 * pad, dtype=bool)
+    long_opp[pad:pad + length] = opportunity
+    long_deam[pad:pad + length] = deaminated
+    expected = _smoothed_deam_rate(long_opp, long_deam)[pad:pad + length]
+    np.testing.assert_array_equal(np.isnan(rate), np.isnan(expected))
+    np.testing.assert_allclose(rate[~np.isnan(rate)],
+                               expected[~np.isnan(expected)])
+
+
+def test_ddda_radial_recall_handles_a_30bp_read():
+    from fiberhmm.core.model_io import load_model
+    from fiberhmm.inference.nuc_recaller import (
+        attach_nuc_profile_emissions,
+        load_nuc_profile,
+        radial_split_in_read,
+        validate_radial_access_in_read,
+    )
+    from fiberhmm.inference.tf_recaller import (
+        build_conditional_hit_tables,
+        build_llr_tables,
+    )
+    from fiberhmm.models import _bundled_model_path, get_model_path
+
+    model = load_model(get_model_path('ddda', 'nuc_refine'))
+    hit, miss = build_llr_tables(model)
+    protected_hit, accessible_hit = build_conditional_hit_tables(model)
+    profile = attach_nuc_profile_emissions(
+        load_nuc_profile(_bundled_model_path('ddda_nuc_profile.json')),
+        protected_hit, accessible_hit)
+    length = 30
+    rng = np.random.default_rng(3)
+    # Non-target 8193; target hits carry their context code (0-4095),
+    # target misses context + 4097.
+    obs = np.full(length, 8193, dtype=np.int32)
+    targets = rng.random(length) < 0.4
+    hits = targets & (rng.random(length) < 0.3)
+    contexts = rng.integers(0, 4096, length).astype(np.int32)
+    obs[targets] = contexts[targets] + 4097
+    obs[hits] = contexts[hits]
+    ns, nl = [0], [length]
+
+    nucs, access = radial_split_in_read(obs, ns, nl, length, profile, 85, hit, miss)
+    validated, accessible = validate_radial_access_in_read(
+        obs, ns, nl, nucs, (), length, hit, miss, min_llr=4.0, min_opps=3,
+        nuc_min_size=85, nuc_profile=profile)
+    for call in list(validated):
+        assert 0 <= call.start and call.start + call.length <= length
+    for start, size in accessible:
+        assert 0 <= start and start + size <= length

@@ -556,6 +556,8 @@ def test_daf_tools_default_ml_threshold_is_128(monkeypatch, tmp_path, module,
 
     def fake(*args, **kwargs):
         captured.update(kwargs)
+        # run_dedup returns its stats; None means it wrote nothing (exit 1).
+        return {}
 
     monkeypatch.setattr(mod, runner, fake)
     monkeypatch.setattr(sys, "argv", [module, *argv])

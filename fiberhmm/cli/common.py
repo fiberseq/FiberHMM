@@ -123,6 +123,66 @@ def resolve_observation_mode(
     )
 
 
+def ml_threshold(value) -> int:
+    """argparse type for an ML probability threshold: an integer 0-255.
+
+    ML bytes are 0-255, so a larger threshold silently turns every
+    modification call off.
+    """
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"expected an integer 0-255, got {value!r}")
+    if not 0 <= number <= 255:
+        raise argparse.ArgumentTypeError(
+            f"must be 0-255 (ML probabilities are bytes), got {number}")
+    return number
+
+
+def non_negative_int(value) -> int:
+    """argparse type for counts and thresholds that cannot be negative."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"expected an integer >= 0, got {value!r}")
+    if number < 0:
+        raise argparse.ArgumentTypeError(f"must be >= 0, got {number}")
+    return number
+
+
+def refuse_model_enzyme_assay_conflict(model_mode, enzyme, seq, model_path, *,
+                                       tool: str, explicit_mode=None) -> None:
+    """Exit 2 when a custom ``-m`` and ``--enzyme`` name different assays.
+
+    A DAF-seq (deamination) table with an m6A enzyme, or the reverse, used to
+    run in the model's mode and fail later with a misleading message ("DAF-seq
+    calling needs deamination calls"). Platform differences within an assay
+    are left to the existing mode resolution; an explicit legacy ``--mode``
+    override is honoured.
+    """
+    if not enzyme or explicit_mode or model_mode not in OBSERVATION_MODES:
+        return
+    from fiberhmm.models import get_observation_mode
+
+    try:
+        expected = get_observation_mode(enzyme, seq, warn_missing_seq=False)
+    except KeyError:
+        return
+    if (model_mode == 'daf') == (expected == 'daf'):
+        return
+
+    def assay(mode):
+        return 'DAF-seq (deamination)' if mode == 'daf' else 'Fiber-seq (m6A)'
+
+    print(
+        f"error: {tool}: -m {model_path} is a {assay(model_mode)} model "
+        f"(mode {model_mode}), but --enzyme {enzyme} is {assay(expected)}. "
+        f"Drop --enzyme to use the model as it is, or give a {enzyme} model.",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
+
 def add_filter_args(parser: argparse.ArgumentParser,
                     min_mapq: int = 0,
                     prob_threshold: Optional[int] = 128,
@@ -143,17 +203,17 @@ def add_filter_args(parser: argparse.ArgumentParser,
         threshold_help = (f"Minimum MM/ML probability (0-255) to call "
                           f"modification (default: {prob_threshold})")
     parser.add_argument(
-        '--min-mapq', '-q', type=int, default=min_mapq,
+        '--min-mapq', '-q', type=non_negative_int, default=min_mapq,
         help="Minimum mapping quality; reads below this are written to output "
              "unchanged without footprint/nucleosome tags. Default 0 (call on "
              "all mapped reads). Pass a positive value to filter."
     )
     parser.add_argument(
-        '--prob-threshold', type=int, default=prob_threshold,
+        '--prob-threshold', type=ml_threshold, default=prob_threshold,
         help=threshold_help,
     )
     parser.add_argument(
-        '--min-read-length', type=int, default=min_read_length,
+        '--min-read-length', type=non_negative_int, default=min_read_length,
         help=f"Minimum aligned read length in bp; shorter reads are written to "
              f"output unchanged without footprint/nucleosome tags. Set to 0 to "
              f"attempt calling on all reads regardless of length (default: {min_read_length})"
@@ -312,10 +372,21 @@ _ONT_PROGRAMS = {"dorado", "guppy", "guppy_basecaller", "minknow", "bonito"}
 class PlatformEvidence:
     """Result of :func:`sniff_sequencing_platform`."""
 
-    def __init__(self, platform=None, source="", conflict=None):
+    def __init__(self, platform=None, source="", conflict=None, *,
+                 reads_inspected=0, m6a_reads=0, mm_platform=None,
+                 mm_source="", declared_platform=None):
         self.platform = platform      # 'pacbio' | 'nanopore' | None
         self.source = source          # human-readable evidence summary
         self.conflict = conflict      # explanation when evidence disagrees
+        # Read-level evidence (only when records were inspected): primary
+        # records read, how many carry an m6A MM spec (A+a / T-a), and the
+        # platform their MM specs alone indicate.
+        self.reads_inspected = reads_inspected
+        self.m6a_reads = m6a_reads
+        self.mm_platform = mm_platform
+        self.mm_source = mm_source
+        # The header's single FIBERHMM-CHEMISTRY platform, if any.
+        self.declared_platform = declared_platform
 
     def __repr__(self):  # pragma: no cover - debugging aid
         return (f"PlatformEvidence(platform={self.platform!r}, "
@@ -331,6 +402,22 @@ def _mm_spec_platform(mm_tag: str):
     if "A+a" in bases:
         return "nanopore"
     return None
+
+
+def _mm_has_m6a(mm_tag: str) -> bool:
+    """Whether an MM tag carries an m6A spec on A or T.
+
+    Codes follow the SAM spec, as the MM parser reads them: a run of
+    single-letter codes (``A+a``, ``A+ab``) or one ChEBI number (``A+21839``).
+    """
+    for item in str(mm_tag).split(";"):
+        spec = item.split(",", 1)[0].strip().rstrip(".?")
+        if len(spec) < 3 or spec[0] not in "ATN" or spec[1] not in "+-":
+            continue
+        codes = spec[2:]
+        if codes == "21839" or (codes.isalpha() and "a" in codes):
+            return True
+    return False
 
 
 def _header_platform(header_dict):
@@ -355,7 +442,8 @@ def _header_platform(header_dict):
 
 
 def sniff_sequencing_platform(bam_path, n_reads: int = PLATFORM_SNIFF_READS,
-                              *, inspect_reads: bool = True):
+                              *, inspect_reads: bool = True,
+                              inspect_declared: bool = False):
     """Infer PacBio vs Nanopore from a BAM's own evidence.
 
     Evidence, strongest first: a FiberHMM chemistry declaration in the header;
@@ -368,8 +456,10 @@ def sniff_sequencing_platform(bam_path, n_reads: int = PLATFORM_SNIFF_READS,
 
     At most ``n_reads`` records are read, tagged or not (an MM-less DAF BAM
     is never scanned to EOF). Records are not read at all when
-    ``inspect_reads`` is False or when the header's chemistry declaration
-    names a single platform.
+    ``inspect_reads`` is False, or when the header's chemistry declaration
+    names a single platform unless ``inspect_declared`` is True. The
+    declaration still decides ``platform`` then; the read-level evidence is
+    reported in ``mm_platform``/``m6a_reads``/``reads_inspected``.
     """
     if not bam_path or bam_path == "-":
         return PlatformEvidence(source="stdin (not inspected)")
@@ -385,30 +475,59 @@ def sniff_sequencing_platform(bam_path, n_reads: int = PLATFORM_SNIFF_READS,
                 for item in declared_chemistries(bam.header)
             } & {"pacbio", "nanopore"}
             counts = {"pacbio": 0, "nanopore": 0}
-            if inspect_reads and len(declared) != 1:
+            primary = m6a_reads = 0
+            mapped_primary = mapped_m6a = 0
+            aligned_input = bool(getattr(bam, "references", None) or ())
+            if inspect_reads and (len(declared) != 1 or inspect_declared):
                 for inspected, read in enumerate(bam.fetch(until_eof=True), 1):
                     if not (read.is_secondary or read.is_supplementary):
+                        primary += 1
                         tag = ("MM" if read.has_tag("MM")
                                else ("Mm" if read.has_tag("Mm") else None))
-                        platform = (_mm_spec_platform(read.get_tag(tag))
-                                    if tag else None)
+                        mm = read.get_tag(tag) if tag else None
+                        platform = _mm_spec_platform(mm) if tag else None
                         if platform:
                             counts[platform] += 1
+                        has_m6a = bool(tag) and _mm_has_m6a(mm)
+                        m6a_reads += has_m6a
+                        if not read.is_unmapped:
+                            mapped_primary += 1
+                            mapped_m6a += has_m6a
                     if inspected >= n_reads:
                         break
     except (OSError, ValueError) as exc:
         return PlatformEvidence(source=f"unreadable input ({exc})")
 
+    if aligned_input:
+        # Aligned input: unmapped records are passed through uncalled, so
+        # only mapped reads are evidence (none sampled: no evidence).
+        primary, m6a_reads = mapped_primary, mapped_m6a
+    read_evidence = {"reads_inspected": primary, "m6a_reads": m6a_reads}
+    informative = counts["pacbio"] + counts["nanopore"]
+    if informative:
+        majority = max(counts, key=counts.get)
+        if informative - counts[majority] <= _PLATFORM_MINORITY_FRACTION * informative:
+            pattern = "T-a present" if majority == "pacbio" else "A+a only, no T-a"
+            read_evidence["mm_platform"] = majority
+            read_evidence["mm_source"] = (
+                f"MM specs of {informative} read(s) ({pattern})")
+
     sources = []
     if len(declared) > 1:
         return PlatformEvidence(conflict=(
             "the input header declares several platforms "
-            f"({', '.join(sorted(declared))})"))
+            f"({', '.join(sorted(declared))})"), **read_evidence)
     declared_platform = next(iter(declared), None)
     if declared_platform:
         sources.append((declared_platform, "FIBERHMM-CHEMISTRY declaration"))
+        if inspect_declared:
+            # The declaration settles the platform; reads were read only for
+            # the read-level evidence above.
+            return PlatformEvidence(
+                platform=declared_platform,
+                source="FIBERHMM-CHEMISTRY declaration",
+                declared_platform=declared_platform, **read_evidence)
 
-    informative = counts["pacbio"] + counts["nanopore"]
     mm_platform = None
     if informative:
         majority = max(counts, key=counts.get)
@@ -417,7 +536,7 @@ def sniff_sequencing_platform(bam_path, n_reads: int = PLATFORM_SNIFF_READS,
             return PlatformEvidence(conflict=(
                 f"MM specs are mixed: {counts['pacbio']} read(s) carry PacBio "
                 f"T-a calls and {counts['nanopore']} read(s) only Nanopore-style "
-                "A+a calls"))
+                "A+a calls"), **read_evidence)
         mm_platform = majority
         pattern = "T-a present" if majority == "pacbio" else "A+a only, no T-a"
         sources.append((majority, f"MM specs of {informative} read(s) ({pattern})"))
@@ -427,18 +546,111 @@ def sniff_sequencing_platform(bam_path, n_reads: int = PLATFORM_SNIFF_READS,
         sources.append((next(iter(header_votes)), "@RG/@PG header records"))
     elif len(header_votes) > 1 and mm_platform is None and not declared_platform:
         return PlatformEvidence(conflict=(
-            "@RG/@PG header records name both PacBio and Nanopore tools"))
+            "@RG/@PG header records name both PacBio and Nanopore tools"),
+            **read_evidence)
 
     platforms = {platform for platform, _ in sources}
     if len(platforms) > 1:
         detail = "; ".join(f"{src} -> {platform}" for platform, src in sources)
-        return PlatformEvidence(conflict=f"evidence disagrees ({detail})")
+        return PlatformEvidence(conflict=f"evidence disagrees ({detail})",
+                                **read_evidence)
     if not sources:
-        return PlatformEvidence(source="no platform evidence in the first reads")
+        return PlatformEvidence(source="no platform evidence in the first reads",
+                                **read_evidence)
     return PlatformEvidence(
         platform=sources[0][0],
         source="; ".join(src for _, src in sources),
+        **read_evidence,
     )
+
+
+def add_force_seq_arg(parser: argparse.ArgumentParser) -> None:
+    """Add ``--force-seq``: run with an explicit ``--seq`` the reads contradict."""
+    parser.add_argument(
+        '--force-seq', action='store_true',
+        help="Use the given --seq even when the input's MM specs or header "
+             "say the reads come from the other platform (normally refused: "
+             "the wrong platform model changes the calls, e.g. ~100x more "
+             "TF calls for Nanopore reads called as PacBio), and run Hia5 "
+             "even when the first reads carry no m6A calls.",
+    )
+
+
+def _refuse_mismatched_seq(args, evidence, *, tool, enzyme, explicit):
+    """Exit 2 when the reads contradict an explicit ``--seq`` (unless forced)."""
+    # A FIBERHMM-CHEMISTRY declaration is authoritative, as when --seq is
+    # omitted: a sample without T-a calls does not prove Nanopore origin.
+    # Otherwise MM specs are direct evidence, and header records back them up
+    # when no read carries an informative spec.
+    if evidence.declared_platform:
+        if evidence.declared_platform != explicit:
+            # The chemistry reconciliation (ChemistryConflictError, with
+            # --replace-chemistry as the way out) handles a declared conflict.
+            print(
+                f"WARNING: --seq {explicit} was given, but the input declares "
+                f"--seq {evidence.declared_platform} (FIBERHMM-CHEMISTRY "
+                "declaration).",
+                file=sys.stderr,
+            )
+        return
+    if evidence.mm_platform:
+        observed, source = evidence.mm_platform, evidence.mm_source
+    elif evidence.platform and not evidence.conflict:
+        observed, source = evidence.platform, evidence.source
+    else:
+        return
+    if observed == explicit:
+        return
+    if getattr(args, 'force_seq', False):
+        print(
+            f"WARNING: --seq {explicit} was given, but the input looks like "
+            f"{observed} ({source}). Using --seq {explicit} because of "
+            "--force-seq.",
+            file=sys.stderr,
+        )
+        return
+    print(
+        f"error: {tool}: --seq {explicit} was given, but the input looks like "
+        f"{observed} ({source}). Calling {observed} reads with the "
+        f"{explicit} model changes the calls (for example, Nanopore reads "
+        f"called as PacBio give ~100x more TF calls). Pass --seq {observed}, "
+        f"omit --seq "
+        f"to detect it, or add --force-seq to use --seq {explicit} anyway.",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
+
+def _refuse_reads_without_m6a(args, evidence, *, tool, enzyme):
+    """Exit 2 when an m6A enzyme meets reads without any m6A MM calls.
+
+    Only the first records are read, so ``--force-seq`` runs anyway (a BAM
+    whose first reads lack m6A calls but later ones carry them); an explicit
+    legacy ``--mode`` override decides the observation mode itself.
+    """
+    if evidence.reads_inspected == 0 or evidence.m6a_reads > 0:
+        return
+    if getattr(args, 'mode', None):
+        return
+    if getattr(args, 'force_seq', False):
+        print(
+            f"WARNING: none of the first {evidence.reads_inspected} primary "
+            "reads carries an m6A MM/ML tag; running anyway because of "
+            "--force-seq.",
+            file=sys.stderr,
+        )
+        return
+    print(
+        f"error: {tool}: --enzyme {enzyme} calls footprints from m6A "
+        f"modification calls, but none of the first {evidence.reads_inspected} "
+        "primary reads carries an m6A MM/ML tag (MM A+a or T-a), so every read "
+        "would get no footprints. Is this DAF-seq? Use --enzyme dddb or "
+        "--enzyme ddda. For Fiber-seq, call m6A first (ft predict-m6a for "
+        "PacBio, dorado with an m6A model for Nanopore). If later reads do "
+        "carry m6A calls, add --force-seq to run anyway.",
+        file=sys.stderr,
+    )
+    sys.exit(2)
 
 
 def resolve_platform_argument(args, input_path, *, tool: str,
@@ -448,8 +660,11 @@ def resolve_platform_argument(args, input_path, *, tool: str,
     Only enzymes whose bundled model or observation frame depends on the
     platform (Hia5) are sniffed; for DAF enzymes a missing ``--seq`` is filled
     only from explicit header evidence (it then affects just the declared
-    platform). An explicit ``--seq`` is authoritative; a disagreeing sniff
-    only warns.
+    platform). For Hia5 the first reads are always inspected: an explicit
+    ``--seq`` that the reads' MM specs (or, without informative specs, the
+    header) contradict is refused unless ``--force-seq`` is given, and reads
+    with no m6A MM calls at all are refused (DAF-seq run with Hia5). For DAF
+    enzymes a disagreeing header only warns.
     """
     from fiberhmm.models import enzyme_requires_platform
 
@@ -458,13 +673,18 @@ def resolve_platform_argument(args, input_path, *, tool: str,
         return
     requires = enzyme_requires_platform(enzyme)
     explicit = getattr(args, "seq", None)
-    # Read MM specs only when they can decide something: an explicit --seq is
-    # authoritative (header evidence still backs the mismatch warning), and a
-    # platform-independent (DAF) enzyme takes only header evidence below.
+    # MM specs decide only for Hia5: a platform-independent (DAF) enzyme takes
+    # header evidence alone, and its reads carry no m6A specs to read.
     evidence = sniff_sequencing_platform(
-        input_path, inspect_reads=bool(requires and not explicit))
+        input_path, inspect_reads=bool(requires),
+        inspect_declared=bool(requires))
+    if requires:
+        _refuse_reads_without_m6a(args, evidence, tool=tool, enzyme=enzyme)
     if explicit:
-        if evidence.platform and evidence.platform != explicit:
+        if requires:
+            _refuse_mismatched_seq(args, evidence, tool=tool, enzyme=enzyme,
+                                   explicit=explicit)
+        elif evidence.platform and evidence.platform != explicit:
             print(
                 f"WARNING: --seq {explicit} was given, but the input looks like "
                 f"{evidence.platform} ({evidence.source}). Using --seq {explicit} "
@@ -494,8 +714,8 @@ def resolve_platform_argument(args, input_path, *, tool: str,
     if requires:
         print(
             f"WARNING: --seq not given for --enzyme {enzyme} and the platform "
-            f"could not be detected ({evidence.source}); assuming PacBio. Pass "
-            "--seq nanopore for Nanopore data.",
+            f"could not be detected ({evidence.source}); assuming PacBio "
+            "(--seq pacbio). Pass --seq nanopore for Nanopore data.",
             file=sys.stderr,
         )
 
@@ -738,4 +958,146 @@ def refuse_path_aliases(tool: str, **kwargs) -> None:
         check_path_aliases(**kwargs)
     except PathAliasError as exc:
         print(f"{tool}: error: {exc}", file=sys.stderr)
+        # The bundled-model lookup would otherwise repeat this warning.
+        args.seq = "pacbio"
+
+
+# ---------------------------------------------------------------------------
+# User-error reporting for console scripts and model/input validation
+# ---------------------------------------------------------------------------
+
+# pysam/htslib errors that mean "this input is not a readable BAM/CRAM/SAM".
+_INPUT_FORMAT_MESSAGES = (
+    'file does not contain alignment data',
+    'file has no sequences defined',
+    'could not open alignment file',
+    'no bgzf eof marker',
+    'file may be truncated',
+    'truncated file',
+    'error while reading file',
+)
+_DEBUG_ENV = 'FIBERHMM_DEBUG'
+
+
+def is_input_error(exc: BaseException) -> bool:
+    """Whether ``exc`` is an ordinary input problem rather than a bug.
+
+    Missing paths, directories and permission problems (``FileNotFoundError``,
+    ``IsADirectoryError``, ``NotADirectoryError``, ``PermissionError``), and
+    the pysam/htslib errors for a file that is not, or no longer, a readable
+    BAM/CRAM/SAM.
+    """
+    if isinstance(exc, (FileNotFoundError, IsADirectoryError,
+                        NotADirectoryError, PermissionError)):
+        return True
+    if isinstance(exc, (ValueError, OSError)):
+        text = str(exc).lower()
+        return any(message in text for message in _INPUT_FORMAT_MESSAGES)
+    return False
+
+
+def _input_error_text(exc: BaseException) -> str:
+    import re
+
+    text = re.sub(r'^\[Errno \d+\]\s*', '', str(exc)).strip()
+    lowered = text.lower()
+    if '\n' not in text and (isinstance(exc, ValueError)
+                             or 'eof marker' in lowered or 'truncated' in lowered):
+        text += ' (is it a valid, complete BAM/CRAM/SAM file?)'
+    return text
+
+
+def run_reporting_input_errors(tool: str, main):
+    """Run ``main()``; an input error exits 2 with one line instead of a traceback.
+
+    Errors :func:`is_input_error` does not recognise propagate unchanged.
+    ``FIBERHMM_DEBUG=1`` re-raises input errors too, with their traceback.
+    """
+    import os
+
+    try:
+        return main()
+    except (OSError, ValueError) as exc:
+        if not is_input_error(exc) or os.environ.get(_DEBUG_ENV):
+            raise
+        print(f"error: {tool}: {_input_error_text(exc)}", file=sys.stderr)
+        sys.exit(2)
+
+
+_MODEL_JSON_KEYS = ('n_states', 'startprob', 'transmat', 'emissionprob')
+
+
+def require_model_files(tool: str, *flag_paths) -> None:
+    """Exit 2 with one line unless each given model path is a loadable model.
+
+    ``flag_paths`` are ``(flag, path)`` pairs; ``None`` paths are skipped. A
+    ``.json`` file must parse and carry the HMM keys
+    ``fiberhmm.core.model_io.load_model_with_metadata`` reads, so a JSON that
+    is not a model is reported by name instead of as ``KeyError: 'n_states'``.
+    """
+    import json
+    import os
+
+    for flag, path in flag_paths:
+        if not path:
+            continue
+        if not os.path.exists(path):
+            problem = 'does not exist'
+        elif os.path.isdir(path):
+            problem = 'is a directory, not a model file'
+        elif str(path).endswith('.json'):
+            try:
+                with open(path) as handle:
+                    data = json.load(handle)
+            except (OSError, UnicodeDecodeError, ValueError) as exc:
+                problem = f'is not valid JSON ({exc})'
+            else:
+                missing = ([key for key in _MODEL_JSON_KEYS if key not in data]
+                           if isinstance(data, dict) else list(_MODEL_JSON_KEYS))
+                problem = (
+                    'is not a FiberHMM model (missing '
+                    + ', '.join(missing) + ')' if missing else None)
+        else:
+            problem = None
+        if problem:
+            print(f"error: {tool}: {flag} {path} {problem}", file=sys.stderr)
+            sys.exit(2)
+
+
+def refuse_non_bam_output(path, tool: str) -> None:
+    """Exit 2 when a BAM-writing tool is given a ``.sam``/``.cram`` output name.
+
+    The tools always write BGZF BAM; a ``.sam`` name gave BAM bytes under a SAM
+    name (plus ``x.sam.bai``).
+    """
+    if not path or path == '-':
+        return
+    suffix = str(path).lower().rsplit('.', 1)[-1] if '.' in str(path) else ''
+    if suffix in ('sam', 'cram'):
+        print(
+            f"error: {tool}: writes BAM, but the output is named {path!r}. Name "
+            "it .bam (convert afterwards with samtools view if you need "
+            f"{suffix.upper()}).",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+
+def refuse_region_options_without_region_parallel(args, tool: str) -> None:
+    """Exit 2 when --chroms/--skip-scaffolds are given to a streaming run.
+
+    They select regions of the region-parallel pipeline; the streaming path
+    used to ignore them and call every read.
+    """
+    given = [flag for flag, value in (('--chroms', getattr(args, 'chroms', None)),
+                                      ('--skip-scaffolds', getattr(args, 'skip_scaffolds', False)))
+             if value]
+    if given and not getattr(args, 'region_parallel', False):
+        print(
+            f"error: {tool}: {' and '.join(given)} "
+            f"{'select' if len(given) > 1 else 'selects'} regions of "
+            "--region-parallel runs; add --region-parallel (indexed, "
+            "coordinate-sorted input), or use --region for a streaming run.",
+            file=sys.stderr,
+        )
         sys.exit(2)

@@ -205,8 +205,14 @@ fiberhmm-daf-encode -i aligned.bam -o encoded.bam
 fiberhmm-call -i encoded.bam -o calls.initial.bam --enzyme ddda -c 8 --region-parallel
 fiberhmm-tag-m5c -i calls.initial.bam -o calls.m5c.bam -r reference.fa --enzyme ddda \
     --write-cpg-islands islands.used.bed --calls-tsv island_calls.tsv
-fiberhmm-recall-tfs -i calls.m5c.bam -o calls.bam --enzyme ddda -c 8
+fiberhmm-call -i calls.m5c.bam -o calls.bam --enzyme ddda -c 8
 ```
+
+The second `fiberhmm-call` re-calls nucleosomes and TFs with CpG-aware
+recall, which keeps CpG observations inside the confident unmethylated
+(`ddda_ucg`) islands, and keeps the island calls. Use `fiberhmm-call` here,
+not `fiberhmm-recall-tfs`: a recall of DddA call output does not reproduce the
+call ([Re-calling](recalling.md#ddda-call-output)).
 
 On the demo data:
 

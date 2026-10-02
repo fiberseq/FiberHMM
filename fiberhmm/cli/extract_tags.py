@@ -293,15 +293,31 @@ def _annotate_circular_parts(annotations, read_length: int):
     return annotations
 
 
+def _query_span_to_ref_block(query_to_ref, qstart, qend):
+    """Reference block ``[start, end)`` covered by query span ``[qstart, qend)``.
+
+    The block runs from the first aligned base at or after ``qstart`` to the
+    last aligned base before ``qend``, so an interval whose first or last
+    base is soft-clipped or inserted keeps its aligned part instead of being
+    dropped. Returns None only when no base inside the span is aligned.
+    """
+    lo = max(0, int(qstart))
+    hi = min(len(query_to_ref), int(qend))
+    if hi <= lo:
+        return None
+    span = np.asarray(query_to_ref[lo:hi])
+    aligned = np.flatnonzero(span >= 0)
+    if aligned.size == 0:
+        return None
+    first = int(span[aligned[0]])
+    last = int(span[aligned[-1]])
+    return min(first, last), max(first, last) + 1
+
+
 def _annotation_to_ref_block(ann, query_to_ref):
     qstart = int(ann['start'])
     qend = qstart + int(ann['length'])
-    ref_start = _q2r_lookup(query_to_ref, qstart)
-    ref_end = _q2r_lookup(query_to_ref, qend - 1)
-    if ref_start is None or ref_end is None:
-        return None
-    ref_start, ref_end = min(ref_start, ref_end), max(ref_start, ref_end) + 1
-    return ref_start, ref_end
+    return _query_span_to_ref_block(query_to_ref, qstart, qend)
 
 
 def _extract_ma_interval_type(
@@ -462,7 +478,9 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
             bed_outs = {
                 t: stack.enter_context(open(temp_bed_paths[t], 'w')) for t in extract_types
             }
-            with pysam.AlignmentFile(input_bam, "rb", check_sq=False) as inbam:
+            with pysam.AlignmentFile(
+                    input_bam, "rb", check_sq=False,
+                    index_filename=params.get('index_filename')) as inbam:
                 try:
                     read_iter = inbam.fetch(chrom, start, end)
                 except ValueError:
@@ -618,13 +636,10 @@ def _extract_footprints(read, bed_out, with_scores: bool,
     for i, (qstart, length) in enumerate(zip(ns, nl)):
         qend = qstart + length
 
-        ref_start = _q2r_lookup(query_to_ref, qstart)
-        ref_end = _q2r_lookup(query_to_ref, qend - 1)
-
-        if ref_start is None or ref_end is None:
+        block = _query_span_to_ref_block(query_to_ref, qstart, qend)
+        if block is None:
             continue
-
-        ref_start, ref_end = min(ref_start, ref_end), max(ref_start, ref_end) + 1
+        ref_start, ref_end = block
 
         score = 0
         if scores is not None and i < len(scores):
@@ -737,12 +752,10 @@ def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int,
     blocks = []  # (ref_start, ref_end, tq, el, er)
     for qstart, length, tq, el, er in tfs_with_quality:
         qend = qstart + length
-        ref_start = _q2r_lookup(query_to_ref, qstart)
-        ref_end = _q2r_lookup(query_to_ref, qend - 1)
-        if ref_start is None or ref_end is None:
+        block = _query_span_to_ref_block(query_to_ref, qstart, qend)
+        if block is None:
             continue
-        ref_start, ref_end = min(ref_start, ref_end), max(ref_start, ref_end) + 1
-        blocks.append((ref_start, ref_end, tq, el, er))
+        blocks.append((block[0], block[1], tq, el, er))
 
     if not blocks:
         return 0
@@ -817,13 +830,10 @@ def _extract_msps(read, bed_out, with_scores: bool,
     for i, (qstart, length) in enumerate(zip(as_starts, al_lengths)):
         qend = qstart + length
 
-        ref_start = _q2r_lookup(query_to_ref, qstart)
-        ref_end = _q2r_lookup(query_to_ref, qend - 1)
-
-        if ref_start is None or ref_end is None:
+        block = _query_span_to_ref_block(query_to_ref, qstart, qend)
+        if block is None:
             continue
-
-        ref_start, ref_end = min(ref_start, ref_end), max(ref_start, ref_end) + 1
+        ref_start, ref_end = block
 
         score = 0
         if scores is not None and i < len(scores):
@@ -1289,12 +1299,10 @@ def _extract_both_strand(read, bed_out, query_to_ref=None,
 
     blocks = []
     for query_start, query_end in _interval_intersection(plus, minus):
-        ref_start = _q2r_lookup(query_to_ref, query_start)
-        ref_end = _q2r_lookup(query_to_ref, query_end - 1)
-        if ref_start is None or ref_end is None:
+        block = _query_span_to_ref_block(query_to_ref, query_start, query_end)
+        if block is None:
             continue
-        ref_start, ref_end = min(ref_start, ref_end), max(ref_start, ref_end) + 1
-        blocks.append((ref_start, ref_end))
+        blocks.append(block)
     if not blocks:
         return 0
     blocks.sort()
@@ -1351,6 +1359,31 @@ def _build_sort_cmd(in_path: str, out_path: str, tmp_dir: Optional[str],
     return cmd, env
 
 
+def _temporary_index_if_missing(input_bam: str, temp_dir: str) -> Optional[str]:
+    """Path of a temporary CSI index for an unindexed ``input_bam``, else None.
+
+    An existing index is used as htslib finds it (``.bai`` or ``.csi``, next
+    to the BAM), so a CSI-only index is honoured and nothing is written next
+    to the input (whose directory may be read-only). Without one the BAM is
+    indexed into ``temp_dir``; an unsorted BAM cannot be, which is reported as
+    a RuntimeError naming the fix.
+    """
+    with pysam.AlignmentFile(input_bam, 'rb', check_sq=False) as bam:
+        if bam.has_index():
+            return None
+    index_path = os.path.join(temp_dir, os.path.basename(input_bam) + '.csi')
+    print("Input BAM has no index; indexing it into a temporary file "
+          "(run samtools index to skip this step)...")
+    try:
+        pysam.index('-c', input_bam, index_path)
+    except pysam.utils.SamtoolsError as exc:
+        raise RuntimeError(
+            f"cannot index {input_bam} ({str(exc).strip()}); fiberhmm-extract "
+            "needs a coordinate-sorted BAM: run samtools sort, then "
+            "samtools index") from exc
+    return index_path
+
+
 def extract_tags_parallel(input_bam: str, output_beds, extract_types,
                           n_cores: int = 1, region_size: int = 10_000_000,
                           min_mapq: int = 0, prob_threshold: int = 125,
@@ -1392,11 +1425,6 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
     output_beds = {('nucleosome' if k == 'footprint' else k): v
                    for k, v in output_beds.items()}
 
-    # Check BAM index
-    if not os.path.exists(input_bam + '.bai') and not os.path.exists(input_bam.replace('.bam', '.bai')):
-        print("Indexing input BAM...")
-        pysam.index(input_bam)
-
     # Get regions
     regions = _get_genome_regions(input_bam, region_size, skip_scaffolds, chroms)
     print(f"Processing {len(regions)} regions with {n_cores} cores "
@@ -1406,7 +1434,11 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
     temp_dir = tempfile.mkdtemp(prefix='extract_tags_')
 
     try:
+        # Workers fetch by region, so they need an index: an existing one
+        # (.bai or .csi, as htslib finds it), else a temporary CSI index.
+        index_filename = _temporary_index_if_missing(input_bam, temp_dir)
         params = {
+            'index_filename': index_filename,
             'extract_types': extract_types,
             'min_mapq': min_mapq,
             'prob_threshold': prob_threshold,

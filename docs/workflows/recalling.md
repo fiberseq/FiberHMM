@@ -5,10 +5,13 @@ HMM calls, without running the HMM again. Use them to:
 
 - add TF calls to the output of `fiberhmm-apply`;
 - re-call with a refit or custom emission table;
-- re-call DddA TFs after adding CpG-island methylation states
-  ([DAF-seq](daf-seq.md#ddda-cpg-island-methylation));
 - change recall settings (`--min-llr`, nucleosome policy, CpG policy) on an
   existing call set.
+
+For DddA output of `fiberhmm-call`, use `fiberhmm-call` again instead (see
+[DddA call output](#ddda-call-output)); that includes re-calling after
+`fiberhmm-tag-m5c` adds CpG-island states
+([DAF-seq](daf-seq.md#ddda-cpg-island-methylation)).
 
 | Command | Does |
 |---|---|
@@ -17,8 +20,10 @@ HMM calls, without running the HMM again. Use them to:
 
 Both rebuild each read's observations from its own `MM`/`ML` (or DAF
 evidence) and sequence, and take the HMM footprints from the input's
-`ns`/`nl`/`as`/`al`. `fiberhmm-recall-nucs` gives the same footprint tags as
-`fiberhmm-call` for matching `--phase-nrl` and `--nuc-recall-policy`.
+`ns`/`nl`/`as`/`al`, or from its `MA` when the legacy tags are absent
+(`--no-legacy-tags` output, fibertools `Ma`). On `fiberhmm-apply` output,
+`fiberhmm-recall-nucs` gives the same footprint tags as `fiberhmm-call` for
+matching `--phase-nrl` and `--nuc-recall-policy`.
 
 ## After `fiberhmm-apply`
 
@@ -90,6 +95,21 @@ SNP mask or a `--reference` used at calling time, and say so:
 ```text
 WARNING: the input was called by fiberhmm-call with SNP mask (daf_snp_mask=on/0sites). Recall re-derives deaminations from each read and does not re-apply the SNP mask or reference, so masked sites count as hits again. Re-run fiberhmm-call with the same options for SNP-masked calls.
 ```
+
+## DddA call output
+
+Recalling a DddA BAM from `fiberhmm-call` does not reproduce the call. With
+DddA, `fiberhmm-call` chooses the TF scan space from the HMM's own footprints
+and drops TFs that only the radial nucleosome refinement exposed. Its output
+keeps only the refined footprints, so a recall scans different space: on the
+demo data, `recall-tfs` with identical settings changes the TF calls on 370 of
+377 reads. The recallers print a warning on such input. Re-run
+`fiberhmm-call` on the BAM instead: it re-runs the HMM, gives the same calls
+on its own output, and keeps the `ddda_ucg`/`ddda_mcg` island calls, so it
+also re-calls DddA after `fiberhmm-tag-m5c`. Hia5 and DddB recalls of
+`fiberhmm-call` output reproduce the call at the call's ML threshold: for Hia5
+PacBio pass `--prob-threshold 128`, since the recallers default to 125 where
+`fiberhmm-call` uses 128 (see [Options that differ](#options-that-differ-from-fiberhmm-call)).
 
 ## Options that differ from `fiberhmm-call`
 

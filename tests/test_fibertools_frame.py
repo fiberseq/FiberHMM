@@ -73,7 +73,8 @@ def _run(tool_args, tmp_path, name, extra=()):
     proc = subprocess.run(
         [sys.executable, '-m', 'fiberhmm.cli.recall_tfs', '-i', str(FX / name),
          '-o', str(out), '--enzyme', 'hia5', '--seq', 'pacbio', '-c', '1',
-         *tool_args, *extra],
+         # The fixtures carry A+a-only (Nanopore-style) MM specs.
+         '--force-seq', *tool_args, *extra],
         capture_output=True, text=True, env=env)
     return proc, out
 
@@ -332,7 +333,7 @@ def test_recall_refuses_when_merged_histories_disagree(tmp_path):
     env = dict(os.environ)
     env['PYTHONPATH'] = os.pathsep.join(filter(None, [str(REPO), env.get('PYTHONPATH')]))
     base = [sys.executable, '-m', 'fiberhmm.cli.recall_tfs', '-i', str(mixed), '-o', str(out),
-            '--enzyme', 'hia5', '--seq', 'pacbio', '-c', '1']
+            '--enzyme', 'hia5', '--seq', 'pacbio', '--force-seq', '-c', '1']
     proc = subprocess.run(base, capture_output=True, text=True, env=env)
     assert proc.returncode != 0
     assert '--input-frame query' in proc.stderr and '--input-frame molecular' in proc.stderr
@@ -593,7 +594,8 @@ def test_recall_runs_ma_only_input_without_provenance(tmp_path):
     env['PYTHONPATH'] = os.pathsep.join(filter(None, [str(REPO), env.get('PYTHONPATH')]))
     proc = subprocess.run(
         [sys.executable, '-m', 'fiberhmm.cli.recall_tfs', '-i', str(stripped), '-o', str(out),
-         '--enzyme', 'hia5', '--seq', 'pacbio', '-c', '1'], capture_output=True, text=True, env=env)
+         '--enzyme', 'hia5', '--seq', 'pacbio', '--force-seq', '-c', '1'],
+        capture_output=True, text=True, env=env)
     assert proc.returncode == 0, proc.stderr
     with pysam.AlignmentFile(str(out)) as bam:
         got = {r.query_name: _reference_nucs(r) for r in bam}

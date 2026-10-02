@@ -729,7 +729,7 @@ def test_recall_tfs_chemistry_conflict_is_one_line_and_replaceable(tmp_path):
     called = tmp_path / "called.bam"
     result = _run_cli(
         "fiberhmm.cli.call", "-i", bam, "-o", called, "--enzyme", "hia5",
-        "--seq", "pacbio", "--no-qc", "--min-read-length", "0",
+        "--seq", "pacbio", "--force-seq", "--no-qc", "--min-read-length", "0",
         "--prob-threshold", "0", "-c", "1", "--io-threads", "1",
     )
     assert result.returncode == 0, result.stderr.decode(errors="replace")
@@ -827,8 +827,13 @@ def test_call_without_seq_declares_detected_platform(tmp_path,
     assert result.returncode == 2
     assert b"--seq pacbio or --seq nanopore" in result.stderr
 
-    # An explicit --seq stays authoritative.
+    # An explicit --seq that the reads' MM specs contradict is refused (it
+    # used to run silently), unless --force-seq keeps it.
     result = _run_cli("fiberhmm.cli.call", "-i", bam, *base, "--seq", "pacbio")
+    assert result.returncode == 2
+    assert b"--force-seq" in result.stderr
+    result = _run_cli("fiberhmm.cli.call", "-i", bam, *base, "--seq", "pacbio",
+                      "--force-seq")
     assert result.returncode == 0, result.stderr.decode(errors="replace")
     assert _chemistry(output)[0]["platform"] == "pacbio"
 

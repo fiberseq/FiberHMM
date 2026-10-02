@@ -33,6 +33,7 @@ from tqdm import tqdm
 
 from fiberhmm.cli.common import (
     add_edge_trim_args,
+    add_force_seq_arg,
     add_legacy_mode_override,
     add_parallel_args,
     add_verbose_args,
@@ -1065,7 +1066,9 @@ def main():
                        help='Auto-select a bundled enzyme model.')
     parser.add_argument('--seq', choices=['pacbio', 'nanopore'], default=None,
                        help='Hia5 platform; detected from the input when '
-                            'omitted, as in fiberhmm-call. Ignored for dddb/ddda.')
+                            'omitted, as in fiberhmm-call (and checked against '
+                            'the reads when given). Ignored for dddb/ddda.')
+    add_force_seq_arg(parser)
 
     add_legacy_mode_override(parser)
     add_edge_trim_args(parser, default=DEFAULT_EDGE_TRIM)

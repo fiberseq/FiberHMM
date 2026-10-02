@@ -182,3 +182,49 @@ class TestExtractFootprintsFromStates:
         result = _extract_footprints_from_states(states, confidence, 1, with_scores=True)
         if len(result['footprint_starts']) > 0:
             assert result['footprint_scores'] is not None
+
+    def test_msp_score_is_mean_posterior_accessible(self):
+        """``aq`` is a confidence: mean P(accessible) over the MSP.
+
+        It used to be ``mean(1 - confidence)``, which inside an MSP is
+        P(footprint), so a confidently accessible MSP scored near 0.
+        """
+        # nucleosome(100) | MSP(50, confident) | nucleosome(100)
+        states = np.concatenate([
+            np.zeros(100), np.ones(50), np.zeros(100),
+        ]).astype(int)
+        confidence = np.full(250, 0.95)
+        result = _extract_footprints_from_states(
+            states, confidence, msp_min_size=1, with_scores=True)
+        assert list(result['msp_starts']) == [100]
+        assert result['msp_scores'][0] == pytest.approx(0.95)
+
+    def test_msp_score_counts_small_footprints_inside_the_msp(self):
+        # A 10-bp TF-sized footprint (P(footprint) 0.8) inside a 40-bp MSP
+        # whose other 30 bases are accessible with P 0.9.
+        states = np.concatenate([
+            np.zeros(100), np.ones(15), np.zeros(10), np.ones(15), np.zeros(100),
+        ]).astype(int)
+        confidence = np.concatenate([
+            np.full(100, 0.99), np.full(15, 0.9), np.full(10, 0.8),
+            np.full(15, 0.9), np.full(100, 0.99),
+        ])
+        result = _extract_footprints_from_states(
+            states, confidence, msp_min_size=1, with_scores=True)
+        assert list(result['msp_sizes']) == [40]
+        expected = (30 * 0.9 + 10 * 0.2) / 40
+        assert result['msp_scores'][0] == pytest.approx(expected)
+
+
+class TestMspScoreEndToEnd:
+    def test_confident_msp_scores_high(self, simple_model):
+        # Long runs of the accessible-preferred symbol between footprint runs.
+        obs = np.array([3] * 150 + [0] * 80 + [3] * 150, dtype=np.int32)
+        result = predict_footprints_and_msps(
+            simple_model, obs, msp_min_size=1, with_scores=True)
+        assert len(result['msp_scores']) == 1
+        posteriors = simple_model.predict_proba(obs)
+        s, n = int(result['msp_starts'][0]), int(result['msp_sizes'][0])
+        assert result['msp_scores'][0] == pytest.approx(
+            posteriors[s:s + n, 1].mean(), rel=1e-5)
+        assert result['msp_scores'][0] > 0.5

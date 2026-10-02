@@ -25,7 +25,14 @@ import argparse
 import sys
 
 from fiberhmm.cli.common import (
+    add_force_seq_arg,
     add_legacy_mode_override,
+    ml_threshold,
+    non_negative_int,
+    refuse_model_enzyme_assay_conflict,
+    refuse_non_bam_output,
+    refuse_region_options_without_region_parallel,
+    require_model_files,
     resolve_observation_mode,
     resolve_platform_argument,
 )
@@ -95,8 +102,11 @@ def parse_args():
                    help='Sequencing platform. For Hia5 it selects the model; '
                         'when omitted it is detected from the input (MM specs: '
                         'PacBio T-a vs Nanopore A+a only; header records) and '
-                        'the run stops if the evidence conflicts. For '
-                        'dddb/ddda it only sets the declared platform.')
+                        'the run stops if the evidence conflicts. A given '
+                        '--seq that the reads contradict is refused (see '
+                        '--force-seq). For dddb/ddda it only sets the '
+                        'declared platform.')
+    add_force_seq_arg(p)
     p.add_argument('--replace-chemistry', action='store_true',
                    help='Replace, instead of reconcile with, the input BAM\'s '
                         'FIBERHMM-CHEMISTRY declaration (re-calling a BAM with '
@@ -114,14 +124,14 @@ def parse_args():
                    help='Context size override. Default: from model.')
     p.add_argument('--edge-trim', type=int, default=10,
                    help='Bases to mask at edges (default 10)')
-    p.add_argument('--min-mapq', type=int, default=0,
+    p.add_argument('--min-mapq', type=non_negative_int, default=0,
                    help='Min mapping quality (default 0)')
-    p.add_argument('--prob-threshold', type=int, default=None,
+    p.add_argument('--prob-threshold', type=ml_threshold, default=None,
                    help='Min MM/ML modification probability 0-255. Default: '
                         'chemistry preset -- 248 for Hia5 Nanopore (--seq '
                         'nanopore, given or detected), 128 otherwise. R/Y- and '
                         'MD-encoded DAF input is binary and ignores it.')
-    p.add_argument('--min-read-length', type=int, default=1000,
+    p.add_argument('--min-read-length', type=non_negative_int, default=1000,
                    help='Min aligned read length (default 1000 — matches fiberhmm-apply)')
     p.add_argument('--msp-min-size', type=int, default=0,
                    help='Min MSP size (default 0)')
@@ -283,7 +293,7 @@ def parse_args():
         '--ddda-mcg', action='store_true',
         help='Deprecated integrated per-CpG mode; retained only to emit a clear '
              'migration error. Run fiberhmm-call, then fiberhmm-tag-m5c '
-             '(whole CpG islands), then fiberhmm-recall-tfs --use-m5c.',
+             '(whole CpG islands), then fiberhmm-call again on the tagged BAM.',
     )
 
     # --- PCR dedup (DAF / ddda|dddb only) ---
@@ -610,8 +620,9 @@ def _configure_ddda_mcg(args, mode: str) -> bool:
                 "\n  NOTE: To infer DddA mCG, first finish ordinary calling, then run\n"
                 "        fiberhmm-tag-m5c -i calls.bam -o mcg.bam "
                 "-r ref.fa --enzyme ddda\n"
-                "        followed by fiberhmm-recall-tfs --use-m5c. The m5C "
-                "caller reports\n"
+                "        and call mcg.bam again with fiberhmm-call (its CpG-aware "
+                "recall\n"
+                "        uses the islands). The m5C caller reports\n"
                 "        one state per complete CpG island inferred from the "
                 "reference by default.\n",
                 file=sys.stderr,
@@ -621,8 +632,8 @@ def _configure_ddda_mcg(args, mode: str) -> bool:
     print(
         "error: --ddda-mcg used a retired per-CpG integrated caller. "
         "Run fiberhmm-call without this flag, then fiberhmm-tag-m5c "
-        "(one state per complete CpG island), followed by "
-        "fiberhmm-recall-tfs --use-m5c.",
+        "(one state per complete CpG island), then fiberhmm-call again on "
+        "the tagged BAM.",
         file=sys.stderr,
     )
     raise SystemExit(2)
@@ -989,6 +1000,10 @@ def _main(args):
     # A missing --seq is inferred from the input's own evidence (and refused
     # on conflicting evidence) before any model is chosen.
     resolve_platform_argument(args, args.input, tool='fiberhmm-call')
+    require_model_files('fiberhmm-call', ('-m/--model', args.model),
+                        ('--recall-model', args.recall_model))
+    refuse_region_options_without_region_parallel(args, 'fiberhmm-call')
+    refuse_non_bam_output(args.output, 'fiberhmm-call')
 
     apply_model_path = _resolve_apply_model(args)
     recall_model_path = _resolve_recall_model(args)
@@ -1023,6 +1038,10 @@ def _main(args):
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(2)
+    if not using_bundled_model:
+        refuse_model_enzyme_assay_conflict(
+            model_mode, args.enzyme, args.seq, args.model,
+            tool='fiberhmm-call', explicit_mode=args.mode)
     k = args.context_size or int(model_k or 3)
     # Chemistry: reconcile with the input's declaration now (file input) so a
     # conflicting re-call fails in a second, before dedup/SNP/NRL passes, and

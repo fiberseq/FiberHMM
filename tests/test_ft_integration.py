@@ -81,7 +81,8 @@ def test_ft_extract_parses_fiberhmm_output(tmp_path):
     # Run fiberhmm-call (recaller on by default) via its argv.
     import sys
     argv = ["fiberhmm-call", "-i", str(in_bam), "-o", str(out_bam),
-            "--enzyme", "hia5", "--seq", "pacbio", "-c", "1"]
+            "--enzyme", "hia5", "--seq", "pacbio", "-c", "1",
+            "--force-seq"]  # the synthetic reads carry A+a-only MM specs
     old = sys.argv
     try:
         sys.argv = argv

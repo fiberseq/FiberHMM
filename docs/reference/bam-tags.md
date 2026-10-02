@@ -16,7 +16,7 @@ Written by `fiberhmm-call`, `fiberhmm-apply` (legacy tags only),
 | `ns` / `nl` | `B:I` | nucleosome starts / lengths; with `--downstream-compat` also TF calls |
 | `as` / `al` | `B:I` | MSP starts / lengths (`fiberhmm-apply --no-msps` omits them) |
 | `nq` | `B:C` | one byte per `ns` entry: with nucleosome recall the LLR ×10 (0 = unresolved); otherwise the HMM posterior mean ×255 (`--scores`), the input's `nq`, or 0 |
-| `aq` | `B:C` | one byte per MSP: HMM posterior mean ×255; only `fiberhmm-apply --scores` |
+| `aq` | `B:C` | one byte per MSP: mean HMM posterior P(accessible) over the MSP ×255 (high = confidently accessible); only `fiberhmm-apply --scores` |
 | `MA` | `Z` | molecular annotations (groups below) |
 | `AQ` | `B:C` | quality bytes of every `MA` annotation, in `MA` order |
 | `AN` | `Z` | one name per `MA` annotation (`.` for unnamed); written when a call wraps a circular origin (`fhw_*`), for strand-rescue roles, consensus class tokens, or when preserved groups carry names |

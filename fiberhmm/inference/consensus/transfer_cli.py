@@ -3,6 +3,7 @@ evidence or oriented target BAM windows without rediscovery or refitting."""
 import argparse
 import csv
 import html
+import json
 from pathlib import Path
 from .artifacts import read_json,write_json,digest
 from .transfer import export_run,load_bundle,score_payload,run_engine,RECALLER_MODE
@@ -23,7 +24,9 @@ def _model_path(value):
 
 
 def main(argv=None):
-    return report_chemistry_errors(lambda: _main(argv),'fiberhmm-transfer')
+    from fiberhmm.cli.common import run_reporting_input_errors
+    return run_reporting_input_errors(
+        'fiberhmm-transfer', lambda: report_chemistry_errors(lambda: _main(argv),'fiberhmm-transfer'))
 
 
 def _main(argv=None):
@@ -69,12 +72,20 @@ def _main(argv=None):
         progress('complete',f"Exported {len(bundle['models'])} frozen families")
         return
     if not (args.bam or args.datasets or args.evidence):parser.error('Supply --bam, --datasets or --evidence')
-    model_path=_model_path(args.models);schema=read_json(model_path).get('schema')
+    if not args.models:parser.error('Supply --models (a --freeze-run output)')
+    try:
+        model_path=_model_path(args.models);document=read_json(model_path)
+    except (UnicodeDecodeError,json.JSONDecodeError) as error:
+        parser.error(f'--models {args.models} is not a JSON frozen class catalog ({error})')
+    except ValueError as error:parser.error(f'--models {args.models}: {error}')
+    except (OSError,EOFError) as error:parser.error(f'--models {args.models}: cannot read it as (gzipped) JSON ({error})')
+    schema=document.get('schema') if isinstance(document,dict) else None
     from .lattice_recaller.frozen import SCHEMA as RECALLER_SCHEMA
     if schema==RECALLER_SCHEMA:
         return _apply_recaller(args,parser,out,progress,model_path)
     if schema!=STAGED_SCHEMA:
-        raise ValueError(f'Unsupported frozen model schema {schema!r}; this FiberHMM applies {RECALLER_SCHEMA} and {STAGED_SCHEMA}')
+        parser.error(f'--models {args.models} is not a frozen class catalog (schema {schema!r}); give the frozen_classes.json.gz '
+                     f'or frozen_models.json.gz that fiberhmm-transfer --freeze-run writes ({RECALLER_SCHEMA} or {STAGED_SCHEMA})')
     if args.cores is not None or args.dataset_map or args.include_training_molecules:
         parser.error('--cores, --dataset-map and --include-training-molecules apply to lattice_recaller catalogs only')
     args.models=str(model_path)
