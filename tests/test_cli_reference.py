@@ -63,3 +63,21 @@ def test_whole_generated_reference_is_current():
     documented = generator.generated_section(generator.REFERENCE.read_text())
     assert documented == generator.render(), (
         "docs/reference/cli.md is out of date; run python tools/gen_cli_reference.py")
+
+
+@pytest.mark.parametrize("argparse_says_required", [True, False])
+@pytest.mark.parametrize("nargs, expected", [
+    ("*", "—"), ("?", "—"), (None, "required"), ("+", "required"), (2, "required"),
+])
+def test_positional_default_cell_does_not_depend_on_the_python_version(
+        argparse_says_required, nargs, expected):
+    """argparse marks a ``nargs="*"`` positional required before Python 3.12 and
+    not from 3.12 on (fiberhmm-check's ``PATH``); the generated page must be the
+    same on every supported Python, so the cell is decided from ``nargs``."""
+    import argparse
+
+    generator = _generator()
+    parser = argparse.ArgumentParser()
+    action = parser.add_argument("paths", nargs=nargs, metavar="PATH")
+    action.required = argparse_says_required
+    assert generator._default(parser, action) == expected

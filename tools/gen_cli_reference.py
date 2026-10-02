@@ -99,8 +99,22 @@ def _flags(action: argparse.Action) -> str:
     return " / ".join(f"`{flag}`" for flag in action.option_strings)
 
 
+def _positional_required(action: argparse.Action) -> bool:
+    """Whether a positional must be given, from its ``nargs`` alone.
+
+    ``action.required`` is not used for positionals because it depends on the
+    Python version: before 3.12 argparse marks a ``nargs="*"`` positional
+    without a default as required, from 3.12 on it does not. Deciding from
+    ``nargs`` renders the same table on every supported Python.
+    """
+    return action.nargs not in (argparse.OPTIONAL, argparse.ZERO_OR_MORE,
+                                argparse.REMAINDER)
+
+
 def _default(parser: argparse.ArgumentParser, action: argparse.Action) -> str:
-    if action.required:
+    required = (_positional_required(action) if not action.option_strings
+                else action.required)
+    if required:
         return "required"
     default = action.default
     if isinstance(action, argparse.BooleanOptionalAction):
