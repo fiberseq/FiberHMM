@@ -513,6 +513,31 @@ def test_plasmid_end_to_end_contract_and_rerun(plasmid_run):
 
 
 @needs_minimap2
+def test_pipeline_qc_carries_state_aware_rates(plasmid_run):
+    """outputs.json's QC verdicts carry the in-MSP/outside-MSP fields
+    (fiberhmm-qc schema 1.1) that FiberBrowser reads."""
+    run = plasmid_run
+    result = _run_cli([str(run["reads"]), "--reference", str(run["map"]), "--enzyme",
+                       "dddb", "-o", str(run["out"]), "--sample", "s1", "-c", "2",
+                       "--min-read-length", "500",
+                       "--progress-json", str(run["progress"])])
+    assert result.returncode == 0, result.stderr[-3000:]
+    outputs = _assert_contract(_events(run["progress"]), run["out"])
+    report = json.loads(Path(outputs["qc"]["json"]).read_text())
+    assert report["schema_version"] == 1 and report["schema_minor_version"] == 1
+    states = report["state_rates"]
+    assert states["source"] == "tags" and states["available"]
+    assert states["msp"]["aggregate_rate"] > states["outside_msp"]["aggregate_rate"]
+    verdicts = outputs["qc"]["verdicts"]
+    for key in ("efficiency", "background", "verdict_basis", "state_rates"):
+        assert key in verdicts
+    assert verdicts["state_rates"]["msp_rate"] == states["msp"]["median_per_read_rate"]
+    curves = json.loads(Path(outputs["qc"]["curves"]).read_text())
+    assert curves["verdicts"]["efficiency"] == report["efficiency"]["status"]
+    assert curves["state_rates"]["source"] == "tags"
+
+
+@needs_minimap2
 def test_linear_reference_and_aligned_input(tmp_path, monkeypatch):
     monkeypatch.setenv("FIBERHMM_MINIMAP2_INDEX_DIR", str(tmp_path / "mmi"))
     genome = random_seq(30000, 21)

@@ -1962,7 +1962,7 @@ def qc_verdicts(path: Optional[str]) -> dict:
     except (OSError, ValueError):
         return {}
     out = {}
-    for key in ("overall", "signal", "periodicity"):
+    for key in ("overall", "signal", "periodicity", "efficiency", "background"):
         section = data.get(key) or {}
         if "status" in section:
             out[key] = section["status"]
@@ -1971,6 +1971,22 @@ def qc_verdicts(path: Optional[str]) -> dict:
     dedup = data.get("deduplication") or {}
     if dedup.get("duplicate_fraction") is not None:
         out["duplicate_fraction"] = dedup["duplicate_fraction"]
+    if (data.get("overall") or {}).get("verdict_basis"):
+        out["verdict_basis"] = data["overall"]["verdict_basis"]
+    states = data.get("state_rates") or {}
+    if states.get("available"):
+        # Rates split by FiberHMM state (fiberhmm-qc schema 1.1, additive).
+        out["state_rates"] = {
+            "source": states.get("source"),
+            "overall_rate": (states.get("all_states") or {}).get("aggregate_rate"),
+            "msp_rate": (states.get("msp") or {}).get("median_per_read_rate"),
+            "outside_msp_rate": (states.get("outside_msp") or {}).get("median_per_read_rate"),
+            "aggregate_msp_rate": (states.get("msp") or {}).get("aggregate_rate"),
+            "aggregate_outside_msp_rate": (states.get("outside_msp") or {}).get("aggregate_rate"),
+            "msp_to_outside_ratio": states.get("msp_to_outside_ratio"),
+            "msp_length_fraction": states.get("msp_length_fraction"),
+            "min_msp_bp": (states.get("definition") or {}).get("min_msp_bp"),
+        }
     return out
 
 
