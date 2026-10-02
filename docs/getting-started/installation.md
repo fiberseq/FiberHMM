@@ -124,10 +124,12 @@ sudo yum install -y python3-devel htslib-devel zlib-devel bzip2-devel xz-devel l
 xcode-select --install && brew install htslib
 ```
 
-**No prebuilt wheels on older Linux.** On distributions with glibc older
-than 2.28 (CentOS 7-era clusters), pip finds no prebuilt `pysam` for Python
-3.11–3.13 (nor `numpy` for 3.14) and tries to build it from source. Use
-Python 3.10, or install `pysam` from conda first
+**No prebuilt wheels on older Linux.** Current `pysam` wheels need glibc
+2.24 or later (and `numpy` wheels for Python 3.14 need 2.27). On older
+systems, such as CentOS 7-era clusters (glibc 2.17), pip finds no prebuilt
+`pysam` for Python 3.11 and later and tries to build it from source. Use
+Python 3.10, for which pip falls back to an older `pysam` release that still
+has a prebuilt wheel, or install `pysam` from conda first
 (`conda install -c bioconda pysam`), then `pip install fiberhmm`.
 
 **Numba import errors.** Numba supports a limited range of numpy versions:
