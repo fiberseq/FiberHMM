@@ -95,7 +95,7 @@ These now either work or stop with a clear message:
 | `fiberhmm-site-consensus`, targeted families (development builds only) | `fiberhmm-consensus` |
 | `fiberhmm-crossstrand`, `fiberhmm-duplex` (development builds only) | `fiberhmm-pair` |
 | `fiberhmm-merge` (development builds only) | still installed but deprecated: `fiberhmm-pair --from-paired` |
-| `fiberhmm-call --ddda-mcg` (development builds only) | `fiberhmm-tag-m5c`, then `fiberhmm-recall-tfs` ([DAF-seq](workflows/daf-seq.md#ddda-cpg-island-methylation)) |
+| `fiberhmm-call --ddda-mcg` (development builds only) | `fiberhmm-tag-m5c`, then `fiberhmm-call` on the tagged BAM ([DAF-seq](workflows/daf-seq.md#ddda-cpg-island-methylation)) |
 | `fiberhmm-apply --chroms`, `--skip-scaffolds`, `--region-size`, `--scores-db`, `-l` | rejected (they never had an effect); use `fiberhmm-call --region-parallel` |
 | `recaller.abutting` (development builds only) | removed; use the "+ edge" tier or `recaller.linker=either` |
 | `--engine staged_native_families` (consensus) | deprecated but available |

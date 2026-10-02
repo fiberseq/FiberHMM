@@ -164,3 +164,39 @@ def test_phase_nrl_estimate_reads_fiberhmm_ma(called_bams):
     from_ma = _estimate_phase_nrl_from_tags(ma_only, 85)
     assert from_ma["n_pairs"] > 0
     assert from_ma == _estimate_phase_nrl_from_tags(legacy, 85)
+
+
+def _header_with_call_ds(ds):
+    return pysam.AlignmentHeader.from_dict({
+        "HD": {"VN": "1.6"},
+        "SQ": [{"SN": "chr1", "LN": 1000}],
+        "PG": [{"ID": "fiberhmm-call", "PN": "fiberhmm-call", "VN": "3.0.0",
+                "DS": ds, "CL": "fiberhmm-call -i x.bam -o y.bam"}],
+    })
+
+
+def test_recall_warns_on_ddda_radial_call_output():
+    """DddA recall of fiberhmm-call output does not reproduce the call (its
+    TF scan space comes from HMM baseline footprints the output lacks); the
+    recallers say so and point to fiberhmm-call."""
+    import io
+
+    from fiberhmm.cli.recall_tfs import warn_ddda_call_recall
+
+    ddda = _header_with_call_ds(
+        "FiberHMM fused apply+recall; coord=molecular; mode=daf enzyme=ddda "
+        "recall_nucs=True nuc_recall_policy=conservative "
+        "nuc_profile=ddda_phase_posterior_v1 phase_nrl=188")
+    stream = io.StringIO()
+    assert warn_ddda_call_recall(ddda, stream=stream) is True
+    message = stream.getvalue()
+    assert "does not reproduce the call" in message
+    assert "re-run fiberhmm-call" in message
+
+    for ds in (
+        "mode=pacbio-fiber enzyme=hia5 recall_nucs=True nuc_profile=off",
+        "mode=daf enzyme=ddda recall_nucs=False nuc_profile=off",
+    ):
+        stream = io.StringIO()
+        assert warn_ddda_call_recall(_header_with_call_ds(ds), stream=stream) is False
+        assert stream.getvalue() == ""

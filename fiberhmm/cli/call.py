@@ -283,7 +283,7 @@ def parse_args():
         '--ddda-mcg', action='store_true',
         help='Deprecated integrated per-CpG mode; retained only to emit a clear '
              'migration error. Run fiberhmm-call, then fiberhmm-tag-m5c '
-             '(whole CpG islands), then fiberhmm-recall-tfs --use-m5c.',
+             '(whole CpG islands), then fiberhmm-call again on the tagged BAM.',
     )
 
     # --- PCR dedup (DAF / ddda|dddb only) ---
@@ -610,8 +610,9 @@ def _configure_ddda_mcg(args, mode: str) -> bool:
                 "\n  NOTE: To infer DddA mCG, first finish ordinary calling, then run\n"
                 "        fiberhmm-tag-m5c -i calls.bam -o mcg.bam "
                 "-r ref.fa --enzyme ddda\n"
-                "        followed by fiberhmm-recall-tfs --use-m5c. The m5C "
-                "caller reports\n"
+                "        and call mcg.bam again with fiberhmm-call (its CpG-aware "
+                "recall\n"
+                "        uses the islands). The m5C caller reports\n"
                 "        one state per complete CpG island inferred from the "
                 "reference by default.\n",
                 file=sys.stderr,
@@ -621,8 +622,8 @@ def _configure_ddda_mcg(args, mode: str) -> bool:
     print(
         "error: --ddda-mcg used a retired per-CpG integrated caller. "
         "Run fiberhmm-call without this flag, then fiberhmm-tag-m5c "
-        "(one state per complete CpG island), followed by "
-        "fiberhmm-recall-tfs --use-m5c.",
+        "(one state per complete CpG island), then fiberhmm-call again on "
+        "the tagged BAM.",
         file=sys.stderr,
     )
     raise SystemExit(2)

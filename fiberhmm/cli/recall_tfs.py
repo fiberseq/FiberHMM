@@ -1106,6 +1106,48 @@ def _resolve_recall_prob_threshold(args, header=None):
     return resolve_prob_threshold(None, enzyme, seq, RECALL_PROB_THRESHOLD)
 
 
+def _ddda_radial_call_in_history(header) -> bool:
+    """Whether a ``fiberhmm-call`` @PG ran DddA radial nucleosome recall.
+
+    Such a call picks its TF scan space from the HMM baseline footprints and
+    filters TFs that only nucleosome refinement exposed; its output keeps only
+    the refined footprints, so a recall cannot rebuild that scan space.
+    """
+    try:
+        header_dict = header.to_dict() if hasattr(header, 'to_dict') else dict(header)
+    except Exception:
+        return False
+    for record in header_dict.get('PG', []) or []:
+        program = str(record.get('PN') or record.get('ID') or '')
+        if not program.startswith('fiberhmm-call'):
+            continue
+        tokens = str(record.get('DS', '')).split()
+        if 'recall_nucs=True' not in tokens:
+            continue
+        if any(token.startswith('nuc_profile=') and token != 'nuc_profile=off'
+               for token in tokens):
+            return True
+    return False
+
+
+def warn_ddda_call_recall(header, stream=None) -> bool:
+    """Warn that recalling a DddA ``fiberhmm-call`` BAM does not reproduce the call."""
+    if not _ddda_radial_call_in_history(header):
+        return False
+    print(
+        "WARNING: this BAM was called by fiberhmm-call with DddA radial "
+        "nucleosome recall. That call chooses its TF scan space from the HMM "
+        "baseline footprints, which its output does not keep, so recalling it "
+        "does not reproduce the call: TF calls (and with --recall-nucs, "
+        "nucleosomes) change on most reads even with identical settings. To "
+        "re-call DddA after fiberhmm-tag-m5c, or with a refit table or other "
+        "settings, re-run fiberhmm-call on this BAM instead (it re-runs the "
+        "HMM and keeps the ddda_ucg/ddda_mcg island calls).",
+        file=stream if stream is not None else sys.stderr,
+    )
+    return True
+
+
 def main(default_recall_nucs: bool = False):
     args = parse_args(default_recall_nucs=default_recall_nucs)
     try:
@@ -1403,6 +1445,7 @@ def _recall(args, bam_in, model_path, using_bundled_model, n_cores):
               file=sys.stderr)
         from fiberhmm.inference.tf_recaller import warn_unapplied_call_daf_inputs
         warn_unapplied_call_daf_inputs(bam_in.header, mode)
+        warn_ddda_call_recall(bam_in.header)
 
         bam_out = None
         try:

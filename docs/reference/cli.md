@@ -125,7 +125,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--daf-snp-min-dominant-events` | `5` | Minimum dominant conversions to classify a fiber for --daf-call-snps (default 5). |
 | `--daf-snp-min-dominant-purity` | `0.8` | Minimum conversion-direction purity for --daf-call-snps (default 0.80). |
 | `--daf-snp-min-amplicon-reads` | `20` | Minimum aligned reads required to discover and plot an amplicon consensus in SNP QC (default 20). |
-| `--ddda-mcg` | off | Deprecated integrated per-CpG mode; retained only to emit a clear migration error. Run fiberhmm-call, then fiberhmm-tag-m5c (whole CpG islands), then fiberhmm-recall-tfs --use-m5c. |
+| `--ddda-mcg` | off | Deprecated integrated per-CpG mode; retained only to emit a clear migration error. Run fiberhmm-call, then fiberhmm-tag-m5c (whole CpG islands), then fiberhmm-call again on the tagged BAM. |
 | `--dedup` | auto | DAF (ddda/dddb) only: force PCR duplicate detection (already automatic for file-based DddA/DddB calls). Detect by deamination-pattern fingerprint (see fiberhmm-dedup) and similar alignment ends BEFORE footprinting. The integrated default is nondestructive: retain every read and set 0x400 plus di/ds cluster tags. Amplicon/UMI-less DAF libraries can be heavily PCR-duplicated and coordinate dedup does not apply. Requires a file input (not stdin). Ignored for fiber-seq (hia5). |
 | `--no-dedup` | auto | Disable automatic DddA/DddB duplicate marking. |
 | `--dedup-min-jaccard` | `0.95` | Deamination-set Jaccard threshold for --dedup (default 0.95). |
