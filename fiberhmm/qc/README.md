@@ -97,6 +97,27 @@ The caller retains at most 5,000 deterministic background positions plus all
 candidate sites, keeping output and memory bounded while showing the typical
 site distribution.
 
+## State-aware references
+
+`references.json` `profiles.<profile>.state_rates` holds the in-MSP and
+outside-MSP references used to grade efficiency and background (see the QC
+documentation). They are built by `tools/build_qc_state_references.py` from
+the same fixed-seed 2,000-read samples as the curves above, written to a small
+BAM with all footprint tags removed and called with this release's
+`fiberhmm-call` defaults (`--enzyme`, `--seq pacbio` for Hia5, `-c 4`).
+Each sample is then measured twice, from those calls (`by_source.tags`) and
+from the QC light call on every sampled read (`by_source.light_call`), with
+MSPs ≥ 85 bp, terminal segments capped at 85 bp, a 10-bp edge trim and at
+least 50 opportunities per read and compartment. Only per-read rate
+quantiles (5/25/50/75/95%) and pooled counts are packaged.
+
+| Profile | State-aware source |
+|---|---|
+| `dddb` | Spacetime WT 2–4 h DddB, `yw_2-4.sorted.bam` sample (calls: the 726 reads ≥ 1 kb that `fiberhmm-call` calls by default; light call: 1,611 reads) |
+| `ddda` | NAPA and UBA1 DddA. The `206_NAPA`/`206_UBA1` source BAMs are not available locally, so the FiberBrowser demo BAMs of the same loci (`napa_ddda.bam`, `uba1_ddda.bam`) were sampled and re-called |
+| `hia5_pacbio` | `2-4hr_14.aligned_footprints.chr2R.bam` sample, re-called (its stored 1.x-era tags are not used) |
+| `hia5_nanopore` | none: `zld_1.5-3hr.fiberhmm.thr248.bam` is not available locally; `scoring_enabled: false`, the verdict uses the overall rate |
+
 ## Figure formats
 
 Every per-sample and combined QC figure is written as both a 200-dpi PNG for
