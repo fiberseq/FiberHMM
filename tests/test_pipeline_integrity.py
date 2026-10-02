@@ -1141,3 +1141,111 @@ def test_explicit_seq_contradicting_the_reads_warns(tmp_path):
     p._setup(); p.close()
     (warning,) = [n for n in p._notes if isinstance(n, tuple)]
     assert warning[1] == "warning" and "looks like pacbio" in warning[0]
+
+
+# ---------------------------------------------------------------------------
+# Tracks (audit M4, M5; Codex2 #9)
+# ---------------------------------------------------------------------------
+
+def _tracks_pipeline(tmp_path, monkeypatch, layers_made, **kwargs):
+    """A Pipeline whose fiberhmm-extract is replaced by one writing ``layers_made``
+    (named the way extract names them: '_footprints' removed from the stem)."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    reads = tmp_path / "r.fastq"; reads.write_text("@r\nAAAA\n+\nIIII\n")
+    ref = tmp_path / "ref.fa"; ref.write_text(">p\n" + "A" * 1000 + "\n")
+    cfg = config(tmp_path / "out", reads, ref, tracks=True, **kwargs)
+    p = Pipeline(cfg); p._setup(); p.step_prepare_reference()
+    Path(p.called_bam).write_bytes(b"called")
+    seen = []
+
+    def fake_extract(self, cmd, log, *a, **k):
+        seen.append(cmd)
+        outdir = cmd[cmd.index("-o") + 1]
+        os.makedirs(outdir, exist_ok=True)
+        stem = os.path.basename(cmd[cmd.index("-i") + 1])
+        stem = stem.replace(".bam", "").replace("_footprints", "")
+        for layer in layers_made():
+            Path(outdir, f"{stem}_{layer}.bb").write_bytes(layer.encode())
+        return 0
+
+    monkeypatch.setattr(Pipeline, "_run_logged", fake_extract)
+    monkeypatch.setattr(runner.shutil, "which", lambda name: "/bin/" + name)
+    return p, seen
+
+
+def test_tracks_forward_filters_and_record_them(tmp_path, monkeypatch):
+    p, seen = _tracks_pipeline(tmp_path, monkeypatch, lambda: ["tf"],
+                               prob_threshold=250, min_mapq=30)
+    p.step_tracks()
+    (cmd,) = seen
+    assert cmd[cmd.index("-q") + 1] == "30" and cmd[cmd.index("-p") + 1] == "250"
+    fingerprint = read_marker(p.outdir, "tracks")["fingerprint"]
+    assert (fingerprint["prob_threshold"], fingerprint["min_mapq"]) == (250, 30)
+    p.close()
+    p, seen = _tracks_pipeline(tmp_path / "b", monkeypatch, lambda: ["tf"])
+    p.step_tracks()
+    assert "-p" not in seen[0] and seen[0][seen[0].index("-q") + 1] == "20"
+    p.close()
+
+
+def test_sample_with_footprints_in_its_name_keeps_its_tracks(tmp_path, monkeypatch):
+    p, _ = _tracks_pipeline(tmp_path, monkeypatch, lambda: ["nucleosome", "tf"],
+                            sample="x_footprints")
+    p.step_tracks()
+    assert [os.path.basename(f) for f in p.track_files] == [
+        "x.fiberhmm_nucleosome.bb", "x.fiberhmm_tf.bb"]
+    assert all(os.path.dirname(f) == os.path.join(p.outdir, "tracks") for f in p.track_files)
+    assert all(Path(f).exists() for f in p.track_files)
+    assert not os.path.exists(os.path.join(p.outdir, ".fiberhmm-pipeline", "tracks_staging"))
+    p.close()
+
+
+def test_redone_tracks_drop_layers_no_longer_made(tmp_path, monkeypatch):
+    made = [["nucleosome", "tf"]]
+    p, _ = _tracks_pipeline(tmp_path, monkeypatch, lambda: made[0])
+    p.step_tracks(); p.close()
+    old_tf = Path(p.outdir, "tracks", "r.fiberhmm_tf.bb")
+    assert old_tf.exists()
+    made[0] = ["nucleosome"]
+    p, _ = _tracks_pipeline(tmp_path, monkeypatch, lambda: made[0], redo="tracks")
+    p.step_tracks(); p.close()
+    assert [os.path.basename(f) for f in p.track_files] == ["r.fiberhmm_nucleosome.bb"]
+    assert not old_tf.exists()
+
+
+def test_marker_without_new_settings_is_remade_not_refused(tmp_path, monkeypatch):
+    p, seen = _tracks_pipeline(tmp_path, monkeypatch, lambda: ["tf"])
+    p.step_tracks(); p.close()
+    from fiberhmm.pipeline.progress import marker_path as step_marker
+
+    marker_path = Path(step_marker(p.outdir, "tracks"))
+    marker = json.loads(marker_path.read_text())
+    for key in ("prob_threshold", "min_mapq"):
+        del marker["fingerprint"][key]      # a marker written before these were recorded
+    marker_path.write_text(json.dumps(marker))
+    p, seen = _tracks_pipeline(tmp_path, monkeypatch, lambda: ["tf"])
+    p.step_tracks(); p.close()
+    assert len(seen) == 1                    # made again, not refused
+    marker = json.loads(marker_path.read_text())
+    marker["fingerprint"]["min_mapq"] = 5    # a recorded setting that changed: refused
+    marker_path.write_text(json.dumps(marker))
+    p, seen = _tracks_pipeline(tmp_path, monkeypatch, lambda: ["tf"])
+    with pytest.raises(PipelineError, match="min_mapq"):
+        p.step_tracks()
+    p.close()
+
+
+@needs_minimap2
+def test_footprints_sample_end_to_end_lists_its_tracks(tmp_path):
+    ref = random_seq(5000, 51)
+    reads = tmp_path / "reads.fastq"
+    _write_reads(reads, ref, 40, 52, circular=True)
+    fasta = tmp_path / "p.fa"; fasta.write_text(">p\n" + ref + "\n")
+    result = _run_cli([str(reads), "--reference", str(fasta), "--topology", "circular",
+                       "--enzyme", "dddb", "-o", str(tmp_path / "out"), "-c", "1",
+                       "--min-read-length", "500", "--no-qc", "--tracks",
+                       "--sample", "x_footprints"])
+    assert result.returncode == 0, result.stderr[-3000:]
+    outputs = json.loads((tmp_path / "out" / "outputs.json").read_text())
+    assert outputs["tracks"] and all(Path(f).exists() for f in outputs["tracks"])
+    assert all(Path(f).parent == tmp_path / "out" / "tracks" for f in outputs["tracks"])

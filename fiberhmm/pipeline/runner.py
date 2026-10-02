@@ -674,8 +674,15 @@ class Pipeline:
         if not marker:
             return False
         if marker.get("fingerprint") != fingerprint:
-            changed = fingerprint_changes(marker.get("fingerprint") or {}, fingerprint)
+            recorded = marker.get("fingerprint") or {}
+            changed = fingerprint_changes(recorded, fingerprint)
             if self._upstream_reran(changed, upstream or {}):
+                return False
+            if changed and all(key not in recorded for key in changed):
+                # Settings an older FiberHMM did not record for this step: its
+                # result may not reflect them, so make it again.
+                self.log(f"{step}: the earlier result does not record "
+                         f"{', '.join(changed)}; running it again")
                 return False
             self._refuse(step, changed)
         ok, why = outputs_valid(marker, self.memo)
@@ -1536,18 +1543,27 @@ class Pipeline:
         tracks_dir = os.path.join(self.outdir, "tracks")
         bigbed = shutil.which("bedToBigBed") is not None
         fingerprint = {"called": file_fingerprint(self.called_bam, self.memo),
-                       "bigbed": bigbed, "enzyme": cfg.enzyme}
+                       "bigbed": bigbed, "enzyme": cfg.enzyme,
+                       "prob_threshold": cfg.prob_threshold, "min_mapq": cfg.min_mapq}
         if self._is_complete("tracks", fingerprint, upstream={"called": "call"}):
             marker = read_marker(self.outdir, "tracks") or {}
             self.track_files = list((marker.get("outputs") or {}).get("files") or [])
             return
+        previous = list(((read_marker(self.outdir, "tracks") or {}).get("outputs") or {})
+                        .get("files") or [])
         self._start_step("tracks")
         clear_marker(self.outdir, "tracks")
         self.progress.step("tracks", "running")
         layers = ["--nucleosome", "--msp", "--tf"]
         layers.append("--deam" if cfg.enzyme in DAF_ENZYMES else "--m6a")
+        # fiberhmm-extract writes into a private directory: everything in it is
+        # this run's output, whatever names extract derives from the BAM's.
+        staging = os.path.join(self.outdir, STATE_DIR, "tracks_staging")
+        shutil.rmtree(staging, ignore_errors=True)
         cmd = [sys.executable, "-m", "fiberhmm.cli.extract_tags", "-i", self.called_bam,
-               "-o", tracks_dir, "-c", str(cfg.cores), *layers]
+               "-o", staging, "-c", str(cfg.cores), "-q", str(cfg.min_mapq), *layers]
+        if cfg.prob_threshold is not None:
+            cmd += ["-p", str(cfg.prob_threshold)]
         if not bigbed:
             cmd.append("--bed-only")
             self.log("tracks: bedToBigBed not found; writing BED only", "warning")
@@ -1555,12 +1571,25 @@ class Pipeline:
         self.log("tracks: " + " ".join(shlex.quote(c) for c in cmd))
         code = self._run_logged(cmd, log_path)
         if code != 0:
+            shutil.rmtree(staging, ignore_errors=True)
             raise PipelineError(f"fiberhmm-extract failed (exit {code})",
                                 hint=f"Last lines of {log_path}:\n" + _tail(log_path, 20))
-        stem = os.path.basename(self.called_bam)[:-len(".bam")]
-        self.track_files = sorted(
-            os.path.join(tracks_dir, f) for f in os.listdir(tracks_dir)
-            if f.startswith(stem) and f.endswith((".bb", ".bed")))
+        produced = sorted(f for f in os.listdir(staging) if f.endswith((".bb", ".bed")))
+        os.makedirs(tracks_dir, exist_ok=True)
+        self.track_files = []
+        for name in produced:
+            target = os.path.join(tracks_dir, name)
+            os.replace(os.path.join(staging, name), target)
+            self.track_files.append(target)
+        shutil.rmtree(staging, ignore_errors=True)
+        # Tracks of the earlier run that this one did not make again (a layer
+        # with no features now) would otherwise pass for current ones.
+        for stale in previous:
+            stale = os.path.abspath(stale)
+            if (stale not in self.track_files
+                    and os.path.dirname(stale) == os.path.abspath(tracks_dir)):
+                with contextlib.suppress(FileNotFoundError):
+                    os.remove(stale)
         self._write_marker("tracks", fingerprint, {"files": self.track_files},
                            {"n_files": len(self.track_files)})
         self.progress.step("tracks", "done", message=f"{len(self.track_files)} files")
