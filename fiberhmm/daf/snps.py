@@ -573,6 +573,23 @@ def _resolve_reference_conflicts(site_stats) -> tuple[set, int]:
     return rejected, len(disputed)
 
 
+def _renumber_amplicons(amplicons: list, calls: list) -> None:
+    """Number ``amplicons`` ``amplicon_1``.. in their (sorted) order and remap
+    every call's ``amplicon_ids`` with the same complete old->new mapping.
+
+    The mapping is built first and applied once: renaming one ID at a time
+    let a later rename overwrite an earlier one whenever two amplicons swap
+    places (both calls then named the same amplicon).
+    """
+    renamed = {amplicon["amplicon_id"]: f"amplicon_{index}"
+               for index, amplicon in enumerate(amplicons, 1)}
+    for call in calls:
+        call["amplicon_ids"] = [renamed.get(value, value)
+                                for value in call.get("amplicon_ids", [])]
+    for amplicon in amplicons:
+        amplicon["amplicon_id"] = renamed[amplicon["amplicon_id"]]
+
+
 def call_opposite_conversion_snps(
     input_path: str,
     min_fraction: float = DEFAULT_SNP_MIN_FRACTION,
@@ -929,14 +946,7 @@ def call_opposite_conversion_snps(
             item["consensus_start_0based"],
         )
     )
-    for index, amplicon in enumerate(amplicons, 1):
-        old_id = amplicon["amplicon_id"]
-        new_id = f"amplicon_{index}"
-        if old_id != new_id:
-            for call in calls:
-                ids = call.get("amplicon_ids", [])
-                call["amplicon_ids"] = [new_id if value == old_id else value for value in ids]
-        amplicon["amplicon_id"] = new_id
+    _renumber_amplicons(amplicons, calls)
 
     dominant_amplicon = None
     if amplicons:

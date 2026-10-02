@@ -25,6 +25,10 @@ nondeterministic, so it cannot be frozen):
   its base only if at least as many dominant-direction fibers report it as
   report the other C/G base (a tie keeps C), whether or not the other base
   was profiled; both hypotheses are counted where both are.
+* Amplicon IDs are renumbered with one complete old->new mapping. The
+  verbatim copy renamed them one at a time, so when two amplicons swapped
+  places both calls ended up naming the same amplicon (a bug, fixed in
+  ``fiberhmm.daf.snps`` too).
 """
 from __future__ import annotations
 
@@ -581,14 +585,15 @@ def call_opposite_conversion_snps(
             item["consensus_start_0based"],
         )
     )
-    for index, amplicon in enumerate(amplicons, 1):
-        old_id = amplicon["amplicon_id"]
-        new_id = f"amplicon_{index}"
-        if old_id != new_id:
-            for call in calls:
-                ids = call.get("amplicon_ids", [])
-                call["amplicon_ids"] = [new_id if value == old_id else value for value in ids]
-        amplicon["amplicon_id"] = new_id
+    # One-shot remap (see the module docstring): replacing IDs one at a time
+    # let a later rename overwrite an earlier one when two amplicons swap.
+    renamed = {amplicon["amplicon_id"]: f"amplicon_{index}"
+               for index, amplicon in enumerate(amplicons, 1)}
+    for call in calls:
+        call["amplicon_ids"] = [renamed.get(value, value)
+                                for value in call.get("amplicon_ids", [])]
+    for amplicon in amplicons:
+        amplicon["amplicon_id"] = renamed[amplicon["amplicon_id"]]
 
     dominant_amplicon = None
     if amplicons:
