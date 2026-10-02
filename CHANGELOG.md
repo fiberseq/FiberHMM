@@ -325,6 +325,28 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   with a one-line error (exit 2) before any results are written, instead of a
   traceback. Each engine rejects knobs it ignores; explicit `sr`/`cross` settings are honoured. Worker pools stop on
   errors; multi-window BEDs load one window per concurrent job.
+- **Shared results are readable.** Consensus and transfer outputs (result
+  JSONs, family BAMs), strand-rescue reports, BAMs and audits, and
+  `fiberhmm-tag-consensus` BAMs were created owner-only (0600) whatever the
+  umask; they now get the permissions any other file the user writes gets.
+- **Publishing BAM and index together.** `fiberhmm-tag-consensus` and
+  `fiberhmm-utils ma-types` publish the BAM and its index as one transaction
+  (a failure restores the previous pair). `fiberhmm-utils fix-bigbed` exits 1
+  when an input is missing or cannot be converted, and replaces the bigBed
+  atomically beside it.
+- **Custom models and edge cases.** TF/nucleosome recall refuses emission
+  tables that are not k=3 (a k=4 model silently gave wrong calls). 5mC
+  (`gpc`/`cpg`) reverse-aligned reads are encoded in the same C-centred
+  context as forward reads. The HMM no longer returns NaN for a state that a
+  zero start or transition probability makes unreachable.
+- **Smaller fixes.** `--region-parallel` progress and logs go to stderr
+  (stdout carries data only), and outputs no longer carry a `samtools cat`
+  `@PG` listing the temporary work directory. `fiberhmm-call-m5c` refuses
+  `-o -` with `--tag-output -`; the DddA preflight of `fiberhmm-tag-m5c`/
+  `-call-m5c` reads the declared enzyme instead of any "hia5" in a path.
+  `fiberhmm-strand-rescue` names a `--region` contig the BAM lacks (exit 2).
+  The SNP report's per-call `amplicon_ids` no longer collapse when two
+  amplicons swap places during renumbering.
 
 ### Changed defaults
 
