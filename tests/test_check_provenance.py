@@ -75,6 +75,8 @@ def test_calls_without_provenance_are_unverifiable_not_clean(tmp_path, capsys):
     assert any(".fiberhmm_tmp/bam_list.txt" in line for line in advisory["evidence"])
 
     assert main([str(stale)]) == EXIT_UNVERIFIABLE == 4
+    # Header only (no record scan): the FiberHMM work path is evidence enough.
+    assert report(stale, scan_records=0)["status"] == "unverifiable"
     out = capsys.readouterr().out
     assert "no re-run needed" not in out
     assert "CANNOT VERIFY" in out and "re-run recommended if they came from FiberHMM < 3.0" in out

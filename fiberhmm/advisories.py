@@ -1171,18 +1171,21 @@ def _check_untracked(rule, data, runs, scan, path):
         return []
     ma_types = [c for c in data.get("CO", []) if str(c).startswith("MA-TYPES:v1:")]
     header_calls = any(re.search(r"(^|[:,])(nuc|msp|tf)(,|$)", str(c)) for c in ma_types)
+    trace = _unrecorded_fiberhmm_trace(data)
+    confidence = "medium" if trace else "low"
     if scan and scan.call_tags:
         evidence = [f"{scan.call_tags} of the first {scan.records} records carry footprint "
                     "calls; no FiberHMM calling @PG is recorded"]
     elif header_calls:
         evidence = ["the header advertises nuc/msp/tf annotations (MA-TYPES) but records "
                     "no FiberHMM calling @PG"]
+    elif trace and not (scan and scan.records):
+        # Header only: the reads were not scanned, but FiberHMM made this file.
+        evidence = ["no FiberHMM calling @PG is recorded and the reads were not scanned"]
+        confidence = "low"
     else:
         return []
-    confidence = "low"
-    trace = _unrecorded_fiberhmm_trace(data)
     if trace:
-        confidence = "medium"
         evidence.append(f"the header shows a FiberHMM run that recorded no @PG of its own: {trace}")
     return [_make(rule, _Finding(POSSIBLY, confidence, evidence), path=path)]
 
