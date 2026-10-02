@@ -153,7 +153,7 @@ def _shared(A, B, gaps, uids):
 
 
 def pair_table(els, gaps, cov, *, scope='all', clusters=None, n_perm=500, seed=7, min_reads=50, min_marginal=10,
-               per_bin=PER_BIN, q_max=0.1, progress=None):
+               per_bin=PER_BIN, q_max=0.1, pad_bp=0, progress=None):
     """All testable pairs. ``scope``: 'all', or 'nfr' (pairs with at least one NFR element).
     ``clusters``: None, or callable(uids, exclude_intervals) -> {uid: label} (the within-cluster check)."""
     rng = np.random.default_rng(seed); rows = []; skipped = []
@@ -180,7 +180,7 @@ def pair_table(els, gaps, cov, *, scope='all', clusters=None, n_perm=500, seed=7
             skipped.append(dict(a=A['id'], b=B['id'], reason=f'a marginal state has < {min_marginal} reads'))
             continue
         t = table(x, y)
-        ex = [(A['start'], A['end']), (B['start'], B['end'])]
+        ex = [(A['start'] - pad_bp, A['end'] + pad_bp), (B['start'] - pad_bp, B['end'] + pad_bp)]
         op = np.array([element_open_excluding(cov[u], ex) for u in uids])
         ch = np.array([cov[u]['ch'] for u in uids])
         if np.isnan(op).any():

@@ -101,6 +101,7 @@ fiberhmm-footprint-model = "fiberhmm.cli._entry:footprint_model_main"
 fiberhmm-tag-consensus = "fiberhmm.cli._entry:tag_families_main"
 fiberhmm-consensus = "fiberhmm.inference.consensus.cli:main"
 fiberhmm-transfer = "fiberhmm.inference.consensus.transfer_cli:main"
+fiberhmm-nfr = "fiberhmm.inference.accessibility.cli:main"  # EXPERIMENTAL preview
 fiberhmm-qc = "fiberhmm.cli._entry:qc_main"
 fiberhmm-check = "fiberhmm.cli._entry:check_main"
 

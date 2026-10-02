@@ -56,6 +56,7 @@ class NFROptions:
     internal_footprint_tolerance_bp: int = 25
     pairs: str = 'nfr'               # 'nfr' (pairs with at least one NFR element) | 'all' (also class x class)
     per_bin: int = 50                # reads per openness stratum
+    openness_pad_bp: int = 0         # extra bp masked around both tested elements when measuring per-read openness
     min_spanning: int = 50
     min_marginal: int = 10
     n_perm: int = 500                # display-only permutations (null centre of the pooled OR)
@@ -367,7 +368,7 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
         _report(progress, 'coaccess', f'Pair tests {done}/{total}', completed=done, total=total)
     pairs, skipped = C.pair_table(all_els, gaps_by_uid, cov, scope=opt.pairs, clusters=cl, n_perm=opt.n_perm,
                                   min_reads=opt.min_spanning, min_marginal=opt.min_marginal, per_bin=opt.per_bin,
-                                  q_max=opt.q_max, progress=pair_progress) if len(all_els) >= 2 else ([], [])
+                                  q_max=opt.q_max, pad_bp=opt.openness_pad_bp, progress=pair_progress) if len(all_els) >= 2 else ([], [])
     # combinations
     combo = None
     ids = {e['id']: e for e in all_els}

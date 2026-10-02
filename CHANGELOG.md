@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased: experimental preview (branch exp/fh-nfr, not part of 3.0.0)
+
+- **EXPERIMENTAL: `fiberhmm-nfr`, NFR variants and element co-accessibility
+  (`fiberhmm.inference.accessibility`).** A preview for testing in
+  FiberBrowser; outputs, parameters and formats (schema
+  `fiberhmm.accessibility.preview.v0`) may change without notice. For a region:
+  per-read NFRs (gaps between consecutive >= 90-bp nucleosome calls; factor-sized
+  protections inside do not split them), NFR variants discovered with the
+  lattice recaller's recipe (prediction-strength k, held-out identity merges and
+  support; `--stringency`, default 0.9), per-read membership, prevalence as a
+  strict-to-EM range with conditional bootstrap intervals, Timer depth states
+  (`--mode depth`), and element co-accessibility between variants and footprint
+  classes of a `fiberhmm-consensus` run (`--classes`): spanning reads only,
+  Timer's shared-opening exclusion, an exact test stratified by per-read
+  openness x channel, the Mantel-Haenszel odds ratio and BH. Writes
+  variants.tsv, configurations.tsv, molecules.tsv.gz, coaccess.tsv, combos.tsv,
+  result.json and manifest.json; deterministic.
+
 ## 3.0.0
 
 FiberHMM 3.0 is the third generation of the FiberHMM family, released together
