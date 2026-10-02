@@ -47,12 +47,23 @@ always numbers contexts in encoder order, so custom tables built with
 `fiberhmm-probs` in 3.0 are correct; **rebuild custom m6A tables made with
 the 2.x builder**, which had the same ordering error.
 
+## Re-train models built with `--base-model`
+
+`fiberhmm-train --base-model` keeps the base model's transitions and replaces
+its emissions. With a base whose state 0 is the footprint, such as the
+bundled Nanopore Hia5 model, every 2.x release paired the inherited
+transitions with inverted states, so the resulting model called accessible
+DNA as footprint. 3.0 matches the new emission rows to the base model's
+accessible state. **Re-train models built this way with 2.x**;
+`fiberhmm-check` cannot detect them.
+
 ## Defaults that change numbers
 
 | Change | 2.x | 3.0 | To get the 2.x behaviour |
 |---|---|---|---|
 | ML threshold for Hia5 Nanopore (`call`, `apply`, `recall-tfs`/`-nucs`, `extract`, `qc`, `posteriors`) | 128 / 125 | **248** | `--prob-threshold 128` (or 125) |
 | Alignments called by `call`/`apply` | all | **primary only** | `--no-primary` |
+| Bases trimmed at read ends by `posteriors` | 100 | **10** (as `call`/`apply`) | `--edge-trim 100` |
 | DddA CpG-aware recall in `call` and `pair`/`merge` joint recall | off | **on** (`ddda_ucg` islands exempt), as in `recall-tfs` | `--no-use-m5c` |
 | DAF tools reading MM/ML dU (`dedup`, `pair`, `merge`) | ML 0 | **ML 128** | `--prob-threshold 0` |
 | DAF duplicate grouping | by alignment orientation | **by deamination flavour** (more duplicates found; for example 5.8% → 9.9% on one DddA data set) | none |

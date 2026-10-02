@@ -313,7 +313,12 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   zero reads; Baum-Welch trains per read; all-zero emission columns are
   neutral. `fiberhmm-utils transfer` no longer stops with
   `KeyError: 'total'`, and a saved `--accessibility-priors` table serves every
-  smaller `-k`.
+  smaller `-k`. `fiberhmm-train --base-model` now matches the new emission
+  rows to the base model's accessible state: with a base whose state 0 is
+  the footprint (such as the bundled Nanopore Hia5 model), every 2.x release
+  paired the inherited transitions with inverted states, so the resulting
+  model called accessible DNA as footprint. Re-train models built with
+  `--base-model` on such a base.
 - **Consensus.** Looser prevalence tiers are a coherent union (a non-member
   adds only its remaining `1 − P`; previously a tier could exceed 1). Staged
   XCR units merge by complete linkage. The declared enzyme is honoured, and
@@ -336,6 +341,9 @@ These change numbers relative to 2.x.
   threshold mismatch. Other chemistries keep 128
   (`call`, `apply`, `posteriors`) or 125 (`recall`, `extract`, `qc`). An explicit
   `--prob-threshold` always wins.
+- **`fiberhmm-posteriors` trims 10 bases at read ends** (was 100), as
+  `fiberhmm-call` and `fiberhmm-apply` do, so posteriors within 100 bases of
+  a read end change. `--edge-trim 100` restores the 2.x behaviour.
 - **Primary alignments only.** `fiberhmm-call` and `fiberhmm-apply` pass
   secondary and supplementary records through uncalled (`--no-primary` to call
   them).
@@ -375,7 +383,8 @@ These change numbers relative to 2.x.
   flavour instead of alignment orientation (more duplicates are marked; e.g.
   about 5.8% → 9.9% on one DddA dataset).
 - **Python ≥ 3.10.** Numba, scikit-learn, joblib and threadpoolctl are core
-  dependencies (`[consensus]` and `[numba]` remain as empty aliases).
+  dependencies (`[consensus]` and `[numba]` remain as compatibility aliases
+  that add nothing beyond the core install).
 - `fiberhmm-apply` rejects `--chroms`, `--skip-scaffolds`, `--region-size`,
   `--scores-db` and `-l`, which never had an effect there.
 - **`fiberhmm-apply -m` on DddA-declared input** applies the DddA CC/GG
@@ -427,6 +436,9 @@ fiberhmm-check data/*.bam qc/*.qc.json consensus_out/
   recall), so numbers move even where no fix applies. Most have an option to
   get the 2.x behaviour back (the TF decoder and the DddA tables do not); the
   context-swapped 2.x tables are kept under `fiberhmm/models/legacy/`.
+- **Re-train** models built with 2.x `fiberhmm-train --base-model` on a base
+  whose state 0 is the footprint, such as the bundled Nanopore Hia5 model
+  (`fiberhmm-check` cannot detect these).
 - Replace `fiberhmm-run` and the `python *.py` scripts with the `fiberhmm-*`
   commands.
 - FiberBrowser 3.0 requires FiberHMM 3.x.
