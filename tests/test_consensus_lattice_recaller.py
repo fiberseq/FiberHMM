@@ -392,6 +392,8 @@ def test_cli_rejects_staged_stage_controls_before_loading_and_streams_windows(tm
     monkeypatch.setattr(bam, 'load_bam_payload', lambda d, w, o, p: events.append(('load', w['start'])) or dict(region=w, strata=[]))
     # x.bam is never written: the CLI's up-front chemistry check reads BAM headers, so stub it with the loader.
     monkeypatch.setattr(bam, 'check_dataset_chemistries', lambda datasets: None)
+    # Likewise the up-front --region contig check.
+    monkeypatch.setattr(bam, '_resolve_bam_fetch_region', lambda path, chrom, start, end: (chrom, start, end, 10_000))
     monkeypatch.setattr(cli, 'run_analysis', lambda payload, v, folder, progress=None: events.append(('run', payload['region']['start'])) or
                         dict(manifest=dict(status='complete', seconds=0.)))
     common = ['--bam', str(tmp_path/'x.bam'), '--region', 'chrT:100-200', '--region', 'chrT:300-400']

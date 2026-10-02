@@ -288,6 +288,8 @@ def test_recall_tfs_closes_bams_when_processing_fails(monkeypatch):
         lambda path: (object(), 3, "pacbio-fiber"),
     )
     monkeypatch.setattr(recall_tfs, "build_llr_tables", lambda model: (object(), object()))
+    # The model file is stubbed too: skip the up-front model-file check.
+    monkeypatch.setattr(recall_tfs, "require_model_files", lambda *a, **k: None)
 
     def fail_processing(*args, **kwargs):
         raise RuntimeError("processing failed")
