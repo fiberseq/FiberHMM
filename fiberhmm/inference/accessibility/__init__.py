@@ -1,7 +1,9 @@
 """NFR variants and element co-accessibility (EXPERIMENTAL preview).
 
 This package is an experimental preview, not a released analysis. Its outputs, parameters and file
-formats may change without notice (schema ``fiberhmm.accessibility.preview.v0``).
+formats may change without notice (schema ``fiberhmm.accessibility.preview.v1``; ``analysis`` holds
+the views of a finished run: read splits per element pair, size/edge/V-plot arrays, phasing, frozen-catalogue
+prevalence).
 
 What it does, per region:
 

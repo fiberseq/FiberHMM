@@ -142,14 +142,59 @@ def element_open_excluding(c, ex):
 
 
 def _shared(A, B, gaps, uids):
+    """(kept, shared) unit lists: a read where one gap covers both elements' centres is "shared" (Timer)."""
     ca = (A['start'] + A['end'])/2; cb = (B['start'] + B['end'])/2
-    keep, shared = [], 0
+    keep, shared = [], []
     for u in uids:
         if any(g0 <= min(ca, cb) and g1 >= max(ca, cb) for g0, g1 in gaps.get(u, [])):
-            shared += 1
+            shared.append(u)
         else:
             keep.append(u)
     return keep, shared
+
+
+def pair_eligibility(A, B, gaps, cov, pad_bp=0, universe=None):
+    """The reads a pair test uses, and why every other read is left out. ``pair_table`` and the read split of the
+    analysis views (``analysis.pair_split``) both call this, so a split's four groups are the test's 2x2 table.
+
+    Returns uids (eligible, sorted), op ({uid: openness without the two elements}), n_spanning (reads left after the
+    spanning, coverage, channel and shared rules: the count the spanning-read minimum applies to), and excluded:
+    {reason: [uids]} with reasons not_spanning_a / not_spanning_b (no state for that element: censored, abstained or
+    off-channel), no_coverage (< 200 bp of nucleosome-bounded coverage in the window), channel (class x class on
+    different channels), shared (one opening covers both centres) and no_background (< 10 openness bins left once
+    the two elements are masked). ``universe`` (optional): the reads to account for; without it only reads with a
+    state for both elements are."""
+    excluded = {}
+    sa, sb = A['state'], B['state']
+    if universe is not None:
+        for u in sorted(universe):
+            if u not in sa:
+                excluded.setdefault('not_spanning_a', []).append(u)
+            elif u not in sb:
+                excluded.setdefault('not_spanning_b', []).append(u)
+    both = sorted(set(sa) & set(sb))
+    uids = [u for u in both if u in cov]
+    if len(uids) < len(both):
+        excluded['no_coverage'] = [u for u in both if u not in cov]
+    if A['kind'] == 'tf' and B['kind'] == 'tf':
+        off = [u for u in uids if A['channel'][u] != B['channel'][u]]
+        if off:
+            excluded['channel'] = off
+        uids = [u for u in uids if A['channel'][u] == B['channel'][u]]
+    if A['kind'] == 'nfr' and B['kind'] == 'nfr':
+        uids, shared = _shared(A, B, gaps, uids)
+        if shared:
+            excluded['shared'] = shared
+    n_spanning = len(uids)
+    # per-read openness without the two tested elements; a read with < 10 background bins has none and is left out of
+    # this pair (never: the whole pair loses its openness adjustment)
+    ex = [(A['start'] - pad_bp, A['end'] + pad_bp), (B['start'] - pad_bp, B['end'] + pad_bp)]
+    op = {u: element_open_excluding(cov[u], ex) for u in uids}
+    nb = [u for u in uids if np.isnan(op[u])]
+    if nb:
+        excluded['no_background'] = nb
+    uids = [u for u in uids if not np.isnan(op[u])]
+    return dict(uids=uids, op={u: op[u] for u in uids}, n_spanning=n_spanning, excluded=excluded, ex=ex)
 
 
 def pair_table(els, gaps, cov, *, scope='all', clusters=None, n_perm=500, seed=7, min_reads=50, min_marginal=10,
@@ -166,21 +211,13 @@ def pair_table(els, gaps, cov, *, scope='all', clusters=None, n_perm=500, seed=7
         if A['kind'] == B['kind'] and overlapping(A, B):
             skipped.append(dict(a=A['id'], b=B['id'], reason='overlap'))
             continue
-        uids = sorted(set(A['state']) & set(B['state']) & set(cov))
-        if A['kind'] == 'tf' and B['kind'] == 'tf':
-            uids = [u for u in uids if A['channel'][u] == B['channel'][u]]
-        shared = 0
-        if A['kind'] == 'nfr' and B['kind'] == 'nfr':
-            uids, shared = _shared(A, B, gaps, uids)
-        if len(uids) < min_reads:
-            skipped.append(dict(a=A['id'], b=B['id'], reason=f'spanning reads {len(uids)} < {min_reads}'))
+        el = pair_eligibility(A, B, gaps, cov, pad_bp)
+        shared = len(el['excluded'].get('shared', ()))
+        if el['n_spanning'] < min_reads:
+            skipped.append(dict(a=A['id'], b=B['id'], reason=f"spanning reads {el['n_spanning']} < {min_reads}"))
             continue
-        # per-read openness without the two tested elements; a read with < 10 background bins has none and is left
-        # out of this pair (never: the whole pair loses its openness adjustment)
-        ex = [(A['start'] - pad_bp, A['end'] + pad_bp), (B['start'] - pad_bp, B['end'] + pad_bp)]
-        op_all = {u: element_open_excluding(cov[u], ex) for u in uids}
-        no_background = sum(1 for u in uids if np.isnan(op_all[u]))
-        uids = [u for u in uids if not np.isnan(op_all[u])]
+        uids, op_all, ex = el['uids'], el['op'], el['ex']
+        no_background = len(el['excluded'].get('no_background', ()))
         if len(uids) < min_reads:
             skipped.append(dict(a=A['id'], b=B['id'], reason=f'spanning reads with background {len(uids)} < {min_reads}'))
             continue
@@ -250,19 +287,35 @@ def curveball(M, n_samples, rng, burn=None):
     return out
 
 
-def combinations(els, gaps=None, n_samples=300, seed=11, q_max=0.1, min_reads=30):
-    for A, B in itertools.combinations(els, 2):
-        if A['kind'] == B['kind'] and overlapping(A, B):
-            raise ValueError(f"{A['id']} and {B['id']} overlap: one opening cannot be two elements")
+def combo_eligibility(els, gaps=None, universe=None):
+    """Reads a combination table uses: spanning every element, minus "shared" reads (one gap covers two NFR elements'
+    centres). Shared by ``combinations`` and ``analysis.combo_split``. excluded: {not_spanning, shared: [uids]}."""
     uids = sorted(set.intersection(*[set(e['state']) for e in els]))
-    n_spanning = len(uids); n_shared = 0
+    excluded = {}
+    if universe is not None:
+        miss = sorted(set(universe) - set(uids))
+        if miss:
+            excluded['not_spanning'] = miss
+    n_spanning = len(uids)
     if gaps is not None:
         cen = [(e['start'] + e['end'])/2 for e in els if e['kind'] == 'nfr']
 
         def shared(u):
             return any(sum(g0 <= c <= g1 for c in cen) >= 2 for g0, g1 in gaps.get(u, []))
-        kept = [u for u in uids if not shared(u)]
-        n_shared = len(uids) - len(kept); uids = kept
+        sh = [u for u in uids if shared(u)]
+        if sh:
+            excluded['shared'] = sh
+        uids = [u for u in uids if not shared(u)]
+    return dict(uids=uids, n_spanning=n_spanning, excluded=excluded)
+
+
+def combinations(els, gaps=None, n_samples=300, seed=11, q_max=0.1, min_reads=30):
+    for A, B in itertools.combinations(els, 2):
+        if A['kind'] == B['kind'] and overlapping(A, B):
+            raise ValueError(f"{A['id']} and {B['id']} overlap: one opening cannot be two elements")
+    el = combo_eligibility(els, gaps)
+    uids, n_spanning = el['uids'], el['n_spanning']
+    n_shared = len(el['excluded'].get('shared', ()))
     M = np.array([[e['state'][u] for e in els] for u in uids], np.int8).reshape(-1, len(els))
     base = dict(elements=[e['id'] for e in els], labels=[e['label'] for e in els], n=len(M), n_spanning=n_spanning,
                 n_shared_excluded=n_shared)

@@ -17,6 +17,23 @@
   openness x channel, the Mantel-Haenszel odds ratio and BH. Writes
   variants.tsv, configurations.tsv, molecules.tsv.gz, coaccess.tsv, combos.tsv,
   result.json and manifest.json; deterministic.
+- **EXPERIMENTAL: analysis views of an NFR run** (schema
+  `fiberhmm.accessibility.preview.v1`; v0 results still load).
+  - The result now stores, per molecule, its span, its nucleosome calls within
+    the window +- 1 kb, its openness span and its gap edge features. It also
+    stores the read states each pair test used, and each NFR's frozen variant
+    catalogue (in result.json). The TSV outputs are unchanged.
+  - `fiberhmm.inference.accessibility.analysis` splits a pair's reads into
+    A+B+ / A+B- / A-B+ / A-B- and not-informative reads. It uses the test's own
+    eligibility (`coaccess.pair_eligibility`), so the four groups are the 2x2
+    table. It also splits combination patterns, and gives per-stratum tables,
+    the spacing between two openings on one molecule, and per-group
+    accessibility profiles.
+  - It gives variant mini profiles; opening widths; the left-edge x right-edge
+    density; the -1 / +1 boundary nucleosomes; centre and coverage V-plots;
+    and nucleosome phasing on member vs other reads.
+  - It also computes the frozen-catalogue prevalence on any read group or
+    another payload (`quantify_frozen`, `group_prevalence`, `transfer`).
 
 ## 3.0.0
 

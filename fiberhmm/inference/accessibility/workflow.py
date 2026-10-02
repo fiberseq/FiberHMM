@@ -24,7 +24,12 @@ from . import coaccess as C
 from . import gaps as G
 from . import variants as V
 
-SCHEMA = 'fiberhmm.accessibility.preview.v0'
+SCHEMA = 'fiberhmm.accessibility.preview.v1'
+# v1 adds, for the analysis views (``analysis.py``): per molecule its span, nucleosome calls near the window, openness
+# span and gap edge features; the per-element read states the pair tests used; each NFR's frozen variant catalogue.
+# v0 results still load: the views that need the additions say so.
+COMPATIBLE_SCHEMAS = ('fiberhmm.accessibility.preview.v0', SCHEMA)
+NUC_FLANK_BP = 1000               # nucleosome calls kept per molecule: the window +- this (phasing, boundaries)
 EXPERIMENTAL_NOTE = ('EXPERIMENTAL preview: NFR variants and element co-accessibility. Outputs, parameters and formats '
                      'may change without notice.')
 
@@ -315,6 +320,9 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
                                                 members=r['members'], nfr={}))
             molecules[r['uid']]['nfr'][nfr_id] = dict(status='callable' if r['callable'] else 'censored',
                                                       gaps=[[g['g0'], g['g1']] for g in r['gaps']])
+            if r['callable'] and r['gaps']:
+                # the EM's edge features (range midpoints and widths): frozen-catalogue requantification per read group
+                molecules[r['uid']]['nfr'][nfr_id]['edges'] = [[g['L'], g['R'], g['wL'], g['wR']] for g in r['gaps']]
         if n_call == 0:
             nfr.update(status='not_analysable', message='No read has a nucleosome on both sides of this region.')
             nfrs.append(nfr); continue
@@ -341,6 +349,7 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
                    candidates=diag['candidates'], merges=[list(m) for m in diag['merges']], dropped=diag['dropped'])
         _report(progress, 'nfr', f'{nfr_id}: prevalence (EM, {opt.bootstrap} bootstrap replicates)')
         q = V.quantify(reads, vs, es, opt)
+        nfr['catalogue'] = catalogue(vs, es, nreg, opt)
         rob = V.robust(reads, nreg, vs, opt, n=opt.robust) if (vs and opt.robust) else None
         Pv = q['Pv']
         for j, v in enumerate(vs):
@@ -387,6 +396,7 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
     # co-accessibility
     _report(progress, 'coaccess', 'Per-read openness')
     cov = G.read_covariates(units, region['start'], region['end'])
+    _store_molecule_context(molecules, units, cov, region)
     cl = None
     if clusters is not None:
         cl = clusters
@@ -422,9 +432,78 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
                                        molecules=getattr(cl, 'n', None)) if cl is not None else None,
                   warnings=warnings)
     result['molecules'] = molecules
+    result['element_states'] = encode_element_states(all_els, molecules)
     if output_dir is not None:
         write_outputs(result, Path(output_dir), payload, inputs)
     return result
+
+
+def catalogue(variants, es, nreg, opt):
+    """The NFR's frozen variant catalogue: geometry (centre and full covariance of the edge Gaussians), the "other
+    shape" density and the rules that made the gaps, so the same variants can be re-quantified on other reads
+    (``analysis.quantify_frozen``) without discovery."""
+    return dict(region=[int(nreg[0]), int(nreg[1])], log_other=float(es.log_other), min_gap_bp=int(opt.min_gap_bp),
+                max_gaps=int(opt.max_gaps), open_threshold=float(opt.open_threshold), seed=int(opt.seed),
+                variants=[dict(name=f'V{j + 1}', mu=[float(x) for x in v['mu']], cov=[[float(x) for x in row] for row in v['cov']])
+                          for j, v in enumerate(variants)])
+
+
+def _store_molecule_context(molecules, units, cov, region):
+    """Per molecule (schema v1): its reference span, its >= 90-bp nucleosome calls within the window +- NUC_FLANK_BP,
+    and the span its per-read openness was measured over (absent: < 200 bp of nucleosome-bounded coverage, so it has
+    no openness and never enters a pair test)."""
+    lo, hi = region['start'] - NUC_FLANK_BP, region['end'] + NUC_FLANK_BP
+    seen = set()
+    for u in units:
+        m = molecules.get(u['unit_id'])
+        if m is None or u['unit_id'] in seen:
+            continue
+        seen.add(u['unit_id'])
+        m['span'] = [u.get('reference_start'), u.get('reference_end')]
+        m['nucs'] = [[a, b] for a, b in G.nucleosomes(u) if b > lo and a < hi]
+        c = cov.get(u['unit_id'])
+        if c is not None:
+            m['cov'] = list(c['span'])
+
+
+def encode_element_states(els, molecules):
+    """The read states every pair test used, compactly: one character per molecule (sorted unit_ids): '1' open or
+    member, '0' closed or non-member, '.' no state (not spanning / censored / abstained). Footprint classes also
+    carry the channel each state was read on (index into ``channels``; '.' none). Geometry is kept unrounded (the
+    shared rule and the openness mask use it)."""
+    order = sorted(molecules)
+    channels = sorted({ch for e in els if e.get('channel') for ch in e['channel'].values()})
+    code = {ch: chr(48 + i) if i < 10 else chr(65 + i - 10) for i, ch in enumerate(channels)}
+    if len(channels) > 36:
+        raise ValueError('more than 36 channels')
+    out = dict(order='sorted unit_id', n=len(order), channels=channels, elements={})
+    for e in els:
+        st = e['state']
+        row = dict(kind=e['kind'], start=float(e['start']), end=float(e['end']),
+                   states=''.join('.' if u not in st else '1' if st[u] else '0' for u in order))
+        if e.get('channel'):
+            row['channel'] = ''.join(code[e['channel'][u]] if u in e['channel'] else '.' for u in order)
+        out['elements'][e['id']] = row
+    return out
+
+
+def decode_element_states(result):
+    """``encode_element_states`` back to elements with ``state`` (and ``channel``) dicts, keyed by element id."""
+    block = result.get('element_states')
+    if not block:
+        return None
+    order = sorted(result['molecules'])
+    if len(order) != block['n']:
+        raise ValueError('element states do not match the molecules of this result')
+    channels = block['channels']
+    out = {}
+    for eid, row in block['elements'].items():
+        st = {u: int(c) for u, c in zip(order, row['states']) if c != '.'}
+        e = dict(id=eid, kind=row['kind'], start=row['start'], end=row['end'], state=st)
+        if row.get('channel'):
+            e['channel'] = {u: channels[int(c, 36)] for u, c in zip(order, row['channel']) if c != '.'}
+        out[eid] = e
+    return out
 
 
 def _pair_out(p):
@@ -517,7 +596,7 @@ def write_outputs(result, out, payload=None, inputs=None):
     combo = result.get('combos')
     crow = [dict(o, elements='+'.join(combo['elements']), n=combo['n']) for o in (combo or {}).get('patterns', [])]
     files['combos.tsv'] = _tsv(crow, COMBO_FIELDS).encode()
-    slim = {k: v for k, v in result.items() if k != 'molecules'}
+    slim = {k: v for k, v in result.items() if k not in ('molecules', 'element_states')}
     files['result.json'] = (json.dumps(slim, sort_keys=True, indent=1) + '\n').encode()
     for name, data in files.items():
         (out/name).write_bytes(data)

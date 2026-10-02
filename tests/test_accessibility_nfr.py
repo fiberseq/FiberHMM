@@ -178,7 +178,8 @@ def test_outputs_do_not_depend_on_read_order_and_are_byte_identical(tmp_path):
     for name in ('variants.tsv', 'configurations.tsv', 'molecules.tsv.gz', 'coaccess.tsv', 'combos.tsv', 'result.json'):
         assert (tmp_path/'a'/name).read_bytes() == (tmp_path/'b'/name).read_bytes(), name
     ma = json.loads((tmp_path/'a'/'manifest.json').read_text())
-    assert ma['schema'] == 'fiberhmm.accessibility.preview.v0' and ma['experimental'] is True
+    assert ma['schema'] == 'fiberhmm.accessibility.preview.v1' and ma['experimental'] is True
+    assert a['element_states'] == b['element_states'] and a['molecules'] == b['molecules']   # v1 additions too
     assert ma['outputs'] == json.loads((tmp_path/'b'/'manifest.json').read_text())['outputs']
     assert a['nfrs'] == b['nfrs'] and len((tmp_path/'a'/'coaccess.tsv').read_text().splitlines()) == 4
     with gzip.open(tmp_path/'a'/'molecules.tsv.gz', 'rt') as fh:

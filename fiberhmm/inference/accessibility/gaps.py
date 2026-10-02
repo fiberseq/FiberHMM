@@ -129,8 +129,18 @@ def read_covariates(units, lo, hi, step=PROFILE_STEP, min_bp=200):
         x = np.arange(s, e, step); m = np.zeros(len(x), bool)
         for a, b in nuc:
             m |= (x >= a) & (x < b)
-        cov[u['unit_id']] = dict(open=float(1 - m.mean()), ch=channel(u), read=u.get('read_name'), x=x, closed=m)
+        cov[u['unit_id']] = dict(open=float(1 - m.mean()), ch=channel(u), read=u.get('read_name'), x=x, closed=m, span=(int(s), int(e)))
     return cov
+
+
+def covariate_from_nucs(nucs, span, ch, step=PROFILE_STEP):
+    """``read_covariates``' entry for one unit rebuilt from its stored nucleosome calls and span (the analysis views
+    recompute per-read openness from a saved run; the stored calls must cover the span)."""
+    s, e = span
+    x = np.arange(s, e, step); m = np.zeros(len(x), bool)
+    for a, b in nucs:
+        m |= (x >= a) & (x < b)
+    return dict(open=float(1 - m.mean()) if len(m) else float('nan'), ch=ch, x=x, closed=m, span=(int(s), int(e)))
 
 
 def access_matrix(units, lo, hi, step=PROFILE_STEP):
