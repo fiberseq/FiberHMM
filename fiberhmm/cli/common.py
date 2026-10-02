@@ -718,6 +718,8 @@ def resolve_platform_argument(args, input_path, *, tool: str,
             "(--seq pacbio). Pass --seq nanopore for Nanopore data.",
             file=sys.stderr,
         )
+        # The bundled-model lookup would otherwise repeat this warning.
+        args.seq = "pacbio"
 
 
 # ---------------------------------------------------------------------------
@@ -958,8 +960,7 @@ def refuse_path_aliases(tool: str, **kwargs) -> None:
         check_path_aliases(**kwargs)
     except PathAliasError as exc:
         print(f"{tool}: error: {exc}", file=sys.stderr)
-        # The bundled-model lookup would otherwise repeat this warning.
-        args.seq = "pacbio"
+        sys.exit(2)
 
 
 # ---------------------------------------------------------------------------
