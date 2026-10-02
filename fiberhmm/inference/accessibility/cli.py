@@ -153,7 +153,9 @@ def _main(argv=None):
                                      if k == 'input'},
                   classes=[str(Path(d).resolve()) for d in args.classes or ()])
     out.mkdir(parents=True, exist_ok=True)
-    result = run_accessibility(payload, opt, out, progress, classes=classes or None, inputs=inputs)
+    from fiberhmm.inference.consensus.execution import single_threaded_blas
+    with single_threaded_blas():      # threshold-sensitive clustering: one numerical thread configuration
+        result = run_accessibility(payload, opt, out, progress, classes=classes or None, inputs=inputs)
     summary = [dict(id=n['id'], start=n['start'], end=n['end'], status=n['status'], callable=n['callable'], reads=n['reads'],
                     variants=[v['name'] for v in n['variants']]) for n in result['nfrs']]
     print(json.dumps(dict(status='complete', experimental=True, output=str(out), nfrs=summary, pairs=len(result['pairs']),

@@ -65,9 +65,10 @@ def collect(units, region, min_gap_bp, max_gaps):
     for u in units:
         ok, gaps = read_gaps(u, region, min_gap_bp)
         overflow = max(0, len(gaps) - max_gaps)
+        widest = max((g['g1'] - g['g0'] for g in gaps), default=0)    # before truncation (depth mode)
         if overflow:
             gaps = gaps[:max_gaps]
-        reads.append(dict(uid=u['unit_id'], ch=channel(u), callable=ok, gaps=gaps, overflow=overflow,
+        reads.append(dict(uid=u['unit_id'], ch=channel(u), callable=ok, gaps=gaps, overflow=overflow, widest=widest,
                           read_name=u.get('read_name'), dataset=u['dataset'], strand=u.get('strand'),
                           members=sorted({str(m.get('read_name')) for m in u.get('source_members') or () if m.get('read_name')}),
                           span=(u.get('reference_start'), u.get('reference_end'))))
@@ -104,7 +105,7 @@ def detect_nfrs(units, lo, hi, threshold=.15, min_callable=20, min_width=60, ste
             j = i
             while j < len(x) and on[j]:
                 j += 1
-            a, b = int(x[i]), int(x[j - 1]) + step
+            a, b = int(x[i]), min(int(x[j - 1]) + step, int(hi))
             if b - a >= min_width:
                 runs.append(dict(start=a, end=b, peak=round(float(f175[i:j].max()), 3)))
             i = j

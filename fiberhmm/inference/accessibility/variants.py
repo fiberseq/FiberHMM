@@ -159,7 +159,7 @@ def discover(reads, region, opt, salt='', progress=None):
                 k=0, ps_curve=[], candidates=[], merges=[], dropped=[])
     if len(X) < 2*opt.min_reads:
         return [], diag, es
-    kmax = max(2, min(opt.kmax, len(X)//(2*int(opt.min_reads))))
+    kmax = min(opt.kmax, max(2, len(X)//(2*int(opt.min_reads))))     # == the prototype's rule for kmax >= 2
     curve = []
     for k in range(1, kmax + 1):
         ps, _ = prediction_strength(X, gid, k, opt.seed, opt.splits)
@@ -379,7 +379,7 @@ def depth_states(reads, thresholds=(175, 300, 500)):
     """Timer's nested width states per callable read: the widest gap overlapping the region >= each threshold."""
     names = {175: 'pioneered', 300: 'merged', 500: 'actuated'}
     callable_reads = sorted([r for r in reads if r['callable']], key=lambda r: r['uid'])
-    widest = np.array([max((g['g1'] - g['g0'] for g in r['gaps']), default=0) for r in callable_reads], float)
+    widest = np.array([r.get('widest', max((g['g1'] - g['g0'] for g in r['gaps']), default=0)) for r in callable_reads], float)
     states = []
     for t in thresholds:
         states.append(dict(name=f'>={t}', depth=names.get(t, f'>={t}'), threshold=t, open=(widest >= t).astype(int)))

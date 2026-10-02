@@ -87,10 +87,29 @@ class NFROptions:
             raise ValueError("elements must be 'variants' or 'nfrs'")
         if self.pairs not in ('nfr', 'all'):
             raise ValueError("pairs must be 'nfr' or 'all'")
-        if self.min_gap_bp < 1 or self.max_gaps < 1 or self.kmax < 1 or self.folds < 2:
-            raise ValueError('min_gap_bp, max_gaps and kmax must be >= 1 and folds >= 2')
-        if self.bootstrap < 0 or self.robust < 0 or self.within_clusters < 0:
-            raise ValueError('bootstrap, robust and within_clusters must be >= 0')
+        ints = ('kmax', 'splits', 'seed', 'min_gap_bp', 'folds', 'max_gaps', 'bootstrap', 'shift_bp', 'robust', 'per_bin',
+                'openness_pad_bp', 'min_spanning', 'min_marginal', 'n_perm', 'within_clusters', 'combo_max', 'combo_samples',
+                'internal_footprint_tolerance_bp')
+        for name in ints:
+            v = getattr(self, name)
+            if isinstance(v, bool) or not isinstance(v, (int, np.integer)):
+                if isinstance(v, float) and v.is_integer():
+                    setattr(self, name, int(v)); continue
+                raise ValueError(f'{name} must be an integer')
+        for name in ('stringency', 'min_reads', 'identity_nats', 'support_nats', 'detect_threshold', 'open_threshold', 'q_max',
+                     'class_min_prevalence'):
+            if not math.isfinite(float(getattr(self, name))):
+                raise ValueError(f'{name} must be a finite number')
+        if self.min_gap_bp < 1 or self.max_gaps < 1 or self.kmax < 1 or self.folds < 2 or self.splits < 1:
+            raise ValueError('min_gap_bp, max_gaps, kmax and splits must be >= 1 and folds >= 2')
+        if self.min_reads < 1 or self.per_bin < 1 or self.n_perm < 1 or self.combo_samples < 1 or self.min_spanning < 1:
+            raise ValueError('min_reads, per_bin, n_perm, combo_samples and min_spanning must be >= 1')
+        if self.bootstrap < 0 or self.robust < 0 or self.within_clusters < 0 or self.openness_pad_bp < 0 or self.min_marginal < 0:
+            raise ValueError('bootstrap, robust, within_clusters, openness_pad_bp and min_marginal must be >= 0')
+        if self.within_clusters == 1:
+            raise ValueError('within_clusters: use 0 (off) or k >= 2')
+        if not 0 < self.open_threshold <= 1 or not 0 < self.q_max <= 1 or not 0 <= self.detect_threshold < 1:
+            raise ValueError('open_threshold and q_max must be in (0, 1], detect_threshold in [0, 1)')
         regions = []
         for r in self.nfr_regions or ():
             a, b = (int(r[0]), int(r[1])) if not isinstance(r, dict) else (int(r['start']), int(r['end']))
@@ -174,6 +193,13 @@ def _nfr_regions(units, region, opt):
     return [dict(r, source='detected') for r in G.detect_nfrs(units, region['start'], region['end'], opt.detect_threshold)]
 
 
+def _whole_nfr(nfr_id, nreg, reads):
+    """Whole-NFR element: open = any opening (>= min_gap_bp) in the NFR region."""
+    return dict(id=f'{nfr_id}:open', kind='nfr', subtype='nfr', nfr=nfr_id, start=float(nreg[0]), end=float(nreg[1]),
+                label=f'{nfr_id} any opening', prevalence=float(np.mean([bool(r['gaps']) for r in reads])) if reads else None,
+                state={r['uid']: int(bool(r['gaps'])) for r in reads}, channel=None)
+
+
 def _variant_row(nfr_id, v, by_channel, robust_frac):
     return dict(id=f"{nfr_id}:{v['name']}", nfr=nfr_id, name=v['name'], start=_r(v['L'], 1), end=_r(v['R'], 1),
                 L=_r(v['L'], 1), R=_r(v['R'], 1), Lsd=_r(v['Lsd'], 1), Rsd=_r(v['Rsd'], 1), width=_r(v['width'], 1),
@@ -234,7 +260,7 @@ def _masked_clusters(units, cov, els, k, region):
         for a, b in ex:
             keep &= ~((x >= a - 50) & (x < b + 50))
         us = [u for u in uids if u in full]
-        if len(us) < 50 or keep.sum() < 2:
+        if len(us) < max(50, 2*k) or keep.sum() < 2:
             return {}
         lab = KMeans(k, n_init=4, random_state=42).fit_predict(M[[row_of[u] for u in us]][:, keep])
         return dict(zip(us, lab.tolist()))
@@ -298,9 +324,12 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
                 prev = float(s['open'].mean())
                 nfr['depth_states'].append(dict(id=f"{nfr_id}:{s['name']}", name=s['name'], depth=s['depth'], threshold=s['threshold'],
                                                 prevalence=_r(prev), n=len(cr)))
-                elements.append(dict(id=f"{nfr_id}:{s['name']}", kind='nfr', subtype='depth', nfr=nfr_id, start=float(nreg[0]),
-                                     end=float(nreg[1]), label=f"{nfr_id} {s['depth']} ({s['name']} bp)", prevalence=prev,
-                                     state={r['uid']: int(o) for r, o in zip(cr, s['open'])}, channel=None))
+                if opt.elements != 'nfrs':
+                        elements.append(dict(id=f"{nfr_id}:{s['name']}", kind='nfr', subtype='depth', nfr=nfr_id, start=float(nreg[0]),
+                                         end=float(nreg[1]), label=f"{nfr_id} {s['depth']} ({s['name']} bp)", prevalence=prev,
+                                         state={r['uid']: int(o) for r, o in zip(cr, s['open'])}, channel=None))
+            if opt.elements == 'nfrs':
+                elements.append(_whole_nfr(nfr_id, nreg, cr))
             for r, w in zip(cr, widest):
                 molecules[r['uid']]['nfr'][nfr_id].update(widest=int(w), map='closed' if not r['gaps'] else f'widest {int(w)} bp')
             nfrs.append(nfr); continue
@@ -336,9 +365,7 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
                                      label=f"{nfr_id} {v['name']} {v['relation']}", prevalence=v['prevalence'],
                                      state={r['uid']: int(Pv[i, j] >= opt.open_threshold) for i, r in enumerate(q['reads'])}, channel=None))
         else:
-            elements.append(dict(id=f'{nfr_id}:open', kind='nfr', subtype='nfr', nfr=nfr_id, start=float(nreg[0]), end=float(nreg[1]),
-                                 label=f'{nfr_id} any opening', prevalence=float(np.mean([bool(r['gaps']) for r in q['reads']])),
-                                 state={r['uid']: int(bool(r['gaps'])) for r in q['reads']}, channel=None))
+            elements.append(_whole_nfr(nfr_id, nreg, q['reads']))
         nfrs.append(nfr)
     # footprint classes (lattice recaller) overlapping the window
     tf_els = []
@@ -416,7 +443,7 @@ VARIANT_FIELDS = ['nfr', 'nfr_start', 'nfr_end', 'id', 'name', 'L', 'R', 'Lsd', 
 CONFIG_FIELDS = ['nfr', 'label', 'weight', 'internal_footprint', 'display_label']
 MOLECULE_FIELDS = ['nfr', 'unit_id', 'read_name', 'dataset', 'strand', 'status', 'map', 'map_posterior', 'p', 'p_other', 'gaps']
 PAIR_FIELDS = ['a', 'b', 'kind_a', 'kind_b', 'n', 'shared', 'n11', 'n10', 'n01', 'n00', 'log2or', 'lo', 'hi', 'fisher_p', 'mh', 'mh_lo',
-               'mh_hi', 'p_exact', 'q', 'class', 'adjust', 'null_median', 'null_lo', 'null_hi', 'exp11', 'nested', 'dist', 'cluster', 'cluster_n']
+               'mh_hi', 'p_exact', 'q', 'class', 'separation', 'obs11', 'no_background', 'adjust', 'null_median', 'null_lo', 'null_hi', 'exp11', 'nested', 'dist', 'cluster', 'cluster_n']
 COMBO_FIELDS = ['pattern', 'elements', 'obs', 'exp_indep', 'null_med', 'null_lo', 'null_hi', 'p', 'q', 'pinned', 'n']
 
 
@@ -500,7 +527,8 @@ def write_outputs(result, out, payload=None, inputs=None):
                     definitions=dict(nfr='gap between consecutive >= 90-bp nucleosome calls (Timer preprint); internal factor-sized '
                                          'protections do not split it',
                                      callable='nucleosome-bounded read coverage spans the NFR region (both edges observed)',
-                                     prevalence='range: strict (membership >= 0.9) to EM; bootstrap interval conditional on the catalogue',
+                                     prevalence='two descriptive estimates shown as a range: strict (share of reads with membership >= 0.9) and EM '
+                                                '(mean membership); neither is a bound on the other; bootstrap interval (EM) conditional on the catalogue',
                                      coaccess='spanning reads only; Timer shared rule; exact test stratified by openness x channel; '
                                               'Mantel-Haenszel OR; BH over all tested pairs'))
     (out/'manifest.json').write_text(json.dumps(manifest, sort_keys=True, indent=1) + '\n')
@@ -509,7 +537,9 @@ def write_outputs(result, out, payload=None, inputs=None):
 
 def _version():
     from fiberhmm import __version__
-    info = dict(version=__version__)
+    import scipy
+    import sklearn
+    info = dict(version=__version__, numpy=np.__version__, scipy=scipy.__version__, sklearn=sklearn.__version__)
     root = Path(__file__).resolve().parents[3]
     try:
         import subprocess
@@ -521,8 +551,25 @@ def _version():
     return info
 
 
+def _sha256(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as fh:
+        for block in iter(lambda: fh.read(1 << 20), b''):
+            h.update(block)
+    return h.hexdigest()
+
+
 def _inputs(payload, inputs):
     out = dict(inputs or {})
+    digests = {}
+    for d in out.get('classes') or ():
+        for name in ('classes.tsv', 'molecules.tsv.gz'):
+            if (Path(d)/name).is_file():
+                digests[str(Path(d)/name)] = _sha256(Path(d)/name)
+    if out.get('evidence') and Path(out['evidence']).is_file():
+        digests[out['evidence']] = _sha256(out['evidence'])
+    if digests:
+        out['sha256'] = digests
     if payload is not None and payload.get('input_files'):
         out.setdefault('files', payload['input_files'])
     if payload is not None:

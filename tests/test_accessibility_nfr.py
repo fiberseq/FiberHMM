@@ -167,19 +167,23 @@ def test_nfr_regions_are_detected_from_the_profile():
 
 # ---------------------------------------------------------------- determinism
 def test_outputs_do_not_depend_on_read_order_and_are_byte_identical(tmp_path):
-    units, _ = planted([(.5, [(1400, 1700)]), (.2, [(1480, 1620)]), (.3, [])], n=250, seed=6)
+    states = [(.3, [(800, 1000), (1400, 1700), (2100, 2300)]), (.2, [(1480, 1620), (2100, 2300)]), (.2, [(800, 1000)]), (.3, [])]
+    units, _ = planted(states, n=250, seed=6)
     shuffled = list(units); random.Random(0).shuffle(shuffled)
-    a = run_accessibility(payload(units), dict(FAST, nfr_regions=[(1380, 1720)]), tmp_path/'a')
-    b = run_accessibility(payload(shuffled), dict(FAST, nfr_regions=[(1380, 1720)]), tmp_path/'b')
+    params = dict(FAST, nfr_regions=[(780, 1020), (1380, 1720), (2080, 2320)], elements='nfrs')
+    a = run_accessibility(payload(units), params, tmp_path/'a')
+    b = run_accessibility(payload(shuffled), params, tmp_path/'b')
+    assert len(a['pairs']) == 3 and a['combos']['status'] == 'ok'          # the pair and combination files are not empty
+    assert len(a['combos']['patterns']) == 8 and sum(p['obs'] for p in a['combos']['patterns']) == a['combos']['n']
     for name in ('variants.tsv', 'configurations.tsv', 'molecules.tsv.gz', 'coaccess.tsv', 'combos.tsv', 'result.json'):
         assert (tmp_path/'a'/name).read_bytes() == (tmp_path/'b'/name).read_bytes(), name
     ma = json.loads((tmp_path/'a'/'manifest.json').read_text())
     assert ma['schema'] == 'fiberhmm.accessibility.preview.v0' and ma['experimental'] is True
     assert ma['outputs'] == json.loads((tmp_path/'b'/'manifest.json').read_text())['outputs']
-    assert a['nfrs'] == b['nfrs']
+    assert a['nfrs'] == b['nfrs'] and len((tmp_path/'a'/'coaccess.tsv').read_text().splitlines()) == 4
     with gzip.open(tmp_path/'a'/'molecules.tsv.gz', 'rt') as fh:
         rows = fh.read().splitlines()
-    assert rows[0].split('\t')[:3] == ['nfr', 'unit_id', 'read_name'] and len(rows) == 251
+    assert rows[0].split('\t')[:3] == ['nfr', 'unit_id', 'read_name'] and len(rows) == 1 + 3*250   # one row per molecule and NFR
 
 
 # ---------------------------------------------------------------- co-accessibility
@@ -364,3 +368,77 @@ def test_cli_writes_every_output_deterministically(tmp_path, capsys):
     assert 'outside the analysis window' in capsys.readouterr().err
     main(['--schema'])
     assert json.loads(capsys.readouterr().out)['stringency'] == .9
+
+
+# ---------------------------------------------------------------- Codex review regressions (nfr-preview)
+def test_stringency_only_lowers_or_keeps_k():
+    units, _ = planted([(.5, [(1400, 1700)]), (.3, [(1470, 1770)]), (.2, [])], n=300, seed=8)
+    ks = [run_accessibility(payload(units), dict(FAST, bootstrap=0, stringency=s, nfr_regions=[(1380, 1790)]))['nfrs'][0]
+          for s in (.5, .9, 1.)]
+    assert ks[0]['ps_curve'] == ks[1]['ps_curve'] == ks[2]['ps_curve']
+    assert ks[0]['k'] >= ks[1]['k'] >= ks[2]['k']
+
+
+def test_depth_mode_uses_every_gap_of_an_overflow_read():
+    u = dict(unit_id='u', strand='CT', dataset='d', positions=[], hits=[],
+             raw_nuc_intervals=[[0, 100], [200, 300], [400, 500], [600, 700], [1300, 1400]])
+    reads = G.collect([u], (50, 1350), 60, 3)
+    assert reads[0]['overflow'] == 1 and reads[0]['widest'] == 600
+    from fiberhmm.inference.accessibility.variants import depth_states
+    _, widest, states = depth_states(reads)
+    assert widest[0] == 600 and [int(s['open'][0]) for s in states] == [1, 1, 1]
+
+
+def test_a_read_without_background_is_dropped_not_the_adjustment():
+    def p_open(rng, i):
+        o1 = rng.random() < .5
+        return o1, rng.random() < (.8 if o1 else .2), 30
+    units = two_nfr_units(300, 11, p_open)
+    units[0]['raw_nuc_intervals'] = [[950, 1000], [1000, 1090], [1260, 1360]]   # covers only N1: no background bins
+    res = run_accessibility(payload(units), dict(FAST, nfr_regions=[(980, 1270), (1980, 2270)]))
+    p = pair_of(res, 'N1:V1', 'N2:V1')
+    assert p['adjust'] == 'openness x channel'
+
+
+def test_separation_is_classified_from_the_exact_test():
+    x = np.r_[np.ones(50), np.zeros(50)].astype(int)
+    els = [dict(id='A', kind='nfr', start=100., end=200., state={f'u{i}': int(v) for i, v in enumerate(x)}),
+           dict(id='B', kind='nfr', start=900., end=1000., state={f'u{i}': int(v) for i, v in enumerate(x)})]
+    rng = np.random.default_rng(0)
+    cov = {f'u{i}': dict(x=np.arange(0, 1200, 10), closed=rng.random(120) < .5, ch='d::CT') for i in range(100)}
+    rows, _ = C.pair_table(els, {}, cov, min_reads=10)
+    r, = rows
+    assert r['separation'] and np.isnan(r['mh']) and r['class'] == 'co-accessible' and r['q'] < 1e-10
+
+
+def test_kmax_one_caps_discovery_and_depth_honours_whole_nfr_elements():
+    units, _ = planted([(.5, [(1400, 1700)]), (.3, [(1470, 1770)]), (.2, [])], n=200, seed=8)
+    res = run_accessibility(payload(units), dict(FAST, kmax=1, nfr_regions=[(1380, 1790)]))
+    assert res['nfrs'][0]['k'] == 1 and [k for k, _ in res['nfrs'][0]['ps_curve']] == [1]
+    res = run_accessibility(payload(units), dict(FAST, mode='depth', elements='nfrs', nfr_regions=[(1380, 1790)]))
+    assert [e['id'] for e in res['elements']] == ['N1:open'] and len(res['nfrs'][0]['depth_states']) == 3
+
+
+def test_detected_regions_stay_inside_the_window_and_bad_parameters_are_refused():
+    units = [dict(unit_id=f'u{i}', strand='CT', dataset='d', raw_nuc_intervals=[[0, 100], [1000, 1100]]) for i in range(20)]
+    runs = G.detect_nfrs(units, 400, 703)
+    assert runs and runs[-1]['end'] <= 703
+    for bad in (dict(min_reads=.5), dict(n_perm=0), dict(per_bin=0), dict(splits=0), dict(within_clusters=1),
+                dict(kmax=2.5), dict(q_max=float('nan'))):
+        with pytest.raises(ValueError):
+            NFROptions.from_params(bad)
+    assert NFROptions.from_params(dict(kmax=3.0)).kmax == 3
+
+
+def test_load_recaller_classes_reads_recaller_artifacts(tmp_path):
+    from fiberhmm.inference.accessibility import load_recaller_classes
+    (tmp_path/'classes.tsv').write_text('class_id\tchannel\tstart\tend\tprevalence\tsupported\n'
+                                        'class_001\td::CT\t100.5\t130\t0.4\tTrue\nclass_001\td::GA\t100.5\t130\t0.2\tFalse\n'
+                                        'class_002\td::CT\t300\t330\t0.01\tTrue\n')
+    with gzip.open(tmp_path/'molecules.tsv.gz', 'wt') as fh:
+        fh.write('class_id\tchannel\tunit_id\tposterior\tlabel\n')
+        fh.write('class_001\td::CT\tu1\t0.9\tmember\nclass_001\td::CT\tu2\t0.1\tnon_member\n'
+                 'class_001\td::CT\tu3\t0.5\tabstain\nclass_001\td::GA\tu4\t0.9\tmember\n')
+    c, = load_recaller_classes(tmp_path, prefix='R1:')     # class_002 below the minimum prevalence; GA unsupported
+    assert c['id'] == 'R1:class_001' and c['state'] == {'u1': 1, 'u2': 0} and c['channels'] == ['d::CT']
+    assert c['start'] == 100.5 and c['kind'] == 'tf'

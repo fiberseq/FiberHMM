@@ -175,18 +175,23 @@ def pair_table(els, gaps, cov, *, scope='all', clusters=None, n_perm=500, seed=7
         if len(uids) < min_reads:
             skipped.append(dict(a=A['id'], b=B['id'], reason=f'spanning reads {len(uids)} < {min_reads}'))
             continue
+        # per-read openness without the two tested elements; a read with < 10 background bins has none and is left
+        # out of this pair (never: the whole pair loses its openness adjustment)
+        ex = [(A['start'] - pad_bp, A['end'] + pad_bp), (B['start'] - pad_bp, B['end'] + pad_bp)]
+        op_all = {u: element_open_excluding(cov[u], ex) for u in uids}
+        no_background = sum(1 for u in uids if np.isnan(op_all[u]))
+        uids = [u for u in uids if not np.isnan(op_all[u])]
+        if len(uids) < min_reads:
+            skipped.append(dict(a=A['id'], b=B['id'], reason=f'spanning reads with background {len(uids)} < {min_reads}'))
+            continue
         x = np.array([A['state'][u] for u in uids]); y = np.array([B['state'][u] for u in uids])
         if min(x.sum(), (1 - x).sum(), y.sum(), (1 - y).sum()) < min_marginal:
             skipped.append(dict(a=A['id'], b=B['id'], reason=f'a marginal state has < {min_marginal} reads'))
             continue
         t = table(x, y)
-        ex = [(A['start'] - pad_bp, A['end'] + pad_bp), (B['start'] - pad_bp, B['end'] + pad_bp)]
-        op = np.array([element_open_excluding(cov[u], ex) for u in uids])
+        op = np.array([op_all[u] for u in uids])
         ch = np.array([cov[u]['ch'] for u in uids])
-        if np.isnan(op).any():
-            strata = ch.astype(str); adjust = 'channel only (no background bins)'
-        else:
-            strata = openness_strata(op, ch, per_bin); adjust = 'openness x channel'
+        strata = openness_strata(op, ch, per_bin); adjust = 'openness x channel'
         l2, lo, hi = log2_or(t)
         _, fp = fisher_exact([[t[0], t[1]], [t[2], t[3]]])
         null = stratified_perm(x, y, strata, n_perm, rng)
@@ -195,7 +200,8 @@ def pair_table(els, gaps, cov, *, scope='all', clusters=None, n_perm=500, seed=7
         row = dict(a=A['id'], b=B['id'], kind_a=A['kind'], kind_b=B['kind'], n=len(uids), shared=shared, table=list(t),
                    log2or=float(l2), lo=float(lo), hi=float(hi), fisher_p=float(fp), null_median=float(np.median(null)),
                    null_lo=float(np.percentile(null, 2.5)), null_hi=float(np.percentile(null, 97.5)), p_exact=float(pp),
-                   mh=float(mh[0]), mh_lo=float(mh[1]), mh_hi=float(mh[2]), adjust=adjust, exp11=float(e11),
+                   mh=float(mh[0]), mh_lo=float(mh[1]), mh_hi=float(mh[2]), adjust=adjust, exp11=float(e11), obs11=int(_o11),
+                   no_background=no_background,
                    nested=nested(A, B), dist=float(abs((A['start'] + A['end'])/2 - (B['start'] + B['end'])/2)))
         if clusters is not None:
             lab = clusters(uids, ex) if callable(clusters) else clusters
@@ -207,6 +213,10 @@ def pair_table(els, gaps, cov, *, scope='all', clusters=None, n_perm=500, seed=7
     q = bh([r['p_exact'] for r in rows])
     for r, qq in zip(rows, q):
         r['q'] = float(qq); r['class'] = classify(r['mh_lo'], r['mh_hi'], qq, q_max)
+        r['separation'] = bool(np.isnan(r['mh']))
+        if r['separation'] and qq <= q_max:
+            # complete separation within strata: the MH effect is undefined but the exact test is valid
+            r['class'] = 'co-accessible' if r['obs11'] > r['exp11'] else 'anti'
     return rows, skipped
 
 
