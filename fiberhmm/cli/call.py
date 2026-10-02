@@ -27,6 +27,9 @@ import sys
 from fiberhmm.cli.common import (
     add_force_seq_arg,
     add_legacy_mode_override,
+    ml_threshold,
+    non_negative_int,
+    refuse_model_enzyme_assay_conflict,
     require_model_files,
     resolve_observation_mode,
     resolve_platform_argument,
@@ -119,14 +122,14 @@ def parse_args():
                    help='Context size override. Default: from model.')
     p.add_argument('--edge-trim', type=int, default=10,
                    help='Bases to mask at edges (default 10)')
-    p.add_argument('--min-mapq', type=int, default=0,
+    p.add_argument('--min-mapq', type=non_negative_int, default=0,
                    help='Min mapping quality (default 0)')
-    p.add_argument('--prob-threshold', type=int, default=None,
+    p.add_argument('--prob-threshold', type=ml_threshold, default=None,
                    help='Min MM/ML modification probability 0-255. Default: '
                         'chemistry preset -- 248 for Hia5 Nanopore (--seq '
                         'nanopore, given or detected), 128 otherwise. R/Y- and '
                         'MD-encoded DAF input is binary and ignores it.')
-    p.add_argument('--min-read-length', type=int, default=1000,
+    p.add_argument('--min-read-length', type=non_negative_int, default=1000,
                    help='Min aligned read length (default 1000 — matches fiberhmm-apply)')
     p.add_argument('--msp-min-size', type=int, default=0,
                    help='Min MSP size (default 0)')
@@ -980,6 +983,10 @@ def _main(args):
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(2)
+    if not using_bundled_model:
+        refuse_model_enzyme_assay_conflict(
+            model_mode, args.enzyme, args.seq, args.model,
+            tool='fiberhmm-call', explicit_mode=args.mode)
     k = args.context_size or int(model_k or 3)
     # Chemistry: reconcile with the input's declaration now (file input) so a
     # conflicting re-call fails in a second, before dedup/SNP/NRL passes, and

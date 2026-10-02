@@ -123,6 +123,66 @@ def resolve_observation_mode(
     )
 
 
+def ml_threshold(value) -> int:
+    """argparse type for an ML probability threshold: an integer 0-255.
+
+    ML bytes are 0-255, so a larger threshold silently turns every
+    modification call off.
+    """
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"expected an integer 0-255, got {value!r}")
+    if not 0 <= number <= 255:
+        raise argparse.ArgumentTypeError(
+            f"must be 0-255 (ML probabilities are bytes), got {number}")
+    return number
+
+
+def non_negative_int(value) -> int:
+    """argparse type for counts and thresholds that cannot be negative."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"expected an integer >= 0, got {value!r}")
+    if number < 0:
+        raise argparse.ArgumentTypeError(f"must be >= 0, got {number}")
+    return number
+
+
+def refuse_model_enzyme_assay_conflict(model_mode, enzyme, seq, model_path, *,
+                                       tool: str, explicit_mode=None) -> None:
+    """Exit 2 when a custom ``-m`` and ``--enzyme`` name different assays.
+
+    A DAF-seq (deamination) table with an m6A enzyme, or the reverse, used to
+    run in the model's mode and fail later with a misleading message ("DAF-seq
+    calling needs deamination calls"). Platform differences within an assay
+    are left to the existing mode resolution; an explicit legacy ``--mode``
+    override is honoured.
+    """
+    if not enzyme or explicit_mode or model_mode not in OBSERVATION_MODES:
+        return
+    from fiberhmm.models import get_observation_mode
+
+    try:
+        expected = get_observation_mode(enzyme, seq, warn_missing_seq=False)
+    except KeyError:
+        return
+    if (model_mode == 'daf') == (expected == 'daf'):
+        return
+
+    def assay(mode):
+        return 'DAF-seq (deamination)' if mode == 'daf' else 'Fiber-seq (m6A)'
+
+    print(
+        f"error: {tool}: -m {model_path} is a {assay(model_mode)} model "
+        f"(mode {model_mode}), but --enzyme {enzyme} is {assay(expected)}. "
+        f"Drop --enzyme to use the model as it is, or give a {enzyme} model.",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
+
 def add_filter_args(parser: argparse.ArgumentParser,
                     min_mapq: int = 0,
                     prob_threshold: Optional[int] = 128,
@@ -143,17 +203,17 @@ def add_filter_args(parser: argparse.ArgumentParser,
         threshold_help = (f"Minimum MM/ML probability (0-255) to call "
                           f"modification (default: {prob_threshold})")
     parser.add_argument(
-        '--min-mapq', '-q', type=int, default=min_mapq,
+        '--min-mapq', '-q', type=non_negative_int, default=min_mapq,
         help="Minimum mapping quality; reads below this are written to output "
              "unchanged without footprint/nucleosome tags. Default 0 (call on "
              "all mapped reads). Pass a positive value to filter."
     )
     parser.add_argument(
-        '--prob-threshold', type=int, default=prob_threshold,
+        '--prob-threshold', type=ml_threshold, default=prob_threshold,
         help=threshold_help,
     )
     parser.add_argument(
-        '--min-read-length', type=int, default=min_read_length,
+        '--min-read-length', type=non_negative_int, default=min_read_length,
         help=f"Minimum aligned read length in bp; shorter reads are written to "
              f"output unchanged without footprint/nucleosome tags. Set to 0 to "
              f"attempt calling on all reads regardless of length (default: {min_read_length})"

@@ -18,6 +18,7 @@ from fiberhmm.cli.common import (
     add_parallel_args,
     add_stats_args,
     add_version_args,
+    refuse_model_enzyme_assay_conflict,
     require_model_files,
     resolve_observation_mode,
     resolve_platform_argument,
@@ -377,6 +378,10 @@ def _main(args):
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(2)
+    if not using_bundled_model:
+        refuse_model_enzyme_assay_conflict(
+            model_mode, args.enzyme, args.seq, args.model,
+            tool='fiberhmm-apply', explicit_mode=args.mode)
 
     print(f"  Mode: {mode}")
     args.mode = mode

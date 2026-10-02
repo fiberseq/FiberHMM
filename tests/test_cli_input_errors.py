@@ -204,3 +204,40 @@ def test_merge_of_a_header_only_bam_writes_an_empty_bam(tmp_path):
     with pysam.AlignmentFile(str(output), check_sq=False) as bam:
         assert sum(1 for _ in bam.fetch(until_eof=True)) == 0
 
+
+# ---------------------------------------------------------------------------
+# L5: out-of-range thresholds; L7: -m and --enzyme of different assays
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("function,flag,value", [
+    ("call_main", "--prob-threshold", "300"),
+    ("call_main", "--min-mapq", "-5"),
+    ("call_main", "--min-read-length", "-1"),
+    ("apply_main", "--prob-threshold", "256"),
+    ("apply_main", "--min-mapq", "-1"),
+])
+def test_out_of_range_filters_are_usage_errors(bad_inputs, function, flag, value):
+    """--prob-threshold 300 turned every modification call off and the run
+    still reported footprints; --min-mapq -5 was accepted."""
+    proc = _entry(function, "-i", bad_inputs["garbage"], "-o",
+                  bad_inputs["tmp"] / "x", "--enzyme", "hia5", flag, value)
+    assert proc.returncode == 2
+    assert f"argument {flag}" in proc.stderr
+    assert "Traceback" not in proc.stderr
+
+
+@pytest.mark.parametrize("function", ["call_main", "apply_main"])
+def test_daf_model_with_an_m6a_enzyme_names_the_conflict(bad_inputs, function):
+    from conftest import make_synthetic_bam
+
+    from fiberhmm.models import get_model_path
+
+    bam = make_synthetic_bam(str(bad_inputs["tmp"] / f"l7_{function}.bam"),
+                             n_reads=2, read_length=600, n_chroms=1,
+                             chrom_length=20_000)
+    proc = _entry(function, "-i", bam, "-o", bad_inputs["tmp"] / f"l7_{function}",
+                  "--enzyme", "hia5", "--seq", "nanopore", "-c", "1",
+                  "-m", get_model_path("dddb", "apply", seq="nanopore"))
+    assert proc.returncode == 2, proc.stderr
+    assert "is a DAF-seq (deamination) model" in proc.stderr
+    assert "--enzyme hia5 is Fiber-seq (m6A)" in proc.stderr
