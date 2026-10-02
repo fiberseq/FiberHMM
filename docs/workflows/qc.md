@@ -176,14 +176,16 @@ ignores molecule-to-molecule variation and state-calling uncertainty, so it
 is narrower than a molecule bootstrap), and per-read quantiles over reads with
 at least 50 opportunities in the compartment.
 Efficiency grades the median per-read in-MSP rate against the reference's
-per-read in-MSP rates, one-sided: PASS at or above the reference 25th
-percentile, WARN down to the 5th, FAIL below. Background grades the median
-per-read outside-MSP rate: PASS at or below the reference 75th percentile,
-WARN up to the 95th, FAIL above. The reference is the one computed from the
-same state source (calls made by this release's `fiberhmm-call` defaults, or
-the light call), under the same definition; a different `--min-msp-bp`
-reports the rates without grading them. The quantiles bounding PASS/WARN are
-`state_rates.grading` in `fiberhmm/qc/references.json`. As for the signal
+median, one-sided: PASS while it is less than 20% below the reference median,
+WARN 20–30% below, FAIL more than 30% below. Background grades the median
+per-read outside-MSP rate the same way above the reference median: PASS while
+less than 20% above it, WARN 20–30% above, FAIL more than 30% above. The
+reference is the one computed from the same state source (calls made by this
+release's `fiberhmm-call` defaults, or the light call), under the same
+definition; a different `--min-msp-bp` reports the rates without grading them.
+The bands are `state_rates.grading` (`pass_relative`, `warn_relative`) in
+`fiberhmm/qc/references.json`; a reference may instead give
+`pass_quantile`/`warn_quantile` to bound PASS/WARN by its per-read quantiles. As for the signal
 rate, an ML threshold more than 5 away from the reference's caps the grade at
 WARN. These are screening thresholds on the reference's molecules, not
 false-failure probabilities for a sample median. When one compartment lacks

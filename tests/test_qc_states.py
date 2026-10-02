@@ -404,20 +404,42 @@ def _block(msp, outside, n=100):
             "outside_msp": {"median_per_read_rate": outside, "n_rate_reads": n}}
 
 
-@pytest.mark.parametrize("msp, status", [(0.45, "PASS"), (0.3, "PASS"),
-                                         (0.25, "WARN"), (0.1, "FAIL")])
+# Bands relative to the reference median (0.4 here): PASS while less than 20%
+# below, WARN 20-30% below, FAIL further below.
+@pytest.mark.parametrize("msp, status", [(0.45, "PASS"), (0.33, "PASS"),
+                                         (0.30, "WARN"), (0.25, "FAIL")])
 def test_efficiency_is_graded_one_sided_low(msp, status):
     efficiency, _ = grade_state_rates(_block(msp, 0.05), _state_reference(), 125)
     assert efficiency["status"] == status
-    assert efficiency["pass_min"] == 0.3 and efficiency["warn_min"] == 0.2
+    assert efficiency["pass_min"] == pytest.approx(0.32) and efficiency["warn_min"] == pytest.approx(0.28)
 
 
-@pytest.mark.parametrize("outside, status", [(0.0, "PASS"), (0.07, "PASS"),
-                                             (0.09, "WARN"), (0.2, "FAIL")])
+# Background mirrors it above the reference median (0.05 here).
+@pytest.mark.parametrize("outside, status", [(0.0, "PASS"), (0.059, "PASS"),
+                                             (0.062, "WARN"), (0.08, "FAIL")])
 def test_background_is_graded_one_sided_high(outside, status):
     _, background = grade_state_rates(_block(0.4, outside), _state_reference(), 125)
     assert background["status"] == status
-    assert background["pass_max"] == 0.07 and background["warn_max"] == 0.1
+    assert background["pass_max"] == pytest.approx(0.06) and background["warn_max"] == pytest.approx(0.065)
+
+
+def test_a_reference_can_still_grade_by_its_quantiles():
+    reference = _state_reference()
+    reference["state_rates"]["grading"] = {
+        "efficiency": {"pass_quantile": 0.25, "warn_quantile": 0.05},
+        "background": {"pass_quantile": 0.75, "warn_quantile": 0.95}}
+    efficiency, background = grade_state_rates(_block(0.25, 0.09), reference, 125)
+    assert efficiency["pass_min"] == 0.3 and efficiency["warn_min"] == 0.2 and efficiency["status"] == "WARN"
+    assert background["pass_max"] == 0.07 and background["warn_max"] == 0.1 and background["status"] == "WARN"
+
+
+def test_the_shipped_references_grade_relative_to_their_median():
+    import json
+    from importlib import resources
+    shipped = json.loads(resources.files("fiberhmm.qc").joinpath("references.json").read_text())
+    graded = [p["state_rates"]["grading"] for p in shipped["profiles"].values()
+              if isinstance(p.get("state_rates"), dict) and "grading" in p["state_rates"]]
+    assert graded and all(g["efficiency"] == {"pass_relative": 0.2, "warn_relative": 0.3} for g in graded)
 
 
 def test_grading_requires_the_reference_definition_and_threshold():

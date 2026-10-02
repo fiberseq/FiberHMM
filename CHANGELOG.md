@@ -432,7 +432,9 @@ These change numbers relative to 2.x.
   accessible the sample's chromatin is (an amplicon at an open locus labels
   more of its length than genome-wide data at the same enzyme efficiency).
   Hia5 Nanopore, without a state-aware reference yet, keeps the
-  overall-rate verdict, as does `--state-source none`.
+  overall-rate verdict, as does `--state-source none`. Both rates are graded
+  relative to the reference median: PASS within 20% of it, WARN 20–30% off
+  (below for efficiency, above for background), FAIL beyond 30%.
 
 - **ML threshold per chemistry.** Hia5 on Nanopore (`--seq nanopore`, given or
   detected) calls m6A at ML ≥ 248 in `fiberhmm-call`, `-apply`,

@@ -113,12 +113,12 @@ def build_profile(profile: str, paths: list[str]) -> dict:
         "by_source": by_source,
         "inputs": [Path(path).name for path in paths],
         "thresholds": (
-            "efficiency (median per-read in-MSP rate): PASS >= the reference "
-            "quantile grading.efficiency.pass_quantile, WARN >= warn_quantile, "
-            "FAIL below; background (median per-read outside-MSP rate): PASS <= "
-            "grading.background.pass_quantile, WARN <= warn_quantile, FAIL "
-            "above; quantiles of the reference's per-read rates under the "
-            "sample's own state source (tags or light_call)"
+            "efficiency (median per-read in-MSP rate): PASS while less than "
+            "grading.efficiency.pass_relative below the reference median, WARN "
+            "down to warn_relative below, FAIL further; background (median "
+            "per-read outside-MSP rate): the same fractions above the median; "
+            "medians of the reference's per-read rates under the sample's own "
+            "state source (tags or light_call)"
         ),
     }
 

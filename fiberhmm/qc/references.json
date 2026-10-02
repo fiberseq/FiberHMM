@@ -15,12 +15,12 @@
         },
         "grading": {
           "efficiency": {
-            "pass_quantile": 0.25,
-            "warn_quantile": 0.05
+            "pass_relative": 0.2,
+            "warn_relative": 0.3
           },
           "background": {
-            "pass_quantile": 0.75,
-            "warn_quantile": 0.95
+            "pass_relative": 0.2,
+            "warn_relative": 0.3
           }
         },
         "by_source": {
@@ -121,7 +121,7 @@
           "napa.called.bam",
           "uba1.called.bam"
         ],
-        "thresholds": "efficiency (median per-read in-MSP rate): PASS >= the reference quantile grading.efficiency.pass_quantile, WARN >= warn_quantile, FAIL below; background (median per-read outside-MSP rate): PASS <= grading.background.pass_quantile, WARN <= warn_quantile, FAIL above; quantiles of the reference's per-read rates under the sample's own state source (tags or light_call)"
+        "thresholds": "efficiency (median per-read in-MSP rate): PASS while less than 20% below the reference median, WARN 20-30% below, FAIL more than 30% below; background (median per-read outside-MSP rate): PASS while less than 20% above the reference median, WARN 20-30% above, FAIL more than 30% above; medians of the reference's per-read rates under the sample's own state source (tags or light_call)"
       },
       "periodicity": {
         "pass_strength": 0.008,
@@ -187,12 +187,12 @@
         },
         "grading": {
           "efficiency": {
-            "pass_quantile": 0.25,
-            "warn_quantile": 0.05
+            "pass_relative": 0.2,
+            "warn_relative": 0.3
           },
           "background": {
-            "pass_quantile": 0.75,
-            "warn_quantile": 0.95
+            "pass_relative": 0.2,
+            "warn_relative": 0.3
           }
         },
         "by_source": {
@@ -292,7 +292,7 @@
         "inputs": [
           "yw.called.bam"
         ],
-        "thresholds": "efficiency (median per-read in-MSP rate): PASS >= the reference quantile grading.efficiency.pass_quantile, WARN >= warn_quantile, FAIL below; background (median per-read outside-MSP rate): PASS <= grading.background.pass_quantile, WARN <= warn_quantile, FAIL above; quantiles of the reference's per-read rates under the sample's own state source (tags or light_call)"
+        "thresholds": "efficiency (median per-read in-MSP rate): PASS while less than 20% below the reference median, WARN 20-30% below, FAIL more than 30% below; background (median per-read outside-MSP rate): PASS while less than 20% above the reference median, WARN 20-30% above, FAIL more than 30% above; medians of the reference's per-read rates under the sample's own state source (tags or light_call)"
       },
       "periodicity": {
         "pass_strength": 0.04,
@@ -415,12 +415,12 @@
         },
         "grading": {
           "efficiency": {
-            "pass_quantile": 0.25,
-            "warn_quantile": 0.05
+            "pass_relative": 0.2,
+            "warn_relative": 0.3
           },
           "background": {
-            "pass_quantile": 0.75,
-            "warn_quantile": 0.95
+            "pass_relative": 0.2,
+            "warn_relative": 0.3
           }
         },
         "by_source": {
@@ -520,7 +520,7 @@
         "inputs": [
           "pacbio.called.bam"
         ],
-        "thresholds": "efficiency (median per-read in-MSP rate): PASS >= the reference quantile grading.efficiency.pass_quantile, WARN >= warn_quantile, FAIL below; background (median per-read outside-MSP rate): PASS <= grading.background.pass_quantile, WARN <= warn_quantile, FAIL above; quantiles of the reference's per-read rates under the sample's own state source (tags or light_call)"
+        "thresholds": "efficiency (median per-read in-MSP rate): PASS while less than 20% below the reference median, WARN 20-30% below, FAIL more than 30% below; background (median per-read outside-MSP rate): PASS while less than 20% above the reference median, WARN 20-30% above, FAIL more than 30% above; medians of the reference's per-read rates under the sample's own state source (tags or light_call)"
       },
       "periodicity": {
         "pass_strength": 0.08,

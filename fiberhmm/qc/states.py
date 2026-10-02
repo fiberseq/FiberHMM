@@ -687,9 +687,13 @@ def _opportunity_text(mode: str) -> str:
 #: Definition fields a sample must share with the reference to be graded.
 #: Reference per-read quantiles that bound PASS/WARN (adjustable per profile
 #: in references.json ``state_rates.grading``).
+# Bands relative to the reference median (owner, 3 Oct): efficiency PASS while
+# less than 20% below it, WARN 20-30% below, FAIL more than 30% below;
+# background mirrors it above the median. A reference may instead give
+# pass_quantile/warn_quantile (bounds from its per-read quantiles).
 DEFAULT_GRADING = {
-    "efficiency": {"pass_quantile": 0.25, "warn_quantile": 0.05},
-    "background": {"pass_quantile": 0.75, "warn_quantile": 0.95},
+    "efficiency": {"pass_relative": 0.20, "warn_relative": 0.30},
+    "background": {"pass_relative": 0.20, "warn_relative": 0.30},
 }
 GRADED_DEFINITION_FIELDS = (
     "min_msp_bp", "edge_trim_bp", "terminal_segments",
@@ -797,9 +801,16 @@ def grade_state_rates(block: dict, profile: Optional[dict],
     for component, compartment, scorer in (
             (efficiency, "msp", "high"), (background, "outside_msp", "low")):
         median = quantile(compartment, 0.5)
-        rule = grading["efficiency" if scorer == "high" else "background"]
-        pass_bound = quantile(compartment, rule["pass_quantile"])
-        warn_bound = quantile(compartment, rule["warn_quantile"])
+        name = "efficiency" if scorer == "high" else "background"
+        rule = {**DEFAULT_GRADING[name], **reference.get("grading", {}).get(name, {})}
+        if "pass_quantile" in rule and "warn_quantile" in rule and "pass_relative" not in reference.get(
+                "grading", {}).get(name, {}):
+            pass_bound = quantile(compartment, rule["pass_quantile"])
+            warn_bound = quantile(compartment, rule["warn_quantile"])
+        else:
+            sign = -1.0 if scorer == "high" else 1.0
+            pass_bound = median * (1.0 + sign * float(rule["pass_relative"]))
+            warn_bound = median * (1.0 + sign * float(rule["warn_relative"]))
         if scorer == "high":
             component.update(pass_min=pass_bound, warn_min=warn_bound)
         else:
