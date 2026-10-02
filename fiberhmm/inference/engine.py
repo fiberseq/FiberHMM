@@ -604,11 +604,8 @@ def _daf_excluded_query_positions(read):
 
 
 def daf_no_call_blocks(read):
-    """Long unaligned (I/S) SEQ spans of ``read`` from which calls are removed
-    (:mod:`fiberhmm.inference.no_evidence`). Slim stubs carry them precomputed."""
-    blocks = getattr(read, '_daf_no_call_blocks', None)
-    if blocks is not None:
-        return list(blocks)
+    """Long unaligned (I/S) SEQ spans of a live DAF ``read`` from which calls
+    are removed (:mod:`fiberhmm.inference.no_evidence`)."""
     if not daf_unaligned_mask_enabled():
         return []
     try:
@@ -620,6 +617,24 @@ def daf_no_call_blocks(read):
     from fiberhmm.inference.no_evidence import unaligned_blocks
     seq = getattr(read, 'query_sequence', None)
     return unaligned_blocks(cigar, query_length=len(seq) if seq else None)
+
+
+def read_no_call_blocks(read, mode):
+    """SEQ spans of ``read`` that get no calls: a DAF read's long unaligned
+    blocks, and the soft clips of any supplementary record (those bases are
+    the primary record's; a supplementary record is called on its aligned
+    part only). Slim stubs carry the spans precomputed by their producer."""
+    blocks = getattr(read, '_no_call_blocks', None)
+    if blocks is not None:
+        return list(blocks)
+    out = list(daf_no_call_blocks(read)) if mode == 'daf' else []
+    if getattr(read, 'is_supplementary', False):
+        from fiberhmm.inference.no_evidence import supplementary_clip_blocks
+        out += supplementary_clip_blocks(read)
+    if len(out) > 1:
+        from fiberhmm.inference.no_evidence import merge_blocks
+        out = merge_blocks(out)
+    return out
 
 
 def _stub_or_live_excluded(read):
@@ -646,11 +661,11 @@ class _ApplyPayloadRead:
     """
     __slots__ = ('query_name', 'query_sequence', 'is_reverse', '_tags',
                  '_daf_md_result', '_daf_excluded_query_positions',
-                 '_daf_no_call_blocks')
+                 '_no_call_blocks')
 
     def __init__(self, query_name, query_sequence, is_reverse, tags,
                  daf_md_result=None, daf_excluded_query_positions=None,
-                 daf_no_call_blocks=None):
+                 no_call_blocks=None):
         self.query_name = query_name
         self.query_sequence = query_sequence
         self.is_reverse = is_reverse
@@ -659,7 +674,7 @@ class _ApplyPayloadRead:
         self._daf_excluded_query_positions = set(
             daf_excluded_query_positions or ()
         )
-        self._daf_no_call_blocks = list(daf_no_call_blocks or ())
+        self._no_call_blocks = list(no_call_blocks or ())
 
     def has_tag(self, t):
         return t in self._tags
@@ -721,9 +736,6 @@ def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None,
         excluded_query_positions = _daf_excluded_query_positions(read)
         if excluded_query_positions:
             payload['_daf_excluded_query_positions'] = excluded_query_positions
-        no_call_blocks = daf_no_call_blocks(read)
-        if no_call_blocks:
-            payload['_daf_no_call_blocks'] = no_call_blocks
         if not has_iupac_encoding(seq):
             from fiberhmm.daf.encoder import get_daf_positions
             md_res = get_daf_positions(
@@ -741,6 +753,10 @@ def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None,
             rest = _daf_raw_mismatch_lists(read, ref_fasta)
             if rest is not None:
                 payload['_daf_md_result'] = rest
+
+    no_call_blocks = read_no_call_blocks(read, mode)
+    if no_call_blocks:
+        payload['_no_call_blocks'] = no_call_blocks
 
     if mode == 'daf' and read.has_tag('MA'):
         # DddA CpG-aware recall reads the molecule's own tag-m5c island calls
@@ -778,7 +794,7 @@ def extract_fiber_read_from_payload(payload: dict, mode: str, prob_threshold: in
             daf_excluded_query_positions=payload.get(
                 '_daf_excluded_query_positions'
             ),
-            daf_no_call_blocks=payload.get('_daf_no_call_blocks'),
+            no_call_blocks=payload.get('_no_call_blocks'),
         ),
         mode, prob_threshold,
     )
@@ -857,10 +873,10 @@ def _with_unknown(fiber_read: dict, unknown_positions, read=None) -> dict:
     no-call blocks of a DAF read to a fiber_read."""
     if unknown_positions:
         fiber_read['unknown_query_positions'] = set(unknown_positions)
-        if read is not None:
-            blocks = daf_no_call_blocks(read)
-            if blocks:
-                fiber_read['no_call_blocks'] = blocks
+    if read is not None:
+        blocks = read_no_call_blocks(read, 'daf')
+        if blocks:
+            fiber_read['no_call_blocks'] = blocks
     return fiber_read
 
 
@@ -1004,10 +1020,9 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
         # Bases left unlisted by a '?' MM entry (and, for DAF, masked bases):
         # no call, not "unmodified".
         fiber_read['unknown_query_positions'] = unknown_pos_set
-        if mode == 'daf':
-            blocks = daf_no_call_blocks(read)
-            if blocks:
-                fiber_read['no_call_blocks'] = blocks
+    blocks = read_no_call_blocks(read, mode)
+    if blocks:
+        fiber_read['no_call_blocks'] = blocks
     return fiber_read
 
 

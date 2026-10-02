@@ -45,13 +45,71 @@ def new_skip_counts() -> dict:
     return {reason: 0 for reason in SKIP_REASONS}
 
 
+# Which alignment records are called. ``primary-supplementary`` (the 3.0
+# default) calls primary and supplementary records: a supplementary record is
+# another part of the same read (a split alignment: the far side of a
+# structural variant, a TE copy elsewhere), not a copy of it. Secondary records
+# are alternative placements of the same bases and stay uncalled. ``primary``
+# is the earlier 3.0 behaviour (--primary), ``all`` calls every record
+# (--no-primary).
+ALIGNMENT_SETS = ("primary", "primary-supplementary", "all")
+DEFAULT_ALIGNMENTS = "primary-supplementary"
+
+
+def resolve_alignments(value) -> str:
+    """Normalise a ``primary_only``/``--alignments`` value to an ALIGNMENT_SETS
+    name: True -> ``primary``, False -> ``all``, None -> the default."""
+    if value is None:
+        return DEFAULT_ALIGNMENTS
+    if value is True:
+        return "primary"
+    if value is False:
+        return "all"
+    if value not in ALIGNMENT_SETS:
+        raise ValueError(f"alignments must be one of {ALIGNMENT_SETS}, not {value!r}")
+    return value
+
+
+def alignment_skipped(read, alignments) -> bool:
+    """True when ``read``'s record type is outside the called alignment set."""
+    alignments = resolve_alignments(alignments)
+    if alignments == "all":
+        return False
+    if read.is_secondary:
+        return True
+    return bool(read.is_supplementary) and alignments == "primary"
+
+
+def add_alignment_args(parser) -> None:
+    """``--alignments`` with ``--primary``/``--no-primary`` as aliases."""
+    import argparse
+    parser.add_argument(
+        '--alignments', choices=list(ALIGNMENT_SETS), default=DEFAULT_ALIGNMENTS,
+        help='Alignment records to call (default primary-supplementary): '
+             'primary and supplementary records, the parts of a split read '
+             '(e.g. both sides of a structural variant); secondary records, '
+             'alternative placements of the same bases, pass through uncalled. '
+             'On a supplementary record only its aligned bases are called. '
+             '"primary" calls primary records only; "all" also calls secondary '
+             'records. Hard-clipped records whose MM/ML cannot match SEQ are '
+             'always skipped (hard_clipped_mm).')
+    parser.add_argument('--primary', dest='alignments', action='store_const',
+                        const='primary',
+                        help='Same as --alignments primary.')
+    parser.add_argument('--no-primary', dest='alignments', action='store_const',
+                        const='all', help='Same as --alignments all.')
+    del argparse
+
+
 @dataclass(frozen=True)
 class ReadFilterConfig:
     """Filtering options shared by streaming inference paths."""
 
     min_mapq: int = 0
     min_read_length: int = 0
-    primary_only: bool = False
+    # Alignment set (see ALIGNMENT_SETS); True/False are the older
+    # primary-only / all spellings.
+    primary_only: object = False
     process_unmapped: bool = False
     train_rids: AbstractSet[str] = field(default_factory=frozenset)
     # Observation mode and reference availability decide whether a read's
@@ -123,7 +181,7 @@ def streaming_skip_reason(read, config: ReadFilterConfig) -> Optional[str]:
         if not config.process_unmapped or read.query_sequence is None:
             return "unmapped"
 
-    if config.primary_only and (read.is_secondary or read.is_supplementary):
+    if alignment_skipped(read, config.primary_only):
         return "secondary_supplementary"
 
     if not read.is_unmapped and read.mapping_quality < config.min_mapq:

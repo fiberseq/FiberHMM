@@ -656,3 +656,68 @@ def test_read_inputs_fastq_tags_and_bam_to_fastq(tmp_path):
     # restores the original name.
     assert names == ["0~r1", "1~f", "2~r"]
     assert [mm2.original_name(n) for n in names] == ["r1", "f", "r"]
+
+
+# ---------------------------------------------------------------------------
+# Split reads (3.0 SV default): supplementary records and soft clips
+# ---------------------------------------------------------------------------
+
+def _split_group(circular_contig=False):
+    header = pysam.AlignmentHeader.from_dict(
+        {"SQ": [{"SN": "c1", "LN": 50_000}, {"SN": "te", "LN": 5_000}]})
+    seq = random_seq(3_000, 21)
+    prim = _record(header, "r", seq, 1_000, [(0, 2_000), (4, 1_000)])
+    supp = _record(header, "r", seq, 100, [(4, 2_000), (0, 1_000)], supplementary=True)
+    supp.reference_id = 1
+    sec = _record(header, "r", seq, 9_000, [(0, 2_000), (4, 1_000)])
+    sec.flag |= 0x100
+    for rec in (prim, supp):
+        rec.set_tag("SA", "x,1,+,10M,60,0;")
+    circular = {"c1", "te"} if circular_contig else set()
+    return [prim, supp, sec], circular
+
+
+def _process(group, circular, **config):
+    from types import SimpleNamespace
+    cfg = runner.PipelineConfig(reads=[], reference="r.fa", enzyme="dddb", outdir="o",
+                                **config)
+    stub = SimpleNamespace(config=cfg, _overlaps_regions=lambda read: True)
+    stats = {k: 0 for k in ("reads", "unmapped", "low_mapq", "outside_regions", "kept",
+                            "supplementary_kept", "origin_merged", "hard_clipped_reads",
+                            "hard_clipped_bases")}
+    sequences = {name: "A" * 50_000 for name in circular}
+    kept = runner.Pipeline._process_group(stub, group, circular, sequences, stats, "r")
+    return kept, stats
+
+
+def test_aligner_step_keeps_supplementary_and_soft_clips_on_linear_contigs():
+    group, circular = _split_group()
+    kept, stats = _process(group, circular)
+    assert [r.is_supplementary for r in kept] == [False, True]
+    assert [r.cigartuples[0][0] for r in kept] == [0, 4]      # soft clips kept
+    assert all(r.has_tag("SA") for r in kept)                 # all pieces kept
+    assert stats["kept"] == 1 and stats["supplementary_kept"] == 1
+    assert stats["hard_clipped_reads"] == 0
+
+
+def test_aligner_step_primary_only_and_hard_clip_options():
+    group, circular = _split_group()
+    kept, _ = _process(group, circular, alignments="primary")
+    assert len(kept) == 1 and not kept[0].has_tag("SA")
+    group, circular = _split_group()
+    kept, stats = _process(group, circular, hard_clip=True)
+    assert stats["hard_clipped_reads"] == 2
+    assert all(op != 4 for r in kept for op, _n in r.cigartuples)
+
+
+def test_daf_hard_clip_and_supplementary_drop_stay_on_circular_contigs():
+    """Concatemer arms and copies of the same plasmid would annotate one
+    molecule twice: DAF reads on circular contigs keep the 3.0 handling."""
+    group, circular = _split_group(circular_contig=True)
+    kept, stats = _process(group, circular)
+    assert len(kept) == 1 and not kept[0].is_supplementary
+    assert stats["hard_clipped_reads"] == 1
+    assert runner.PipelineConfig(reads=[], reference="r", enzyme="hia5",
+                                 outdir="o").resolved_hard_clip() == "off"
+    assert runner.PipelineConfig(reads=[], reference="r", enzyme="ddda",
+                                 outdir="o").resolved_hard_clip() == "circular"

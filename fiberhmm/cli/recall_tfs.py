@@ -391,18 +391,16 @@ def _make_payload(read, mode=None, input_molecular_frame=True) -> dict:
         'is_reverse': read.is_reverse,
         'tags': tags,
     }
+    from fiberhmm.inference.engine import read_no_call_blocks
+    blocks = read_no_call_blocks(read, mode)
+    if blocks:
+        payload['_no_call_blocks'] = blocks
     if mode == 'daf' and read.query_sequence:
         from fiberhmm.core.bam_reader import has_iupac_encoding
-        from fiberhmm.inference.engine import (
-            daf_no_call_blocks,
-            daf_unaligned_query_positions,
-        )
+        from fiberhmm.inference.engine import daf_unaligned_query_positions
         unaligned = daf_unaligned_query_positions(read)
         if unaligned:
             payload['_daf_unaligned_query_positions'] = unaligned
-            blocks = daf_no_call_blocks(read)
-            if blocks:
-                payload['_daf_no_call_blocks'] = blocks
         if (
             not has_iupac_encoding(read.query_sequence)
             and not (('MM' in tags or 'Mm' in tags) and ('ML' in tags or 'Ml' in tags))
@@ -568,8 +566,8 @@ def _process_nuc_payload_record(read, payload, nuc_cfg) -> tuple:
             _WORKER.get('cpg_mask_policy', 'unmethylated-only'),
         )
     fiber_read = {'query_sequence': payload['seq']}
-    if payload.get('_daf_no_call_blocks'):
-        fiber_read['no_call_blocks'] = payload['_daf_no_call_blocks']
+    if payload.get('_no_call_blocks'):
+        fiber_read['no_call_blocks'] = payload['_no_call_blocks']
     result = build_fused_recall_result(
         fiber_read, apply_result,
         _WORKER['llr_hit'], _WORKER['llr_miss'],

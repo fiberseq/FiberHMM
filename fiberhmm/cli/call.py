@@ -153,13 +153,8 @@ def parse_args():
                         '(uBAM) input, off (pass-through) for indexed aligned '
                         'BAMs. A run that skips >90%% of records as unmapped '
                         'fails unless --no-process-unmapped is given.')
-    p.add_argument('--primary', action=argparse.BooleanOptionalAction,
-                   default=True,
-                   help='Call primary alignments only (default); secondary and '
-                        'supplementary records are passed through uncalled. '
-                        '--no-primary also calls them. Hard-clipped records '
-                        'whose MM/ML cannot match SEQ are always skipped '
-                        '(hard_clipped_mm).')
+    from fiberhmm.inference.read_filters import add_alignment_args
+    add_alignment_args(p)
 
     # --- Recall params ---
     p.add_argument('--min-llr', type=float, default=None,
@@ -1407,7 +1402,7 @@ def _main(args):
                    f"(ns/nl/as/al/MA in molecular original-fiber coordinates); "
                    f"mode={mode} enzyme={args.enzyme or 'custom'} "
                    f"prob_threshold={args.prob_threshold} "
-                   f"primary_only={'on' if args.primary else 'off'} "
+                   f"primary_only={'on' if args.alignments == 'primary' else 'off'} alignments={args.alignments} "
                    f"tf_decoder={TF_DECODER_VERSION} tf_interval_penalty={min_llr} "
                    f"recall_nucs={recall_nucs} "
                    f"nuc_recall_policy={nuc_recall_policy} "
@@ -1432,7 +1427,7 @@ def _main(args):
             f"  nuc likelihood model: {nuc_model_path or '(reuse recall model)'}\n"
             f"  mode={mode} k={k} enzyme={args.enzyme or 'custom'} "
             f"prob-threshold={args.prob_threshold} "
-            f"primary-only={'on' if args.primary else 'off'}\n"
+            f"alignments={args.alignments}\n"
             f"  min_llr={min_llr} min_opps={args.min_opps} "
             f"unify_threshold={args.unify_threshold} uplift={uplift}\n"
             f"  tf-decoder={TF_DECODER_VERSION} interval-penalty={min_llr}\n"
@@ -1509,7 +1504,7 @@ def _main(args):
                 skip_scaffolds=args.skip_scaffolds,
                 chroms=chroms_set,
                 io_threads=args.io_threads,
-                primary_only=args.primary,
+                primary_only=args.alignments,
                 ref_fasta_path=args.reference,
                 recall_nucs=recall_nucs,
                 split_min_llr=args.split_min_llr,
@@ -1563,7 +1558,7 @@ def _main(args):
                 chunk_size=args.chunk_size,
                 io_threads=args.io_threads,
                 process_unmapped=process_unmapped,
-                primary_only=args.primary,
+                primary_only=args.alignments,
                 ref_fasta_path=args.reference,
                 recall_nucs=recall_nucs,
                 split_min_llr=args.split_min_llr,

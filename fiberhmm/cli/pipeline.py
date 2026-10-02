@@ -2,9 +2,10 @@
 """fiberhmm-pipeline — reads + reference -> called BAM ready for FiberBrowser.
 
 One command from a sequencing run to footprints: aligns the reads with
-minimap2 (DAF-seq on Nanopore: -ax map-ont --MD -Y), keeps primary alignments
-at MAPQ >= 20, joins reads that run through the origin of a circular plasmid,
-trims unaligned read arms, calls footprints with fiberhmm-call (duplicate
+minimap2 (DAF-seq on Nanopore: -ax map-ont --MD -Y), keeps primary and
+supplementary alignments at MAPQ >= 20 (both sides of a split read), joins
+reads that run through the origin of a circular plasmid and trims DAF
+concatemer arms there, calls footprints with fiberhmm-call (duplicate
 marking, chimera filter and SNP screen as in fiberhmm-call) and runs
 fiberhmm-qc. BAMs already aligned to the reference (e.g. Fiber-seq aligned
 with pbmm2) are called as they are.
@@ -91,10 +92,15 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Keep primary alignments with at least this MAPQ "
                             "(default 20); also passed to fiberhmm-call and "
                             "fiberhmm-qc.")
-    align.add_argument("--keep-soft-clips", action="store_true",
-                       help="Keep unaligned read arms as soft clips. Default: hard-clip "
-                            "them for ddda/dddb (concatemer and chimera arms), keep "
-                            "them for hia5.")
+    clips = align.add_mutually_exclusive_group()
+    clips.add_argument("--keep-soft-clips", action="store_true",
+                       help="Keep unaligned read arms as soft clips everywhere. "
+                            "Default: kept on linear contigs (DAF calling treats them "
+                            "as no evidence); for ddda/dddb hard-clipped on circular "
+                            "contigs (concatemer arms beyond one full circle).")
+    clips.add_argument("--hard-clip", action="store_true",
+                       help="Hard-clip unaligned read arms on every contig (the "
+                            "earlier ddda/dddb default).")
     align.add_argument("--no-origin-merge", dest="origin_merge", action="store_false",
                        help="Do not join the two pieces of reads that run through the "
                             "origin of a circular reference (keep the primary piece).")
@@ -117,11 +123,27 @@ def build_parser() -> argparse.ArgumentParser:
                            "depth preflight).")
     call.add_argument("--snp-mask", default=None, metavar="BED",
                       help="DAF: your own BED of SNP sites to exclude.")
+    call.add_argument("--daf-mask-unaligned", action=argparse.BooleanOptionalAction,
+                      default=True,
+                      help="DAF: treat insertion and soft-clip bases as no evidence "
+                           "and leave unaligned stretches >= 50 bp uncalled "
+                           "(default on).")
     call.add_argument("--chimera-filter", action=argparse.BooleanOptionalAction,
                       default=True,
                       help="DAF: skip strand-swap chimeric reads (default on).")
-    call.add_argument("--primary", action=argparse.BooleanOptionalAction, default=True,
-                      help="Call primary alignments only (default on).")
+    call.add_argument("--alignments", choices=["primary", "primary-supplementary", "all"],
+                      default="primary-supplementary",
+                      help="Alignment records to keep and call (default "
+                           "primary-supplementary: a read's primary and supplementary "
+                           "records, i.e. both sides of a split alignment, on linear "
+                           "contigs; secondary records are dropped). primary: the "
+                           "primary record only; all: as primary-supplementary here "
+                           "(the aligner step never keeps secondary records) and "
+                           "passed to fiberhmm-call.")
+    call.add_argument("--primary", dest="alignments", action="store_const",
+                      const="primary", help="Same as --alignments primary.")
+    call.add_argument("--no-primary", dest="alignments", action="store_const",
+                      const="all", help="Same as --alignments all.")
     call.add_argument("--prob-threshold", type=int, default=None,
                       help="ML threshold override, 0-255 (default: chemistry preset).")
     call.add_argument("--use-m5c", action=argparse.BooleanOptionalAction, default=None,
@@ -180,14 +202,16 @@ def config_from_args(args):
         regions=list(args.region or []),
         min_mapq=args.min_mapq,
         min_read_length=args.min_read_length,
-        hard_clip=False if args.keep_soft_clips else None,
+        hard_clip=(False if args.keep_soft_clips
+                   else True if args.hard_clip else None),
         origin_merge=args.origin_merge,
         dedup=args.dedup,
         dedup_mode=args.dedup_mode,
         snp_screen=args.snp_screen,
         snp_mask=args.snp_mask,
         chimera_filter=args.chimera_filter,
-        primary=args.primary,
+        daf_mask_unaligned=args.daf_mask_unaligned,
+        alignments=args.alignments,
         prob_threshold=args.prob_threshold,
         use_m5c=args.use_m5c,
         cpg_mask_policy=args.cpg_mask_policy,

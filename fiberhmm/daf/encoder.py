@@ -144,12 +144,16 @@ def get_daf_positions(
         though only the selected-strand list is used downstream -- the
         other is returned for diagnostics and future use).
 
-        ``None`` if the read should be skipped (unmapped, secondary,
-        supplementary, no mismatches, or ambiguous strand with
-        no ``force_strand``).
+        ``None`` if the read should be skipped (unmapped, no mismatches,
+        or ambiguous strand with no ``force_strand``). Secondary and
+        supplementary records are evaluated like primary ones (before 3.0
+        they returned ``None``); ``fiberhmm-daf-encode`` still passes them
+        through unencoded, and fiberhmm-call compares them through MD.
     """
-    # Skip unmapped / secondary / supplementary
-    if read.is_unmapped or read.is_secondary or read.is_supplementary:
+    # Unmapped records have no reference to compare with. Secondary and
+    # supplementary records are compared like any other alignment (their
+    # MD/reference is their own); callers choose which records to call.
+    if read.is_unmapped:
         return None
 
     seq = read.query_sequence

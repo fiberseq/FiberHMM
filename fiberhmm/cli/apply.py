@@ -112,13 +112,8 @@ Examples:
     # a clear error instead of an argparse "unrecognized argument".
     parser.add_argument('-l', '--min-footprints', type=int, default=0,
                         help=argparse.SUPPRESS)
-    parser.add_argument('--primary', action=argparse.BooleanOptionalAction,
-                        default=True,
-                        help='Call primary alignments only (default); secondary '
-                             'and supplementary records are passed through '
-                             'uncalled. --no-primary also calls them. '
-                             'Hard-clipped records whose MM/ML cannot match SEQ '
-                             'are always skipped (hard_clipped_mm).')
+    from fiberhmm.inference.read_filters import add_alignment_args
+    add_alignment_args(parser)
     parser.add_argument('--process-unmapped', action=argparse.BooleanOptionalAction,
                         default=None,
                         help='Process unmapped reads that have sequences and modification tags. '
@@ -244,7 +239,7 @@ def _apply_pg_record(args, mode, context_size, chemistry, daf_run_mask):
                f"original-fiber coordinates); mode={mode} "
                f"enzyme={args.enzyme or 'custom'} k={context_size} "
                f"prob_threshold={args.prob_threshold} "
-               f"primary_only={'on' if args.primary else 'off'} "
+               f"primary_only={'on' if args.alignments == 'primary' else 'off'} alignments={args.alignments} "
                f"daf_run_mask={f'>={min_run}/{policy}' if min_run else 'off'}"),
     }
 
@@ -543,7 +538,7 @@ def _main(args):
         max_reads=args.max_reads,
         debug_timing=args.debug_timing,
         region_parallel=False,
-        primary_only=args.primary,
+        primary_only=args.alignments,
         output_posteriors=args.output_posteriors,
         write_msps=not args.no_msps,
         io_threads=args.io_threads,

@@ -199,7 +199,7 @@ def test_mask_can_be_disabled():
     assert "unknown_query_positions" not in fr
     payload = make_apply_payload(read, mode="daf")
     assert "_daf_excluded_query_positions" not in payload
-    assert "_daf_no_call_blocks" not in payload
+    assert "_no_call_blocks" not in payload
 
 
 def test_snp_masked_target_is_no_evidence_not_unmodified():

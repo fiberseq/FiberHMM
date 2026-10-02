@@ -18,6 +18,10 @@ The block is then annotated with nothing: neither protected nor accessible.
 Per-call quality arrays stay aligned with their intervals, so the tags remain
 well formed. Linear reads only: circular molecules keep the mask but not the
 trimming.
+
+The same trimming keeps a supplementary record's calls to its aligned bases
+in every mode: its soft clips are the primary record's sequence (minimap2
+``-Y``), so calling them again would annotate the same bases twice.
 """
 
 from __future__ import annotations
@@ -55,6 +59,35 @@ def unaligned_blocks(cigartuples, min_length: int = NO_CALL_MIN_BLOCK,
     if query_length is not None:
         blocks = [(s, min(e, query_length)) for s, e in blocks if s < query_length]
     return [(s, e) for s, e in blocks if e - s >= min_length]
+
+
+def supplementary_clip_blocks(read) -> List[Tuple[int, int]]:
+    """SEQ spans of a record's leading and trailing soft clips (any length)."""
+    cigar = getattr(read, 'cigartuples', None)
+    if not cigar:
+        return []
+    q_len = sum(n for op, n in cigar if op in _QUERY_OPS)
+    out = []
+    if cigar[0][0] == 4:
+        out.append((0, cigar[0][1]))
+    elif len(cigar) > 1 and cigar[0][0] == 5 and cigar[1][0] == 4:
+        out.append((0, cigar[1][1]))
+    if len(cigar) > 1 and cigar[-1][0] == 4:
+        out.append((q_len - cigar[-1][1], q_len))
+    elif len(cigar) > 2 and cigar[-1][0] == 5 and cigar[-2][0] == 4:
+        out.append((q_len - cigar[-2][1], q_len))
+    return [(s, e) for s, e in out if e > s]
+
+
+def merge_blocks(blocks) -> List[Tuple[int, int]]:
+    """Sort and merge overlapping or touching spans."""
+    out: List[Tuple[int, int]] = []
+    for s, e in sorted((int(a), int(b)) for a, b in blocks):
+        if out and s <= out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], e))
+        else:
+            out.append((s, e))
+    return out
 
 
 def _pieces(start: int, end: int, blocks: Sequence[Tuple[int, int]]):
