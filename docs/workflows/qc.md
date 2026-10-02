@@ -141,28 +141,36 @@ the frame the header declares), those calls are used (`state_rates.source:
 tags`). Otherwise QC runs a *light call*: the bundled apply HMM of the
 declared chemistry, through the same extraction, encoding and Viterbi code
 as `fiberhmm-call`, without nucleosome or TF recall, on at most
-`--light-call-reads` (400) sampled reads and `--light-call-seconds` (60 s)
-(`source: light_call`, with model, SHA-256, reads called and what stopped
-it). The sample is in random order, so a stopped light call is still a random
-subset. `--state-source tags|light-call|none` forces a source or skips.
+`--light-call-reads` (400) sampled reads, taken in a seeded random order, and
+a `--light-call-seconds` (60 s) budget checked between reads (a soft limit:
+one read in progress finishes; a time-stopped subset depends on machine
+speed) (`source: light_call`, with model, SHA-256, reads called and what
+stopped it). fibertools' own calls (`Ma` without `MA`) are reported as
+`fibertools_tags` and not graded, since the references are FiberHMM calls.
+`--state-source tags|light-call|none` forces a source or skips.
 
 **Opportunities** are read off the observation encoding calling uses, so they
 are exactly the sites the HMM sees: DAF targets on the deaminated strand only
-(C on CT reads, G on GA reads) with the chemistry's adjacent-run mask (DddA)
-and the SNP mask; Hia5 PacBio A and T; Hia5 Nanopore the basecalled-strand A;
+(C on CT reads, G on GA reads) with the adjacent-run mask the call recorded
+in its `@PG` (else the chemistry default: keep-one on runs ≥ 2 for DddA);
+sites under the DAF SNP mask are removed as both events and opportunities;
+Hia5 PacBio A and T; Hia5 Nanopore the basecalled-strand A;
 MM `?`-unlisted bases excluded; 10 bases at each read end excluded as in
 calling. These differ from the signal rate's opportunities (all aligned C/G
 for DAF), so `all_states` and `signal` are not the same number.
 
 **Read ends.** A terminal state segment is truncated by the read end: a
 nucleosome cut below 85 bp no longer bounds an MSP and joins it, and an MSP
-cut below 85 bp counts as outside. Both errors reach at most 85 bp from the
-end, so each terminal segment is excluded up to 85 bp from its read end
-(`definition.terminal_segments: cap`).
+cut below 85 bp counts as outside. Each terminal segment is excluded up to
+85 bp from its read end (`definition.terminal_segments: cap`), a heuristic
+that removes most of these errors (a partial nucleosome followed by a linker
+can carry a few linker bases past it).
 
 **Grading.** Each compartment reports pooled `n_events`, `n_opportunities`,
-`aggregate_rate` with a binomial `aggregate_rate_wilson95`, and per-read
-quantiles over reads with at least 50 opportunities in the compartment.
+`aggregate_rate` with a nominal binomial `aggregate_rate_wilson95` (it
+ignores molecule-to-molecule variation and state-calling uncertainty, so it
+is narrower than a molecule bootstrap), and per-read quantiles over reads with
+at least 50 opportunities in the compartment.
 Efficiency grades the median per-read in-MSP rate against the reference's
 per-read in-MSP rates, one-sided: PASS at or above the reference 25th
 percentile, WARN down to the 5th, FAIL below. Background grades the median
@@ -173,7 +181,15 @@ the light call), under the same definition; a different `--min-msp-bp`
 reports the rates without grading them. The quantiles bounding PASS/WARN are
 `state_rates.grading` in `fiberhmm/qc/references.json`. As for the signal
 rate, an ML threshold more than 5 away from the reference's caps the grade at
-WARN.
+WARN. These are screening thresholds on the reference's molecules, not
+false-failure probabilities for a sample median. When one compartment lacks
+evidence (fewer than 20 reads with enough opportunities) the other still
+decides with periodicity; a graded FAIL is never hidden.
+
+Both rates are conditioned on states inferred from the same marks, so they
+are empirical diagnostics rather than direct biochemical measurements: a
+change in state calling, read length or sequence composition can move them
+without any change in the enzyme.
 
 ## Reference data sets
 

@@ -1354,7 +1354,7 @@ def _state_terminal_lines(result: dict) -> list[str]:
     basis = result.get("overall", {}).get("verdict_basis")
     if basis == "state-aware":
         lines.append("  verdict uses in-MSP efficiency + outside-MSP background "
-                     "(the overall rate is reported, not graded)")
+                     "(the signal-rate grade is reported but excluded from the verdict)")
     return lines
 
 
@@ -2042,7 +2042,7 @@ def _plot_qc(
                   "edgecolor": "#cccccc", "alpha": 0.9},
         )
     axes[0, 0].set(xlabel=f"per-read {result['signal']['label']} rate (%)", ylabel="fraction of fibers <= rate", title=(f"Signal rate [{result['signal']['status']}"
-                   + (", reported, not graded]"
+                   + (", not in verdict]"
                       if result["overall"].get("verdict_basis") == "state-aware" else "]")))
     axes[0, 0].set_ylim(0, 1.01)
     axes[0, 0].legend(frameon=False, fontsize=8)
@@ -2534,14 +2534,17 @@ def _state_rates(input_path, reads, mode, enzyme, **options) -> tuple[dict, dict
 def _overall_verdict(analysis: dict) -> dict:
     """Overall status from the graded components.
 
-    When the in-MSP efficiency and outside-MSP background are graded they
+    When the in-MSP efficiency and/or outside-MSP background are graded they
     replace the overall-rate grade (which stays in ``signal`` as a reported
     metric): the overall rate also reflects how much of the DNA is accessible,
     so it confounds enzyme efficiency with the chromatin of the sample.
     """
-    state_graded = (analysis["efficiency"]["score"] is not None
-                    and analysis["background"]["score"] is not None)
-    names = (("efficiency", "background", "periodicity") if state_graded
+    graded_states = [name for name in ("efficiency", "background")
+                     if analysis[name]["score"] is not None]
+    state_graded = bool(graded_states)
+    # A state component without evidence is reported, not counted as a WARN,
+    # when the other one is graded; every graded failure is kept.
+    names = ((*graded_states, "periodicity") if state_graded
              else ("signal", "periodicity"))
     statuses = [analysis[name]["status"] for name in names]
     scored = [analysis[name]["score"] for name in names
@@ -2677,7 +2680,7 @@ def run_qc(
     state_block, state_arrays = _state_rates(
         input_path, sampled.reads, resolved_mode, resolved_enzyme,
         prob_threshold=prob_threshold, reference_fasta=reference_fasta,
-        snp_mask_path=snp_mask_path, state_source=state_source,
+        snp_mask=snp_mask, state_source=state_source, seed=seed,
         min_msp_bp=min_msp_bp, light_call_reads=light_call_reads,
         light_call_seconds=light_call_seconds,
     )

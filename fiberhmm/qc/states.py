@@ -73,28 +73,61 @@ def tag_frames(header) -> dict:
 
 
 def _to_seq_frame(intervals, read, frame: Optional[str]):
+    """``(start, length, feature_length)`` triples in SEQ frame.
+
+    A wrapped interval (circular molecule) may start before 0 after the frame
+    flip; its start is taken modulo the read length so it keeps covering
+    ``[start, L) + [0, end - L)``.
+    """
     from fiberhmm.io.ma_tags import flip_intervals_to_seq
 
-    starts = [int(s) for s, _length in intervals]
-    lengths = [int(length) for _s, length in intervals]
+    starts = [int(item[0]) for item in intervals]
+    lengths = [int(item[1]) for item in intervals]
+    features = [int(item[2]) if len(item) > 2 else int(item[1]) for item in intervals]
     if frame == "molecular":
         starts, lengths = flip_intervals_to_seq(starts, lengths, read)
-    return list(zip(starts, lengths))
+    read_length = len(getattr(read, "query_sequence", None) or "")
+    if read_length:
+        starts = [start % read_length for start in starts]
+    return list(zip(starts, lengths, features))
+
+
+def _ma_msps(parsed: dict, an_names) -> list:
+    """MA ``msp`` pieces with the length of the whole feature each belongs to.
+
+    A circular MSP across the origin is written as two pieces sharing an
+    ``AN`` name; its length cut-off applies to the joined feature.
+    """
+    pieces, index = [], 0
+    for name, _strand, _qual, intervals in parsed["raw_types"]:
+        for start, length in intervals:
+            if name == "msp":
+                feature = an_names[index] if index < len(an_names) else ""
+                pieces.append((start, length, feature))
+            index += 1
+    totals: dict = {}
+    for _start, length, feature in pieces:
+        if feature:
+            totals[feature] = totals.get(feature, 0) + int(length)
+    return [(start, length, totals.get(feature, length) if feature else length)
+            for start, length, feature in pieces]
 
 
 def msp_intervals_from_tags(read, frames: dict) -> Optional[list]:
-    """SEQ-frame ``(start, length)`` MSPs from a read's FiberHMM calls.
+    """SEQ-frame ``(start, length, feature_length)`` MSPs from a read's calls.
 
     ``None`` when the read carries no usable footprint annotation (or its
     frame cannot be decided); ``[]`` for a called read without MSPs.
     """
-    from fiberhmm.io.ma_tags import parse_ma_tag
+    from fiberhmm.io.ma_tags import parse_an_tag, parse_ma_tag
 
-    for tag, frame in (("MA", frames.get("MA", "seq")), ("Ma", "molecular")):
+    for tag, an_tag, frame in (("MA", "AN", frames.get("MA", "seq")),
+                               ("Ma", "An", "molecular")):
         if not read.has_tag(tag):
             continue
         try:
             parsed = parse_ma_tag(str(read.get_tag(tag)))
+            names = parse_an_tag(str(read.get_tag(an_tag))) if read.has_tag(an_tag) else []
         except (ValueError, TypeError):
             return None
         length = len(read.query_sequence or "")
@@ -102,7 +135,7 @@ def msp_intervals_from_tags(read, frames: dict) -> Optional[list]:
             return None
         if not (parsed["msp"] or parsed["nuc"]):
             return None  # e.g. an MA carrying only m5C/TF features
-        return _to_seq_frame(parsed["msp"], read, frame)
+        return _to_seq_frame(_ma_msps(parsed, names), read, frame)
     # Legacy footprint tags come in start/length pairs. Other pipelines use
     # the same two-letter names for unrelated scalars (e.g. an integer ``ns``),
     # so only array-valued pairs count as calls.
@@ -134,14 +167,17 @@ def _array_tag_pair(read, start_tag: str, length_tag: str) -> bool:
 def msp_mask(intervals, read_length: int, min_msp_bp: int) -> np.ndarray:
     """Boolean per-base MSP mask; MSPs shorter than ``min_msp_bp`` are dropped.
 
-    Intervals running past the read end (a circular wrap) continue at 0.
+    Intervals are ``(start, length[, feature_length])``; the cut-off applies
+    to ``feature_length`` (a wrapped feature's joined length). Intervals
+    running past the read end (a circular wrap) continue at 0.
     """
     mask = np.zeros(read_length, dtype=bool)
-    for start, length in intervals:
-        start, length = int(start), int(length)
-        if length < max(1, int(min_msp_bp)) or read_length <= 0:
+    for interval in intervals:
+        start, length = int(interval[0]), int(interval[1])
+        feature = int(interval[2]) if len(interval) > 2 else length
+        if feature < max(1, int(min_msp_bp)) or read_length <= 0 or length <= 0:
             continue
-        start = start % read_length if start >= read_length else max(0, start)
+        start %= read_length
         end = start + length
         mask[start:min(end, read_length)] = True
         if end > read_length:
@@ -154,9 +190,10 @@ def terminal_exclusion(mask: np.ndarray, policy: str = DEFAULT_TERMINAL_POLICY,
     """Positions of a molecule's terminal (read-end-truncated) state segments.
 
     A terminal segment's state is called from a partial feature: a nucleosome
-    cut to < 85 bp by the read end does not bound an MSP, so its DNA joins the
-    terminal MSP; an MSP cut below ``min_msp_bp`` counts as outside. Both
-    errors reach at most ``margin`` (= ``min_msp_bp``) bases from the end.
+    cut to < 85 bp by the read end does not bound an MSP, so its DNA (and
+    any linker beyond it) joins the terminal MSP; an MSP cut below
+    ``min_msp_bp`` counts as outside. Excluding ``margin`` (= ``min_msp_bp``)
+    bases is a heuristic that removes most of this, not a bound on it.
 
     ``cap`` (default) excludes each terminal segment up to ``margin`` bases
     from its read end; ``drop`` excludes the whole first and last segment
@@ -181,6 +218,62 @@ def terminal_exclusion(mask: np.ndarray, policy: str = DEFAULT_TERMINAL_POLICY,
     excluded[: min(first, margin)] = True
     excluded[max(last, n - margin):] = True
     return excluded
+
+
+_RUN_MASK_RE = None
+
+
+def declared_run_mask(header) -> Optional[tuple]:
+    """``(min_run, policy)`` the BAM's last FiberHMM writer encoded DAF with.
+
+    Read from ``daf_run_mask=off`` / ``daf_run_mask=>=2/keep-one`` in the
+    @PG description; ``None`` when no writer recorded it.
+    """
+    import re
+
+    global _RUN_MASK_RE
+    if _RUN_MASK_RE is None:
+        _RUN_MASK_RE = re.compile(r"daf_run_mask=(off|>=(\d+)/([a-z-]+))")
+    try:
+        programs = (header.to_dict() if hasattr(header, "to_dict") else dict(header)).get("PG", [])
+    except (TypeError, ValueError):
+        return None
+    found = None
+    for program in programs:
+        match = _RUN_MASK_RE.search(str(program.get("DS", "")))
+        if match:
+            found = (0, "keep-one") if match.group(1) == "off" else (
+                int(match.group(2)), match.group(3))
+    return found
+
+
+def _sample_order(reads, seed: int) -> list:
+    """Indices of ``reads`` in a seeded hash order (a random, reproducible
+    order, whatever order the sampler returned them in)."""
+    import hashlib
+
+    def rank(read):
+        key = f"{seed}|{read.query_name}|{read.flag}|{read.reference_id}|{read.reference_start}"
+        return hashlib.blake2b(key.encode("utf-8", "replace"), digest_size=8).digest()
+
+    return sorted(range(len(reads)), key=lambda index: (rank(reads[index]), index))
+
+
+def snp_query_positions(read, snp_mask: Optional[dict]) -> set:
+    """Query positions aligned to masked reference sites (DAF SNP mask)."""
+    if not snp_mask or read.is_unmapped:
+        return set()
+    sites = snp_mask.get(read.reference_name)
+    if not sites:
+        return set()
+    from fiberhmm.daf.snps import wrapped_reference_sites
+
+    sites = wrapped_reference_sites(read, sites)
+    try:
+        return {int(query) for query, reference in read.get_aligned_pairs(matches_only=True)
+                if reference in sites}
+    except (ValueError, TypeError, IndexError):
+        return set()
 
 
 # ---------------------------------------------------------------------------
@@ -256,8 +349,8 @@ class LightCaller:
         )
         if result is None:
             return None
-        intervals = list(zip(
-            np.asarray(result["as"]).tolist(), np.asarray(result["al"]).tolist()))
+        intervals = [(start, length, length) for start, length in zip(
+            np.asarray(result["as"]).tolist(), np.asarray(result["al"]).tolist())]
         return intervals, result["encoded"]
 
 
@@ -324,7 +417,7 @@ def compute_state_rates(
     header=None,
     prob_threshold: int = 125,
     reference_fasta: Optional[str] = None,
-    snp_mask_path: Optional[str] = None,
+    snp_mask: Optional[dict] = None,
     state_source: str = "auto",
     min_msp_bp: int = DEFAULT_MIN_MSP_BP,
     edge_trim: int = DEFAULT_EDGE_TRIM,
@@ -333,6 +426,7 @@ def compute_state_rates(
     min_state_opportunities: int = DEFAULT_MIN_STATE_OPPORTUNITIES,
     terminal_policy: str = DEFAULT_TERMINAL_POLICY,
     clock=time.monotonic,
+    seed: int = 20260824,
 ) -> tuple[dict, dict]:
     """In-MSP / outside-MSP modification rates of the sampled molecules.
 
@@ -374,16 +468,25 @@ def compute_state_rates(
     eligible = [read for read in reads if not getattr(read, "is_duplicate", False)]
     tagged = [msp_intervals_from_tags(read, frames) for read in eligible]
     n_tagged = sum(1 for item in tagged if item is not None)
+    # fibertools' own calls (Ma without FiberHMM MA) are a different state
+    # caller from the FiberHMM calls the references were built from.
+    n_fibertools = sum(1 for read, item in zip(eligible, tagged)
+                       if item is not None and not read.has_tag("MA") and read.has_tag("Ma"))
 
     use_tags = state_source == "tags" or (
         state_source == "auto" and eligible and n_tagged >= 0.5 * len(eligible))
     caller = None
+    started = clock()
+    run_mask = default_daf_run_mask(enzyme) if mode == "daf" else (0, "keep-one")
     if use_tags:
         if not n_tagged:
             block["note"] = "no sampled read carries FiberHMM MSP/nucleosome calls"
             return block, {}
-        source = "tags"
+        source = "fibertools_tags" if n_fibertools > n_tagged / 2 else "tags"
         context_size = _context_size_for(enzyme, mode)
+        if mode == "daf":
+            # Re-encode tagged reads as their call did.
+            run_mask = declared_run_mask(header) or run_mask
     else:
         try:
             caller = LightCaller(enzyme, mode)
@@ -392,6 +495,12 @@ def compute_state_rates(
             return block, {}
         source = "light_call"
         context_size = caller.context_size
+        order = _sample_order(eligible, seed)
+        eligible = [eligible[index] for index in order]
+        tagged = [tagged[index] for index in order]
+    block["definition"]["daf_run_mask"] = (
+        (f">={run_mask[0]}/{run_mask[1]}" if run_mask[0] else "off")
+        if mode == "daf" else None)
 
     totals = dict(msp_events=0, msp_opps=0, out_events=0, out_opps=0,
                   msp_bp=0, total_bp=0, excluded_opps=0, all_events=0, all_opps=0)
@@ -405,18 +514,17 @@ def compute_state_rates(
     light = {"reads_called": 0, "budget_reads": int(light_call_reads),
              "budget_seconds": float(light_call_seconds), "stopped_by": None,
              "elapsed_seconds": 0.0}
-    started = clock()
+    snp_mask = snp_mask if mode == "daf" else None
 
-    run_mask = default_daf_run_mask(enzyme) if mode == "daf" else (0, "keep-one")
     with ExitStack() as stack:
         stack.enter_context(daf_run_mask_scope(*run_mask))
         reference_handle = (
             stack.enter_context(pysam.FastaFile(reference_fasta))
             if reference_fasta else None
         )
-        previous_mask = engine._DAF_SNP_MASK
-        engine.configure_daf_snp_mask(snp_mask_path if mode == "daf" else None)
-        stack.callback(setattr, engine, "_DAF_SNP_MASK", previous_mask)
+        # Calling's SNP mask is a process-wide setting that QC never changes
+        # (QC may run inside fiberhmm-call, whose mask is the same one); the
+        # QC mask is applied per read below.
 
         for read, intervals in zip(eligible, tagged):
             if caller is not None:
@@ -442,6 +550,11 @@ def compute_state_rates(
             if fiber_read is None:
                 counts["reads_without_signal"] += 1
                 continue
+            masked = snp_query_positions(read, snp_mask)
+            if masked:
+                # Masked sites are neither events nor opportunities.
+                fiber_read["m6a_query_positions"] = (
+                    set(fiber_read["m6a_query_positions"]) - masked)
             if caller is not None:
                 light["reads_called"] += 1
                 called = caller.call(fiber_read, mode, edge_trim)
@@ -456,6 +569,11 @@ def compute_state_rates(
                 counts["reads_without_calls"] += 1
                 continue
             opportunity, event = observation_masks(encoded, context_size)
+            if masked:
+                index = np.fromiter(masked, dtype=np.int64)
+                index = index[(index >= 0) & (index < read_length)]
+                opportunity[index] = False
+                event[index] = False
             in_msp = msp_mask(intervals, read_length, min_msp_bp)
             totals["msp_bp"] += int(in_msp.sum())
             totals["total_bp"] += read_length
@@ -636,15 +754,14 @@ def grade_state_rates(block: dict, profile: Optional[dict],
         return note("not graded: the state definition differs from the reference's "
                     f"({', '.join(differing)})")
     by_source = reference.get("by_source", {})
-    source = _REFERENCE_SOURCE.get(block.get("source"), "light_call")
-    ref = by_source.get(source)
-    source_note = ""
-    if ref is None and by_source:
-        fallback = sorted(by_source)[0]
-        ref, source_note = by_source[fallback], (
-            f"reference states come from {fallback}, the sample's from {source}")
+    source = _REFERENCE_SOURCE.get(block.get("source"))
+    ref = by_source.get(source) if source else None
     if ref is None:
-        return note("this QC reference has no state-aware calibration")
+        return note(f"not graded: the reference has no calibration for states from "
+                    f"{block.get('source')} (available: {', '.join(sorted(by_source)) or 'none'})")
+    if block.get("definition", {}).get("daf_run_mask") != reference.get(
+            "definition", {}).get("daf_run_mask", block.get("definition", {}).get("daf_run_mask")):
+        return note("not graded: the DAF adjacent-run mask differs from the reference's")
     threshold = reference.get("definition", {}).get("probability_threshold")
     cap_note = ""
     if threshold is not None and abs(int(prob_threshold) - int(threshold)) > 5:
@@ -668,8 +785,8 @@ def grade_state_rates(block: dict, profile: Optional[dict],
         else:
             component.update(pass_max=pass_bound, warn_max=warn_bound)
         component["reference_median"] = median
-        component["reference_source"] = source if not source_note else sorted(by_source)[0]
-        notes = [text for text in (source_note, cap_note) if text]
+        component["reference_source"] = source
+        notes = [cap_note] if cap_note else []
         value = component["value"]
         if value is None or component["n_rate_reads"] < min_rate_reads:
             component["note"] = "; ".join(

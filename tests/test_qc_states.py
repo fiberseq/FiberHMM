@@ -209,6 +209,95 @@ def test_terminal_policies():
     assert terminal_exclusion(np.ones(500, dtype=bool), "drop").all()
 
 
+def test_wrapped_msp_split_by_an_keeps_its_joined_length():
+    """A circular MSP across the origin is written as two MA pieces sharing an
+    AN name; the 85-bp cut-off applies to the joined 100-bp feature."""
+    header = _header()
+    read = _pacbio_read(header, _sequence(), set(), reverse=False, name="c")
+    read.set_tag("MA", f"{L};nuc.Q:300-147;msp.:{L - 49}-50,1-50")
+    read.set_tag("AN", "n1,m1,m1")
+    intervals = msp_intervals_from_tags(read, {"MA": "molecular", "legacy": None})
+    mask = states.msp_mask(intervals, L, 85)
+    assert mask.sum() == 100 and mask[:50].all() and mask[-50:].all()
+    read.set_tag("AN", None)  # without AN the pieces are two 50-bp MSPs
+    assert states.msp_mask(msp_intervals_from_tags(
+        read, {"MA": "molecular", "legacy": None}), L, 85).sum() == 0
+
+
+def test_unsplit_wrapped_interval_flips_onto_both_read_ends():
+    header = _header()
+    read = _pacbio_read(header, _sequence()[:1000], set(), reverse=True, name="w")
+    read.set_tag("MA", "1000;msp.:951-100")  # molecular [950, 1050) wraps
+    (start, length, _feature), = msp_intervals_from_tags(read, {"MA": "molecular"})
+    mask = states.msp_mask([(start, length)], 1000, 85)
+    assert mask[:50].all() and mask[950:].all() and mask.sum() == 100
+
+
+def test_daf_snp_mask_removes_opportunities_without_touching_calling_state(tmp_path):
+    from fiberhmm.inference import engine
+
+    header = pysam.AlignmentHeader.from_dict({
+        "HD": {"VN": "1.6"}, "SQ": [{"SN": "chr1", "LN": 100_000}],
+        "PG": [{"ID": "fiberhmm-call", "PN": "fiberhmm-call",
+                "DS": "mode=daf enzyme=dddb coord=molecular daf_run_mask=off"}]})
+    molecule = _sequence(seed=9)
+    mods = _planted_mods(molecule, targets="C")
+    read = pysam.AlignedSegment(header)
+    read.query_name, read.flag, read.reference_id = "daf", 0, 0
+    read.query_sequence = "".join("Y" if p in mods else b for p, b in enumerate(molecule))
+    read.reference_start, read.mapping_quality = 1000, 60
+    read.cigartuples = [(0, L)]
+    read.set_tag("st", "CT")
+    read.set_tag("MA", f"{L};msp.:" + ",".join(f"{s + 1}-{n}" for s, n in PLANTED_MSPS))
+    masked_event = sorted(p for p in mods if _in_planted_msp(p) and p > CAP)[0]
+    masked_plain = next(p for p, b in enumerate(molecule)
+                        if b == "C" and p not in mods and _in_planted_msp(p) and p > CAP)
+    snp = {"chr1": {1000 + masked_event, 1000 + masked_plain}}
+    sentinel = {"chrX": {1}}
+    engine._DAF_SNP_MASK, previous = sentinel, engine._DAF_SNP_MASK
+    try:
+        plain, _ = compute_state_rates([read], "daf", "dddb", header=header)
+        block, _ = compute_state_rates([read], "daf", "dddb", header=header, snp_mask=snp)
+        assert engine._DAF_SNP_MASK is sentinel
+    finally:
+        engine._DAF_SNP_MASK = previous
+    assert block["msp"]["n_opportunities"] == plain["msp"]["n_opportunities"] - 2
+    assert block["msp"]["n_events"] == plain["msp"]["n_events"] - 1
+    assert block["definition"]["daf_run_mask"] == "off"
+
+
+def test_tagged_daf_reads_use_the_calls_declared_run_mask():
+    from fiberhmm.qc.states import declared_run_mask
+
+    def header(ds):
+        return pysam.AlignmentHeader.from_dict({
+            "HD": {"VN": "1.6"}, "SQ": [{"SN": "chr1", "LN": 100}],
+            "PG": [{"ID": "fiberhmm-call", "PN": "fiberhmm-call", "DS": ds}]})
+
+    assert declared_run_mask(header("mode=daf daf_run_mask=off")) == (0, "keep-one")
+    assert declared_run_mask(header("mode=daf daf_run_mask=>=2/keep-one")) == (2, "keep-one")
+    assert declared_run_mask(header("mode=daf")) is None
+
+
+def test_light_call_subset_is_a_seeded_shuffle_of_the_sample():
+    header = _header()
+    reads = _uncalled_reads(header, 8, seed=4)
+    a, _ = compute_state_rates(reads, "pacbio-fiber", "hia5", header=header,
+                               light_call_reads=3)
+    b, _ = compute_state_rates(list(reversed(reads)), "pacbio-fiber", "hia5",
+                               header=header, light_call_reads=3)
+    assert a["msp"] == b["msp"] and a["outside_msp"] == b["outside_msp"]
+
+
+def test_grading_requires_a_reference_for_the_samples_state_source():
+    block = _block(0.45, 0.05)
+    block["source"] = "light_call"
+    efficiency, background = grade_state_rates(block, _state_reference(), 125)
+    assert efficiency["status"] == background["status"] == "INSUFFICIENT"
+    block["source"] = "fibertools_tags"
+    assert grade_state_rates(block, _state_reference(), 125)[0]["score"] is None
+
+
 def test_scalar_legacy_tags_are_not_footprint_calls():
     """Regression: a non-FiberHMM pipeline's integer ``ns`` tag (Spacetime
     DddB BAMs) was read as 'called, no MSPs', so every base was outside-MSP."""
@@ -222,7 +311,7 @@ def test_scalar_legacy_tags_are_not_footprint_calls():
     assert msp_intervals_from_tags(read, frames) == []
     read.set_tag("as", array.array("I", [160]))
     read.set_tag("al", array.array("I", [240]))
-    assert msp_intervals_from_tags(read, frames) == [(160, 240)]
+    assert msp_intervals_from_tags(read, frames) == [(160, 240, 240)]
 
 
 def _uncalled_reads(header, n, seed=0):
@@ -284,7 +373,8 @@ def test_light_call_reproduces_the_calling_encoding():
     reference = _process_single_read(fiber_read, caller.model, 10, False,
                                      "pacbio-fiber", 3, 0, False, nuc_min_size=85,
                                      include_encoded=True)
-    assert intervals == list(zip(reference["as"].tolist(), reference["al"].tolist()))
+    assert intervals == [(s, n, n) for s, n in zip(reference["as"].tolist(),
+                                                     reference["al"].tolist())]
     np.testing.assert_array_equal(encoded, states._encode_like_call(
         fiber_read, "pacbio-fiber", 3, 10))
 
@@ -347,7 +437,13 @@ def test_overall_verdict_uses_states_when_graded():
     overall = _overall_verdict(analysis)
     assert overall["status"] == "PASS" and overall["verdict_basis"] == "state-aware"
     assert overall["components"] == ["efficiency", "background", "periodicity"]
+    # A graded failure is never hidden by the other component lacking evidence.
+    analysis["efficiency"] = {"score": 10.0, "status": "FAIL"}
     analysis["background"] = {"score": None, "status": "INSUFFICIENT"}
+    overall = _overall_verdict(analysis)
+    assert overall["status"] == "FAIL" and overall["verdict_basis"] == "state-aware"
+    assert overall["components"] == ["efficiency", "periodicity"]
+    analysis["efficiency"] = {"score": None, "status": "INSUFFICIENT"}
     overall = _overall_verdict(analysis)
     assert overall["status"] == "FAIL" and overall["verdict_basis"] == "overall-rate"
 

@@ -49,9 +49,10 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   background), their ratio, and the share of read length in MSPs. States come
   from the BAM's own calls (`MA`, fibertools `Ma`, legacy `as/al`); an uncalled
   BAM gets a bounded *light call* (the declared chemistry's bundled apply
-  HMM on at most 400 sampled reads / 60 s, no nucleosome or TF recall), and
-  the report says which. Opportunities are the calling encoding's own (DAF:
-  deaminated-strand targets with the chemistry's run and SNP masks; Hia5
+  HMM on at most 400 sampled reads / a 60 s soft budget, no nucleosome or
+  TF recall), and the report says which. Opportunities are the calling
+  encoding's own (DAF: deaminated-strand targets with the call's run mask,
+  SNP-masked sites removed; Hia5
   PacBio A/T; Hia5 Nanopore basecalled A). Counts and opportunities are
   reported per compartment so confidence intervals can be computed. New
   report keys (`schema_minor_version: 1`, additive to schema 1):

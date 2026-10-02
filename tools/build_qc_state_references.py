@@ -105,7 +105,7 @@ def build_profile(profile: str, paths: list[str]) -> dict:
         by_source[source] = _source_entry(results)
     definition = {key: definition[key] for key in (
         "min_msp_bp", "edge_trim_bp", "terminal_segments",
-        "min_state_opportunities_per_read", "probability_threshold")}
+        "min_state_opportunities_per_read", "probability_threshold", "daf_run_mask")}
     return {
         "scoring_enabled": True,
         "definition": definition,

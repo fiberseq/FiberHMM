@@ -10,7 +10,8 @@
           "edge_trim_bp": 10,
           "terminal_segments": "cap",
           "min_state_opportunities_per_read": 50,
-          "probability_threshold": 125
+          "probability_threshold": 125,
+          "daf_run_mask": ">=2/keep-one"
         },
         "grading": {
           "efficiency": {
@@ -181,7 +182,8 @@
           "edge_trim_bp": 10,
           "terminal_segments": "cap",
           "min_state_opportunities_per_read": 50,
-          "probability_threshold": 125
+          "probability_threshold": 125,
+          "daf_run_mask": "off"
         },
         "grading": {
           "efficiency": {
@@ -408,7 +410,8 @@
           "edge_trim_bp": 10,
           "terminal_segments": "cap",
           "min_state_opportunities_per_read": 50,
-          "probability_threshold": 125
+          "probability_threshold": 125,
+          "daf_run_mask": null
         },
         "grading": {
           "efficiency": {
