@@ -83,9 +83,9 @@ def _check_window_sizes(parser, windows, limit, source):
 
 def _check_region_contigs(parser, windows, datasets):
     """Each --region must name a contig of every input BAM and overlap it (the loader's naming rules)."""
-    from .bam import _resolve_bam_fetch_region
+    from .bam import _flatten_paths, _resolve_bam_fetch_region
     for dataset in datasets or ():
-        for path in dataset.get('paths', ()):
+        for path in _flatten_paths(dataset.get('paths', ())):
             for w in windows:
                 try: _resolve_bam_fetch_region(path,w['chrom'],w['start'],w['end'])
                 except ValueError as error:

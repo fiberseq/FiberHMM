@@ -72,26 +72,49 @@ def test_matching_explicit_seq_is_silent(tmp_path, capsys):
     assert capsys.readouterr().err == ""
 
 
-def test_explicit_seq_is_checked_even_when_the_header_declares_it(tmp_path):
-    """A declaration that agrees with --seq does not hide contradicting reads."""
+def _declare(tmp_path, source, platform):
     from fiberhmm.io.bam_header import append_chemistry
 
-    source = _bam(tmp_path, "ont", mm_style="nanopore")
-    declared = str(tmp_path / "declared.bam")
+    declared = str(tmp_path / f"declared_{platform}.bam")
     with pysam.AlignmentFile(source, "rb") as src:
         header = append_chemistry(src.header, {
-            "assay": "fiber-seq", "enzyme": "hia5", "platform": "pacbio",
-            "mode": "pacbio-fiber"})
+            "assay": "fiber-seq", "enzyme": "hia5", "platform": platform,
+            "mode": f"{platform}-fiber"})
         with pysam.AlignmentFile(declared, "wb", header=header) as out:
             for read in src.fetch(until_eof=True):
                 out.write(read)
+    return declared
+
+
+def test_a_chemistry_declaration_decides_like_the_auto_path(tmp_path):
+    """A sample without T-a calls does not prove Nanopore origin: a header
+    declaring PacBio accepts --seq pacbio (as omitting --seq does) and
+    refuses --seq nanopore."""
+    source = _bam(tmp_path, "ont", mm_style="nanopore")
+    declared = _declare(tmp_path, source, "pacbio")
+    args = _args(seq="pacbio")
+    resolve_platform_argument(args, declared, tool="t")
+    assert args.seq == "pacbio"
     with pytest.raises(SystemExit) as exc:
-        resolve_platform_argument(_args(seq="pacbio"), declared, tool="t")
+        resolve_platform_argument(_args(seq="nanopore"), declared, tool="t")
     assert exc.value.code == 2
-    # Without --seq the declaration still settles the platform.
     args = _args()
     resolve_platform_argument(args, declared, tool="t")
     assert args.seq == "pacbio"
+
+
+@pytest.mark.parametrize("mm", ["A+21839.,0;", "A+ab.,0;", "T-a?,0;", "A+a.;C+m.,1;"])
+def test_m6a_spec_spellings_are_recognised(mm):
+    from fiberhmm.cli.common import _mm_has_m6a
+
+    assert _mm_has_m6a(mm)
+
+
+@pytest.mark.parametrize("mm", ["C+m.,0;", "C+h.,0;", "", "A+m.,0;"])
+def test_non_m6a_specs_are_not_m6a(mm):
+    from fiberhmm.cli.common import _mm_has_m6a
+
+    assert not _mm_has_m6a(mm)
 
 
 def test_hia5_on_reads_without_m6a_calls_is_refused(tmp_path, capsys):
@@ -105,6 +128,41 @@ def test_hia5_on_reads_without_m6a_calls_is_refused(tmp_path, capsys):
         assert "--enzyme dddb or --enzyme ddda" in err
     # DAF enzymes need no m6A calls.
     resolve_platform_argument(_args(enzyme="dddb", seq="pacbio"), bam, tool="t")
+    # Only the first reads are read: --force-seq runs anyway, and an explicit
+    # legacy --mode decides the observation mode itself.
+    resolve_platform_argument(_args(seq="pacbio", force_seq=True), bam, tool="t")
+    assert "running anyway because of --force-seq" in capsys.readouterr().err
+    args = _args(seq="pacbio")
+    args.mode = "daf"
+    resolve_platform_argument(args, bam, tool="t")
+
+
+def test_unmapped_records_do_not_trigger_the_m6a_refusal(tmp_path):
+    """In an aligned BAM, untagged unmapped records are passed through; only
+    the mapped reads count for the m6A check."""
+    source = _bam(tmp_path, "pb", mm_style="pacbio", n_reads=4)
+    mixed = str(tmp_path / "mixed.bam")
+    with pysam.AlignmentFile(source, "rb") as src, \
+            pysam.AlignmentFile(mixed, "wb", header=src.header) as out:
+        reads = list(src.fetch(until_eof=True))
+        for read in reads:
+            out.write(read)
+        for index in range(300):
+            unmapped = pysam.AlignedSegment(out.header)
+            unmapped.query_name = f"u{index}"
+            unmapped.query_sequence = "ACGT" * 50
+            unmapped.flag = 4
+            out.write(unmapped)
+    # Unmapped records sort last; put them first to fill the sample window.
+    reordered = str(tmp_path / "unmapped_first.bam")
+    with pysam.AlignmentFile(mixed, "rb", check_sq=False) as src, \
+            pysam.AlignmentFile(reordered, "wb", header=src.header) as out:
+        records = list(src.fetch(until_eof=True))
+        for read in sorted(records, key=lambda r: not r.is_unmapped):
+            out.write(read)
+    args = _args(seq="pacbio")
+    resolve_platform_argument(args, reordered, tool="t", )
+    assert args.seq == "pacbio"
 
 
 def test_no_evidence_warns_once_and_records_the_assumed_platform(

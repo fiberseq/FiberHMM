@@ -374,7 +374,7 @@ class PlatformEvidence:
 
     def __init__(self, platform=None, source="", conflict=None, *,
                  reads_inspected=0, m6a_reads=0, mm_platform=None,
-                 mm_source=""):
+                 mm_source="", declared_platform=None):
         self.platform = platform      # 'pacbio' | 'nanopore' | None
         self.source = source          # human-readable evidence summary
         self.conflict = conflict      # explanation when evidence disagrees
@@ -385,6 +385,8 @@ class PlatformEvidence:
         self.m6a_reads = m6a_reads
         self.mm_platform = mm_platform
         self.mm_source = mm_source
+        # The header's single FIBERHMM-CHEMISTRY platform, if any.
+        self.declared_platform = declared_platform
 
     def __repr__(self):  # pragma: no cover - debugging aid
         return (f"PlatformEvidence(platform={self.platform!r}, "
@@ -403,9 +405,19 @@ def _mm_spec_platform(mm_tag: str):
 
 
 def _mm_has_m6a(mm_tag: str) -> bool:
-    """Whether an MM tag carries an m6A spec (``A+a`` or ``T-a``)."""
-    specs = [item.split(",", 1)[0] for item in str(mm_tag).split(";") if item]
-    return any(spec.rstrip(".?") in ("A+a", "T-a") for spec in specs)
+    """Whether an MM tag carries an m6A spec on A or T.
+
+    Codes follow the SAM spec, as the MM parser reads them: a run of
+    single-letter codes (``A+a``, ``A+ab``) or one ChEBI number (``A+21839``).
+    """
+    for item in str(mm_tag).split(";"):
+        spec = item.split(",", 1)[0].strip().rstrip(".?")
+        if len(spec) < 3 or spec[0] not in "ATN" or spec[1] not in "+-":
+            continue
+        codes = spec[2:]
+        if codes == "21839" or (codes.isalpha() and "a" in codes):
+            return True
+    return False
 
 
 def _header_platform(header_dict):
@@ -464,6 +476,8 @@ def sniff_sequencing_platform(bam_path, n_reads: int = PLATFORM_SNIFF_READS,
             } & {"pacbio", "nanopore"}
             counts = {"pacbio": 0, "nanopore": 0}
             primary = m6a_reads = 0
+            mapped_primary = mapped_m6a = 0
+            aligned_input = bool(getattr(bam, "references", None) or ())
             if inspect_reads and (len(declared) != 1 or inspect_declared):
                 for inspected, read in enumerate(bam.fetch(until_eof=True), 1):
                     if not (read.is_secondary or read.is_supplementary):
@@ -474,13 +488,20 @@ def sniff_sequencing_platform(bam_path, n_reads: int = PLATFORM_SNIFF_READS,
                         platform = _mm_spec_platform(mm) if tag else None
                         if platform:
                             counts[platform] += 1
-                        if tag and _mm_has_m6a(mm):
-                            m6a_reads += 1
+                        has_m6a = bool(tag) and _mm_has_m6a(mm)
+                        m6a_reads += has_m6a
+                        if not read.is_unmapped:
+                            mapped_primary += 1
+                            mapped_m6a += has_m6a
                     if inspected >= n_reads:
                         break
     except (OSError, ValueError) as exc:
         return PlatformEvidence(source=f"unreadable input ({exc})")
 
+    if aligned_input:
+        # Aligned input: unmapped records are passed through uncalled, so
+        # only mapped reads are evidence (none sampled: no evidence).
+        primary, m6a_reads = mapped_primary, mapped_m6a
     read_evidence = {"reads_inspected": primary, "m6a_reads": m6a_reads}
     informative = counts["pacbio"] + counts["nanopore"]
     if informative:
@@ -504,7 +525,8 @@ def sniff_sequencing_platform(bam_path, n_reads: int = PLATFORM_SNIFF_READS,
             # the read-level evidence above.
             return PlatformEvidence(
                 platform=declared_platform,
-                source="FIBERHMM-CHEMISTRY declaration", **read_evidence)
+                source="FIBERHMM-CHEMISTRY declaration",
+                declared_platform=declared_platform, **read_evidence)
 
     mm_platform = None
     if informative:
@@ -549,15 +571,21 @@ def add_force_seq_arg(parser: argparse.ArgumentParser) -> None:
         help="Use the given --seq even when the input's MM specs or header "
              "say the reads come from the other platform (normally refused: "
              "the wrong platform model changes the calls, e.g. ~100x more "
-             "TF calls for Nanopore reads called as PacBio).",
+             "TF calls for Nanopore reads called as PacBio), and run Hia5 "
+             "even when the first reads carry no m6A calls.",
     )
 
 
 def _refuse_mismatched_seq(args, evidence, *, tool, enzyme, explicit):
     """Exit 2 when the reads contradict an explicit ``--seq`` (unless forced)."""
-    # MM specs are direct evidence; header records and declarations back
-    # them up when no read carries an informative spec.
-    if evidence.mm_platform:
+    # A FIBERHMM-CHEMISTRY declaration is authoritative, as when --seq is
+    # omitted: a sample without T-a calls does not prove Nanopore origin.
+    # Otherwise MM specs are direct evidence, and header records back them up
+    # when no read carries an informative spec.
+    if evidence.declared_platform:
+        observed = evidence.declared_platform
+        source = "FIBERHMM-CHEMISTRY declaration"
+    elif evidence.mm_platform:
         observed, source = evidence.mm_platform, evidence.mm_source
     elif evidence.platform and not evidence.conflict:
         observed, source = evidence.platform, evidence.source
@@ -585,9 +613,24 @@ def _refuse_mismatched_seq(args, evidence, *, tool, enzyme, explicit):
     sys.exit(2)
 
 
-def _refuse_reads_without_m6a(evidence, *, tool, enzyme):
-    """Exit 2 when an m6A enzyme meets reads without any m6A MM calls."""
+def _refuse_reads_without_m6a(args, evidence, *, tool, enzyme):
+    """Exit 2 when an m6A enzyme meets reads without any m6A MM calls.
+
+    Only the first records are read, so ``--force-seq`` runs anyway (a BAM
+    whose first reads lack m6A calls but later ones carry them); an explicit
+    legacy ``--mode`` override decides the observation mode itself.
+    """
     if evidence.reads_inspected == 0 or evidence.m6a_reads > 0:
+        return
+    if getattr(args, 'mode', None):
+        return
+    if getattr(args, 'force_seq', False):
+        print(
+            f"WARNING: none of the first {evidence.reads_inspected} primary "
+            "reads carries an m6A MM/ML tag; running anyway because of "
+            "--force-seq.",
+            file=sys.stderr,
+        )
         return
     print(
         f"error: {tool}: --enzyme {enzyme} calls footprints from m6A "
@@ -595,7 +638,8 @@ def _refuse_reads_without_m6a(evidence, *, tool, enzyme):
         "primary reads carries an m6A MM/ML tag (MM A+a or T-a), so every read "
         "would get no footprints. Is this DAF-seq? Use --enzyme dddb or "
         "--enzyme ddda. For Fiber-seq, call m6A first (ft predict-m6a for "
-        "PacBio, dorado with an m6A model for Nanopore).",
+        "PacBio, dorado with an m6A model for Nanopore). If later reads do "
+        "carry m6A calls, add --force-seq to run anyway.",
         file=sys.stderr,
     )
     sys.exit(2)
@@ -627,7 +671,7 @@ def resolve_platform_argument(args, input_path, *, tool: str,
         input_path, inspect_reads=bool(requires),
         inspect_declared=bool(requires))
     if requires:
-        _refuse_reads_without_m6a(evidence, tool=tool, enzyme=enzyme)
+        _refuse_reads_without_m6a(args, evidence, tool=tool, enzyme=enzyme)
     if explicit:
         if requires:
             _refuse_mismatched_seq(args, evidence, tool=tool, enzyme=enzyme,

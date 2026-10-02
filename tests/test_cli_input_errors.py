@@ -169,6 +169,20 @@ def test_consensus_region_errors_are_one_line(declared_bam, tmp_path, capsys,
         assert "--parameters" in err
 
 
+def test_consensus_region_check_accepts_a_string_dataset_path(declared_bam, tmp_path, capsys):
+    """--datasets entries may give "paths" as one string (the loader accepts it)."""
+    from fiberhmm.inference.consensus.cli import main
+
+    datasets = tmp_path / "datasets.json"
+    datasets.write_text(json.dumps([{"dataset_id": "d", "paths": declared_bam,
+                                     "chemistry": "hia5-pacbio"}]))
+    with pytest.raises(SystemExit) as exc:
+        main(["--datasets", str(datasets), "--region", "chrNope:1-100",
+              "--output", str(tmp_path / "out")])
+    assert exc.value.code == 2
+    assert f"{declared_bam}: chromosome 'chrNope' is absent" in capsys.readouterr().err
+
+
 def test_consensus_garbage_bam_is_one_line(bad_inputs, tmp_path, capsys):
     from fiberhmm.inference.consensus.cli import main
 
