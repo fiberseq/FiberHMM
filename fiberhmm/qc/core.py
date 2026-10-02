@@ -630,11 +630,24 @@ def _daf_signal_profile(
     # Fallback for unaligned/MD-less encoded DAF BAMs. This is less exact but
     # preserves support for files that have no recoverable reference bases.
     positions, unknown = _daf_marks(read, reference_handle, prob_threshold)
+    # Insertion and soft-clip bases have no reference counterpart, so they
+    # carry no DAF evidence (as in calling): neither events nor opportunities.
+    from fiberhmm.daf.aligned_arrays import unaligned_query_positions
+    try:
+        cigar = read.cigartuples
+    except (AttributeError, ValueError, TypeError):
+        cigar = None
+    unaligned = unaligned_query_positions(cigar, len(sequence))
+    if unaligned:
+        positions = np.asarray(
+            [p for p in positions if int(p) not in unaligned], dtype=np.int64)
     opportunities = _opportunities(sequence, positions, "daf")
-    if unknown:
-        # Unlisted '?' bases counted above (C/G/R/Y; events are never unknown).
+    no_evidence = set(int(p) for p in unknown) | unaligned if (unknown or unaligned) else ()
+    if no_evidence:
+        # Unlisted '?' and unaligned bases counted above (C/G/R/Y; events
+        # are never unknown).
         opportunities -= sum(
-            1 for position in unknown
+            1 for position in no_evidence
             if 0 <= int(position) < len(sequence)
             and sequence[int(position)] in "CGRY"
         )

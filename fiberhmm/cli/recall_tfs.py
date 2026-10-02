@@ -247,13 +247,18 @@ class _PayloadRead:
     to_string()/fromstring() calls per read (two in the main process, two in
     the worker) and the associated MM/ML base64 encoding overhead.
     """
-    __slots__ = ('query_sequence', 'is_reverse', '_tags', '_daf_md_result')
+    __slots__ = ('query_sequence', 'is_reverse', '_tags', '_daf_md_result',
+                 '_daf_unaligned_query_positions')
 
-    def __init__(self, seq, is_reverse, tags, daf_md_result=None):
+    def __init__(self, seq, is_reverse, tags, daf_md_result=None,
+                 daf_unaligned_query_positions=None):
         self.query_sequence = seq
         self.is_reverse = is_reverse
         self._tags = tags
         self._daf_md_result = daf_md_result
+        # CIGAR I/S bases, computed by the producer (the stub has no CIGAR).
+        self._daf_unaligned_query_positions = set(
+            daf_unaligned_query_positions or ())
 
     def has_tag(self, t):
         return t in self._tags
@@ -388,6 +393,16 @@ def _make_payload(read, mode=None, input_molecular_frame=True) -> dict:
     }
     if mode == 'daf' and read.query_sequence:
         from fiberhmm.core.bam_reader import has_iupac_encoding
+        from fiberhmm.inference.engine import (
+            daf_no_call_blocks,
+            daf_unaligned_query_positions,
+        )
+        unaligned = daf_unaligned_query_positions(read)
+        if unaligned:
+            payload['_daf_unaligned_query_positions'] = unaligned
+            blocks = daf_no_call_blocks(read)
+            if blocks:
+                payload['_daf_no_call_blocks'] = blocks
         if (
             not has_iupac_encoding(read.query_sequence)
             and not (('MM' in tags or 'Mm' in tags) and ('ML' in tags or 'Ml' in tags))
@@ -412,6 +427,7 @@ def _process_payload_record(payload) -> tuple:
         payload['is_reverse'],
         payload['tags'],
         payload.get('_daf_md_result'),
+        payload.get('_daf_unaligned_query_positions'),
     )
     nuc_cfg = _WORKER.get('nuc_cfg')
     if nuc_cfg is not None and nuc_cfg.recall_nucs:
@@ -552,6 +568,8 @@ def _process_nuc_payload_record(read, payload, nuc_cfg) -> tuple:
             _WORKER.get('cpg_mask_policy', 'unmethylated-only'),
         )
     fiber_read = {'query_sequence': payload['seq']}
+    if payload.get('_daf_no_call_blocks'):
+        fiber_read['no_call_blocks'] = payload['_daf_no_call_blocks']
     result = build_fused_recall_result(
         fiber_read, apply_result,
         _WORKER['llr_hit'], _WORKER['llr_miss'],
@@ -814,6 +832,11 @@ def parse_args(default_recall_nucs: bool = False):
                    help='DAF only: thin targets lying in same-strand runs of >= N original C (CT) or G (GA) bases (CC/GG and longer at N=2; see --daf-run-policy). Adjacent conversions are coupled and do not follow the per-site emission model. Default: 2 with keep-one for --enzyme ddda (duplex-validated), off otherwise; 0 disables.')
     p.add_argument('--daf-run-policy', choices=['keep-one', 'drop'], default='keep-one',
                    help="With --daf-mask-runs: keep each run's 5'-most target (default) or drop the run.")
+    p.add_argument('--daf-mask-unaligned', action=argparse.BooleanOptionalAction,
+                   default=True,
+                   help='DAF only: treat CIGAR insertion and soft-clip bases as no '
+                        'evidence and leave unaligned stretches of >= 50 bp uncalled '
+                        '(default on, as in fiberhmm-call).')
     p.add_argument('--min-llr', type=float, default=None,
                    help='Override native LLR cost per TF interval in joint decoding '
                         '(nats; default: enzyme preset; not an FDR threshold).')
@@ -1341,6 +1364,9 @@ def _recall(args, bam_in, model_path, using_bundled_model, n_cores):
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(2)
     configure_daf_run_mask(args.daf_mask_runs, args.daf_run_policy)
+    from fiberhmm.inference.engine import configure_daf_unaligned_mask
+    configure_daf_unaligned_mask(
+        bool(getattr(args, 'daf_mask_unaligned', True)) and mode == 'daf')
 
     llr_hit, llr_miss = build_llr_tables(model)
     m5c_llr_hit = m5c_llr_miss = None

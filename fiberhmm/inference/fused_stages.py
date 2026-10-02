@@ -14,6 +14,7 @@ from fiberhmm.inference.circular import (
     split_intervals_for_legacy,
 )
 from fiberhmm.inference.engine import _process_single_read
+from fiberhmm.inference.no_evidence import suppress_calls_in_blocks
 from fiberhmm.inference.nuc_recaller import (
     assemble_circular_nuc_msp_tiling,
     assemble_nuc_msp_tiling,
@@ -306,7 +307,18 @@ def finalize_baseline_radial_nuc_configuration(
     return nuc_calls, msps
 
 
-def build_fused_recall_result(
+def build_fused_recall_result(fiber_read: Mapping[str, Any], *args, **kwargs) -> dict:
+    """Fused recall (see :func:`_build_fused_recall_result`), then removal of
+    calls from the read's long no-evidence blocks (DAF insertions and soft
+    clips; :mod:`fiberhmm.inference.no_evidence`)."""
+    result = _build_fused_recall_result(fiber_read, *args, **kwargs)
+    blocks = fiber_read.get("no_call_blocks") if fiber_read else None
+    if blocks:
+        result = suppress_calls_in_blocks(result, blocks)
+    return result
+
+
+def _build_fused_recall_result(
     fiber_read: Mapping[str, Any],
     apply_result: Mapping[str, Any],
     llr_hit,

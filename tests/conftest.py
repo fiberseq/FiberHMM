@@ -34,6 +34,16 @@ def _isolate_daf_run_mask(monkeypatch):
     os.environ.pop(bam_reader._DAF_RUN_POLICY_ENV, None)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_daf_unaligned_mask(monkeypatch):
+    """CLI entry points configure the process-wide DAF unaligned-base mask."""
+    from fiberhmm.inference import engine
+    monkeypatch.setattr(engine, "_DAF_UNALIGNED_MASK", None)
+    monkeypatch.delenv(engine._DAF_UNALIGNED_MASK_ENV, raising=False)
+    yield
+    os.environ.pop(engine._DAF_UNALIGNED_MASK_ENV, None)
+
+
 @pytest.fixture
 def simple_emission_probs():
     """

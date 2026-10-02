@@ -2,6 +2,8 @@
 
 from typing import Optional, Tuple
 
+import os
+
 import numpy as np
 import pysam
 
@@ -532,7 +534,48 @@ def _daf_reference_mask(read):
     return wrapped_reference_sites(read, sites)
 
 
-def _daf_excluded_query_positions(read):
+# DAF unaligned-base mask. Deamination evidence is a read-versus-reference
+# comparison on matched pairs, so query bases with no reference counterpart
+# (CIGAR I insertions, S soft clips) can never carry a mark; without the mask
+# their unconverted C/G would count as unmodified (protected) targets and an
+# insertion or clip would be called nucleosome-packed. Masked like SNP sites:
+# no evidence either way. On by default; mirrored into the environment so
+# spawned workers inherit an opt-out.
+_DAF_UNALIGNED_MASK_ENV = 'FIBERHMM_DAF_MASK_UNALIGNED'
+_DAF_UNALIGNED_MASK = None
+
+
+def configure_daf_unaligned_mask(enabled: bool = True) -> None:
+    """Mask (default) or keep DAF query bases with no reference counterpart."""
+    global _DAF_UNALIGNED_MASK
+    _DAF_UNALIGNED_MASK = bool(enabled)
+    os.environ[_DAF_UNALIGNED_MASK_ENV] = '1' if enabled else '0'
+
+
+def daf_unaligned_mask_enabled() -> bool:
+    global _DAF_UNALIGNED_MASK
+    if _DAF_UNALIGNED_MASK is None:
+        _DAF_UNALIGNED_MASK = os.environ.get(_DAF_UNALIGNED_MASK_ENV, '1') != '0'
+    return _DAF_UNALIGNED_MASK
+
+
+def daf_unaligned_query_positions(read):
+    """SEQ positions of ``read``'s CIGAR I/S bases (empty when the mask is off,
+    for unmapped records and for slim stubs without a CIGAR)."""
+    if not daf_unaligned_mask_enabled():
+        return set()
+    from fiberhmm.daf.aligned_arrays import unaligned_query_positions
+    try:
+        cigar = getattr(read, 'cigartuples', None)
+    except (ValueError, TypeError):
+        return set()
+    if not cigar:
+        return set()
+    seq = getattr(read, 'query_sequence', None)
+    return unaligned_query_positions(cigar, len(seq) if seq else None)
+
+
+def _daf_snp_masked_query_positions(read):
     reference_mask = _daf_reference_mask(read)
     if not reference_mask or not hasattr(read, "get_aligned_pairs"):
         return set()
@@ -546,6 +589,44 @@ def _daf_excluded_query_positions(read):
         }
     except (ValueError, TypeError, IndexError):
         return set()
+
+
+def _daf_excluded_query_positions(read):
+    """DAF query positions that carry no evidence: SNP-masked matched bases
+    plus (unless disabled) unaligned I/S bases. Callers drop them from the
+    deamination calls AND encode them as unknown, so a masked unconverted
+    C/G is not counted as an unmodified (protected) target."""
+    excluded = _daf_snp_masked_query_positions(read)
+    unaligned = daf_unaligned_query_positions(read)
+    if unaligned:
+        excluded = excluded | unaligned if excluded else unaligned
+    return excluded
+
+
+def daf_no_call_blocks(read):
+    """Long unaligned (I/S) SEQ spans of ``read`` from which calls are removed
+    (:mod:`fiberhmm.inference.no_evidence`). Slim stubs carry them precomputed."""
+    blocks = getattr(read, '_daf_no_call_blocks', None)
+    if blocks is not None:
+        return list(blocks)
+    if not daf_unaligned_mask_enabled():
+        return []
+    try:
+        cigar = getattr(read, 'cigartuples', None)
+    except (ValueError, TypeError):
+        return []
+    if not cigar:
+        return []
+    from fiberhmm.inference.no_evidence import unaligned_blocks
+    seq = getattr(read, 'query_sequence', None)
+    return unaligned_blocks(cigar, query_length=len(seq) if seq else None)
+
+
+def _stub_or_live_excluded(read):
+    excluded = getattr(read, '_daf_excluded_query_positions', None)
+    if excluded is None:
+        excluded = _daf_excluded_query_positions(read)
+    return excluded
 
 
 class _ApplyPayloadRead:
@@ -564,10 +645,12 @@ class _ApplyPayloadRead:
     does not implement).
     """
     __slots__ = ('query_name', 'query_sequence', 'is_reverse', '_tags',
-                 '_daf_md_result', '_daf_excluded_query_positions')
+                 '_daf_md_result', '_daf_excluded_query_positions',
+                 '_daf_no_call_blocks')
 
     def __init__(self, query_name, query_sequence, is_reverse, tags,
-                 daf_md_result=None, daf_excluded_query_positions=None):
+                 daf_md_result=None, daf_excluded_query_positions=None,
+                 daf_no_call_blocks=None):
         self.query_name = query_name
         self.query_sequence = query_sequence
         self.is_reverse = is_reverse
@@ -576,6 +659,7 @@ class _ApplyPayloadRead:
         self._daf_excluded_query_positions = set(
             daf_excluded_query_positions or ()
         )
+        self._daf_no_call_blocks = list(daf_no_call_blocks or ())
 
     def has_tag(self, t):
         return t in self._tags
@@ -637,6 +721,9 @@ def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None,
         excluded_query_positions = _daf_excluded_query_positions(read)
         if excluded_query_positions:
             payload['_daf_excluded_query_positions'] = excluded_query_positions
+        no_call_blocks = daf_no_call_blocks(read)
+        if no_call_blocks:
+            payload['_daf_no_call_blocks'] = no_call_blocks
         if not has_iupac_encoding(seq):
             from fiberhmm.daf.encoder import get_daf_positions
             md_res = get_daf_positions(
@@ -691,6 +778,7 @@ def extract_fiber_read_from_payload(payload: dict, mode: str, prob_threshold: in
             daf_excluded_query_positions=payload.get(
                 '_daf_excluded_query_positions'
             ),
+            daf_no_call_blocks=payload.get('_daf_no_call_blocks'),
         ),
         mode, prob_threshold,
     )
@@ -764,6 +852,18 @@ def _is_iupac_daf_chimera(read, query_sequence: str, excluded_query_positions,
                           purity=_DAF_CHIMERA_CFG['purity'])
 
 
+def _with_unknown(fiber_read: dict, unknown_positions, read=None) -> dict:
+    """Attach no-evidence positions (encoded as non-target) and the long
+    no-call blocks of a DAF read to a fiber_read."""
+    if unknown_positions:
+        fiber_read['unknown_query_positions'] = set(unknown_positions)
+        if read is not None:
+            blocks = daf_no_call_blocks(read)
+            if blocks:
+                fiber_read['no_call_blocks'] = blocks
+    return fiber_read
+
+
 def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
                                     ref_fasta=None) -> Optional[dict]:
     """Extract minimal data needed for HMM processing from a pysam read.
@@ -779,13 +879,7 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
     if mode == 'daf' and has_iupac_encoding(query_sequence):
         st_tag = read.get_tag('st') if read.has_tag('st') else None
         mod_positions, strand, conv_seq = extract_daf_iupac_positions(query_sequence, st_tag)
-        excluded_query_positions = getattr(
-            read,
-            '_daf_excluded_query_positions',
-            None,
-        )
-        if excluded_query_positions is None:
-            excluded_query_positions = _daf_excluded_query_positions(read)
+        excluded_query_positions = _stub_or_live_excluded(read)
         # Strand-swap chimera filter, same policy as the MD path below.
         if _DAF_CHIMERA_CFG['filter'] and _is_iupac_daf_chimera(
                 read, query_sequence, excluded_query_positions, ref_fasta):
@@ -793,13 +887,13 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
         mod_positions.difference_update(excluded_query_positions)
         if not mod_positions:
             return None
-        return {
+        return _with_unknown({
             'read_id': read.query_name,
             'query_sequence': conv_seq,       # Y→T, R→A (pure ACGT)
             'm6a_query_positions': mod_positions,
             'query_length': len(conv_seq),
             '_daf_strand': strand,            # pre-computed from st tag
-        }
+        }, excluded_query_positions, read)
 
     # MD fallback for DAF mode: raw aligned BAM (no R/Y in sequence yet).
     # Parse MD on the fly into the same (mod_positions, strand) the R/Y
@@ -832,17 +926,22 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
                                   purity=_DAF_CHIMERA_CFG['purity']):
                     return CHIMERA_SKIP
             mod_positions = set(ct_pos) if strand_tag == 'CT' else set(ga_pos)
+            # SNP-masked sites are already out of the mismatch lists (they
+            # were excluded by reference position); the same set, plus the
+            # unaligned bases, is encoded as no evidence below.
+            excluded_query_positions = _stub_or_live_excluded(read)
+            mod_positions.difference_update(excluded_query_positions)
             if not mod_positions:
                 return None
             # query_sequence is already raw ACGT (no R/Y to decode);
             # uppercase to match what extract_daf_iupac_positions emits.
-            return {
+            return _with_unknown({
                 'read_id': read.query_name,
                 'query_sequence': query_sequence.upper(),
                 'm6a_query_positions': mod_positions,
                 'query_length': len(query_sequence),
                 '_daf_strand': '+' if strand_tag == 'CT' else '-',
-            }
+            }, excluded_query_positions, read)
 
     # Legacy MM/ML path: use the fast vectorized parser instead of
     # read.modified_bases.  pysam's modified_bases returns a dict of
@@ -886,13 +985,13 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
         return None
 
     if mode == 'daf':
-        # SNP mask applies to MM/ML-native deamination calls too.
-        excluded_query_positions = getattr(
-            read, '_daf_excluded_query_positions', None)
-        if excluded_query_positions is None:
-            excluded_query_positions = _daf_excluded_query_positions(read)
+        # The SNP and unaligned-base masks apply to MM/ML-native deamination
+        # calls too (DAF evidence is a reference comparison whatever its
+        # carrier): masked bases are dropped and encoded as no evidence.
+        excluded_query_positions = _stub_or_live_excluded(read)
         if excluded_query_positions:
             mod_pos_set.difference_update(excluded_query_positions)
+            unknown_pos_set = set(unknown_pos_set) | set(excluded_query_positions)
 
     fiber_read = {
         'read_id': read.query_name,
@@ -902,8 +1001,13 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
         'is_reverse': bool(read.is_reverse),
     }
     if unknown_pos_set:
-        # Bases left unlisted by a '?' MM entry: no call, not "unmodified".
+        # Bases left unlisted by a '?' MM entry (and, for DAF, masked bases):
+        # no call, not "unmodified".
         fiber_read['unknown_query_positions'] = unknown_pos_set
+        if mode == 'daf':
+            blocks = daf_no_call_blocks(read)
+            if blocks:
+                fiber_read['no_call_blocks'] = blocks
     return fiber_read
 
 
@@ -986,6 +1090,12 @@ def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool
             'tiled_as': fp_result['tiled_as'],
             'tiled_al': fp_result['tiled_al'],
         })
+
+    # DAF: no calls inside long no-evidence (unaligned) blocks.
+    no_call_blocks = fiber_read.get('no_call_blocks')
+    if no_call_blocks and not result.get('circular'):
+        from fiberhmm.inference.no_evidence import suppress_calls_in_blocks
+        suppress_calls_in_blocks(result, no_call_blocks)
 
     # Include posteriors data if requested
     if return_posteriors and fp_result.get('posteriors') is not None:

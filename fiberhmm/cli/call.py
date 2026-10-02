@@ -250,6 +250,15 @@ def parse_args():
     p.add_argument('--daf-run-policy', choices=['keep-one', 'drop'], default='keep-one',
                    help='With --daf-mask-runs: keep the 5\'-most target of each run '
                         '(keep-one, default) or remove the whole run (drop).')
+    p.add_argument('--daf-mask-unaligned', action=argparse.BooleanOptionalAction,
+                   default=True,
+                   help='DAF only: treat query bases with no reference counterpart '
+                        '(CIGAR insertions and soft clips) as no evidence, like '
+                        'SNP-masked sites, and leave unaligned stretches of >= 50 bp '
+                        'uncalled (default on). Deaminations are read-versus-reference '
+                        'mismatches, so these bases can never carry one; '
+                        '--no-daf-mask-unaligned restores the pre-3.0 encoding, which '
+                        'counts them as protected.')
     p.add_argument('--daf-snp-mask', default=None,
                    help='DAF only: 0-based BED of recurrent C>T/G>A SNP sites '
                         'to exclude from deamination observations. MD is preserved.')
@@ -1142,6 +1151,8 @@ def _main(args):
     args.daf_mask_runs, args.daf_run_policy = resolve_daf_run_mask(
         args.daf_mask_runs if mode == 'daf' else 0, args.daf_run_policy, args.enzyme)
     configure_daf_run_mask(args.daf_mask_runs, args.daf_run_policy)
+    from fiberhmm.inference.engine import configure_daf_unaligned_mask
+    configure_daf_unaligned_mask(bool(args.daf_mask_unaligned) and mode == 'daf')
     if (args.daf_call_snps or args.daf_snp_mask) and mode != 'daf':
         print("error: DAF SNP masking requires --mode daf", file=sys.stderr)
         sys.exit(2)
@@ -1355,6 +1366,8 @@ def _main(args):
                        else f"j{args.dedup_min_jaccard}"
                             f"{'/collapse' if args.dedup_collapse else '/mark'}"
                             f"/ends{args.dedup_max_end_diff}")
+        unaligned_state = ('n/a' if mode != 'daf'
+                           else ('on' if args.daf_mask_unaligned else 'off'))
         if snp_mask_path:
             snp_state = f"on/{snp_mask_sites}sites"
         elif snp_preflight is not None and not snp_preflight['run']:
@@ -1405,6 +1418,7 @@ def _main(args):
                    f"{derived_tf_max_edge_ambiguity if derived_tf_max_edge_ambiguity is not None else 'off'} "
                    f"chimera_filter={chimera_state} dedup={dedup_state} "
                    f"daf_snp_mask={snp_state} "
+                   f"daf_unaligned_mask={unaligned_state} "
                    f"daf_run_mask={('>=' + str(args.daf_mask_runs) + '/' + args.daf_run_policy) if args.daf_mask_runs else 'off'} "
                    f"cpg_mask={cpg_mask_policy or 'off'}"),
         }
@@ -1463,6 +1477,7 @@ def _main(args):
                         'max_end_diff': args.dedup_max_end_diff,
                     },
                     'daf_run_mask': [args.daf_mask_runs, args.daf_run_policy],
+                    'daf_unaligned_mask': unaligned_state,
                     'reference': reference_identity(args.reference, memo),
                     'process_unmapped': process_unmapped,
                 }
