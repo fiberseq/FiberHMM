@@ -54,7 +54,8 @@ class PosteriorsTSVWriter:
 
     def __init__(self, output_path: str, mode: str = 'pacbio-fiber',
                  context_size: int = 3, edge_trim: int = 10,
-                 source_bam: str = '', compress: bool = True):
+                 source_bam: str = '', compress: bool = True,
+                 extra_metadata: Optional[dict] = None):
         """
         Args:
             output_path: Path to output file (.tsv or .tsv.gz)
@@ -63,6 +64,8 @@ class PosteriorsTSVWriter:
             edge_trim: Edge trim setting
             source_bam: Source BAM filename
             compress: If True, gzip compress the output
+            extra_metadata: Further JSON-serializable ``#metadata`` fields
+                (run provenance); they never replace the fields above.
         """
         self.output_path = output_path
         self.compress = compress or output_path.endswith('.gz')
@@ -86,6 +89,8 @@ class PosteriorsTSVWriter:
             # re-exporting after a fix (written since 3.0).
             'fiberhmm_version': _fiberhmm_version(),
         }
+        for key, value in (extra_metadata or {}).items():
+            metadata.setdefault(key, value)
         self._file.write(f"#metadata:{json.dumps(metadata)}\n")
         self._file.write("#read_id\tchrom\tstart\tend\tstrand\tposteriors_b64\tfp_starts\tfp_sizes\n")
 
