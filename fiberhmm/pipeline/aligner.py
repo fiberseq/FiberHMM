@@ -129,13 +129,30 @@ def _sidecar_contigs(target: str):
         return None
 
 
-def discard_index(target: str) -> None:
-    """Remove a cached index and its sidecar (a stale or damaged entry)."""
+def index_identity(target: str):
+    """``(inode, size, mtime_ns)`` of a cached index file, or None."""
+    try:
+        st = os.stat(target)
+    except OSError:
+        return None
+    return (st.st_ino, st.st_size, st.st_mtime_ns)
+
+
+def discard_index(target: str, loaded=None) -> bool:
+    """Remove a cached index and its sidecar (a stale or damaged entry).
+
+    With ``loaded`` (:func:`index_identity` of the file that was found stale),
+    a file another run has meanwhile replaced is left alone. Returns whether
+    the entry was removed.
+    """
+    if loaded is not None and index_identity(target) != loaded:
+        return False
     for path in (target, target + ".json"):
         try:
             os.remove(path)
         except FileNotFoundError:
             pass
+    return True
 
 
 def ensure_index(fasta: str, contigs, preset: str, aligner: Aligner,
@@ -153,8 +170,11 @@ def ensure_index(fasta: str, contigs, preset: str, aligner: Aligner,
     expected = contig_identity(contigs)
     digest = index_digest(expected, preset, aligner)
     target = os.path.join(cache, f"{digest}.mmi")
-    if (os.path.exists(target) and os.path.getsize(target) > 0
-            and _sidecar_contigs(target) == expected):
+    try:
+        cached = os.path.getsize(target) > 0
+    except OSError:
+        cached = False
+    if cached and _sidecar_contigs(target) == expected:
         return target, False
     tmp = f"{target}.tmp{os.getpid()}"
     sidecar_tmp = f"{target}.json.tmp{os.getpid()}"
@@ -195,10 +215,11 @@ def index_mismatch(stream, contigs) -> Optional[str]:
     (None when it does): the last guard against a stale cache entry."""
     expected = [(name, length) for name, length, _md5 in contig_identity(contigs)]
     if isinstance(stream, MappyStream):
-        # mappy reports the index's names; lengths come from the reference.
-        found = list(stream.aligner.seq_names)
-        if found == [name for name, _length in expected]:
+        names = list(stream.aligner.seq_names)
+        found = [(name, len(stream.aligner.seq(name) or "")) for name in names]
+        if found == expected:
             return None
+        found = [f"{name} ({length:,} bp)" for name, length in found]
     else:
         header = stream.header
         found = list(zip(header.references, header.lengths))
@@ -349,25 +370,42 @@ def fastq_platform_votes(path: str, records: int = 200) -> dict:
     return counts
 
 
-def read_chemistry_evidence(path: str, records: int = 200) -> dict:
+_MM_SPEC = re.compile(r"^([ACGTUN])([+-])([A-Za-z]+|\d+)$")
+
+
+def mm_has_m6a(mm: str) -> bool:
+    """True when an MM tag has an m6A entry (``a`` or ChEBI ``21839`` on A or T)."""
+    for item in str(mm).split(";"):
+        head = item.split(",", 1)[0].strip().rstrip(".?")
+        match = _MM_SPEC.match(head)
+        if not match or match.group(1) not in "ATN":
+            continue
+        code = match.group(3)
+        if code == "21839" or (code.isalpha() and "a" in code):
+            return True
+    return False
+
+
+def read_chemistry_evidence(path: str, records: int = 200, scan_limit: int = 5000) -> dict:
     """What the first primary reads of a FASTQ/BAM carry, for the chemistry check.
 
-    ``{"records": n, "m6a": reads with an m6A MM spec (A+a / T-a),
-    "iupac": reads with R/Y-encoded deaminations}``. Bounded: at most
-    ``records`` primary records are read.
+    ``{"records": n, "m6a": reads with an m6A MM entry (A+a/T-a, or code
+    21839), "iupac": reads with R/Y-encoded deaminations}``. In a BAM with
+    aligned records only aligned primaries are counted (an unsorted BAM may
+    start with untagged unmapped records); unaligned BAMs count their
+    unmapped primaries. Bounded: at most ``records`` reads are counted and
+    ``scan_limit`` records read.
     """
-    from fiberhmm.cli.common import _mm_spec_platform
-    counts = {"records": 0, "m6a": 0, "iupac": 0}
-
-    def tally(sequence: str, mm: Optional[str]) -> None:
+    def tally(counts: dict, sequence: str, mm: Optional[str]) -> None:
         counts["records"] += 1
-        if mm and _mm_spec_platform(mm):
+        if mm and mm_has_m6a(mm):
             counts["m6a"] += 1
         upper = sequence.upper()
         if "R" in upper or "Y" in upper:
             counts["iupac"] += 1
 
     if path.lower().endswith(FASTQ_EXTENSIONS):
+        counts = {"records": 0, "m6a": 0, "iupac": 0}
         with _open_binary(path) as handle:
             header = None
             for i, line in enumerate(handle):
@@ -376,23 +414,26 @@ def read_chemistry_evidence(path: str, records: int = 200) -> dict:
                 elif i % 4 == 1:
                     mm = next((token[5:] for token in header.split()[1:]
                                if token.startswith(("MM:Z:", "Mm:Z:"))), None)
-                    tally(line.decode("ascii", "replace").strip(), mm)
+                    tally(counts, line.decode("ascii", "replace").strip(), mm)
                     if counts["records"] >= records:
                         break
         return counts
+    mapped = {"records": 0, "m6a": 0, "iupac": 0}
+    unmapped = {"records": 0, "m6a": 0, "iupac": 0}
     with pysam.AlignmentFile(path, check_sq=False) as bam:
-        for read in bam.fetch(until_eof=True):
-            if read.is_secondary or read.is_supplementary:
-                continue
-            mm = None
-            for tag in ("MM", "Mm"):
-                if read.has_tag(tag):
-                    mm = str(read.get_tag(tag))
-                    break
-            tally(read.query_sequence or "", mm)
-            if counts["records"] >= records:
+        for examined, read in enumerate(bam.fetch(until_eof=True), 1):
+            if not (read.is_secondary or read.is_supplementary):
+                mm = None
+                for tag in ("MM", "Mm"):
+                    if read.has_tag(tag):
+                        mm = str(read.get_tag(tag))
+                        break
+                counts = unmapped if read.is_unmapped else mapped
+                if counts["records"] < records:
+                    tally(counts, read.query_sequence or "", mm)
+            if mapped["records"] >= records or examined >= scan_limit:
                 break
-    return counts
+    return mapped if mapped["records"] else unmapped
 
 
 def bam_has_mod_tags(path: str, records: int = 200) -> bool:

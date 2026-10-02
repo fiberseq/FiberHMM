@@ -47,9 +47,11 @@ class SampledReads:
     strategy: str
     records_examined: int
     windows_examined: int = 0
-    # Records that were primary and unmapped / aligned (stream sampling only).
+    # Stream sampling only: unmapped primary records and aligned records seen,
+    # and whether the scan reached the end of the file.
     unmapped_primary: int = 0
-    aligned_primary: int = 0
+    aligned_records: int = 0
+    reached_eof: bool = False
 
 
 def _eligible(read, min_mapq: int, allow_unmapped: bool = False) -> bool:
@@ -100,15 +102,18 @@ def _bounded_stream_sample(
     eligible_seen = 0
     records_examined = 0
     unmapped_primary = 0
-    aligned_primary = 0
+    aligned_records = 0
+    reached_eof = True
     with pysam.AlignmentFile(path, "rb", check_sq=False) as bam:
         for read in bam.fetch(until_eof=True):
+            if records_examined >= scan_limit:
+                reached_eof = False
+                break
             records_examined += 1
-            if not (read.is_secondary or read.is_supplementary):
-                if read.is_unmapped:
-                    unmapped_primary += 1
-                else:
-                    aligned_primary += 1
+            if not read.is_unmapped:
+                aligned_records += 1
+            elif not (read.is_secondary or read.is_supplementary):
+                unmapped_primary += 1
             if _eligible(read, min_mapq, allow_unmapped):
                 eligible_seen += 1
                 if len(reservoir) < sample_reads:
@@ -117,15 +122,20 @@ def _bounded_stream_sample(
                     index = int(rng.integers(0, eligible_seen))
                     if index < sample_reads:
                         reservoir[index] = read
-            if records_examined >= scan_limit:
-                break
     return SampledReads(
         reads=reservoir,
         strategy=f"bounded reservoir (first <= {scan_limit:,} records)",
         records_examined=records_examined,
         unmapped_primary=unmapped_primary,
-        aligned_primary=aligned_primary,
+        aligned_records=aligned_records,
+        reached_eof=reached_eof,
     )
+
+
+def _no_aligned_records(sampled: SampledReads) -> bool:
+    """The whole file was read and holds unmapped primaries, no aligned record."""
+    return (sampled.reached_eof and sampled.unmapped_primary > 0
+            and sampled.aligned_records == 0)
 
 
 def _unaligned_stream_sample(path, sample_reads, seed, scan_limit) -> SampledReads:
@@ -152,18 +162,25 @@ def sample_bam_reads(
             indexed = bool(bam.has_index())
             references = list(bam.references)
             lengths = np.asarray(bam.lengths, dtype=np.int64)
+            index_says_unaligned = False
+            if indexed:
+                try:
+                    index_says_unaligned = bam.mapped == 0 and bam.unmapped > 0
+                except (ValueError, AttributeError):
+                    index_says_unaligned = False
     except (OSError, ValueError) as exc:
         raise QCInputError(f"cannot open BAM/CRAM {path!r}: {exc}") from exc
 
-    if not references:
-        # No @SQ: an unaligned BAM (e.g. fiberhmm-call on a uBAM).
+    if not references or index_says_unaligned:
+        # No @SQ, or an index counting no aligned record: an unaligned BAM
+        # (e.g. fiberhmm-call on a uBAM).
         return _unaligned_stream_sample(path, sample_reads, seed, scan_limit)
     usable = lengths > 0
     if not indexed or not np.any(usable):
         sampled = _bounded_stream_sample(
             path, sample_reads, seed, min_mapq, scan_limit
         )
-        if not sampled.reads and sampled.unmapped_primary and not sampled.aligned_primary:
+        if not sampled.reads and _no_aligned_records(sampled):
             return _unaligned_stream_sample(path, sample_reads, seed, scan_limit)
         return sampled
 
@@ -237,7 +254,7 @@ def sample_bam_reads(
         reads = [read for _key, read in ordered]
         records_examined += fill.records_examined
         strategy += " + bounded fill"
-        if not reads and fill.unmapped_primary and not fill.aligned_primary:
+        if not reads and _no_aligned_records(fill):
             return _unaligned_stream_sample(path, sample_reads, seed, scan_limit)
 
     return SampledReads(
@@ -311,12 +328,33 @@ def _declared_assay(header) -> tuple[Optional[str], Optional[str]]:
     return None, None
 
 
+_MINIMAP2_PRESET_RE = re.compile(
+    r"(?:(?:^|\s)-[A-Za-z]*x\s*|preset=)(map-ont|lr:hq|map-hifi|map-pb)(?=\s|$)")
+
+
 def _aligner_platform(header) -> Optional[str]:
-    """Platform named by non-FiberHMM header records (@RG PL, aligner @PG)."""
-    from fiberhmm.cli.common import _header_platform
+    """Platform named by @RG PL, by a known basecaller/aligner @PG, or by the
+    preset of a minimap2 @PG (never by other programs' command lines)."""
+    from fiberhmm.cli.common import _ONT_PROGRAMS, _PACBIO_PROGRAMS
 
     payload = header.to_dict() if hasattr(header, "to_dict") else dict(header)
-    votes = _header_platform(payload)
+    votes = set()
+    for group in payload.get("RG", []):
+        platform = str(group.get("PL", "")).upper()
+        if platform in {"PACBIO", "PACBIO_SMRT"}:
+            votes.add("pacbio")
+        elif platform in {"ONT", "NANOPORE", "OXFORD_NANOPORE"}:
+            votes.add("nanopore")
+    for program in payload.get("PG", []):
+        name = str(program.get("PN") or program.get("ID") or "").lower().split(".", 1)[0]
+        if name in _PACBIO_PROGRAMS:
+            votes.add("pacbio")
+        elif name in _ONT_PROGRAMS:
+            votes.add("nanopore")
+        elif name in ("minimap2", "mappy"):
+            match = _MINIMAP2_PRESET_RE.search(str(program.get("CL", "")))
+            if match:
+                votes.add("nanopore" if match.group(1) in ("map-ont", "lr:hq") else "pacbio")
     return next(iter(votes)) if len(votes) == 1 else None
 
 

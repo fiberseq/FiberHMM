@@ -715,3 +715,33 @@ def test_qc_cli_missing_input_is_a_clean_error(tmp_path, capsys):
 
     assert main(["-i", str(tmp_path / "missing.bam"), "-o", str(tmp_path / "qc")]) == 2
     assert "cannot open BAM/CRAM" in capsys.readouterr().err
+
+
+def test_unmapped_prefix_of_an_aligned_bam_is_not_unaligned(tmp_path):
+    # Codex review: an unsorted BAM whose first records are unmapped still has
+    # aligned records; a bounded scan that saw none must not call it unaligned.
+    path = tmp_path / "prefix.bam"
+    header = pysam.AlignmentHeader.from_dict(
+        {"HD": {"VN": "1.6"}, "SQ": [{"SN": "chr1", "LN": 100_000}]})
+    with pysam.AlignmentFile(str(path), "wb", header=header) as bam:
+        for index in range(12):
+            read = pysam.AlignedSegment(header)
+            read.query_name = f"r{index}"
+            read.query_sequence = "ACGT" * 50
+            if index < 11:
+                read.flag, read.reference_id, read.reference_start = 4, -1, -1
+            else:
+                read.flag, read.reference_id, read.reference_start = 0, 0, 100
+                read.mapping_quality, read.cigar = 60, [(0, 200)]
+            bam.write(read)
+    sampled = sample_bam_reads(str(path), sample_reads=5, scan_limit=10)
+    assert sampled.reads == [] and "unaligned" not in sampled.strategy
+
+
+def test_qc_platform_ignores_unrelated_command_lines(tmp_path):
+    other = {"ID": "custom-tool", "PN": "custom-tool", "CL": "custom-tool --notes map-ont"}
+    path = _header_only_bam(tmp_path / "x.bam", [other])
+    assert infer_assay(path, [], mode="auto", enzyme="auto")[0] == "pacbio-fiber"
+    mm2 = {"ID": "minimap2", "PN": "minimap2", "CL": "minimap2 -ax map-ont ref.fa r.fq"}
+    path = _header_only_bam(tmp_path / "y.bam", [mm2])
+    assert infer_assay(path, [], mode="auto", enzyme="auto")[0] == "nanopore-fiber"

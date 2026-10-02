@@ -564,7 +564,8 @@ class Pipeline:
         self.memo = None
         self._lock: Optional[DirectoryLock] = None
         self._ran: set[str] = set()
-        self._notes: list[str] = []  # logged right after the start event
+        self._notes: list = []  # logged right after the start event (text or (text, level))
+        self._replace_chemistry = False
         self._redo_from = None
         if config.redo:
             self._redo_from = (0 if config.redo == "all" else
@@ -624,6 +625,10 @@ class Pipeline:
             raise PipelineError(f"cannot read the input: {exc}")
         if not problems:
             return
+        # A forced run over a contradicting FIBERHMM-CHEMISTRY declaration must
+        # let fiberhmm-call replace it (it refuses otherwise).
+        self._replace_chemistry = cfg.force_chemistry and any(
+            "FIBERHMM-CHEMISTRY" in problem for problem in problems)
         if cfg.force_chemistry:
             for problem in problems:
                 self._notes.append((f"chemistry: {problem}; continuing (--force-chemistry)",
@@ -1021,14 +1026,16 @@ class Pipeline:
         tmpdir = os.path.join(self.outdir, STATE_DIR, "tmp")
         os.makedirs(tmpdir, exist_ok=True)
         log_path = os.path.join(self.outdir, "logs", "minimap2.log")
+        loaded = mm2.index_identity(self.index_path)
         stream, feeder, source_program = self._open_alignment(preset, rg, carry_tags,
                                                               log_path)
         stale = mm2.index_mismatch(stream, ref.contigs)
         if stale:
             # A cache entry that does not hold this reference (it would place
-            # reads on other contigs): drop it, rebuild, and start again.
+            # reads on other contigs): drop it (unless another run has already
+            # replaced it), rebuild, and start again.
             self._abort_stream(stream)
-            mm2.discard_index(self.index_path)
+            mm2.discard_index(self.index_path, loaded)
             self.log(f"index: {stale}; the cached index was removed and is rebuilt",
                      "warning")
             try:
@@ -1235,6 +1242,7 @@ class Pipeline:
             "call_args": list(cfg.call_args),
             "call_arg_files": self._call_arg_files(),
             "fiberhmm": __version__,
+            **({"replace_chemistry": True} if self._replace_chemistry else {}),
         }
 
     def resumable_call(self, supported: set[str]) -> bool:
@@ -1286,6 +1294,8 @@ class Pipeline:
                 cmd.append("--use-m5c" if cfg.use_m5c else "--no-use-m5c")
             if cfg.cpg_mask_policy:
                 cmd += ["--cpg-mask-policy", cfg.cpg_mask_policy]
+        if self._replace_chemistry:
+            cmd.append("--replace-chemistry")
         # QC runs as its own step (fiberhmm-qc on the called BAM).
         cmd.append("--no-qc")
         # Capabilities of a newer fiberhmm-call (resume, progress). They do not
@@ -1549,8 +1559,14 @@ class Pipeline:
             marker = read_marker(self.outdir, "tracks") or {}
             self.track_files = list((marker.get("outputs") or {}).get("files") or [])
             return
+        inventory = os.path.join(self.outdir, STATE_DIR, "tracks.files.json")
         previous = list(((read_marker(self.outdir, "tracks") or {}).get("outputs") or {})
                         .get("files") or [])
+        try:
+            with open(inventory, encoding="utf-8") as handle:
+                previous += [str(f) for f in json.load(handle)]
+        except (OSError, ValueError, TypeError):
+            pass
         self._start_step("tracks")
         clear_marker(self.outdir, "tracks")
         self.progress.step("tracks", "running")
@@ -1576,11 +1592,13 @@ class Pipeline:
                                 hint=f"Last lines of {log_path}:\n" + _tail(log_path, 20))
         produced = sorted(f for f in os.listdir(staging) if f.endswith((".bb", ".bed")))
         os.makedirs(tracks_dir, exist_ok=True)
-        self.track_files = []
-        for name in produced:
-            target = os.path.join(tracks_dir, name)
+        self.track_files = [os.path.join(tracks_dir, name) for name in produced]
+        # Every track this pipeline has published here (kept until cleanup is
+        # done, so an interrupted or failed run does not lose it).
+        write_json_atomic(inventory, sorted({os.path.abspath(f) for f in previous}
+                                            | set(self.track_files)))
+        for name, target in zip(produced, self.track_files):
             os.replace(os.path.join(staging, name), target)
-            self.track_files.append(target)
         shutil.rmtree(staging, ignore_errors=True)
         # Tracks of the earlier run that this one did not make again (a layer
         # with no features now) would otherwise pass for current ones.
@@ -1590,6 +1608,7 @@ class Pipeline:
                     and os.path.dirname(stale) == os.path.abspath(tracks_dir)):
                 with contextlib.suppress(FileNotFoundError):
                     os.remove(stale)
+        write_json_atomic(inventory, self.track_files)
         self._write_marker("tracks", fingerprint, {"files": self.track_files},
                            {"n_files": len(self.track_files)})
         self.progress.step("tracks", "done", message=f"{len(self.track_files)} files")
