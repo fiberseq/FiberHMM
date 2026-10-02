@@ -512,8 +512,16 @@ def main():
         parser.error(f"input not found: {args.input}")
     if not os.path.isfile(args.reference):
         parser.error(f"reference not found: {args.reference}")
-    if os.path.abspath(args.input) == os.path.abspath(args.output):
-        parser.error("input and output paths must differ")
+    from fiberhmm.cli.common import PathAliasError, check_path_aliases
+    try:
+        check_path_aliases(
+            inputs={"--input": args.input, "--reference": args.reference,
+                    "--model": args.model},
+            outputs={"--output": args.output, "--pairs-tsv": args.pairs_tsv,
+                     "--receipt-json": args.receipt_json},
+        )
+    except PathAliasError as exc:
+        parser.error(str(exc))
     params = DuplexParams(
         min_margin=args.min_margin,
         null_floor=args.null_floor,

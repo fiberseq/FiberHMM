@@ -1058,6 +1058,15 @@ def _main(args):
         # Redirect informational prints to stderr so BAM stream on stdout stays clean
         sys.stdout = sys.stderr
 
+    # -i X -o X (or an output naming the model) is refused, not done in place.
+    import os
+
+    from fiberhmm.cli.common import refuse_path_aliases
+    refuse_path_aliases(
+        os.path.basename(sys.argv[0]) or 'fiberhmm-recall-tfs',
+        inputs={'--in-bam': args.in_bam, '--model': args.model},
+        outputs={'--out-bam': args.out_bam})
+
     # A missing --seq comes from the input's declaration or MM specs (refused
     # on conflicting evidence) before the bundled model is chosen.
     resolve_platform_argument(args, args.in_bam, tool='fiberhmm-recall-tfs')

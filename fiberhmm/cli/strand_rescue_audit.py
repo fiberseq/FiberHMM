@@ -1139,6 +1139,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     from fiberhmm.cli.common import add_version_args
     add_version_args(parser)
     args = parser.parse_args(argv)
+    from fiberhmm.cli.common import PathAliasError, check_path_aliases
+    try:
+        check_path_aliases(inputs={"--bam": args.bam},
+                           outputs={"--output": args.output})
+    except PathAliasError as exc:
+        parser.error(str(exc))
     try:
         result = audit_bams(args.bam, max_errors=args.max_errors)
         if args.output:

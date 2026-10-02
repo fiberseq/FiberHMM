@@ -890,6 +890,34 @@ def main():
         sys.exit(1)
 
 
+def _refuse_call_path_aliases(args):
+    """Refuse outputs that would destroy an input, another output, or be
+    deleted with the region-parallel work directory (exit 2).
+
+    The work directory is the run's private scratch: it is removed after a
+    successful run (and reused by --resume), so nothing the user keeps may
+    live in it, whether or not --keep-work-dir is given.
+    """
+    from fiberhmm.cli.common import refuse_path_aliases
+
+    deleted_dirs = {}
+    if args.region_parallel and args.output != '-':
+        from fiberhmm.inference.region_resume import default_work_dir
+        deleted_dirs['--work-dir'] = (
+            args.work_dir or str(default_work_dir(args.output)))
+    refuse_path_aliases(
+        'fiberhmm-call',
+        inputs={'--input': args.input, '--model': args.model,
+                '--recall-model': args.recall_model,
+                '--reference': args.reference,
+                '--daf-snp-mask': args.daf_snp_mask},
+        outputs={'--output': args.output,
+                 '--progress-json': args.progress_json,
+                 '--dedup-stats-tsv': args.dedup_stats_tsv},
+        deleted_dirs=deleted_dirs,
+    )
+
+
 def _main(args):
     stdout_mode = (args.output == '-')
     using_bundled_model = args.model is None
@@ -920,6 +948,8 @@ def _main(args):
         print("error: --work-dir/--keep-work-dir apply to --region-parallel runs",
               file=sys.stderr)
         sys.exit(2)
+
+    _refuse_call_path_aliases(args)
 
     if args.region_parallel:
         if args.input == '-' or args.output == '-':

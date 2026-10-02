@@ -498,3 +498,199 @@ def resolve_platform_argument(args, input_path, *, tool: str,
             "--seq nanopore for Nanopore data.",
             file=sys.stderr,
         )
+
+
+# ---------------------------------------------------------------------------
+# Input/output path aliasing guard (shared by every CLI that writes files)
+# ---------------------------------------------------------------------------
+#
+# A mistyped path must never destroy data: an output that names an input (or
+# an input's index), two outputs that name one file, or an output/input inside
+# a directory the tool deletes when it finishes. Paths are compared by the
+# file they reach, not by spelling: symlinks are resolved, hard links compare
+# equal (same device and inode), and on case-insensitive filesystems (macOS
+# APFS/HFS+ default, Windows) names that differ only in case are the same.
+
+# Sidecars that describe an input and must not be overwritten either.
+_INPUT_SIDECAR_SUFFIXES = ('.bai', '.csi', '.crai', '.tbi', '.fai', '.gzi')
+
+
+class PathAliasError(ValueError):
+    """An output path would overwrite or delete an input or another output."""
+
+
+def _labelled_paths(paths):
+    """``[(label, path)]`` from ``{label: path-or-paths}`` or ``(label, path)``
+    pairs; ``None``, ``''`` and ``'-'`` (stdin/stdout) are skipped."""
+    import os
+
+    items = paths.items() if hasattr(paths, 'items') else (paths or ())
+    out = []
+    for label, value in items:
+        values = value if isinstance(value, (list, tuple)) else [value]
+        for path in values:
+            if path is None:
+                continue
+            path = os.fspath(path)
+            if path in ('', '-'):
+                continue
+            out.append((label, path))
+    return out
+
+
+def _case_insensitive_directory(directory: str) -> bool:
+    """Whether names in existing ``directory``'s filesystem ignore case.
+
+    Probed without writing: the case-swapped spelling of the nearest path
+    component that has letters is looked up. Undecidable paths count as
+    case-sensitive.
+    """
+    import os
+
+    probe = directory
+    while True:
+        parent, name = os.path.split(probe)
+        if name and name.swapcase() != name:
+            try:
+                return os.path.samefile(probe, os.path.join(parent, name.swapcase()))
+            except OSError:
+                return False
+        if not name or parent == probe:
+            return False
+        probe = parent
+
+
+def _location_key(path: str):
+    """Identity of the file ``path`` reaches (or would create).
+
+    ``(st_dev, st_ino, rest)``: the nearest existing ancestor of the fully
+    resolved path, plus the not-yet-existing components below it (case-folded
+    on a case-insensitive filesystem). Two paths with equal keys are the same
+    file now or will be once written.
+    """
+    import os
+
+    current = os.path.realpath(os.path.abspath(os.path.expanduser(path)))
+    rest = []
+    while not os.path.exists(current):
+        parent, name = os.path.split(current)
+        if parent == current:
+            break
+        rest.append(name)
+        current = parent
+    st = os.stat(current)
+    if rest and _case_insensitive_directory(current):
+        rest = [name.casefold() for name in rest]
+    return (st.st_dev, st.st_ino, tuple(reversed(rest)))
+
+
+def _ancestor_keys(path: str):
+    """Location keys of ``path`` and every directory above it.
+
+    Both the resolved file and the link itself (resolved parent, literal
+    name) are considered: deleting a directory removes a symlink entry in it,
+    and atomic writers replace such an entry rather than its target.
+    """
+    import os
+
+    absolute = os.path.abspath(os.path.expanduser(path))
+    starts = {
+        os.path.realpath(absolute),
+        os.path.join(os.path.realpath(os.path.dirname(absolute)),
+                     os.path.basename(absolute)),
+    }
+    keys = set()
+    for start in starts:
+        current = start
+        while True:
+            keys.add(_location_key(current))
+            parent = os.path.dirname(current)
+            if parent == current:
+                break
+            current = parent
+    return keys
+
+
+def find_path_aliases(*, inputs=(), outputs=(), deleted_dirs=(),
+                      protect_input_sidecars: bool = True):
+    """Problems (one sentence each) with these paths; empty when they are safe.
+
+    ``inputs``/``outputs``/``deleted_dirs`` map an option label (``'--input'``)
+    to a path or a list of paths, or are ``(label, path)`` pairs. An output is
+    refused when it is the same file as an input, as an index beside an input
+    (``.bai/.csi/.crai/.tbi/.fai/.gzi``, when ``protect_input_sidecars``), or
+    as another output. Any input or output inside a directory in
+    ``deleted_dirs`` (or naming it) is refused too.
+    """
+    import os
+
+    inputs = _labelled_paths(inputs)
+    outputs = _labelled_paths(outputs)
+    deleted_dirs = _labelled_paths(deleted_dirs)
+
+    protected = [(label, path, _location_key(path), None) for label, path in inputs]
+    if protect_input_sidecars:
+        from fiberhmm.inference.bam_output import index_paths_for
+
+        for label, path in inputs:
+            sidecars = list(index_paths_for(path))
+            sidecars += [path + suffix for suffix in ('.fai', '.gzi')]
+            for sidecar in dict.fromkeys(sidecars):
+                if os.path.exists(sidecar):
+                    protected.append((label, sidecar, _location_key(sidecar), path))
+
+    problems = []
+    seen_outputs = []
+    for out_label, out_path in outputs:
+        key = _location_key(out_path)
+        clash = next((p for p in protected if p[2] == key), None)
+        if clash is not None:
+            in_label, in_path, _key, owner = clash
+            if owner is None:
+                problems.append(
+                    f"{out_label} {out_path} is the same file as {in_label} "
+                    f"{in_path}; writing it would destroy the input. Choose a "
+                    "different output path")
+            else:
+                problems.append(
+                    f"{out_label} {out_path} is the index {in_path} of {in_label} "
+                    f"{owner}; writing it would destroy that index. Choose a "
+                    "different output path")
+            continue
+        earlier = next((o for o in seen_outputs if o[2] == key), None)
+        if earlier is not None:
+            problems.append(
+                f"{earlier[0]} and {out_label} name the same file ({earlier[1]}, "
+                f"{out_path}); each output needs its own path")
+            continue
+        seen_outputs.append((out_label, out_path, key))
+
+    for dir_label, directory in deleted_dirs:
+        dir_key = _location_key(directory)
+        for kind, label, path in ([('input', *item) for item in inputs]
+                                  + [('output', *item) for item in outputs]):
+            if dir_key in _ancestor_keys(path):
+                problems.append(
+                    f"{kind} {label} {path} is inside {dir_label} {directory}, "
+                    "which is deleted when the run finishes; choose a path "
+                    "outside it")
+    return problems
+
+
+def check_path_aliases(**kwargs) -> None:
+    """Raise :class:`PathAliasError` for the problems :func:`find_path_aliases`
+    finds."""
+    problems = find_path_aliases(**kwargs)
+    if problems:
+        raise PathAliasError('; '.join(problems))
+
+
+def refuse_path_aliases(tool: str, **kwargs) -> None:
+    """Exit with status 2 and a one-line error naming the clashing options
+    when :func:`find_path_aliases` finds a problem. Call it before any file is
+    opened for writing."""
+    try:
+        check_path_aliases(**kwargs)
+    except PathAliasError as exc:
+        print(f"{tool}: error: {exc}", file=sys.stderr)
+        sys.exit(2)

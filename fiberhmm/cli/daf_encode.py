@@ -75,6 +75,12 @@ Examples:
 
 def main(argv=None):
     args = parse_args(argv)
+    # -i X -o X (or an output naming the reference) is refused, not done in place.
+    from fiberhmm.cli.common import refuse_path_aliases
+    refuse_path_aliases('fiberhmm-daf-encode',
+                        inputs={'--input': args.input,
+                                '--reference': args.reference},
+                        outputs={'--output': args.output})
 
     force_strand = None if args.strand == "auto" else args.strand
 
