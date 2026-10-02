@@ -49,7 +49,50 @@ def report_chemistry_errors(run, prog):
 
 
 def main(argv=None):
-    return report_chemistry_errors(lambda: _main(argv),'fiberhmm-consensus')
+    from fiberhmm.cli.common import run_reporting_input_errors
+    return run_reporting_input_errors(
+        'fiberhmm-consensus', lambda: report_chemistry_errors(lambda: _main(argv),'fiberhmm-consensus'))
+
+
+def _parse_regions(parser, values):
+    """--region CHROM:START-END values as windows; malformed or empty spans are usage errors."""
+    windows=[]
+    for i,value in enumerate(values):
+        chrom,sep,span=value.rpartition(':')
+        start,dash,end=span.partition('-')
+        try: a,b=int(start.replace(',','')),int(end.replace(',',''))
+        except ValueError: a=b=None
+        if not (sep and chrom and dash) or a is None:
+            parser.error(f'--region {value!r}: expected CHROM:START-END (0-based, half-open), e.g. chr1:10000-12000')
+        if a<0 or b<=a:
+            parser.error(f'--region {value!r}: START must be >= 0 and END greater than START (0-based, half-open)')
+        windows.append(dict(chrom=chrom,start=a,end=b,name=f'region_{i+1}',strand='+'))
+    return windows
+
+
+def _check_window_sizes(parser, windows, limit, source):
+    """Windows longer than compute.maximum_region_bp are refused by name, with the limit and how to raise it."""
+    for w in windows:
+        span=w['end']-w['start']
+        if span>limit:
+            label=f"--region {w['chrom']}:{w['start']}-{w['end']}" if source=='region' else f"BED window {w.get('name') or ''} {w['chrom']}:{w['start']}-{w['end']}".replace('  ',' ')
+            parser.error(f'{label} spans {span:,} bp, more than the {limit:,} bp analysis limit (compute.maximum_region_bp). '
+                         'Split it into smaller windows, or raise the limit in a --parameters JSON file: '
+                         f'{{"compute": {{"maximum_region_bp": {span}}}}}')
+
+
+def _check_region_contigs(parser, windows, datasets):
+    """Each --region must name a contig of every input BAM and overlap it (the loader's naming rules)."""
+    from .bam import _resolve_bam_fetch_region
+    for dataset in datasets or ():
+        for path in dataset.get('paths', ()):
+            for w in windows:
+                try: _resolve_bam_fetch_region(path,w['chrom'],w['start'],w['end'])
+                except ValueError as error:
+                    detail=str(error)
+                    if detail.startswith('Window does not intersect'):
+                        detail=f'{path}: the window lies beyond the end of {w["chrom"]!r}'
+                    parser.exit(2,f"{parser.prog}: error: --region {w['chrom']}:{w['start']}-{w['end']}: {detail}\n")
 
 
 def _main(argv=None):
@@ -169,13 +212,10 @@ def _main(argv=None):
         else:
             if args.bed: windows=load_bed(args.bed,pooled=args.pool_loci)
             elif args.region:
-                windows=[]
-                for i,value in enumerate(args.region):
-                    chrom,span=value.rsplit(':',1);a,b=map(int,span.split('-'))
-                    if a<0 or b<=a: raise ValueError('Invalid 0-based region: '+value)
-                    windows.append(dict(chrom=chrom,start=a,end=b,name=f'region_{i+1}',strand='+'))
+                windows=_parse_regions(p,args.region)
+                _check_region_contigs(p,windows,datasets)
             else: p.error('BAM input requires --bed or --region')
-            if any(w['end']-w['start']>options['compute'].maximum_region_bp for w in windows): raise ValueError('BED window exceeds maximum_region_bp')
+            _check_window_sizes(p,windows,options['compute'].maximum_region_bp,'bed' if args.bed else 'region')
             def load(i,w):
                 progress.report('windows',f"Loading {w['name']}",completed=i,total=len(windows))
                 return load_bam_payload(datasets,{k:w[k] for k in ('chrom','start','end')},options,progress)

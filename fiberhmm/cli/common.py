@@ -609,3 +609,104 @@ def resolve_platform_argument(args, input_path, *, tool: str,
         # The bundled-model lookup would otherwise repeat this warning.
         args.seq = "pacbio"
 
+
+# ---------------------------------------------------------------------------
+# User-error reporting for console scripts and model/input validation
+# ---------------------------------------------------------------------------
+
+# pysam/htslib errors that mean "this input is not a readable BAM/CRAM/SAM".
+_INPUT_FORMAT_MESSAGES = (
+    'file does not contain alignment data',
+    'file has no sequences defined',
+    'could not open alignment file',
+    'no bgzf eof marker',
+    'file may be truncated',
+    'truncated file',
+    'error while reading file',
+)
+_DEBUG_ENV = 'FIBERHMM_DEBUG'
+
+
+def is_input_error(exc: BaseException) -> bool:
+    """Whether ``exc`` is an ordinary input problem rather than a bug.
+
+    Missing paths, directories and permission problems (``FileNotFoundError``,
+    ``IsADirectoryError``, ``NotADirectoryError``, ``PermissionError``), and
+    the pysam/htslib errors for a file that is not, or no longer, a readable
+    BAM/CRAM/SAM.
+    """
+    if isinstance(exc, (FileNotFoundError, IsADirectoryError,
+                        NotADirectoryError, PermissionError)):
+        return True
+    if isinstance(exc, (ValueError, OSError)):
+        text = str(exc).lower()
+        return any(message in text for message in _INPUT_FORMAT_MESSAGES)
+    return False
+
+
+def _input_error_text(exc: BaseException) -> str:
+    import re
+
+    text = re.sub(r'^\[Errno \d+\]\s*', '', str(exc)).strip()
+    lowered = text.lower()
+    if '\n' not in text and (isinstance(exc, ValueError)
+                             or 'eof marker' in lowered or 'truncated' in lowered):
+        text += ' (is it a valid, complete BAM/CRAM/SAM file?)'
+    return text
+
+
+def run_reporting_input_errors(tool: str, main):
+    """Run ``main()``; an input error exits 2 with one line instead of a traceback.
+
+    Errors :func:`is_input_error` does not recognise propagate unchanged.
+    ``FIBERHMM_DEBUG=1`` re-raises input errors too, with their traceback.
+    """
+    import os
+
+    try:
+        return main()
+    except (OSError, ValueError) as exc:
+        if not is_input_error(exc) or os.environ.get(_DEBUG_ENV):
+            raise
+        print(f"error: {tool}: {_input_error_text(exc)}", file=sys.stderr)
+        sys.exit(2)
+
+
+_MODEL_JSON_KEYS = ('n_states', 'startprob', 'transmat', 'emissionprob')
+
+
+def require_model_files(tool: str, *flag_paths) -> None:
+    """Exit 2 with one line unless each given model path is a loadable model.
+
+    ``flag_paths`` are ``(flag, path)`` pairs; ``None`` paths are skipped. A
+    ``.json`` file must parse and carry the HMM keys
+    ``fiberhmm.core.model_io.load_model_with_metadata`` reads, so a JSON that
+    is not a model is reported by name instead of as ``KeyError: 'n_states'``.
+    """
+    import json
+    import os
+
+    for flag, path in flag_paths:
+        if not path:
+            continue
+        if not os.path.exists(path):
+            problem = 'does not exist'
+        elif os.path.isdir(path):
+            problem = 'is a directory, not a model file'
+        elif str(path).endswith('.json'):
+            try:
+                with open(path) as handle:
+                    data = json.load(handle)
+            except (OSError, UnicodeDecodeError, ValueError) as exc:
+                problem = f'is not valid JSON ({exc})'
+            else:
+                missing = ([key for key in _MODEL_JSON_KEYS if key not in data]
+                           if isinstance(data, dict) else list(_MODEL_JSON_KEYS))
+                problem = (
+                    'is not a FiberHMM model (missing '
+                    + ', '.join(missing) + ')' if missing else None)
+        else:
+            problem = None
+        if problem:
+            print(f"error: {tool}: {flag} {path} {problem}", file=sys.stderr)
+            sys.exit(2)

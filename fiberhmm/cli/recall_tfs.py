@@ -59,6 +59,7 @@ import pysam
 from fiberhmm.cli.common import (
     add_force_seq_arg,
     add_legacy_mode_override,
+    require_model_files,
     resolve_observation_mode,
     resolve_platform_argument,
 )
@@ -1174,6 +1175,7 @@ def _main(args):
     # A missing --seq comes from the input's declaration or MM specs (refused
     # on conflicting evidence) before the bundled model is chosen.
     resolve_platform_argument(args, args.in_bam, tool='fiberhmm-recall-tfs')
+    require_model_files('fiberhmm-recall-tfs', ('-m/--model', args.model))
 
     # Resolve model path: explicit -m wins; else use bundled model for --enzyme
     model_path = args.model

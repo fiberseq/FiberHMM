@@ -209,7 +209,8 @@ def _run_merge_passes(bam, in_bam, out_bam, unsorted, header, prob_threshold,
     def flush(tid, paired):
         """Build consensus reads for one chromosome's paired-read dict."""
         nonlocal n_consensus, n_pairs_seen, n_build_fail
-        if tid < 0 or not paired:
+        # tid is None when the input has no primary records at all.
+        if tid is None or tid < 0 or not paired:
             return
         chrom = bam.get_reference_name(tid)
         done = set()

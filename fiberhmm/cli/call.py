@@ -27,6 +27,7 @@ import sys
 from fiberhmm.cli.common import (
     add_force_seq_arg,
     add_legacy_mode_override,
+    require_model_files,
     resolve_observation_mode,
     resolve_platform_argument,
 )
@@ -945,6 +946,8 @@ def _main(args):
     # A missing --seq is inferred from the input's own evidence (and refused
     # on conflicting evidence) before any model is chosen.
     resolve_platform_argument(args, args.input, tool='fiberhmm-call')
+    require_model_files('fiberhmm-call', ('-m/--model', args.model),
+                        ('--recall-model', args.recall_model))
 
     apply_model_path = _resolve_apply_model(args)
     recall_model_path = _resolve_recall_model(args)

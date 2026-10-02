@@ -18,6 +18,7 @@ from fiberhmm.cli.common import (
     add_parallel_args,
     add_stats_args,
     add_version_args,
+    require_model_files,
     resolve_observation_mode,
     resolve_platform_argument,
 )
@@ -298,6 +299,7 @@ def _main(args):
     # A missing --seq is inferred from the input's own evidence (and refused
     # on conflicting evidence) before the bundled model is chosen.
     resolve_platform_argument(args, args.input, tool='fiberhmm-apply')
+    require_model_files('fiberhmm-apply', ('-m/--model', args.model))
 
     # Resolve model path: explicit -m wins; else use bundled model for --enzyme
     model_path = args.model
