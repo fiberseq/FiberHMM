@@ -115,14 +115,19 @@ def test_hmm_unreachable_state_gives_minus_inf_not_nan():
 @pytest.mark.parametrize("mode", [[], ["--region-parallel"]])
 def test_call_refuses_a_k4_model_before_starting_workers(tmp_path, mode):
     """With --phase-nrl off the tables were first built in worker
-    initializers, where the refusal hung the streaming pool."""
+    initializers, where the refusal hung the streaming pool.
+
+    The shared region fixture has A+a-only (Nanopore-like) MM specs, so the
+    up-front --seq check would refuse ``--seq pacbio`` first; --force-seq keeps
+    this test on the k=3 guard it is about."""
     from test_call_entrypoint_regressions import _run_cli, make_region_test_bam
 
     bam = make_region_test_bam(tmp_path / "in.bam", seed=3)
     output = tmp_path / "out.bam"
     result = _run_cli("fiberhmm.cli.call", "-i", bam, "-o", output,
                       "-m", _model_file(tmp_path / "k4.json", 4), "-k", "4",
-                      "--enzyme", "hia5", "--seq", "pacbio", "--phase-nrl", "off",
+                      "--enzyme", "hia5", "--seq", "pacbio", "--force-seq",
+                      "--phase-nrl", "off",
                       "--no-qc", "--no-recall-nucs", "-c", "2", "--io-threads", "1",
                       *mode, timeout=120)
     assert result.returncode != 0
