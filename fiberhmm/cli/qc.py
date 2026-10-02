@@ -20,6 +20,11 @@ from fiberhmm.qc.core import (
     run_multi_qc,
     run_qc,
 )
+from fiberhmm.qc.states import (
+    DEFAULT_LIGHT_CALL_READS,
+    DEFAULT_LIGHT_CALL_SECONDS,
+    DEFAULT_MIN_MSP_BP,
+)
 
 
 def parse_args(argv=None):
@@ -59,6 +64,10 @@ def parse_args(argv=None):
     parser.add_argument("--min-opportunities", type=int, default=200, help="Minimum target sites per read for rate QC (default 200)")
     parser.add_argument("--snp-mask", default=None, help="Applied DAF SNP-mask BED to summarize (single input only)")
     parser.add_argument("--snp-report", default=None, help="fiberhmm-daf-snps JSON to plot (single input only)")
+    parser.add_argument("--state-source", choices=["auto", "tags", "light-call", "none"], default="auto", help="Where the in-MSP/outside-MSP split comes from: the BAM's FiberHMM calls when the sample carries them, else a bounded light call with the bundled model of the declared chemistry (auto, default); calls only (tags); always re-call (light-call); or skip (none)")
+    parser.add_argument("--min-msp-bp", type=int, default=DEFAULT_MIN_MSP_BP, help=f"Shortest MSP counted as accessible for the in-MSP rate; shorter gaps (linkers) count as outside-MSP (default {DEFAULT_MIN_MSP_BP}; the packaged references are calibrated at this value)")
+    parser.add_argument("--light-call-reads", type=int, default=DEFAULT_LIGHT_CALL_READS, help=f"Most sampled reads the light call runs on (default {DEFAULT_LIGHT_CALL_READS})")
+    parser.add_argument("--light-call-seconds", type=float, default=DEFAULT_LIGHT_CALL_SECONDS, help=f"Wall-time budget of the light call (default {DEFAULT_LIGHT_CALL_SECONDS:g} s)")
     parser.add_argument("--fail-on-qc", action="store_true", help="Exit 2 when the final status is FAIL")
     from fiberhmm.cli.common import add_version_args
     add_version_args(parser)
@@ -121,6 +130,10 @@ def main(argv=None):
         "min_mapq": args.min_mapq,
         "prob_threshold": args.prob_threshold,
         "min_opportunities": args.min_opportunities,
+        "state_source": args.state_source,
+        "min_msp_bp": args.min_msp_bp,
+        "light_call_reads": args.light_call_reads,
+        "light_call_seconds": args.light_call_seconds,
     }
     try:
         if len(input_paths) == 1:

@@ -26,6 +26,13 @@ from fiberhmm.core.bam_reader import (
     parse_mm_tag_query_positions,
 )
 from fiberhmm.io.ma_tags import parse_ma_tag
+from fiberhmm.qc.states import (
+    DEFAULT_LIGHT_CALL_READS,
+    DEFAULT_LIGHT_CALL_SECONDS,
+    DEFAULT_MIN_MSP_BP,
+    compute_state_rates,
+    grade_state_rates,
+)
 
 MAX_LAG = 1000
 PLOT_MAX_LAG = 800
@@ -1307,6 +1314,50 @@ def _fmt_score(value) -> str:
     return "NA" if value is None else f"{float(value):.0f}"
 
 
+def _pct(value, digits: int = 2) -> str:
+    return "NA" if value is None else f"{100 * float(value):.{digits}f}%"
+
+
+def _state_terminal_lines(result: dict) -> list[str]:
+    block = result.get("state_rates")
+    if not block:
+        return []
+    if not block.get("available"):
+        return [f"  state-aware rates: unavailable ({block.get('note') or 'no states'})"]
+    source = block.get("source")
+    if source == "light_call":
+        light = block.get("light_call", {})
+        stop = f", stopped by {light['stopped_by']}" if light.get("stopped_by") else ""
+        source_text = (f"light call of {light.get('reads_called', 0):,} sampled reads "
+                       f"with {light.get('model')} ({light.get('elapsed_seconds', 0):.1f} s"
+                       f"{stop}; apply HMM only)")
+    else:
+        source_text = "the BAM's FiberHMM calls"
+    efficiency = result.get("efficiency", {})
+    background = result.get("background", {})
+    ratio = block.get("msp_to_outside_ratio")
+    lines = [
+        f"  states from {source_text}; MSP >= {block['definition']['min_msp_bp']} bp",
+        f"  in-MSP rate (efficiency): {_pct(efficiency.get('value'))} median, "
+        f"{_pct(block['msp']['aggregate_rate'])} pooled  "
+        f"[{efficiency.get('status', 'NA')} {_fmt_score(efficiency.get('score'))}/100]",
+        f"  outside-MSP rate (background): {_pct(background.get('value'))} median, "
+        f"{_pct(block['outside_msp']['aggregate_rate'])} pooled  "
+        f"[{background.get('status', 'NA')} {_fmt_score(background.get('score'))}/100]",
+        f"  in-MSP/outside-MSP = {'NA' if ratio is None else f'{ratio:.1f}x'}; "
+        f"MSP = {_pct(block.get('msp_length_fraction'), 1)} of read length; "
+        f"all-state rate {_pct(block['all_states']['aggregate_rate'])}",
+    ]
+    note = efficiency.get("note") or background.get("note")
+    if note:
+        lines.append(f"  state note: {note}")
+    basis = result.get("overall", {}).get("verdict_basis")
+    if basis == "state-aware":
+        lines.append("  verdict uses in-MSP efficiency + outside-MSP background "
+                     "(the signal-rate grade is reported but excluded from the verdict)")
+    return lines
+
+
 def format_terminal(result: dict) -> str:
     overall = result["overall"]
     signal = result["signal"]
@@ -1338,6 +1389,7 @@ def format_terminal(result: dict) -> str:
         f"  reference phasogram agreement: r={correlation_text}, "
         f"matched amplitude={amplitude_text}",
     ]
+    lines.extend(_state_terminal_lines(result))
     if footprints["n_tagged_reads"]:
         lines.append(
             f"  footprint tags: nuc n={footprints['n_nucleosomes']:,}, "
@@ -1856,6 +1908,25 @@ def _plot_amplicon_table(axis, result: dict) -> None:
     )
 
 
+def _state_plot_text(result: dict) -> str:
+    block = result.get("state_rates") or {}
+    if not block.get("available"):
+        return ""
+    efficiency = result.get("efficiency") or {}
+    background = result.get("background") or {}
+    ratio = block.get("msp_to_outside_ratio")
+    source = "calls" if block.get("source") == "tags" else "light call"
+    return "\n".join((
+        f"states ({source}); MSP >= {block['definition']['min_msp_bp']} bp",
+        f"in-MSP (efficiency) {_pct(efficiency.get('value'))} "
+        f"[{efficiency.get('status')}]",
+        f"outside-MSP (background) {_pct(background.get('value'))} "
+        f"[{background.get('status')}]",
+        f"ratio {'NA' if ratio is None else f'{ratio:.1f}x'}; "
+        f"MSP {_pct(block.get('msp_length_fraction'), 1)} of length",
+    ))
+
+
 def _plot_qc(
     result: dict,
     arrays: dict,
@@ -1962,7 +2033,17 @@ def _plot_qc(
                 fontsize=8,
                 color="#444444",
             )
-    axes[0, 0].set(xlabel=f"per-read {result['signal']['label']} rate (%)", ylabel="fraction of fibers <= rate", title=f"Signal rate [{result['signal']['status']}]")
+    state_text = _state_plot_text(result)
+    if state_text:
+        axes[0, 0].text(
+            0.98, 0.04, state_text, ha="right", va="bottom",
+            transform=axes[0, 0].transAxes, fontsize=8, color="#333333",
+            bbox={"boxstyle": "round,pad=0.35", "facecolor": "white",
+                  "edgecolor": "#cccccc", "alpha": 0.9},
+        )
+    axes[0, 0].set(xlabel=f"per-read {result['signal']['label']} rate (%)", ylabel="fraction of fibers <= rate", title=(f"Signal rate [{result['signal']['status']}"
+                   + (", not in verdict]"
+                      if result["overall"].get("verdict_basis") == "state-aware" else "]")))
     axes[0, 0].set_ylim(0, 1.01)
     axes[0, 0].legend(frameon=False, fontsize=8)
 
@@ -2205,6 +2286,54 @@ def _plot_read_examples(
     )
 
 
+STATE_TSV_FIELDS = (
+    "state_source",
+    "efficiency_status",
+    "efficiency_score",
+    "background_status",
+    "background_score",
+    "median_msp_rate",
+    "median_outside_msp_rate",
+    "aggregate_msp_rate",
+    "aggregate_outside_msp_rate",
+    "msp_events",
+    "msp_opportunities",
+    "outside_msp_events",
+    "outside_msp_opportunities",
+    "all_states_rate",
+    "msp_to_outside_ratio",
+    "msp_length_fraction",
+    "verdict_basis",
+)
+
+
+def _state_tsv_fields(result: dict) -> dict:
+    block = result.get("state_rates") or {}
+    msp = block.get("msp") or {}
+    outside = block.get("outside_msp") or {}
+    efficiency = result.get("efficiency") or {}
+    background = result.get("background") or {}
+    return {
+        "state_source": block.get("source"),
+        "efficiency_status": efficiency.get("status"),
+        "efficiency_score": efficiency.get("score"),
+        "background_status": background.get("status"),
+        "background_score": background.get("score"),
+        "median_msp_rate": msp.get("median_per_read_rate"),
+        "median_outside_msp_rate": outside.get("median_per_read_rate"),
+        "aggregate_msp_rate": msp.get("aggregate_rate"),
+        "aggregate_outside_msp_rate": outside.get("aggregate_rate"),
+        "msp_events": msp.get("n_events"),
+        "msp_opportunities": msp.get("n_opportunities"),
+        "outside_msp_events": outside.get("n_events"),
+        "outside_msp_opportunities": outside.get("n_opportunities"),
+        "all_states_rate": (block.get("all_states") or {}).get("aggregate_rate"),
+        "msp_to_outside_ratio": block.get("msp_to_outside_ratio"),
+        "msp_length_fraction": block.get("msp_length_fraction"),
+        "verdict_basis": (result.get("overall") or {}).get("verdict_basis"),
+    }
+
+
 def _write_tsv(result: dict, path: Path) -> None:
     fields = {
         "input": result["input"],
@@ -2248,6 +2377,7 @@ def _write_tsv(result: dict, path: Path) -> None:
         "n_discovered_amplicons": result["variant_masking"].get(
             "n_discovered_amplicons", 0
         ),
+        **_state_tsv_fields(result),
     }
     with path.open("w") as handle:
         handle.write("\t".join(fields) + "\n")
@@ -2272,6 +2402,27 @@ def _histogram_payload(values: np.ndarray, control: Optional[dict], step: int,
         "reference_fraction_per_bin": list(control["fraction_per_bin"]) if control else None,
     }
     return payload
+
+
+def _state_curves(result: dict, arrays: dict) -> Optional[dict]:
+    """Per-read in-MSP/outside-MSP rates and the reference quantiles."""
+    block = result.get("state_rates") or {}
+    state_arrays = arrays.get("state_rates") or {}
+    if not block.get("available"):
+        return None
+    reference = block.get("reference") or {}
+    return {
+        "source": block.get("source"),
+        "min_msp_bp": (block.get("definition") or {}).get("min_msp_bp"),
+        "msp_per_read_rates": np.sort(state_arrays.get("msp_rates", [])).tolist(),
+        "outside_msp_per_read_rates":
+            np.sort(state_arrays.get("outside_rates", [])).tolist(),
+        "reference": {
+            key: {"quantiles": (reference.get(key) or {}).get("quantiles"),
+                  "probabilities": (reference.get(key) or {}).get("probabilities")}
+            for key in ("msp", "outside_msp")
+        } if reference else None,
+    }
 
 
 def qc_curves(result: dict, arrays: dict, profile: Optional[dict],
@@ -2321,7 +2472,14 @@ def qc_curves(result: dict, arrays: dict, profile: Optional[dict],
             "signal_score": result["signal"]["score"],
             "periodicity": result["periodicity"]["status"],
             "periodicity_score": result["periodicity"]["score"],
+            # Additive (QC report schema 1.1): state-aware verdict parts.
+            "efficiency": (result.get("efficiency") or {}).get("status"),
+            "efficiency_score": (result.get("efficiency") or {}).get("score"),
+            "background": (result.get("background") or {}).get("status"),
+            "background_score": (result.get("background") or {}).get("score"),
+            "verdict_basis": (result.get("overall") or {}).get("verdict_basis"),
         },
+        "state_rates": _state_curves(result, arrays),
         "signal_rate": {
             "label": result["signal"]["label"],
             "per_read_rates": rates.tolist(),
@@ -2353,6 +2511,60 @@ def qc_curves(result: dict, arrays: dict, profile: Optional[dict],
     }
 
 
+QC_SCHEMA_MINOR_VERSION = 1
+
+
+def _state_rates(input_path, reads, mode, enzyme, **options) -> tuple[dict, dict]:
+    """State-aware rates; a failure is reported in the block, never raised."""
+    if options.get("state_source") in ("none", "", None):
+        return {"available": False, "source": None,
+                "note": "state-aware rates disabled (--state-source none)"}, {}
+    try:
+        with pysam.AlignmentFile(input_path, "rb", check_sq=False) as handle:
+            header = handle.header
+    except (OSError, ValueError):
+        header = None
+    try:
+        return compute_state_rates(reads, mode, enzyme, header=header, **options)
+    except Exception as exc:  # QC must still report everything else
+        return {"available": False, "source": None,
+                "note": f"state-aware rates failed: {type(exc).__name__}: {exc}"}, {}
+
+
+def _overall_verdict(analysis: dict) -> dict:
+    """Overall status from the graded components.
+
+    When the in-MSP efficiency and/or outside-MSP background are graded they
+    replace the overall-rate grade (which stays in ``signal`` as a reported
+    metric): the overall rate also reflects how much of the DNA is accessible,
+    so it confounds enzyme efficiency with the chromatin of the sample.
+    """
+    graded_states = [name for name in ("efficiency", "background")
+                     if analysis[name]["score"] is not None]
+    state_graded = bool(graded_states)
+    # A state component without evidence is reported, not counted as a WARN,
+    # when the other one is graded; every graded failure is kept.
+    names = ((*graded_states, "periodicity") if state_graded
+             else ("signal", "periodicity"))
+    statuses = [analysis[name]["status"] for name in names]
+    scored = [analysis[name]["score"] for name in names
+              if analysis[name]["score"] is not None]
+    if not scored:
+        status = "INSUFFICIENT"
+    elif "FAIL" in statuses:
+        status = "FAIL"
+    elif "WARN" in statuses or "INSUFFICIENT" in statuses:
+        status = "WARN"
+    else:
+        status = "PASS"
+    return {
+        "score": float(np.mean(scored)) if scored else None,
+        "status": status,
+        "components": list(names),
+        "verdict_basis": "state-aware" if state_graded else "overall-rate",
+    }
+
+
 def run_qc(
     input_path: str,
     output_prefix: Optional[str] = None,
@@ -2371,8 +2583,17 @@ def run_qc(
     dedup_run_summary: Optional[dict] = None,
     stream: Optional[TextIO] = sys.stderr,
     return_arrays: bool = False,
+    state_source: str = "auto",
+    min_msp_bp: int = DEFAULT_MIN_MSP_BP,
+    light_call_reads: int = DEFAULT_LIGHT_CALL_READS,
+    light_call_seconds: float = DEFAULT_LIGHT_CALL_SECONDS,
 ) -> dict:
-    """Run bounded QC, write machine-readable output/plot, and print a scorecard."""
+    """Run bounded QC, write machine-readable output/plot, and print a scorecard.
+
+    ``state_source`` selects where the in-MSP/outside-MSP split comes from:
+    ``auto`` (the BAM's FiberHMM calls when the sample carries them, else a
+    bounded light call), ``tags``, ``light-call`` or ``none`` (skip).
+    """
     sampled = sample_bam_reads(
         input_path,
         sample_reads=sample_reads,
@@ -2456,6 +2677,22 @@ def run_qc(
         min_opportunities=min_opportunities,
         snp_mask=snp_mask,
     )
+    state_block, state_arrays = _state_rates(
+        input_path, sampled.reads, resolved_mode, resolved_enzyme,
+        prob_threshold=prob_threshold, reference_fasta=reference_fasta,
+        snp_mask=snp_mask, state_source=state_source, seed=seed,
+        min_msp_bp=min_msp_bp, light_call_reads=light_call_reads,
+        light_call_seconds=light_call_seconds,
+    )
+    efficiency, background = grade_state_rates(state_block, profile, prob_threshold)
+    reference_states = ((profile or {}).get("state_rates") or {}).get("by_source", {})
+    if state_block.get("source") in reference_states:
+        state_block["reference"] = reference_states[state_block["source"]]
+    analysis["state_rates"] = state_block
+    analysis["efficiency"] = efficiency
+    analysis["background"] = background
+    analysis["overall"] = _overall_verdict(analysis)
+    arrays["state_rates"] = state_arrays
     prefix = Path(output_prefix) if output_prefix else Path(str(input_path)).with_suffix("")
     prefix.parent.mkdir(parents=True, exist_ok=True)
     json_path = Path(str(prefix) + ".qc.json")
@@ -2466,6 +2703,8 @@ def run_qc(
 
     result = {
         "schema_version": 1,
+        # Additive revisions of schema 1: 1 = state_rates/efficiency/background.
+        "schema_minor_version": QC_SCHEMA_MINOR_VERSION,
         # Read by fiberhmm.advisories (re-run QC after a fix); since 3.0.
         "fiberhmm_version": fiberhmm_version,
         "input": str(Path(input_path).resolve()),
@@ -2987,6 +3226,7 @@ def _write_combined_tsv(results: Sequence[dict], path: Path) -> None:
         "snp_mask_applied",
         "n_masked_snp_sites",
         "n_discovered_amplicons",
+        *STATE_TSV_FIELDS,
     )
     with path.open("w") as handle:
         handle.write("\t".join(fields) + "\n")
@@ -3032,6 +3272,7 @@ def _write_combined_tsv(results: Sequence[dict], path: Path) -> None:
                 "n_discovered_amplicons": result["variant_masking"].get(
                     "n_discovered_amplicons", 0
                 ),
+                **_state_tsv_fields(result),
             }
             handle.write("\t".join("" if values[field] is None else str(values[field]) for field in fields) + "\n")
 
@@ -3058,12 +3299,18 @@ def _write_combined_html(payload: dict, path: Path) -> None:
             "fraction_nucleosome_over_300_bp"
         )
         plot = result["outputs"].get("plot")
+        state_fields = _state_tsv_fields(result)
         rows.append(
             "<tr>"
             f"<td>{html.escape(sample)}</td>"
             f"<td>{html.escape(result['overall']['status'])}</td>"
             f"<td>{_fmt_score(result['overall']['score'])}</td>"
             f"<td>{'NA' if signal_rate is None else f'{100 * signal_rate:.2f}%'}</td>"
+            f"<td>{_pct(state_fields['median_msp_rate'])} "
+            f"{html.escape(str(state_fields['efficiency_status'] or ''))}</td>"
+            f"<td>{_pct(state_fields['median_outside_msp_rate'])} "
+            f"{html.escape(str(state_fields['background_status'] or ''))}</td>"
+            f"<td>{_pct(state_fields['msp_length_fraction'], 1)}</td>"
             f"<td>{result['periodicity']['nrl_bp'] or 'NA'}</td>"
             f"<td>{result['periodicity']['autocorrelation_strength']:.3f}</td>"
             f"<td>{'NA' if curve_correlation is None else f'{curve_correlation:.3f}'}</td>"
@@ -3086,7 +3333,7 @@ def _write_combined_html(payload: dict, path: Path) -> None:
 </head><body><h1>FiberHMM multi-sample QC — {html.escape(payload['overall']['status'])}</h1>
 <p>Bounded assay-aware QC. Standalone QC does not perform deduplication; matching integrated-call sidecars provide exact full-run duplication and SNP summaries when available.</p>
 {f'<img src="{html.escape(overview)}" alt="combined QC overview">' if overview else ''}
-<h2>Scorecard</h2><table><thead><tr><th>Sample</th><th>Status</th><th>Score</th><th>Signal rate</th><th>NRL (bp)</th><th>Periodicity AC</th><th>Reference curve r</th><th>Matched amplitude</th><th>Duplicate reads</th><th>Nuc-tagged &gt;300 bp</th><th>SNP calls</th><th>Amplicons</th></tr></thead><tbody>{''.join(rows)}</tbody></table>
+<h2>Scorecard</h2><table><thead><tr><th>Sample</th><th>Status</th><th>Score</th><th>Signal rate</th><th>In-MSP rate</th><th>Outside-MSP rate</th><th>MSP length</th><th>NRL (bp)</th><th>Periodicity AC</th><th>Reference curve r</th><th>Matched amplitude</th><th>Duplicate reads</th><th>Nuc-tagged &gt;300 bp</th><th>SNP calls</th><th>Amplicons</th></tr></thead><tbody>{''.join(rows)}</tbody></table>
 {''.join(panels)}</body></html>"""
     path.write_text(document)
 
@@ -3104,6 +3351,10 @@ def run_multi_qc(
     prob_threshold: Optional[int] = None,
     min_opportunities: int = 200,
     stream: Optional[TextIO] = sys.stderr,
+    state_source: str = "auto",
+    min_msp_bp: int = DEFAULT_MIN_MSP_BP,
+    light_call_reads: int = DEFAULT_LIGHT_CALL_READS,
+    light_call_seconds: float = DEFAULT_LIGHT_CALL_SECONDS,
 ) -> dict:
     """Run per-BAM QC once, then build aggregate comparison artifacts."""
     if not input_paths:
@@ -3136,6 +3387,10 @@ def run_multi_qc(
             prob_threshold=prob_threshold,
             min_opportunities=min_opportunities,
             stream=stream,
+            state_source=state_source,
+            min_msp_bp=min_msp_bp,
+            light_call_reads=light_call_reads,
+            light_call_seconds=light_call_seconds,
         )
         results.append(result)
 
@@ -3147,6 +3402,7 @@ def run_multi_qc(
     html_path = directory / "combined.qc.html"
     payload = {
         "schema_version": 1,
+        "schema_minor_version": QC_SCHEMA_MINOR_VERSION,
         "report_type": "fiberhmm_multi_sample_qc",
         "overall": {"status": status, "score": score},
         "n_samples": len(results),

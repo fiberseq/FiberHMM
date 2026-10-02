@@ -282,6 +282,10 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--min-opportunities` | `200` | Minimum target sites per read for rate QC (default 200) |
 | `--snp-mask` | — | Applied DAF SNP-mask BED to summarize (single input only) |
 | `--snp-report` | — | fiberhmm-daf-snps JSON to plot (single input only) |
+| `--state-source` | `auto` | Where the in-MSP/outside-MSP split comes from: the BAM's FiberHMM calls when the sample carries them, else a bounded light call with the bundled model of the declared chemistry (auto, default); calls only (tags); always re-call (light-call); or skip (none) Choices: `auto`, `tags`, `light-call`, `none`. |
+| `--min-msp-bp` | `85` | Shortest MSP counted as accessible for the in-MSP rate; shorter gaps (linkers) count as outside-MSP (default 85; the packaged references are calibrated at this value) |
+| `--light-call-reads` | `400` | Most sampled reads the light call runs on (default 400) |
+| `--light-call-seconds` | `60.0` | Wall-time budget of the light call (default 60 s) |
 | `--fail-on-qc` | off | Exit 2 when the final status is FAIL |
 
 ## fiberhmm-check

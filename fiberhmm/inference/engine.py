@@ -499,8 +499,31 @@ def configure_daf_snp_mask(mask_path=None) -> None:
     _DAF_SNP_MASK = load_snp_mask(mask_path)
 
 
+# Context-local override of the process-wide mask (``daf_snp_mask_scope``),
+# for callers such as QC that run beside calling in one process.
+from contextvars import ContextVar as _ContextVar
+_DAF_SNP_MASK_SCOPE = _ContextVar('fiberhmm_daf_snp_mask_scope', default=None)
+
+
+def daf_snp_mask_scope(mask):
+    """Context manager: use ``mask`` ({chrom: set(ref positions)}, possibly
+    empty) instead of the process-wide DAF SNP mask in the current context."""
+    from contextlib import contextmanager
+
+    @contextmanager
+    def scope():
+        token = _DAF_SNP_MASK_SCOPE.set(dict(mask or {}))
+        try:
+            yield
+        finally:
+            _DAF_SNP_MASK_SCOPE.reset(token)
+    return scope()
+
+
 def _daf_reference_mask(read):
-    sites = _DAF_SNP_MASK.get(getattr(read, "reference_name", None), set())
+    scoped = _DAF_SNP_MASK_SCOPE.get()
+    active = _DAF_SNP_MASK if scoped is None else scoped
+    sites = active.get(getattr(read, "reference_name", None), set())
     if not sites:
         return sites
     # A record running past its contig end (a circular origin) reaches the

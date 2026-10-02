@@ -3,6 +3,126 @@
   "profiles": {
     "ddda": {
       "label": "Human DddA DAF-seq controls",
+      "state_rates": {
+        "scoring_enabled": true,
+        "definition": {
+          "min_msp_bp": 85,
+          "edge_trim_bp": 10,
+          "terminal_segments": "cap",
+          "min_state_opportunities_per_read": 50,
+          "probability_threshold": 125,
+          "daf_run_mask": ">=2/keep-one"
+        },
+        "grading": {
+          "efficiency": {
+            "pass_quantile": 0.25,
+            "warn_quantile": 0.05
+          },
+          "background": {
+            "pass_quantile": 0.75,
+            "warn_quantile": 0.95
+          }
+        },
+        "by_source": {
+          "tags": {
+            "msp": {
+              "probabilities": [
+                0.05,
+                0.25,
+                0.5,
+                0.75,
+                0.95
+              ],
+              "quantiles": [
+                0.5543478260869565,
+                0.6243014083607448,
+                0.664429303451771,
+                0.7027027027027027,
+                0.75
+              ],
+              "n_rate_reads": 3592,
+              "n_events": 489378,
+              "n_opportunities": 736298,
+              "aggregate_rate": 0.6646466512200223
+            },
+            "outside_msp": {
+              "probabilities": [
+                0.05,
+                0.25,
+                0.5,
+                0.75,
+                0.95
+              ],
+              "quantiles": [
+                0.10946196660482375,
+                0.14157303370786517,
+                0.16520210896309315,
+                0.19152542372881357,
+                0.22799097065462753
+              ],
+              "n_rate_reads": 3701,
+              "n_events": 317770,
+              "n_opportunities": 1918238,
+              "aggregate_rate": 0.16565723335686186
+            },
+            "all_states_rate": 0.2995311547334634,
+            "msp_to_outside_ratio": 4.012180076605699,
+            "median_per_read_msp_length_fraction": 0.2560053380782918,
+            "n_reads_used": 3701
+          },
+          "light_call": {
+            "msp": {
+              "probabilities": [
+                0.05,
+                0.25,
+                0.5,
+                0.75,
+                0.95
+              ],
+              "quantiles": [
+                0.6039603960396039,
+                0.6666666666666666,
+                0.7073170731707317,
+                0.7444444444444445,
+                0.7943497997329773
+              ],
+              "n_rate_reads": 3529,
+              "n_events": 443662,
+              "n_opportunities": 629480,
+              "aggregate_rate": 0.7048071424032535
+            },
+            "outside_msp": {
+              "probabilities": [
+                0.05,
+                0.25,
+                0.5,
+                0.75,
+                0.95
+              ],
+              "quantiles": [
+                0.12015293726503158,
+                0.15698153866527018,
+                0.1806083650190114,
+                0.20588235294117646,
+                0.24125448882010989
+              ],
+              "n_rate_reads": 3707,
+              "n_events": 363691,
+              "n_opportunities": 2026495,
+              "aggregate_rate": 0.17946799770046312
+            },
+            "all_states_rate": 0.2994409519060404,
+            "msp_to_outside_ratio": 3.927202350469165,
+            "median_per_read_msp_length_fraction": 0.19879919946631086,
+            "n_reads_used": 3707
+          }
+        },
+        "inputs": [
+          "napa.called.bam",
+          "uba1.called.bam"
+        ],
+        "thresholds": "efficiency (median per-read in-MSP rate): PASS >= the reference quantile grading.efficiency.pass_quantile, WARN >= warn_quantile, FAIL below; background (median per-read outside-MSP rate): PASS <= grading.background.pass_quantile, WARN <= warn_quantile, FAIL above; quantiles of the reference's per-read rates under the sample's own state source (tags or light_call)"
+      },
       "periodicity": {
         "pass_strength": 0.008,
         "pass_curve_correlation": 0.75,
@@ -55,6 +175,125 @@
     },
     "dddb": {
       "label": "Drosophila embryo DddB DAF-seq control",
+      "state_rates": {
+        "scoring_enabled": true,
+        "definition": {
+          "min_msp_bp": 85,
+          "edge_trim_bp": 10,
+          "terminal_segments": "cap",
+          "min_state_opportunities_per_read": 50,
+          "probability_threshold": 125,
+          "daf_run_mask": "off"
+        },
+        "grading": {
+          "efficiency": {
+            "pass_quantile": 0.25,
+            "warn_quantile": 0.05
+          },
+          "background": {
+            "pass_quantile": 0.75,
+            "warn_quantile": 0.95
+          }
+        },
+        "by_source": {
+          "tags": {
+            "msp": {
+              "probabilities": [
+                0.05,
+                0.25,
+                0.5,
+                0.75,
+                0.95
+              ],
+              "quantiles": [
+                0.251,
+                0.3375219458307853,
+                0.3951612903225806,
+                0.4538079014385023,
+                0.5379034378492079
+              ],
+              "n_rate_reads": 615,
+              "n_events": 76750,
+              "n_opportunities": 193732,
+              "aggregate_rate": 0.3961658373423079
+            },
+            "outside_msp": {
+              "probabilities": [
+                0.05,
+                0.25,
+                0.5,
+                0.75,
+                0.95
+              ],
+              "quantiles": [
+                0.013811365372550358,
+                0.038274009063597625,
+                0.06525289822530479,
+                0.08720841288490724,
+                0.1146256243694791
+              ],
+              "n_rate_reads": 726,
+              "n_events": 43540,
+              "n_opportunities": 1074396,
+              "aggregate_rate": 0.04052509503013786
+            },
+            "all_states_rate": 0.09440636540251468,
+            "msp_to_outside_ratio": 9.775815134984526,
+            "median_per_read_msp_length_fraction": 0.19329232237713256,
+            "n_reads_used": 726
+          },
+          "light_call": {
+            "msp": {
+              "probabilities": [
+                0.05,
+                0.25,
+                0.5,
+                0.75,
+                0.95
+              ],
+              "quantiles": [
+                0.28415741866828825,
+                0.3865546218487395,
+                0.44829967646999824,
+                0.5086032388663968,
+                0.6017481767481766
+              ],
+              "n_rate_reads": 628,
+              "n_events": 69395,
+              "n_opportunities": 155685,
+              "aggregate_rate": 0.44573979509907824
+            },
+            "outside_msp": {
+              "probabilities": [
+                0.05,
+                0.25,
+                0.5,
+                0.75,
+                0.95
+              ],
+              "quantiles": [
+                0.01231943660879417,
+                0.045454545454545456,
+                0.07810320781032078,
+                0.10677325448476627,
+                0.15552884615384627
+              ],
+              "n_rate_reads": 1127,
+              "n_events": 60588,
+              "n_opportunities": 1177464,
+              "aggregate_rate": 0.05145635025784228
+            },
+            "all_states_rate": 0.09690604353070373,
+            "msp_to_outside_ratio": 8.662483694733957,
+            "median_per_read_msp_length_fraction": 0.10725483197713881,
+            "n_reads_used": 1611
+          }
+        },
+        "inputs": [
+          "yw.called.bam"
+        ],
+        "thresholds": "efficiency (median per-read in-MSP rate): PASS >= the reference quantile grading.efficiency.pass_quantile, WARN >= warn_quantile, FAIL below; background (median per-read outside-MSP rate): PASS <= grading.background.pass_quantile, WARN <= warn_quantile, FAIL above; quantiles of the reference's per-read rates under the sample's own state source (tags or light_call)"
+      },
       "periodicity": {
         "pass_strength": 0.04,
         "pass_curve_correlation": 0.75,
@@ -107,6 +346,10 @@
     },
     "hia5_nanopore": {
       "label": "Drosophila embryo Nanopore Fiber-seq control",
+      "state_rates": {
+        "scoring_enabled": false,
+        "calibration_note": "the Nanopore Fiber-seq source control is not available to calibrate state-aware rates; the verdict uses the overall rate"
+      },
       "periodicity": {
         "pass_strength": 0.04,
         "pass_curve_correlation": 0.75,
@@ -160,6 +403,125 @@
     },
     "hia5_pacbio": {
       "label": "Drosophila embryo PacBio Fiber-seq control",
+      "state_rates": {
+        "scoring_enabled": true,
+        "definition": {
+          "min_msp_bp": 85,
+          "edge_trim_bp": 10,
+          "terminal_segments": "cap",
+          "min_state_opportunities_per_read": 50,
+          "probability_threshold": 125,
+          "daf_run_mask": null
+        },
+        "grading": {
+          "efficiency": {
+            "pass_quantile": 0.25,
+            "warn_quantile": 0.05
+          },
+          "background": {
+            "pass_quantile": 0.75,
+            "warn_quantile": 0.95
+          }
+        },
+        "by_source": {
+          "tags": {
+            "msp": {
+              "probabilities": [
+                0.05,
+                0.25,
+                0.5,
+                0.75,
+                0.95
+              ],
+              "quantiles": [
+                0.13822566669875808,
+                0.24730699512658982,
+                0.3284440907150445,
+                0.4054243001390653,
+                0.49346395962116485
+              ],
+              "n_rate_reads": 1816,
+              "n_events": 590655,
+              "n_opportunities": 1678891,
+              "aggregate_rate": 0.3518125953382322
+            },
+            "outside_msp": {
+              "probabilities": [
+                0.05,
+                0.25,
+                0.5,
+                0.75,
+                0.95
+              ],
+              "quantiles": [
+                0.017056766820065204,
+                0.036455464514854166,
+                0.054760341431385424,
+                0.07278960351277781,
+                0.09337373324984985
+              ],
+              "n_rate_reads": 1943,
+              "n_events": 1174841,
+              "n_opportunities": 21784769,
+              "aggregate_rate": 0.05392946787730455
+            },
+            "all_states_rate": 0.07526863660284479,
+            "msp_to_outside_ratio": 6.523568823980322,
+            "median_per_read_msp_length_fraction": 0.056518946692357096,
+            "n_reads_used": 1943
+          },
+          "light_call": {
+            "msp": {
+              "probabilities": [
+                0.05,
+                0.25,
+                0.5,
+                0.75,
+                0.95
+              ],
+              "quantiles": [
+                0.18636538461538463,
+                0.3015204667213209,
+                0.3747455902306649,
+                0.4454925528174427,
+                0.5330882352941175
+              ],
+              "n_rate_reads": 1710,
+              "n_events": 494159,
+              "n_opportunities": 1242198,
+              "aggregate_rate": 0.39781017196936397
+            },
+            "outside_msp": {
+              "probabilities": [
+                0.05,
+                0.25,
+                0.5,
+                0.75,
+                0.95
+              ],
+              "quantiles": [
+                0.01737954195137089,
+                0.038402227046395065,
+                0.05766800689259047,
+                0.07749843479435967,
+                0.09852482937637844
+              ],
+              "n_rate_reads": 1943,
+              "n_events": 1271337,
+              "n_opportunities": 22221462,
+              "aggregate_rate": 0.05721212222670138
+            },
+            "all_states_rate": 0.07526863660284479,
+            "msp_to_outside_ratio": 6.9532497045478,
+            "median_per_read_msp_length_fraction": 0.03553653510857505,
+            "n_reads_used": 1943
+          }
+        },
+        "inputs": [
+          "pacbio.called.bam"
+        ],
+        "thresholds": "efficiency (median per-read in-MSP rate): PASS >= the reference quantile grading.efficiency.pass_quantile, WARN >= warn_quantile, FAIL below; background (median per-read outside-MSP rate): PASS <= grading.background.pass_quantile, WARN <= warn_quantile, FAIL above; quantiles of the reference's per-read rates under the sample's own state source (tags or light_call)"
+      },
       "periodicity": {
         "pass_strength": 0.08,
         "pass_curve_correlation": 0.75,
