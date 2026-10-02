@@ -192,6 +192,14 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
 
 ### Fixed
 
+- **QC assay detection.** `fiberhmm-qc` (and the QC step of
+  `fiberhmm-pipeline`) took the assay from the first `mode=` anywhere in the
+  BAM header; on a deduplicated DAF BAM that was the dedup step's
+  `mode=flag`, so every such report was graded INSUFFICIENT with "m6A
+  labeling 0%". The assay now comes from the chemistry declaration (then the
+  newest FiberHMM call record), the pipeline passes `--mode`/`--enzyme`
+  explicitly, and `fiberhmm-check` flags old reports graded under a
+  non-assay mode (`qc-assay-misdetected`; re-run QC, or `--redo qc`).
 - **Footprint classes no longer depend on where the BAM lives or what the
   dataset is called.** Evidence units were named by a hash that included the
   BAM's absolute path and the dataset label, and that name orders the
