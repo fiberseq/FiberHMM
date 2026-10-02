@@ -424,7 +424,7 @@ def vplot_matrices(gaps, lo, hi, size_lo, size_hi, step=STEP, size_step=STEP):
 
 def vplots(result, variant_id, pad=300, step=STEP, size_step=STEP):
     """Centre x size and coverage x size V-plots of the NFR's openings: every callable opening ('all') and the
-    variant's own ('variant'). Counts (not normalised); sizes from the run's minimum gap up to the widest opening."""
+    variant's own ('own'). Counts (not normalised); sizes from the run's minimum gap up to the widest opening."""
     check(result)
     nfr, v = _variant(result, variant_id)
     rows = assigned_gaps(result, nfr['id'])
@@ -436,8 +436,8 @@ def vplots(result, variant_id, pad=300, step=STEP, size_step=STEP):
     size_lo = int((result.get('parameters') or {}).get('min_gap_bp', 60))//size_step*size_step
     size_hi = int(max([size_lo + size_step] + [b - a for a, b in allg]))//size_step*size_step + size_step
     out = dict(variant=variant_id, nfr=nfr['id'], window=[lo, hi], step=step, size=[size_lo, size_hi], size_step=size_step,
-               counts=dict(all=len(allg), variant=len(mine)), span=[v['L'], v['R']])
-    for key, g in (('all', allg), ('variant', mine)):
+               counts=dict(all=len(allg), own=len(mine)), span=[v['L'], v['R']])
+    for key, g in (('all', allg), ('own', mine)):
         c, cv = vplot_matrices(g, lo, hi, size_lo, size_hi, step, size_step)
         out[key] = dict(centre=c.astype(int).tolist(), coverage=np.round(cv, 3).tolist())
     return out

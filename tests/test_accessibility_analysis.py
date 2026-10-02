@@ -138,9 +138,10 @@ def test_vplots_of_a_variant_and_of_all_openings():
     res = run_accessibility(payload(units), dict(FAST, nfr_regions=[(1380, 1720)]))
     core = next(v for v in res['nfrs'][0]['variants'] if v['width'] < 200)
     vp = A.vplots(res, core['id'])
-    allc = np.array(vp['all']['centre']); mine = np.array(vp['variant']['centre'])
-    assert allc.sum() == vp['counts']['all'] and mine.sum() == vp['counts']['variant'] < vp['counts']['all']
-    assert np.array(vp['variant']['coverage']).shape == allc.shape
+    allc = np.array(vp['all']['centre']); mine = np.array(vp['own']['centre'])
+    assert vp['variant'] == core['id']
+    assert allc.sum() == vp['counts']['all'] and mine.sum() == vp['counts']['own'] < vp['counts']['all']
+    assert np.array(vp['own']['coverage']).shape == allc.shape
     rows = np.where(mine.sum(1) > 0)[0]
     sizes = vp['size'][0] + rows*vp['size_step']
     assert sizes.min() >= 110 and sizes.max() <= 170
