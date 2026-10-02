@@ -97,6 +97,11 @@ N_CTX = 4096           # 4^(2*3) hexamer contexts
 NON_TARGET = N_CTX     # code 4096
 UNMETH_OFFSET = 4097   # miss codes live at [4097, 4097 + 4096)
 TF_DECODER_VERSION = "multi_interval_v1"
+# The recall kernels index tables by the k=3 code layout above: hit contexts,
+# one non-target code, miss contexts and (in model files) a trailing
+# non-target code. The trailing column is never read.
+RECALL_TABLE_COLUMNS = UNMETH_OFFSET + N_CTX + 1  # 8194
+_RECALL_TABLE_WIDTHS = (UNMETH_OFFSET + N_CTX, RECALL_TABLE_COLUMNS)
 CPG_MASK_POLICIES = ("unmethylated-only", "methylated-only")
 
 
@@ -206,6 +211,31 @@ class TFCall:
     right_ambiguity: int  # bp gap to bracketing hit on the right (>=0)
 
 
+def require_recall_table(emissionprob) -> np.ndarray:
+    """The two-state emission table as a float array, or ``ValueError``.
+
+    TF and nucleosome recall read observation codes in the k=3 layout
+    (``RECALL_TABLE_COLUMNS`` = 8194 columns); a table built for another
+    context size would be sliced at the wrong offsets and silently give wrong
+    calls, so it is refused. (HMM calling itself works for any k.)
+    """
+    EP = np.asarray(emissionprob, dtype=np.float64)
+    if EP.ndim != 2 or EP.shape[0] != 2:
+        raise ValueError(f"Expected a two-state emission table, got shape {EP.shape}")
+    if EP.shape[1] not in _RECALL_TABLE_WIDTHS:
+        width = EP.shape[1]
+        k = None
+        for candidate in range(1, 8):
+            if width == 2 * 4 ** (2 * candidate) + 2:
+                k = candidate
+        size = f"context size k={k}" if k else "an unknown context size"
+        raise ValueError(
+            f"TF/nucleosome recall needs a k=3 emission table "
+            f"({RECALL_TABLE_COLUMNS} columns); this model has {width} columns "
+            f"({size}). Use a k=3 model for calling with recall")
+    return EP
+
+
 def build_llr_tables(model) -> Tuple[np.ndarray, np.ndarray]:
     """Return (llr_hit, llr_miss) lookup arrays, length N_CTX each.
 
@@ -216,13 +246,7 @@ def build_llr_tables(model) -> Tuple[np.ndarray, np.ndarray]:
     state-order normalization, but they do not contribute to TF recall scores
     or impose a duration/transition prior on the local scan.
     """
-    EP = np.asarray(model.emissionprob_, dtype=np.float64)
-    if EP.shape[0] != 2:
-        raise ValueError(f"Expected 2-state model, got {EP.shape[0]}")
-    if EP.shape[1] < UNMETH_OFFSET + N_CTX:
-        raise ValueError(
-            f"Emission table too small: {EP.shape[1]} columns, "
-            f"need {UNMETH_OFFSET + N_CTX}")
+    EP = require_recall_table(model.emissionprob_)
     eps = 1e-30
     hit_prot = np.clip(EP[0, :N_CTX], eps, 1.0)
     hit_acc = np.clip(EP[1, :N_CTX], eps, 1.0)
@@ -241,11 +265,7 @@ def build_conditional_hit_tables(
     Unlike an LLR table, these conditional probabilities can be mixed into a
     partially exposed rotational state without linearly interpolating log odds.
     """
-    EP = np.asarray(model.emissionprob_, dtype=np.float64)
-    if EP.ndim != 2 or EP.shape[0] != 2 or EP.shape[1] < UNMETH_OFFSET + N_CTX:
-        raise ValueError(
-            "Expected a two-state emission table with complete hit/miss contexts"
-        )
+    EP = require_recall_table(model.emissionprob_)
     eps = 1e-12
     hit = np.clip(EP[:, :N_CTX], 0.0, None)
     miss = np.clip(EP[:, UNMETH_OFFSET:UNMETH_OFFSET + N_CTX], 0.0, None)
@@ -279,12 +299,7 @@ def build_m5c_llr_tables(model, rate_ratio: Optional[float] = None,
     """
     if rate_ratio is not None and not 0.0 < rate_ratio < 1.0:
         raise ValueError("rate_ratio must be between zero and one")
-    EP = np.asarray(model.emissionprob_, dtype=np.float64)
-    if EP.ndim != 2 or EP.shape[0] != 2 or EP.shape[1] < UNMETH_OFFSET + N_CTX:
-        raise ValueError(
-            f"Expected a two-state emission table with at least "
-            f"{UNMETH_OFFSET + N_CTX} columns, got {EP.shape}"
-        )
+    EP = require_recall_table(model.emissionprob_)
     hit_prot = EP[0, :N_CTX]
     hit_acc = EP[1, :N_CTX]
     miss_prot = EP[0, UNMETH_OFFSET:UNMETH_OFFSET + N_CTX]
@@ -341,7 +356,7 @@ def apply_emission_uplift(llr_hit: np.ndarray, llr_miss: np.ndarray,
     """
     if abs(uplift - 1.0) < 1e-9:
         return llr_hit, llr_miss
-    EP = np.asarray(model.emissionprob_, dtype=np.float64)
+    EP = require_recall_table(model.emissionprob_)
     eps = 1e-30
     hit_prot = np.clip(EP[0, :N_CTX], eps, 1.0)
     hit_acc = np.clip(EP[1, :N_CTX], eps, 1.0)

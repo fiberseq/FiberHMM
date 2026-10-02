@@ -924,13 +924,21 @@ def _encode_5mc_observations(sequence: str, mod_positions: Set[int],
     """
     seq_len = len(sequence)
     mod_mask = _mod_positions_mask(mod_positions, seq_len)
-    # Reverse reads: methylated C is stored as G; use G-centered RC context and the
-    # RC image of the motif. Forward reads: C-centered forward context.
+    # Reverse reads: methylated C is stored as G; encode each G by its
+    # reverse-complement (C-centred) context, the code the same cytosine gets
+    # on a forward read, and use the RC image of the motif. Forward reads:
+    # C-centred forward context.
     target = 'G' if is_reverse else 'C'
     neighbor = 'C' if is_reverse else 'G'   # the partner base of the dinucleotide in SEQ
-    context_codes = _encode_vectorized(
-        sequence, target, context_size, edge_trim, non_target_code, include_rc=is_reverse,
-    )
+    if is_reverse:
+        context_codes = _encode_vectorized(
+            sequence, 'G', context_size, edge_trim, non_target_code,
+            include_rc=True, rc_target_base='G', forward_pass=False,
+        )
+    else:
+        context_codes = _encode_vectorized(
+            sequence, 'C', context_size, edge_trim, non_target_code, include_rc=False,
+        )
     sb = np.frombuffer(sequence.upper().encode('ascii'), dtype=np.uint8)
     is_target = sb == ord(target)
     prev_nb = np.zeros(seq_len, dtype=bool)
@@ -1480,7 +1488,8 @@ def _daf_context_codes_numba(seq_int, mod_mask, k, edge_trim, non_target_code,
 
 def _encode_vectorized(sequence: str, target_base: str, context_size: int,
                        edge_trim: int, non_target_code: int,
-                       include_rc: bool = False) -> np.ndarray:
+                       include_rc: bool = False, rc_target_base: str = 'T',
+                       forward_pass: bool = True) -> np.ndarray:
     """
     Vectorized context encoding - much faster than position-by-position loop.
 
@@ -1491,6 +1500,10 @@ def _encode_vectorized(sequence: str, target_base: str, context_size: int,
     - A positions: get forward context code (or min with RC for canonical form)
     - T positions: get RC context code (maps T-centered to A-centered codes)
     This matches old FiberHMM behavior where both A and T are target bases.
+
+    ``rc_target_base`` is the base the RC pass encodes (T for m6A); with
+    ``forward_pass=False`` only the RC pass runs (5mC reverse reads: G
+    positions get the C-centred code of the opposite strand).
     """
     seq_len = len(sequence)
     k = context_size
@@ -1560,7 +1573,7 @@ def _encode_vectorized(sequence: str, target_base: str, context_size: int,
     is_target = seq_int[positions] == target_int
     target_pos = positions[is_target]
 
-    if len(target_pos) > 0:
+    if forward_pass and len(target_pos) > 0:
         # For A positions: use forward context codes
         valid_positions, codes = compute_codes_for_positions(target_pos, use_rc=False)
 
@@ -1571,7 +1584,7 @@ def _encode_vectorized(sequence: str, target_base: str, context_size: int,
     # T positions represent m6A on the opposite strand - Hia5 methylates both strands
     # The context should be RC to match the A-centered context on the opposite strand
     if include_rc:
-        rc_target_int = 2  # T = 2 (using A=0, C=1, T=2, G=3 encoding)
+        rc_target_int = _TARGET_BASE_INT[rc_target_base]  # T = 2 for m6A
         is_rc_target = seq_int[positions] == rc_target_int
         rc_target_pos = positions[is_rc_target]
 
