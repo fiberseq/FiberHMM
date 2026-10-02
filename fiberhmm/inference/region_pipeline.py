@@ -478,6 +478,11 @@ def _process_bam_region_parallel_fused(
     """
     start_time = time.time()
 
+    from fiberhmm.inference.tf_recaller import require_recall_models
+
+    # Refuse a recall table the workers cannot use before any work starts.
+    require_recall_models(recall_model_path or apply_model_path,
+                          nuc_model_path if recall_nucs else None)
     require_indexed_bam(input_bam)
     # Validate the plan (unknown --chroms, nothing left to process) before
     # creating any temporary state.

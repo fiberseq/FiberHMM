@@ -335,7 +335,9 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   when an input is missing or cannot be converted, and replaces the bigBed
   atomically beside it.
 - **Custom models and edge cases.** TF/nucleosome recall refuses emission
-  tables that are not k=3 (a k=4 model silently gave wrong calls). 5mC
+  tables that are not k=3 (a k=4 model silently gave wrong calls), so
+  `fiberhmm-call`, which always recalls TFs, now stops before any work on a
+  custom model with another context size. 5mC
   (`gpc`/`cpg`) reverse-aligned reads are encoded in the same C-centred
   context as forward reads. The HMM no longer returns NaN for a state that a
   zero start or transition probability makes unreachable.

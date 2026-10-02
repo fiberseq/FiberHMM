@@ -110,3 +110,21 @@ def test_hmm_unreachable_state_gives_minus_inf_not_nan():
     beta = model._backward(obs)
     assert not np.isnan(alpha).any() and not np.isnan(beta).any()
     assert np.isneginf(alpha[:, 1]).all()
+
+
+@pytest.mark.parametrize("mode", [[], ["--region-parallel"]])
+def test_call_refuses_a_k4_model_before_starting_workers(tmp_path, mode):
+    """With --phase-nrl off the tables were first built in worker
+    initializers, where the refusal hung the streaming pool."""
+    from test_call_entrypoint_regressions import _run_cli, make_region_test_bam
+
+    bam = make_region_test_bam(tmp_path / "in.bam", seed=3)
+    output = tmp_path / "out.bam"
+    result = _run_cli("fiberhmm.cli.call", "-i", bam, "-o", output,
+                      "-m", _model_file(tmp_path / "k4.json", 4), "-k", "4",
+                      "--enzyme", "hia5", "--seq", "pacbio", "--phase-nrl", "off",
+                      "--no-qc", "--no-recall-nucs", "-c", "2", "--io-threads", "1",
+                      *mode, timeout=120)
+    assert result.returncode != 0
+    assert b"needs a k=3" in result.stderr
+    assert not output.exists()

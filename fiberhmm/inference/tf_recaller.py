@@ -232,8 +232,29 @@ def require_recall_table(emissionprob) -> np.ndarray:
         raise ValueError(
             f"TF/nucleosome recall needs a k=3 emission table "
             f"({RECALL_TABLE_COLUMNS} columns); this model has {width} columns "
-            f"({size}). Use a k=3 model for calling with recall")
+            f"({size}); TF recall in fiberhmm-call and the recall tools needs a k=3 model")
     return EP
+
+
+def require_recall_models(*paths) -> None:
+    """Check, in the calling process, that every model file recall will read
+    has a k=3 table (``require_recall_table``); ``None`` entries are skipped.
+
+    Worker pools build their tables in their initializers, where an error
+    would surface late or not at all; pipelines call this before starting one.
+    """
+    import os
+
+    from fiberhmm.core.model_io import load_model_with_metadata
+
+    for path in dict.fromkeys(p for p in paths if p):
+        if not os.path.isfile(path):
+            continue  # a missing file is reported by whatever loads it
+        model, _context, _mode = load_model_with_metadata(path)
+        try:
+            require_recall_table(model.emissionprob_)
+        except ValueError as error:
+            raise ValueError(f"{path}: {error}") from None
 
 
 def build_llr_tables(model) -> Tuple[np.ndarray, np.ndarray]:
