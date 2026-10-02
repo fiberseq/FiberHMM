@@ -1509,7 +1509,11 @@ def _check_pipeline(path, *, scan_records, index):
     found, fiberhmm_output = _check_bam(called, scan_records=scan_records, sidecars=False,
                                     index=index)
     qc = data.get("qc") if isinstance(data.get("qc"), dict) else {}
-    qc_report = _pipeline_file(outputs, data.get("qc_report") or qc.get("json"))
+    # qc_report is the PDF when plots were made; the JSON is what is checked.
+    recorded = qc.get("json") or data.get("qc_report")
+    if recorded and not str(recorded).lower().endswith(".json"):
+        recorded = None
+    qc_report = _pipeline_file(outputs, recorded)
     if qc_report is not None:
         found.extend(check_qc(qc_report, index=index))
     return found, fiberhmm_output

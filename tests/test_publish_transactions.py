@@ -177,3 +177,16 @@ def test_fix_bigbed_not_a_bigbed_exits_nonzero_without_traceback(tmp_path, capsy
         utils.cmd_fix_bigbed(_fix_args([str(bad)]))
     assert raised.value.code == 1
     assert "[fail]" in capsys.readouterr().err
+
+
+def test_ma_types_replaces_a_stem_index_of_an_uppercase_bam(tmp_path):
+    from fiberhmm.cli import utils
+
+    bam = tmp_path / "sample.BAM"
+    _ma_bam(bam)
+    (tmp_path / "sample.BAM.bai").rename(tmp_path / "sample.bai")
+    missing, _copied, rebuilt = utils._rewrite_bam_ma_types_in_place(str(bam), ["tf"], io_threads=1)
+    assert missing == ["tf"] and rebuilt == [str(bam) + ".bai"]
+    assert not (tmp_path / "sample.bai").exists()  # the stale index is gone
+    with pysam.AlignmentFile(str(bam), "rb") as handle:
+        assert len(list(handle.fetch("chr1"))) == 1

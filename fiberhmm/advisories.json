@@ -221,7 +221,7 @@
    "artifact": "QC",
    "title": "QC report graded under a misdetected assay",
    "reason": "Standalone fiberhmm-qc (and so fiberhmm-pipeline) took the assay mode from the first 'mode=' anywhere in the BAM header. On a deduplicated DAF BAM that is fiberhmm-dedup's mode=flag (or mode=collapse), so the sample was graded without the DAF metrics or reference (typically INSUFFICIENT with 0% labelling). The QC fiberhmm-call runs itself was not affected.",
-   "fix": "Re-run fiberhmm-qc with FiberHMM >= 3.0.0, or give the assay explicitly (--mode daf --enzyme ddda/dddb, or --mode pacbio-fiber/nanopore-fiber).",
+   "fix": "Re-run fiberhmm-qc giving the assay explicitly (--mode daf --enzyme ddda/dddb, or --mode pacbio-fiber/nanopore-fiber); with FiberHMM 3.0.0, whose fiberhmm-qc reads the assay from the chemistry declaration, the defaults also work.",
    "fixed_in": {
     "version": "3.0.0"
    },

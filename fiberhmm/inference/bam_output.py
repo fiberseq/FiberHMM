@@ -19,7 +19,7 @@ def index_paths_for(path: str) -> List[str]:
     """Index files a BAM/BED at ``path`` may have beside it."""
     candidates = [path + '.bai', path + '.csi', path + '.crai', path + '.tbi']
     stem, ext = os.path.splitext(path)
-    if ext in ('.bam', '.cram'):
+    if ext.lower() in ('.bam', '.cram'):
         candidates.extend([stem + '.bai', stem + '.csi', stem + '.crai'])
     return candidates
 

@@ -38,3 +38,15 @@ def test_strand_rescue_unknown_contig_is_a_one_line_error(tmp_path, capsys):
     err = capsys.readouterr().err
     assert "chr3L" in err and "chrDemo" in err and "Traceback" not in err
     assert not (tmp_path / "sr.json").exists()
+
+
+def test_tolerated_region_worker_failures_are_reported_on_stderr(capsys):
+    from types import SimpleNamespace
+
+    from fiberhmm.inference.region_pipeline import _enforce_region_failures
+
+    aggregation = SimpleNamespace(metrics={"worker_failures": 1}, total_reads=100_000,
+                                  failure_messages=("Traceback: boom",))
+    _enforce_region_failures(aggregation)
+    captured = capsys.readouterr()
+    assert captured.out == "" and "boom" in captured.err

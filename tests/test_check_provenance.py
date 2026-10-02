@@ -136,13 +136,17 @@ def test_qc_report_with_a_misdetected_assay(tmp_path):
     assert advisory.id == "qc-assay-misdetected"
 
 
-def _pipeline(outdir, *, qc_mode="flag"):
+def _pipeline(outdir, *, qc_mode="flag", plots=False):
     outdir.mkdir(parents=True)
     called = _bam(outdir / "ddda.fiberhmm.bam", [CURRENT_CALL])
     qc = _qc(outdir / "qc" / "ddda.fiberhmm.qc.json", qc_mode)
+    report_path = qc
+    if plots:  # with fiberhmm[plots] the recorded QC report is the PDF
+        report_path = outdir / "qc" / "ddda.fiberhmm.qc.pdf"
+        report_path.write_bytes(b"%PDF-1.4 not json")
     (outdir / "outputs.json").write_text(json.dumps({
         "schema": "fiberhmm.pipeline.outputs.v1", "version": "3.0.0",
-        "called_bam": str(called), "qc_report": str(qc), "qc": {"json": str(qc)}}))
+        "called_bam": str(called), "qc_report": str(report_path), "qc": {"json": str(qc)}}))
     return outdir
 
 
@@ -162,6 +166,8 @@ def test_pipeline_output_directory_checks_its_bam_and_qc(tmp_path, capsys):
     moved = tmp_path / "moved"
     shutil.move(str(outdir), str(moved))
     assert report(moved)["status"] == "rerun-recommended"
+    plotted = _pipeline(tmp_path / "plotted", plots=True)
+    assert report(plotted)["status"] == "rerun-recommended"  # reads the JSON, not the PDF
     clean = _pipeline(tmp_path / "clean", qc_mode="daf")
     assert report(clean)["status"] == "clean"
     (clean / "ddda.fiberhmm.bam").unlink()

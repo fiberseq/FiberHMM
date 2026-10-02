@@ -51,6 +51,14 @@ def test_paths_naming_another_enzyme_do_not_reject_a_ddda_bam(tmp_path):
     _preflight_input(path)  # accepted
 
 
+def test_enzyme_words_inside_fiberhmm_arguments_do_not_count(tmp_path):
+    call = dict(DDDA_CALL, CL="fiberhmm-call -i /data/enzyme=hia5/reads.bam -o y.bam --enzyme ddda",
+                DS="mode=daf enzyme=ddda input=/data/run_enzyme=hia5")
+    path = _ddda_bam(tmp_path / "ddda.bam", [call])
+    with pysam.AlignmentFile(path, "rb", check_sq=False) as bam:
+        assert _declared_enzymes(bam.header) == {"ddda"}
+
+
 def test_declared_other_chemistry_is_still_rejected(tmp_path):
     declared = _ddda_bam(tmp_path / "hia5.bam", declare=dict(
         assay="fiber-seq", enzyme="hia5", platform="pacbio", mode="pacbio-fiber"))

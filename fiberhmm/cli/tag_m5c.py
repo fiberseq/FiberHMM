@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shlex
 import sys
 
 import numpy as np
@@ -19,16 +20,33 @@ from fiberhmm.daf.m5c import (
 
 
 _KNOWN_ENZYMES = ("ddda", "dddb", "hia5", "ecogii", "sssi")
-_ENZYME_OPTION_RE = re.compile(r"(?:--enzyme[ =]|(?<![a-z0-9_-])enzyme=)([a-z0-9]+)")
+_DS_ENZYME_RE = re.compile(r"(?:^|[\s;(])enzyme=([a-z0-9]+)")
+
+
+def _cl_enzymes(command_line: str) -> set[str]:
+    """Values of ``--enzyme X`` / ``--enzyme=X`` among a command line's
+    arguments (paths and other arguments never count)."""
+    try:
+        tokens = shlex.split(command_line)
+    except ValueError:
+        tokens = command_line.split()
+    found = set()
+    for index, token in enumerate(tokens):
+        if token == "--enzyme" and index + 1 < len(tokens):
+            found.add(tokens[index + 1].lower())
+        elif token.startswith("--enzyme="):
+            found.add(token.split("=", 1)[1].lower())
+    return found
 
 
 def _declared_enzymes(header) -> set[str]:
     """Enzymes the BAM's FiberHMM provenance declares.
 
-    Read from the ``FIBERHMM-CHEMISTRY`` declarations and the enzyme option
-    (``--enzyme X`` in ``CL``, ``enzyme=X`` in ``DS``) of FiberHMM ``@PG``
-    records. Other programs' records, file and directory names never count
-    (an aligner run on ``/data/ddda_vs_hia5/reads.fastq`` declares nothing).
+    Read from the ``FIBERHMM-CHEMISTRY`` declarations and, for FiberHMM
+    ``@PG`` records, the ``--enzyme`` argument of ``CL`` and the ``enzyme=``
+    field of ``DS``. Other programs' records, file and directory names never
+    count (an aligner run on ``/data/ddda_vs_hia5/reads.fastq`` declares
+    nothing).
     """
     from fiberhmm.io.bam_header import declared_chemistries
 
@@ -41,8 +59,8 @@ def _declared_enzymes(header) -> set[str]:
         program = str(record.get("PN") or record.get("ID") or "").lower()
         if not program.startswith("fiberhmm"):
             continue
-        text = f"{record.get('CL', '')} {record.get('DS', '')}".lower()
-        enzymes.update(match.group(1) for match in _ENZYME_OPTION_RE.finditer(text))
+        enzymes.update(_cl_enzymes(str(record.get("CL", ""))))
+        enzymes.update(_DS_ENZYME_RE.findall(str(record.get("DS", "")).lower()))
     return {enzyme for enzyme in enzymes if enzyme in _KNOWN_ENZYMES}
 
 

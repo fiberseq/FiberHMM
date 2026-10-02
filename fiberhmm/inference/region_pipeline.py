@@ -79,7 +79,7 @@ def _enforce_region_failures(aggregation) -> None:
         failures,
         aggregation.total_reads + failures,
         aggregation.failure_messages,
-        log=sys.stdout,
+        log=sys.stderr,
         label='region worker',
     )
 
@@ -131,7 +131,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
     _note(f"Planning regions with {n_cores} cores...")
     if return_posteriors:
         _note(f"Posteriors will be written to: {output_posteriors}")
-    sys.stdout.flush()
+    sys.stderr.flush()
 
     # Create temp directory in output folder for easier cleanup
     output_dir = ensure_parent_dir(output_bam)
@@ -174,7 +174,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
 
         # Use initializer to load model once per worker
         _note(f"  Initializing {n_cores} worker processes (loading HMM model in each)...")
-        sys.stdout.flush()
+        sys.stderr.flush()
         pool_start = time.time()
 
         with ProcessPoolExecutor(
@@ -199,7 +199,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
                         first_result_time = time.time()
                         init_time = first_result_time - pool_start
                         _note(f"  Workers ready ({init_time:.1f}s). Processing regions...")
-                        sys.stdout.flush()
+                        sys.stderr.flush()
 
                     elapsed = time.time() - start_time
                     rate = aggregation.total_reads / elapsed if elapsed > 0 else 0
@@ -207,7 +207,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
                           f"Reads: {aggregation.total_reads:,} | "
                           f"With footprints: {aggregation.reads_with_footprints:,} | "
                           f"{rate:.1f} reads/s", end='')
-                    sys.stdout.flush()
+                    sys.stderr.flush()
 
                 except Exception as e:
                     _note(f"\nError processing region: {e}")
@@ -241,7 +241,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
         def _finalize(path):
             # Index (sorting first if needed) the closed temporary; the BAM
             # and its index are published together afterwards.
-            sys.stdout.flush()
+            sys.stderr.flush()
             output_size_gb = os.path.getsize(path) / (1024**3)
             _note(f"Output BAM: {output_size_gb:.2f}GB")
             _note("Step: Index/Sort...")
@@ -323,7 +323,7 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
     # Get regions
     regions = _get_genome_regions(input_bam, region_size, skip_scaffolds, chroms)
     _note(f"Processing {len(regions)} regions with {n_cores} cores (BED output)...")
-    sys.stdout.flush()
+    sys.stderr.flush()
 
     # Create temp directory for BED files (small compared to BAMs)
     output_dir = ensure_parent_dir(output_bed)
@@ -355,7 +355,7 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
         first_result_time = None
 
         _note(f"  Initializing {n_cores} worker processes (loading HMM model in each)...")
-        sys.stdout.flush()
+        sys.stderr.flush()
         pool_start = time.time()
 
         with ProcessPoolExecutor(
@@ -377,7 +377,7 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
                         first_result_time = time.time()
                         init_time = first_result_time - pool_start
                         _note(f"  Workers ready ({init_time:.1f}s). Processing regions...")
-                        sys.stdout.flush()
+                        sys.stderr.flush()
 
                     elapsed = time.time() - start_time
                     rate = aggregation.total_reads / elapsed if elapsed > 0 else 0
@@ -385,7 +385,7 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
                           f"Reads: {aggregation.total_reads:,} | "
                           f"With footprints: {aggregation.reads_with_footprints:,} | "
                           f"{rate:.1f} reads/s", end='')
-                    sys.stdout.flush()
+                    sys.stderr.flush()
 
                 except Exception as e:
                     _note(f"\nError processing region: {e}")
@@ -399,7 +399,7 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
                          if os.path.exists(bed) and os.path.getsize(bed) > 0]
 
         _note(f"Concatenating {len(non_empty_beds)} region BED files...")
-        sys.stdout.flush()
+        sys.stderr.flush()
 
         with open(output_bed, 'wb') as fout:
             for bed_path in non_empty_beds:
@@ -579,7 +579,7 @@ def _process_bam_region_parallel_fused(
         if reused:
             _note(f"  Resuming: {len(reused)}/{len(work_items)} regions already "
                   f"finished in {temp_dir}; {len(pending)} to run.")
-        sys.stdout.flush()
+        sys.stderr.flush()
         emit('start', regions_total=len(work_items), regions_done=len(reused),
              regions_reused=len(reused), work_dir=temp_dir if work else None,
              output=os.path.abspath(output_bam))
@@ -589,7 +589,7 @@ def _process_bam_region_parallel_fused(
         done_bp = 0
         if pending:
             _note(f"  Initializing {n_cores} workers (loading apply model + LLR tables)...")
-            sys.stdout.flush()
+            sys.stderr.flush()
             pool_start = time.time()
             first_result = None
             initializer, initargs = _init_fused_region_worker, (
@@ -618,7 +618,7 @@ def _process_bam_region_parallel_fused(
                     if first_result is None:
                         first_result = time.time()
                         _note(f"  Workers ready ({first_result - pool_start:.1f}s). Processing...")
-                        sys.stdout.flush()
+                        sys.stderr.flush()
                     elapsed = time.time() - dispatch_start
                     rate = new_reads / elapsed if elapsed > 0 else 0
                     eta = (elapsed * (pending_bp - done_bp) / done_bp
@@ -629,7 +629,7 @@ def _process_bam_region_parallel_fused(
                           f"{rate:.0f} r/s"
                           f"{f' | ETA {eta / 60:.1f} min' if eta is not None and aggregation.completed < len(regions) else ''}",
                           end='')
-                    sys.stdout.flush()
+                    sys.stderr.flush()
                     emit('region', region=list(work_items[index].region),
                          regions_done=aggregation.completed,
                          regions_total=len(regions), regions_reused=len(reused),
