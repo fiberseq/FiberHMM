@@ -255,13 +255,13 @@ def chemistry_problems(paths: list[str], enzyme: str, seq: Optional[str]) -> lis
             with pysam.AlignmentFile(path, check_sq=False) as bam:
                 declarations = declared_chemistries(bam.header)
             enzymes = {str(d.get("enzyme", "")).lower() for d in declarations} - {"", "custom"}
-            if enzymes and enzyme not in enzymes:
+            if enzymes and enzymes != {enzyme}:
                 problems.append(f"{name} declares {'/'.join(sorted(enzymes))} chemistry "
                                 f"(FIBERHMM-CHEMISTRY), not {enzyme}")
             platforms = {("nanopore" if str(d.get("platform", "")).lower() == "ont"
                           else str(d.get("platform", "")).lower())
                          for d in declarations} & {"pacbio", "nanopore"}
-            if seq and platforms and seq not in platforms:
+            if seq and platforms and platforms != {seq}:
                 problems.append(f"{name} declares {'/'.join(sorted(platforms))} reads "
                                 f"(FIBERHMM-CHEMISTRY), not --seq {seq}")
         found = mm2.read_chemistry_evidence(path)
@@ -1567,6 +1567,10 @@ class Pipeline:
                 previous += [str(f) for f in json.load(handle)]
         except (OSError, ValueError, TypeError):
             pass
+        # Kept before the marker is cleared: an interrupted or failed run must
+        # not lose the list of tracks published so far.
+        previous = sorted({os.path.abspath(f) for f in previous})
+        write_json_atomic(inventory, previous)
         self._start_step("tracks")
         clear_marker(self.outdir, "tracks")
         self.progress.step("tracks", "running")
@@ -1595,8 +1599,7 @@ class Pipeline:
         self.track_files = [os.path.join(tracks_dir, name) for name in produced]
         # Every track this pipeline has published here (kept until cleanup is
         # done, so an interrupted or failed run does not lose it).
-        write_json_atomic(inventory, sorted({os.path.abspath(f) for f in previous}
-                                            | set(self.track_files)))
+        write_json_atomic(inventory, sorted(set(previous) | set(self.track_files)))
         for name, target in zip(produced, self.track_files):
             os.replace(os.path.join(staging, name), target)
         shutil.rmtree(staging, ignore_errors=True)

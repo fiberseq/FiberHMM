@@ -420,8 +420,13 @@ def read_chemistry_evidence(path: str, records: int = 200, scan_limit: int = 500
         return counts
     mapped = {"records": 0, "m6a": 0, "iupac": 0}
     unmapped = {"records": 0, "m6a": 0, "iupac": 0}
+    reached_eof = True
     with pysam.AlignmentFile(path, check_sq=False) as bam:
+        has_sq = bool(bam.header.to_dict().get("SQ"))
         for examined, read in enumerate(bam.fetch(until_eof=True), 1):
+            if examined > scan_limit or mapped["records"] >= records:
+                reached_eof = False
+                break
             if not (read.is_secondary or read.is_supplementary):
                 mm = None
                 for tag in ("MM", "Mm"):
@@ -431,9 +436,13 @@ def read_chemistry_evidence(path: str, records: int = 200, scan_limit: int = 500
                 counts = unmapped if read.is_unmapped else mapped
                 if counts["records"] < records:
                     tally(counts, read.query_sequence or "", mm)
-            if mapped["records"] >= records or examined >= scan_limit:
-                break
-    return mapped if mapped["records"] else unmapped
+    if mapped["records"]:
+        return mapped
+    if not has_sq or reached_eof:
+        return unmapped
+    # Only unmapped records within the scan of a BAM that may hold aligned
+    # ones further on: no evidence either way.
+    return {"records": 0, "m6a": 0, "iupac": 0}
 
 
 def bam_has_mod_tags(path: str, records: int = 200) -> bool:

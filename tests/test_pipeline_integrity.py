@@ -1335,3 +1335,51 @@ def test_failed_extract_keeps_the_track_inventory(tmp_path, monkeypatch):
     p.step_tracks(); p.close()
     assert not old_tf.exists()
     assert [os.path.basename(f) for f in p.track_files] == ["r.fiberhmm_nucleosome.bb"]
+
+
+def test_chemistry_evidence_long_unmapped_prefix_is_inconclusive(tmp_path):
+    from fiberhmm.pipeline import aligner as mm2
+
+    sequence = random_seq(1000, 15)
+    header = pysam.AlignmentHeader.from_dict({"HD": {"VN": "1.6"},
+                                              "SQ": [{"SN": "p", "LN": 1000}]})
+    path = tmp_path / "long_prefix.bam"
+    with pysam.AlignmentFile(str(path), "wb", header=header) as out:
+        for i in range(30):
+            r = pysam.AlignedSegment(header); r.query_name = f"u{i}"; r.flag = 4
+            r.query_sequence = sequence[:300]
+            out.write(r)
+    assert mm2.read_chemistry_evidence(str(path), scan_limit=10)["records"] == 0
+    assert mm2.read_chemistry_evidence(str(path))["records"] == 30   # EOF: all unmapped
+
+
+def test_conflicting_declarations_are_a_problem_even_if_one_matches(tmp_path):
+    sequence = random_seq(4000, 16)
+    path = tmp_path / "merged.bam"
+    header = pysam.AlignmentHeader.from_dict({"HD": {"VN": "1.6"}, "CO": [
+        "FIBERHMM-CHEMISTRY:v1:assay=daf;enzyme=ddda;platform=nanopore;mode=daf",
+        "FIBERHMM-CHEMISTRY:v1:assay=daf;enzyme=dddb;platform=nanopore;mode=daf"]})
+    with pysam.AlignmentFile(str(path), "wb", header=header) as out:
+        r = pysam.AlignedSegment(header); r.query_name = "r"; r.flag = 4
+        r.query_sequence = sequence[:500].replace("C", "Y", 5)
+        out.write(r)
+    (problem,) = runner.chemistry_problems([str(path)], "ddda", None)
+    assert "ddda/dddb" in problem
+
+
+def test_pre_inventory_tracks_survive_a_failed_rerun(tmp_path, monkeypatch):
+    made = [["nucleosome", "tf"]]
+    p, _ = _tracks_pipeline(tmp_path, monkeypatch, lambda: made[0])
+    p.step_tracks(); p.close()
+    inventory = Path(p.outdir, ".fiberhmm-pipeline", "tracks.files.json")
+    inventory.unlink()                      # an outdir made before the inventory existed
+    old_tf = Path(p.outdir, "tracks", "r.fiberhmm_tf.bb")
+    p, _ = _tracks_pipeline(tmp_path, monkeypatch, lambda: made[0], redo="tracks")
+    monkeypatch.setattr(Pipeline, "_run_logged", lambda self, cmd, log, *a, **k: 1)
+    with pytest.raises(PipelineError):
+        p.step_tracks()
+    p.close()
+    made[0] = ["nucleosome"]
+    p, _ = _tracks_pipeline(tmp_path, monkeypatch, lambda: made[0], redo="tracks")
+    p.step_tracks(); p.close()
+    assert not old_tf.exists()
