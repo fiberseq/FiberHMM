@@ -17,9 +17,10 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import tempfile
 
 import numpy as np
+
+from fiberhmm.io.output_files import mkstemp_shared
 
 _NAMESPACE = None
 
@@ -97,7 +98,7 @@ class NativeFitCache:
                      parameters=[float(v) for v in np.asarray(parameters, float)],
                      objective=float(objective), converged=bool(converged), iterations=int(iterations),
                      message=str(message), source_units=int(source_units))
-        fd, temporary = tempfile.mkstemp(prefix='.'+path.name+'.', dir=path.parent)
+        fd, temporary = mkstemp_shared(prefix='.'+path.name+'.', dir=path.parent)
         try:
             with os.fdopen(fd, 'w') as handle:
                 json.dump(entry, handle, allow_nan=False)

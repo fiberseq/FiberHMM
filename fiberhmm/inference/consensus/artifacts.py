@@ -5,8 +5,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import tempfile
 import numpy as np
+from fiberhmm.io.output_files import mkstemp_shared
 
 
 def json_default(value):
@@ -40,7 +40,8 @@ def write_json(path, value, *, encoded=None):
         encoded = json.dumps(value, allow_nan=False, default=json_default,
                              separators=(',', ':')).encode('utf-8')
     # Never leave a truncated published artifact on cancellation/write failure.
-    fd, temporary = tempfile.mkstemp(prefix='.'+path.name+'.', dir=path.parent)
+    # Created like open() does (umask applies), not 0600 like tempfile.mkstemp.
+    fd, temporary = mkstemp_shared(prefix='.'+path.name+'.', dir=path.parent)
     try:
         with os.fdopen(fd, 'wb') as raw:
             if path.suffix == '.gz':

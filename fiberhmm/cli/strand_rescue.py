@@ -23,7 +23,6 @@ import json
 import math
 import os
 import sys
-import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -49,6 +48,7 @@ except ImportError:  # pragma: no cover - exercised only on non-POSIX hosts
 
 from fiberhmm import __version__ as FIBERHMM_VERSION
 from fiberhmm.core.model_io import load_model_with_metadata
+from fiberhmm.io.output_files import mkstemp_shared
 from fiberhmm.inference.strand_rescue import (
     DEFAULT_ACCESSIBLE_SITE_GAP,
     MIN_MAPPED_ANNOTATION_FRACTION,
@@ -305,7 +305,7 @@ def _mkstemp_with_permission_retry(
 ) -> Tuple[int, str]:
     """Create one destination-local stage despite a short sharing lock."""
     return _retry_transient_permission(
-        lambda: tempfile.mkstemp(
+        lambda: mkstemp_shared(
             prefix=prefix,
             suffix=suffix,
             dir=str(directory),
