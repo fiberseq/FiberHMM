@@ -6,7 +6,9 @@ the protected stretches (nucleosomes, and transcription-factor or Pol II
 footprints) and the accessible stretches between them (methylase-sensitive
 patches, MSPs). Its calls are written back into the BAM as standard tags that
 [fibertools](https://github.com/fiberseq/fibertools-rs), FIRE and
-[FiberBrowser](https://github.com/mtcicero26/FiberBrowser) read.
+FiberBrowser, the companion browser (install with `pip install fiberbrowser`),
+read.
+<!-- TODO(owner): link FiberBrowser once its public URL is decided. -->
 
 Across many molecules, FiberHMM also finds recurrent footprint classes at a
 locus and measures how often each molecule carries each one.

@@ -46,7 +46,7 @@ fiberhmm-call -i sorted.bam -o calls.bam --enzyme hia5 --seq pacbio \
   the output). Main chromosomes of human, mouse, fly, yeast (chrI–chrXVI),
   worm, RefSeq `NC_` accessions and `chrEBV` are kept.
 - `--chroms chr2L chr3R` calls only those contigs; the others are copied.
-- The output directory must exist.
+- A missing output directory is created.
 
 **Streaming** (the default without `--region-parallel`) reads the input once,
 in order, with `--cores` workers each taking `--chunk-size` (500) reads. It
@@ -85,9 +85,11 @@ fiberhmm-call -i sorted.bam -o calls.bam --enzyme hia5 --seq pacbio \
   parameter including the resolved chemistry and defaults, the content
   digests of the model, nucleosome profile, SNP mask and reference, the
   region plan and the FiberHMM version.
-- Identities compare content, not file dates: a copied or touched input is
-  the same input, a changed one is refused even if its size and date were
-  preserved. A digest is recomputed unless the file's device, inode, size,
+- Identities compare content, not file dates: a touched input, or a file
+  replaced by an identical copy at the same path, is the same input; a
+  changed one is refused even if its size and date were preserved. The
+  resolved path is part of the identity, so the same data at another path
+  (for example staged to scratch) is a different input. A digest is recomputed unless the file's device, inode, size,
   modification time and status-change time (which no tool can set back) are
   all unchanged, so resuming does not rehash unchanged inputs.
 - `--resume` reuses every region whose marker and BAM (size and SHA-256)

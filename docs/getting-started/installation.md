@@ -70,6 +70,7 @@ pip install -e ".[all,dev]"
 | UCSC [`bedToBigBed`](https://hgdownload.soe.ucsc.edu/admin/exe/) | bigBed output of `fiberhmm-extract` and `fiberhmm-footprint-model --bigbed` | `fiberhmm-extract` writes BED only |
 | UCSC `bigBedInfo`, `bigBedToBed` | `fiberhmm-utils fix-bigbed` | the command stops |
 | [`ft`](https://github.com/fiberseq/fibertools-rs) (fibertools) | FIRE scoring after calling (`ft fire`) | not needed by FiberHMM itself |
+| FiberBrowser (`pip install fiberbrowser`) | viewing calls and footprint classes | not needed by FiberHMM itself |
 
 `fiberhmm-pipeline` ([From a Plasmidsaurus run to footprints](quick-daf-seq.md))
 aligns reads with minimap2. Install the program, or the `mappy` Python module
@@ -98,8 +99,9 @@ fiberhmm-call --help
 
 Then run the [Quick start](quickstart.md) on the synthetic demo data.
 
-Each command checks PyPI at most once a day for a newer release and prints a
-one-line reminder on stderr. Set `FIBERHMM_NO_UPDATE_CHECK=1` to turn this off
+Every command except `fiberhmm-consensus` and `fiberhmm-transfer` checks PyPI
+at most once a day for a newer release and prints a one-line reminder on
+stderr. Set `FIBERHMM_NO_UPDATE_CHECK=1` to turn this off
 (see [Environment variables](../reference/environment.md)).
 
 ## Updating and removing
@@ -121,6 +123,12 @@ sudo yum install -y python3-devel htslib-devel zlib-devel bzip2-devel xz-devel l
 # macOS
 xcode-select --install && brew install htslib
 ```
+
+**No prebuilt wheels on older Linux.** On distributions with glibc older
+than 2.28 (CentOS 7-era clusters), pip finds no prebuilt `pysam` for Python
+3.11–3.13 (nor `numpy` for 3.14) and tries to build it from source. Use
+Python 3.10, or install `pysam` from conda first
+(`conda install -c bioconda pysam`), then `pip install fiberhmm`.
 
 **Numba import errors.** Numba supports a limited range of numpy versions:
 `pip install --upgrade numpy numba`.

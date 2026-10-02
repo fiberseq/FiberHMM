@@ -23,7 +23,7 @@ python docs/examples/make_demo_data.py demo
 or, after `pip install fiberhmm`:
 
 ```bash
-curl -O https://raw.githubusercontent.com/fiberseq/FiberHMM/main/docs/examples/make_demo_data.py
+curl -O https://raw.githubusercontent.com/fiberseq/FiberHMM/v3.0.0/docs/examples/make_demo_data.py
 python make_demo_data.py demo
 ```
 

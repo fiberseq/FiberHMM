@@ -136,11 +136,12 @@ start over. FiberHMM never discards finished regions silently.
 
 ### `--resume refused: the input or parameters differ from the interrupted run`
 
-The input BAM (path, size, modification time, header or index) or an
-effective parameter differs from the run that made the work directory; the
-message names the fields. Rerun with the original input and options, or
-delete the work directory to start over. Rebuilding or touching the input
-BAM counts as a change.
+The input BAM (its resolved path, size, content or header digest, or its
+index) or an effective parameter differs from the run that made the work
+directory; the message names the fields. Rerun with the original input and
+options, or delete the work directory to start over. Touching a file does not
+count as a change; changing its content, or moving or copying it to another
+path, does.
 
 ### `--resume needs the region-parallel pipeline`
 

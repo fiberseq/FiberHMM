@@ -47,7 +47,9 @@ DddA island groups are kept.
 | `tf_recaller.QQQQQQ` | `tq`, `fi`, `tier`, `q0`, `lr`, `rr` | `fiberhmm-consensus --bam-recaller-layer` | the lattice recaller's own class calls |
 | `tf_cross_consensus.QQQQQQ` | as `tf_consensus` | `fiberhmm-consensus --engine staged_native_families` (XCR) | deprecated staged engine |
 
-The strand field of every FiberHMM group is `.`. `ddda_mcg+`/`-` and
+The strand field of every FiberHMM group is `.`, except the duplex
+coverage groups of `fiberhmm-pair`, whose strand is `+` (`deam+`, CT source)
+or `-` (`deam-`, GA source). `ddda_mcg+`/`-` and
 `ddda_mcg_hemi+`/`-` from older experimental per-CpG callers are still read
 but no longer written.
 

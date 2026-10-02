@@ -237,8 +237,9 @@ structured progress events to stderr.
 ## Reproducibility
 
 **Same inputs, same classes.** Since 3.0, the same BAMs with the same
-parameters give identical classes on any machine, from any folder and under
-any dataset names: a molecule is identified by its dataset's position in the
+parameters give identical classes on any machine (with single-threaded BLAS;
+see [Environment variables](../reference/environment.md)), from any folder
+and under any dataset names: a molecule is identified by its dataset's position in the
 run, its file's position in that dataset and the alignment record itself,
 never by a path or label. The order of the datasets and of the files within
 a dataset is part of the input; reorder them and you have a different (equally
@@ -249,7 +250,9 @@ deterministic, but the order of the molecules seeds k-means and decides the
 split-halves and folds of its held-out tests. A class well above the
 thresholds is found under any order; one close to them (a rare footprint, or
 two geometries a few bp apart) may appear under some orders and not others.
-On the demo 4 kb window the default order finds 19 supported classes; other
+On the 4 kb NAPA promoter window of FiberBrowser's demo (DddA-seq, hg38,
+chr19:47514000-47518000, the window of the example below) the default order
+finds 19 supported classes; other
 orders find between 14 and 19, and `--robust 2` (like `--robust 4`) marks 12
 of the 19 robust.
 

@@ -104,7 +104,8 @@ FiberBrowser can pair the BAM with its map.
 
 ## Open it in FiberBrowser
 
-Run the printed command, or open the called BAM and the reference in the
+FiberBrowser, the companion browser, is installed separately
+(`pip install fiberbrowser`). Run the printed command, or open the called BAM and the reference in the
 FiberBrowser window. For a plasmid, also load the plasmid map (it adds the
 features); its contig name is the one the BAM uses, because the pipeline names
 the contig the way FiberBrowser names the map: the file name without its
