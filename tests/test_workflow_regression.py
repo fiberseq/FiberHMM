@@ -371,6 +371,8 @@ def test_hmm_apply_to_tf_recall_to_label_extraction_workflow_by_mode(
             enzyme=enzyme,
             daf_mask_runs=0,  # homopolymer fixture: one read-length run; test plumbing, not the mask
             seq=seq,
+            # One synthetic A+a-only read serves the PacBio and Nanopore cases.
+            force_seq=True,
             downstream_compat=False,
             cores=1,
             min_llr=0.0,

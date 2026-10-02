@@ -57,6 +57,7 @@ from collections import deque, namedtuple
 import pysam
 
 from fiberhmm.cli.common import (
+    add_force_seq_arg,
     add_legacy_mode_override,
     resolve_observation_mode,
     resolve_platform_argument,
@@ -797,8 +798,10 @@ def parse_args(default_recall_nucs: bool = False):
                    help='Hia5 sequencing platform. When omitted it is taken '
                         'from the input\'s FIBERHMM-CHEMISTRY declaration or '
                         'detected from its MM specs (PacBio T-a vs Nanopore '
-                        'A+a only); conflicting evidence stops the run. '
-                        'Ignored for dddb/ddda.')
+                        'A+a only); conflicting evidence stops the run, and '
+                        'a given --seq that the reads contradict is refused '
+                        '(see --force-seq). Ignored for dddb/ddda.')
+    add_force_seq_arg(p)
     p.add_argument('--replace-chemistry', action='store_true',
                    help='Replace, instead of reconcile with, the input BAM\'s '
                         'FIBERHMM-CHEMISTRY declaration. By default a custom '

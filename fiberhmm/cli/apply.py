@@ -13,6 +13,7 @@ import pandas as pd
 from fiberhmm.cli.common import (
     add_edge_trim_args,
     add_filter_args,
+    add_force_seq_arg,
     add_legacy_mode_override,
     add_parallel_args,
     add_stats_args,
@@ -80,7 +81,10 @@ Examples:
                         help='Hia5 sequencing platform. When omitted it is '
                              'detected from the input (MM specs: PacBio T-a vs '
                              'Nanopore A+a only; header records); conflicting '
-                             'evidence stops the run. Ignored for dddb/ddda.')
+                             'evidence stops the run, and a given --seq that the '
+                             'reads contradict is refused (see --force-seq). '
+                             'Ignored for dddb/ddda.')
+    add_force_seq_arg(parser)
 
     # Backward-compatible escape hatch; normal workflows infer this.
     add_legacy_mode_override(parser)

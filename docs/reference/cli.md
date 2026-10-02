@@ -82,7 +82,8 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `-m` / `--model` | — | Apply HMM model JSON. If omitted, bundled model for --enzyme/--seq is used. |
 | `--recall-model` | — | Separate model for TF LLR tables. Default: reuse apply model. |
 | `--enzyme` | — | Bundled enzyme preset. Choices: `ddda`, `dddb`, `hia5`. |
-| `--seq` | — | Sequencing platform. For Hia5 it selects the model; when omitted it is detected from the input (MM specs: PacBio T-a vs Nanopore A+a only; header records) and the run stops if the evidence conflicts. For dddb/ddda it only sets the declared platform. Choices: `pacbio`, `nanopore`. |
+| `--seq` | — | Sequencing platform. For Hia5 it selects the model; when omitted it is detected from the input (MM specs: PacBio T-a vs Nanopore A+a only; header records) and the run stops if the evidence conflicts. A given --seq that the reads contradict is refused (see --force-seq). For dddb/ddda it only sets the declared platform. Choices: `pacbio`, `nanopore`. |
+| `--force-seq` | off | Use the given --seq even when the input's MM specs or header say the reads come from the other platform (normally refused: the wrong platform model changes the calls, e.g. ~100x more TF calls for Nanopore reads called as PacBio). |
 | `--replace-chemistry` | off | Replace, instead of reconcile with, the input BAM's FIBERHMM-CHEMISTRY declaration (re-calling a BAM with a deliberately different chemistry). |
 | `--reference` | — | Reference FASTA for DAF-seq BAMs that lack both R/Y IUPAC encoding and MD tags. When present, acts as a fallback source for deamination-site detection (R/Y codes and a usable MD tag take precedence). Must match the BAM's assembly and be faidx-indexed. |
 | `-k` / `--context-size` | — | Context size override. Default: from model. |
@@ -162,7 +163,8 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `-m` / `--model` | — | Path to trained HMM model (.json, .npz, or .pickle). If omitted, the bundled model for --enzyme/--seq is used. |
 | `-o` / `--outdir` | required | Output directory, or "-" to write BAM to stdout (for piping) |
 | `--enzyme` | — | Auto-select a supported bundled chemistry model. Use --seq pacbio\|nanopore for Hia5. Choices: `ddda`, `dddb`, `hia5`. |
-| `--seq` | — | Hia5 sequencing platform. When omitted it is detected from the input (MM specs: PacBio T-a vs Nanopore A+a only; header records); conflicting evidence stops the run. Ignored for dddb/ddda. Choices: `pacbio`, `nanopore`. |
+| `--seq` | — | Hia5 sequencing platform. When omitted it is detected from the input (MM specs: PacBio T-a vs Nanopore A+a only; header records); conflicting evidence stops the run, and a given --seq that the reads contradict is refused (see --force-seq). Ignored for dddb/ddda. Choices: `pacbio`, `nanopore`. |
+| `--force-seq` | off | Use the given --seq even when the input's MM specs or header say the reads come from the other platform (normally refused: the wrong platform model changes the calls, e.g. ~100x more TF calls for Nanopore reads called as PacBio). |
 | `-k` / `--context-size` | — | Context size (auto-detected from model if not specified) |
 | `--cores` / `-c` | `1` | Number of CPU cores (0=auto, default: 1) |
 | `--io-threads` | `4` | Number of htslib decompression/compression threads for BAM I/O (default: 4) |
@@ -196,7 +198,8 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `-o` / `--out-bam` | required | Output BAM with MA/AQ + refreshed legacy tags. Use "-" for stdout (for piping to ft fire, samtools, etc). |
 | `-m` / `--model` | — | FiberHMM model JSON. If omitted, the bundled model for --enzyme/--seq is used automatically. |
 | `--enzyme` | — | Enzyme preset: auto-selects the bundled model and min-llr/emission-uplift defaults (ddda, dddb, hia5). Choices: `ddda`, `dddb`, `hia5`. |
-| `--seq` | — | Hia5 sequencing platform. When omitted it is taken from the input's FIBERHMM-CHEMISTRY declaration or detected from its MM specs (PacBio T-a vs Nanopore A+a only); conflicting evidence stops the run. Ignored for dddb/ddda. Choices: `pacbio`, `nanopore`. |
+| `--seq` | — | Hia5 sequencing platform. When omitted it is taken from the input's FIBERHMM-CHEMISTRY declaration or detected from its MM specs (PacBio T-a vs Nanopore A+a only); conflicting evidence stops the run, and a given --seq that the reads contradict is refused (see --force-seq). Ignored for dddb/ddda. Choices: `pacbio`, `nanopore`. |
+| `--force-seq` | off | Use the given --seq even when the input's MM specs or header say the reads come from the other platform (normally refused: the wrong platform model changes the calls, e.g. ~100x more TF calls for Nanopore reads called as PacBio). |
 | `--replace-chemistry` | off | Replace, instead of reconcile with, the input BAM's FIBERHMM-CHEMISTRY declaration. By default a custom --model inherits the input's enzyme/platform when its observation mode matches, and a conflicting --enzyme/--seq is refused. |
 | `--daf-mask-runs` | — | DAF only: thin targets lying in same-strand runs of &gt;= N original C (CT) or G (GA) bases (CC/GG and longer at N=2; see --daf-run-policy). Adjacent conversions are coupled and do not follow the per-site emission model. Default: 2 with keep-one for --enzyme ddda (duplex-validated), off otherwise; 0 disables. |
 | `--daf-run-policy` | `keep-one` | With --daf-mask-runs: keep each run's 5'-most target (default) or drop the run. Choices: `keep-one`, `drop`. |
@@ -232,7 +235,8 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `-o` / `--out-bam` | required | Output BAM with MA/AQ + refreshed legacy tags. Use "-" for stdout (for piping to ft fire, samtools, etc). |
 | `-m` / `--model` | — | FiberHMM model JSON. If omitted, the bundled model for --enzyme/--seq is used automatically. |
 | `--enzyme` | — | Enzyme preset: auto-selects the bundled model and min-llr/emission-uplift defaults (ddda, dddb, hia5). Choices: `ddda`, `dddb`, `hia5`. |
-| `--seq` | — | Hia5 sequencing platform. When omitted it is taken from the input's FIBERHMM-CHEMISTRY declaration or detected from its MM specs (PacBio T-a vs Nanopore A+a only); conflicting evidence stops the run. Ignored for dddb/ddda. Choices: `pacbio`, `nanopore`. |
+| `--seq` | — | Hia5 sequencing platform. When omitted it is taken from the input's FIBERHMM-CHEMISTRY declaration or detected from its MM specs (PacBio T-a vs Nanopore A+a only); conflicting evidence stops the run, and a given --seq that the reads contradict is refused (see --force-seq). Ignored for dddb/ddda. Choices: `pacbio`, `nanopore`. |
+| `--force-seq` | off | Use the given --seq even when the input's MM specs or header say the reads come from the other platform (normally refused: the wrong platform model changes the calls, e.g. ~100x more TF calls for Nanopore reads called as PacBio). |
 | `--replace-chemistry` | off | Replace, instead of reconcile with, the input BAM's FIBERHMM-CHEMISTRY declaration. By default a custom --model inherits the input's enzyme/platform when its observation mode matches, and a conflicting --enzyme/--seq is refused. |
 | `--daf-mask-runs` | — | DAF only: thin targets lying in same-strand runs of &gt;= N original C (CT) or G (GA) bases (CC/GG and longer at N=2; see --daf-run-policy). Adjacent conversions are coupled and do not follow the per-site emission model. Default: 2 with keep-one for --enzyme ddda (duplex-validated), off otherwise; 0 disables. |
 | `--daf-run-policy` | `keep-one` | With --daf-mask-runs: keep each run's 5'-most target (default) or drop the run. Choices: `keep-one`, `drop`. |
@@ -642,7 +646,8 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `-o` / `--output` | required | Output file (.tsv.gz for TSV, .h5/.hdf5 for HDF5) |
 | `--format` | `auto` | Output format (default: auto-detect from extension) Choices: `auto`, `hdf5`, `tsv`. |
 | `--enzyme` | — | Auto-select a bundled enzyme model. Choices: `ddda`, `dddb`, `hia5`. |
-| `--seq` | — | Hia5 platform; detected from the input when omitted, as in fiberhmm-call. Ignored for dddb/ddda. Choices: `pacbio`, `nanopore`. |
+| `--seq` | — | Hia5 platform; detected from the input when omitted, as in fiberhmm-call (and checked against the reads when given). Ignored for dddb/ddda. Choices: `pacbio`, `nanopore`. |
+| `--force-seq` | off | Use the given --seq even when the input's MM specs or header say the reads come from the other platform (normally refused: the wrong platform model changes the calls, e.g. ~100x more TF calls for Nanopore reads called as PacBio). |
 | `--edge-trim` / `-e` | `10` | Bases to trim from read edges (default: 10) |
 | `--prob-threshold` | — | Min ML probability (0-255) for an MM/ML modification call. Default: chemistry preset, as in fiberhmm-call -- 248 for Hia5 Nanopore (--seq nanopore, given or detected), 128 otherwise. |
 | `--keep-chimeras` | off | Do not drop DAF strand-swap chimeric reads |

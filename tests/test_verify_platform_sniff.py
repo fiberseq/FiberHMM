@@ -122,9 +122,10 @@ def test_platform_sniff_skips_reads_when_settled(monkeypatch):
         return common.PlatformEvidence(platform="pacbio", source="header")
 
     monkeypatch.setattr(common, "sniff_sequencing_platform", spy)
-    # Explicit --seq: no MM scan.
+    # Explicit --seq for Hia5: the reads are still inspected, because an
+    # explicit --seq is checked against their MM specs.
     common.resolve_platform_argument(
-        SimpleNamespace(enzyme="hia5", seq="nanopore"), "x.bam", tool="t")
+        SimpleNamespace(enzyme="hia5", seq="pacbio"), "x.bam", tool="t")
     # DAF enzymes: the platform never changes the observation mode.
     common.resolve_platform_argument(
         SimpleNamespace(enzyme="ddda", seq=None), "x.bam", tool="t")
@@ -133,7 +134,7 @@ def test_platform_sniff_skips_reads_when_settled(monkeypatch):
     # Hia5 without --seq still inspects reads.
     common.resolve_platform_argument(
         SimpleNamespace(enzyme="hia5", seq=None), "x.bam", tool="t")
-    assert calls == [False, False, False, True]
+    assert calls == [True, False, False, True]
 
 
 def test_platform_sniff_declaration_settles_without_reading():

@@ -312,10 +312,19 @@ _ONT_PROGRAMS = {"dorado", "guppy", "guppy_basecaller", "minknow", "bonito"}
 class PlatformEvidence:
     """Result of :func:`sniff_sequencing_platform`."""
 
-    def __init__(self, platform=None, source="", conflict=None):
+    def __init__(self, platform=None, source="", conflict=None, *,
+                 reads_inspected=0, m6a_reads=0, mm_platform=None,
+                 mm_source=""):
         self.platform = platform      # 'pacbio' | 'nanopore' | None
         self.source = source          # human-readable evidence summary
         self.conflict = conflict      # explanation when evidence disagrees
+        # Read-level evidence (only when records were inspected): primary
+        # records read, how many carry an m6A MM spec (A+a / T-a), and the
+        # platform their MM specs alone indicate.
+        self.reads_inspected = reads_inspected
+        self.m6a_reads = m6a_reads
+        self.mm_platform = mm_platform
+        self.mm_source = mm_source
 
     def __repr__(self):  # pragma: no cover - debugging aid
         return (f"PlatformEvidence(platform={self.platform!r}, "
@@ -331,6 +340,12 @@ def _mm_spec_platform(mm_tag: str):
     if "A+a" in bases:
         return "nanopore"
     return None
+
+
+def _mm_has_m6a(mm_tag: str) -> bool:
+    """Whether an MM tag carries an m6A spec (``A+a`` or ``T-a``)."""
+    specs = [item.split(",", 1)[0] for item in str(mm_tag).split(";") if item]
+    return any(spec.rstrip(".?") in ("A+a", "T-a") for spec in specs)
 
 
 def _header_platform(header_dict):
@@ -355,7 +370,8 @@ def _header_platform(header_dict):
 
 
 def sniff_sequencing_platform(bam_path, n_reads: int = PLATFORM_SNIFF_READS,
-                              *, inspect_reads: bool = True):
+                              *, inspect_reads: bool = True,
+                              inspect_declared: bool = False):
     """Infer PacBio vs Nanopore from a BAM's own evidence.
 
     Evidence, strongest first: a FiberHMM chemistry declaration in the header;
@@ -368,8 +384,10 @@ def sniff_sequencing_platform(bam_path, n_reads: int = PLATFORM_SNIFF_READS,
 
     At most ``n_reads`` records are read, tagged or not (an MM-less DAF BAM
     is never scanned to EOF). Records are not read at all when
-    ``inspect_reads`` is False or when the header's chemistry declaration
-    names a single platform.
+    ``inspect_reads`` is False, or when the header's chemistry declaration
+    names a single platform unless ``inspect_declared`` is True. The
+    declaration still decides ``platform`` then; the read-level evidence is
+    reported in ``mm_platform``/``m6a_reads``/``reads_inspected``.
     """
     if not bam_path or bam_path == "-":
         return PlatformEvidence(source="stdin (not inspected)")
@@ -385,30 +403,49 @@ def sniff_sequencing_platform(bam_path, n_reads: int = PLATFORM_SNIFF_READS,
                 for item in declared_chemistries(bam.header)
             } & {"pacbio", "nanopore"}
             counts = {"pacbio": 0, "nanopore": 0}
-            if inspect_reads and len(declared) != 1:
+            primary = m6a_reads = 0
+            if inspect_reads and (len(declared) != 1 or inspect_declared):
                 for inspected, read in enumerate(bam.fetch(until_eof=True), 1):
                     if not (read.is_secondary or read.is_supplementary):
+                        primary += 1
                         tag = ("MM" if read.has_tag("MM")
                                else ("Mm" if read.has_tag("Mm") else None))
-                        platform = (_mm_spec_platform(read.get_tag(tag))
-                                    if tag else None)
+                        mm = read.get_tag(tag) if tag else None
+                        platform = _mm_spec_platform(mm) if tag else None
                         if platform:
                             counts[platform] += 1
+                        if tag and _mm_has_m6a(mm):
+                            m6a_reads += 1
                     if inspected >= n_reads:
                         break
     except (OSError, ValueError) as exc:
         return PlatformEvidence(source=f"unreadable input ({exc})")
 
+    read_evidence = {"reads_inspected": primary, "m6a_reads": m6a_reads}
+    informative = counts["pacbio"] + counts["nanopore"]
+    if informative:
+        majority = max(counts, key=counts.get)
+        if informative - counts[majority] <= _PLATFORM_MINORITY_FRACTION * informative:
+            pattern = "T-a present" if majority == "pacbio" else "A+a only, no T-a"
+            read_evidence["mm_platform"] = majority
+            read_evidence["mm_source"] = (
+                f"MM specs of {informative} read(s) ({pattern})")
+
     sources = []
     if len(declared) > 1:
         return PlatformEvidence(conflict=(
             "the input header declares several platforms "
-            f"({', '.join(sorted(declared))})"))
+            f"({', '.join(sorted(declared))})"), **read_evidence)
     declared_platform = next(iter(declared), None)
     if declared_platform:
         sources.append((declared_platform, "FIBERHMM-CHEMISTRY declaration"))
+        if inspect_declared:
+            # The declaration settles the platform; reads were read only for
+            # the read-level evidence above.
+            return PlatformEvidence(
+                platform=declared_platform,
+                source="FIBERHMM-CHEMISTRY declaration", **read_evidence)
 
-    informative = counts["pacbio"] + counts["nanopore"]
     mm_platform = None
     if informative:
         majority = max(counts, key=counts.get)
@@ -417,7 +454,7 @@ def sniff_sequencing_platform(bam_path, n_reads: int = PLATFORM_SNIFF_READS,
             return PlatformEvidence(conflict=(
                 f"MM specs are mixed: {counts['pacbio']} read(s) carry PacBio "
                 f"T-a calls and {counts['nanopore']} read(s) only Nanopore-style "
-                "A+a calls"))
+                "A+a calls"), **read_evidence)
         mm_platform = majority
         pattern = "T-a present" if majority == "pacbio" else "A+a only, no T-a"
         sources.append((majority, f"MM specs of {informative} read(s) ({pattern})"))
@@ -427,18 +464,81 @@ def sniff_sequencing_platform(bam_path, n_reads: int = PLATFORM_SNIFF_READS,
         sources.append((next(iter(header_votes)), "@RG/@PG header records"))
     elif len(header_votes) > 1 and mm_platform is None and not declared_platform:
         return PlatformEvidence(conflict=(
-            "@RG/@PG header records name both PacBio and Nanopore tools"))
+            "@RG/@PG header records name both PacBio and Nanopore tools"),
+            **read_evidence)
 
     platforms = {platform for platform, _ in sources}
     if len(platforms) > 1:
         detail = "; ".join(f"{src} -> {platform}" for platform, src in sources)
-        return PlatformEvidence(conflict=f"evidence disagrees ({detail})")
+        return PlatformEvidence(conflict=f"evidence disagrees ({detail})",
+                                **read_evidence)
     if not sources:
-        return PlatformEvidence(source="no platform evidence in the first reads")
+        return PlatformEvidence(source="no platform evidence in the first reads",
+                                **read_evidence)
     return PlatformEvidence(
         platform=sources[0][0],
         source="; ".join(src for _, src in sources),
+        **read_evidence,
     )
+
+
+def add_force_seq_arg(parser: argparse.ArgumentParser) -> None:
+    """Add ``--force-seq``: run with an explicit ``--seq`` the reads contradict."""
+    parser.add_argument(
+        '--force-seq', action='store_true',
+        help="Use the given --seq even when the input's MM specs or header "
+             "say the reads come from the other platform (normally refused: "
+             "the wrong platform model changes the calls, e.g. ~100x more "
+             "TF calls for Nanopore reads called as PacBio).",
+    )
+
+
+def _refuse_mismatched_seq(args, evidence, *, tool, enzyme, explicit):
+    """Exit 2 when the reads contradict an explicit ``--seq`` (unless forced)."""
+    # MM specs are direct evidence; header records and declarations back
+    # them up when no read carries an informative spec.
+    if evidence.mm_platform:
+        observed, source = evidence.mm_platform, evidence.mm_source
+    elif evidence.platform and not evidence.conflict:
+        observed, source = evidence.platform, evidence.source
+    else:
+        return
+    if observed == explicit:
+        return
+    if getattr(args, 'force_seq', False):
+        print(
+            f"WARNING: --seq {explicit} was given, but the input looks like "
+            f"{observed} ({source}). Using --seq {explicit} because of "
+            "--force-seq.",
+            file=sys.stderr,
+        )
+        return
+    print(
+        f"error: {tool}: --seq {explicit} was given, but the input looks like "
+        f"{observed} ({source}). Calling {observed} reads with the "
+        f"{explicit} model changes the calls (for example, Nanopore reads "
+        f"called as PacBio give ~100x more TF calls). Pass --seq {observed}, "
+        f"omit --seq "
+        f"to detect it, or add --force-seq to use --seq {explicit} anyway.",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
+
+def _refuse_reads_without_m6a(evidence, *, tool, enzyme):
+    """Exit 2 when an m6A enzyme meets reads without any m6A MM calls."""
+    if evidence.reads_inspected == 0 or evidence.m6a_reads > 0:
+        return
+    print(
+        f"error: {tool}: --enzyme {enzyme} calls footprints from m6A "
+        f"modification calls, but none of the first {evidence.reads_inspected} "
+        "primary reads carries an m6A MM/ML tag (MM A+a or T-a), so every read "
+        "would get no footprints. Is this DAF-seq? Use --enzyme dddb or "
+        "--enzyme ddda. For Fiber-seq, call m6A first (ft predict-m6a for "
+        "PacBio, dorado with an m6A model for Nanopore).",
+        file=sys.stderr,
+    )
+    sys.exit(2)
 
 
 def resolve_platform_argument(args, input_path, *, tool: str,
@@ -448,8 +548,11 @@ def resolve_platform_argument(args, input_path, *, tool: str,
     Only enzymes whose bundled model or observation frame depends on the
     platform (Hia5) are sniffed; for DAF enzymes a missing ``--seq`` is filled
     only from explicit header evidence (it then affects just the declared
-    platform). An explicit ``--seq`` is authoritative; a disagreeing sniff
-    only warns.
+    platform). For Hia5 the first reads are always inspected: an explicit
+    ``--seq`` that the reads' MM specs (or, without informative specs, the
+    header) contradict is refused unless ``--force-seq`` is given, and reads
+    with no m6A MM calls at all are refused (DAF-seq run with Hia5). For DAF
+    enzymes a disagreeing header only warns.
     """
     from fiberhmm.models import enzyme_requires_platform
 
@@ -458,13 +561,18 @@ def resolve_platform_argument(args, input_path, *, tool: str,
         return
     requires = enzyme_requires_platform(enzyme)
     explicit = getattr(args, "seq", None)
-    # Read MM specs only when they can decide something: an explicit --seq is
-    # authoritative (header evidence still backs the mismatch warning), and a
-    # platform-independent (DAF) enzyme takes only header evidence below.
+    # MM specs decide only for Hia5: a platform-independent (DAF) enzyme takes
+    # header evidence alone, and its reads carry no m6A specs to read.
     evidence = sniff_sequencing_platform(
-        input_path, inspect_reads=bool(requires and not explicit))
+        input_path, inspect_reads=bool(requires),
+        inspect_declared=bool(requires))
+    if requires:
+        _refuse_reads_without_m6a(evidence, tool=tool, enzyme=enzyme)
     if explicit:
-        if evidence.platform and evidence.platform != explicit:
+        if requires:
+            _refuse_mismatched_seq(args, evidence, tool=tool, enzyme=enzyme,
+                                   explicit=explicit)
+        elif evidence.platform and evidence.platform != explicit:
             print(
                 f"WARNING: --seq {explicit} was given, but the input looks like "
                 f"{evidence.platform} ({evidence.source}). Using --seq {explicit} "
@@ -494,7 +602,10 @@ def resolve_platform_argument(args, input_path, *, tool: str,
     if requires:
         print(
             f"WARNING: --seq not given for --enzyme {enzyme} and the platform "
-            f"could not be detected ({evidence.source}); assuming PacBio. Pass "
-            "--seq nanopore for Nanopore data.",
+            f"could not be detected ({evidence.source}); assuming PacBio "
+            "(--seq pacbio). Pass --seq nanopore for Nanopore data.",
             file=sys.stderr,
         )
+        # The bundled-model lookup would otherwise repeat this warning.
+        args.seq = "pacbio"
+

@@ -40,9 +40,19 @@ def _programs(path, program):
 
 @pytest.fixture(scope="module")
 def pacbio_bam(tmp_path_factory):
-    path = tmp_path_factory.mktemp("docbugs") / "pacbio.bam"
-    make_synthetic_bam(str(path), n_reads=4, read_length=1500, n_chroms=1,
-                       chrom_length=20_000, seed=5)
+    tmp = tmp_path_factory.mktemp("docbugs")
+    source = make_synthetic_bam(str(tmp / "src.bam"), n_reads=4,
+                                read_length=1500, n_chroms=1,
+                                chrom_length=20_000, seed=5)
+    # PacBio-style MM (a T-a spec next to A+a): an explicit --seq pacbio is
+    # checked against the reads' MM specs, and A+a-only reads are Nanopore.
+    path = tmp / "pacbio.bam"
+    with pysam.AlignmentFile(source, "rb") as src, \
+            pysam.AlignmentFile(str(path), "wb", header=src.header) as out:
+        for read in src.fetch(until_eof=True):
+            read.set_tag("MM", read.get_tag("MM") + "T-a;")
+            out.write(read)
+    pysam.index(str(path))
     return path
 
 

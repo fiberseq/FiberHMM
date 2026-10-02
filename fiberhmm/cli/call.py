@@ -25,6 +25,7 @@ import argparse
 import sys
 
 from fiberhmm.cli.common import (
+    add_force_seq_arg,
     add_legacy_mode_override,
     resolve_observation_mode,
     resolve_platform_argument,
@@ -95,8 +96,11 @@ def parse_args():
                    help='Sequencing platform. For Hia5 it selects the model; '
                         'when omitted it is detected from the input (MM specs: '
                         'PacBio T-a vs Nanopore A+a only; header records) and '
-                        'the run stops if the evidence conflicts. For '
-                        'dddb/ddda it only sets the declared platform.')
+                        'the run stops if the evidence conflicts. A given '
+                        '--seq that the reads contradict is refused (see '
+                        '--force-seq). For dddb/ddda it only sets the '
+                        'declared platform.')
+    add_force_seq_arg(p)
     p.add_argument('--replace-chemistry', action='store_true',
                    help='Replace, instead of reconcile with, the input BAM\'s '
                         'FIBERHMM-CHEMISTRY declaration (re-calling a BAM with '
