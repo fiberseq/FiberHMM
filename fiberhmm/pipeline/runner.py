@@ -1296,6 +1296,10 @@ class Pipeline:
                 cmd += ["--cpg-mask-policy", cfg.cpg_mask_policy]
         if self._replace_chemistry:
             cmd.append("--replace-chemistry")
+        if cfg.force_chemistry:
+            # fiberhmm-call checks the reads against --seq (MM specs, m6A
+            # presence) itself; --force-chemistry has already accepted them.
+            cmd.append("--force-seq")
         # QC runs as its own step (fiberhmm-qc on the called BAM).
         cmd.append("--no-qc")
         # Capabilities of a newer fiberhmm-call (resume, progress). They do not

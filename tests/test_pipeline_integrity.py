@@ -1295,6 +1295,27 @@ def test_forced_run_over_a_declaration_lets_the_call_replace_it(tmp_path):
     assert "--replace-chemistry" not in p2.call_command(set())[0]
 
 
+def test_forced_run_lets_the_call_accept_the_reads(tmp_path, monkeypatch):
+    # fiberhmm-call refuses an explicit --seq the MM specs contradict, and Hia5
+    # on reads without m6A, unless --force-seq: a --force-chemistry run must
+    # pass it on, or the call step exits 2 on reads the pipeline accepted.
+    from fiberhmm.cli import call
+
+    sequence = random_seq(4000, 14)
+    ref = tmp_path / "ref.fa"; ref.write_text(">p\n" + sequence + "\n")
+    nanopore = _bam_input(tmp_path / "ont.bam", sequence, mm="A+a.,0;")
+    p = Pipeline(config(tmp_path / "o1", nanopore, ref, enzyme="hia5", seq="pacbio",
+                        force_chemistry=True))
+    p._setup(); p.step_prepare_reference(); p.close()
+    cmd, _ = p.call_command(set())
+    assert "--force-seq" in cmd
+    monkeypatch.setattr(sys, "argv", ["fiberhmm-call", *cmd[3:]])
+    assert call.parse_args().force_seq is True
+    p2 = Pipeline(config(tmp_path / "o2", nanopore, ref, enzyme="hia5", seq="nanopore"))
+    p2._setup(); p2.step_prepare_reference(); p2.close()
+    assert "--force-seq" not in p2.call_command(set())[0]
+
+
 def test_discard_index_leaves_a_replacement_alone(tmp_path):
     from fiberhmm.pipeline import aligner as mm2
 
