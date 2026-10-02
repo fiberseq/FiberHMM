@@ -18,8 +18,10 @@ lists the fixes below that apply to it, with the exact command to re-run:
 fiberhmm-check data/*.bam qc/*.qc.json consensus_out/
 ```
 
-It exits 0 when nothing needs re-running and 3 when something does, and
-`--json` gives the same result for scripts. BAMs record the digests of the
+It exits 0 when nothing needs re-running, 3 when something does, and 4 when
+a file holds calls without FiberHMM provenance, which cannot be checked
+(re-run them if they came from FiberHMM < 3.0); `--json` gives the same
+result for scripts. BAMs record the digests of the
 tables they were called with since 3.0, so later releases can tell exactly;
 for 2.x BAMs the check uses the version and command line, and says so when
 that cannot decide (development builds reported 2.16.8 on both sides of some

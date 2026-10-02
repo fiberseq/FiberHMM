@@ -37,7 +37,13 @@ from typing import Any, Iterable, Optional
 
 INDEX_SCHEMA = "fiberhmm.advisories.v1"
 REPORT_SCHEMA = "fiberhmm.advisory_report.v1"
-SEVERITIES = ("rerun-required", "rerun-recommended", "info")
+SEVERITIES = ("rerun-required", "rerun-recommended", "unverifiable", "info")
+# Severities that mean "re-run this output" (``Advisory.needs_rerun``).
+# ``unverifiable`` (results without FiberHMM provenance) is a suggestion: the
+# output cannot be checked, so it needs a re-run only if it came from an old
+# FiberHMM; ``info`` is a default change.
+RERUN_SEVERITIES = ("rerun-required", "rerun-recommended")
+_QC_ASSAY_MODES = ("daf", "pacbio-fiber", "nanopore-fiber")
 DEFAULT_SCAN_RECORDS = 5000
 
 AFFECTED = "affected"
@@ -84,7 +90,7 @@ class Advisory:
 
     @property
     def needs_rerun(self) -> bool:
-        return self.severity != "info"
+        return self.severity in RERUN_SEVERITIES
 
     def to_dict(self) -> dict[str, Any]:
         out = asdict(self)
@@ -1173,7 +1179,42 @@ def _check_untracked(rule, data, runs, scan, path):
                     "no FiberHMM calling @PG"]
     else:
         return []
-    return [_make(rule, _Finding(POSSIBLY, "low", evidence), path=path)]
+    confidence = "low"
+    trace = _unrecorded_fiberhmm_trace(data)
+    if trace:
+        confidence = "medium"
+        evidence.append(f"the header shows a FiberHMM run that recorded no @PG of its own: {trace}")
+    return [_make(rule, _Finding(POSSIBLY, confidence, evidence), path=path)]
+
+
+# Work paths FiberHMM 1.x/2.x left in the @PG of the samtools/pysam steps it ran
+# (its region files were concatenated from .fiberhmm_tmp/), and its output names.
+_FIBERHMM_TRACE_RE = re.compile(r"(\S*\.fiberhmm_tmp/\S*|\S*_footprints\.bam)")
+
+
+def _unrecorded_fiberhmm_trace(data: dict) -> Optional[str]:
+    """A non-FiberHMM ``@PG`` whose command line shows FiberHMM's own work
+    files (an old run that wrote no ``@PG``), as ``"ID: path"``; else None."""
+    for record in _pg_records(data):
+        if _program_name(record):
+            continue
+        match = _FIBERHMM_TRACE_RE.search(str(record.get("CL", "")))
+        if match:
+            return f"@PG {record.get('ID', '?')} ran on {match.group(1)}"
+    return None
+
+
+def is_fiberhmm_output(header, scan: Optional[ReadScan] = None) -> bool:
+    """Whether a BAM shows anything FiberHMM made, as far as its header and
+    the scanned records tell: any FiberHMM @PG, MA-TYPES naming nuc/msp/tf, or
+    scanned reads carrying footprint calls."""
+    data = _header_dict(header)
+    if any(_program_name(record) for record in _pg_records(data)):
+        return True
+    if any(str(c).startswith("MA-TYPES:v1:") and re.search(r"(^|[:,])(nuc|msp|tf)(,|$)", str(c))
+           for c in data.get("CO", [])):
+        return True
+    return bool(scan and scan.call_tags)
 
 
 def check_bam(path, *, scan_records: int = DEFAULT_SCAN_RECORDS,
@@ -1181,6 +1222,11 @@ def check_bam(path, *, scan_records: int = DEFAULT_SCAN_RECORDS,
     """Advisories for a BAM/CRAM/SAM: its header, the first ``scan_records``
     records (0: header only) and, with ``sidecars``, the QC report
     ``fiberhmm-call`` writes beside it (``qc/<name>.qc.json``)."""
+    return _check_bam(path, scan_records=scan_records, sidecars=sidecars, index=index)[0]
+
+
+def _check_bam(path, *, scan_records, sidecars, index):
+    """``(advisories, fiberhmm_output)`` for :func:`check_bam` and :func:`report`."""
     import pysam
 
     path = str(path)
@@ -1194,6 +1240,8 @@ def check_bam(path, *, scan_records: int = DEFAULT_SCAN_RECORDS,
     except (OSError, ValueError, UnicodeDecodeError) as error:
         raise AdvisoryInputError(f"{path}: cannot read as a BAM ({error})") from error
     found = check_header(header, scan=scan, index=index, path=path)
+    # Without a record scan, reads may hold calls the header does not show.
+    fiberhmm_output = is_fiberhmm_output(header, scan) or scan_records <= 0
     if sidecars and "://" not in path:
         stem = Path(path)
         name = stem.name
@@ -1203,7 +1251,7 @@ def check_bam(path, *, scan_records: int = DEFAULT_SCAN_RECORDS,
         for candidate in (stem.parent / "qc" / f"{name}.qc.json", stem.parent / f"{name}.qc.json"):
             if candidate.is_file():
                 found.extend(check_qc(candidate, index=index))
-    return found
+    return found, fiberhmm_output
 
 
 # ---------------------------------------------------------------------------
@@ -1227,14 +1275,22 @@ def check_qc(path, *, index: Optional[dict] = None) -> list[Advisory]:
     payload = _read_json(path)
     samples = payload.get("samples") if isinstance(payload.get("samples"), list) else [payload]
     rule = idx.rules["qc-nanopore-opportunities"]
+    assay_rule = idx.rules.get("qc-assay-misdetected")
     findings = []
-    for sample in samples:
+    assay_findings = []
+    for number, sample in enumerate(samples, 1):
         if not isinstance(sample, dict):
             raise AdvisoryInputError(f"{path}: malformed QC report (a sample is not a JSON object)")
         assay = sample.get("assay") or {}
         if not isinstance(assay, dict):
             raise AdvisoryInputError(f"{path}: malformed QC report (assay is not a JSON object)")
         mode = str(assay.get("mode") or "").lower()
+        if assay_rule and mode and mode not in _QC_ASSAY_MODES:
+            source = sample.get("input")
+            name = Path(source).name if isinstance(source, str) and source else f"sample {number}"
+            assay_findings.append(_Finding(AFFECTED, "high", [
+                f"{name} was graded with assay mode {mode!r}, which is not an assay "
+                "(daf, pacbio-fiber or nanopore-fiber)"]))
         profile = str(assay.get("reference_profile") or "").lower()
         if mode != "nanopore-fiber" and "nanopore" not in profile:
             continue
@@ -1244,8 +1300,14 @@ def check_qc(path, *, index: Optional[dict] = None) -> list[Advisory]:
             "reads are Nanopore Fiber-seq")
         if finding:
             findings.append(finding)
+    found = []
     combined = _combine(findings)
-    return [_make(rule, combined, path=path)] if combined else []
+    if combined:
+        found.append(_make(rule, combined, path=path))
+    misdetected = _combine(assay_findings)
+    if misdetected:
+        found.append(_make(assay_rule, misdetected, path=path))
+    return found
 
 
 def check_posteriors(path, *, index: Optional[dict] = None) -> list[Advisory]:
@@ -1367,13 +1429,32 @@ def _read_json(path: str) -> dict:
 # Dispatch and report
 # ---------------------------------------------------------------------------
 
+PIPELINE_OUTPUTS_SCHEMA = "fiberhmm.pipeline.outputs.v1"
+
+
+def _pipeline_outputs(path) -> Optional[Path]:
+    """The ``outputs.json`` of a ``fiberhmm-pipeline`` OUTDIR (or the file itself)."""
+    candidate = Path(str(path))
+    outputs = candidate / "outputs.json" if candidate.is_dir() else candidate
+    if outputs.name != "outputs.json" or not outputs.is_file():
+        return None
+    try:
+        data = json.loads(outputs.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError):
+        return None
+    return outputs if isinstance(data, dict) and data.get("schema") == PIPELINE_OUTPUTS_SCHEMA else None
+
+
 def output_kind(path) -> str:
-    """``bam``, ``qc``, ``posteriors`` or ``consensus`` for a path, by name and shape."""
+    """``bam``, ``qc``, ``posteriors``, ``consensus`` or ``pipeline`` for a path,
+    by name and shape."""
     text = str(path)
     lower = text.lower()
     if lower.endswith((".bam", ".cram", ".sam")) or "://" in text:
         return "bam"
     candidate = Path(text)
+    if _pipeline_outputs(candidate):
+        return "pipeline"
     if candidate.is_dir() or candidate.name in ("manifest.json", "consensus_run.json"):
         return "consensus"
     if lower.endswith(".qc.json"):
@@ -1386,7 +1467,49 @@ def output_kind(path) -> str:
             return "qc"
         if data.get("cr_mode") or str(data.get("schema", "")).startswith("fiberhmm.consensus"):
             return "consensus"
-    raise AdvisoryInputError(f"{text}: not a BAM, QC report, posteriors file or consensus result")
+    raise AdvisoryInputError(f"{text}: not a BAM, QC report, posteriors file, consensus result "
+                             "or fiberhmm-pipeline output directory")
+
+
+def _pipeline_file(outputs: Path, recorded) -> Optional[Path]:
+    """A file ``outputs.json`` records: at its recorded path, or (for a moved
+    or copied OUTDIR) under the same name in the directory itself."""
+    if not recorded:
+        return None
+    recorded = Path(str(recorded))
+    if not recorded.is_absolute():
+        recorded = outputs.parent / recorded
+    if recorded.exists():
+        return recorded
+    for local in (outputs.parent / recorded.name, outputs.parent / "qc" / recorded.name):
+        if local.exists():
+            return local
+    raise AdvisoryInputError(f"{outputs}: records {recorded}, which no longer exists")
+
+
+def check_pipeline(path, *, scan_records: int = DEFAULT_SCAN_RECORDS,
+                   index: Optional[dict] = None) -> list[Advisory]:
+    """Advisories for a ``fiberhmm-pipeline`` output directory (or its
+    ``outputs.json``): the called BAM and the QC report it records."""
+    found, _fiberhmm_output = _check_pipeline(path, scan_records=scan_records, index=index)
+    return found
+
+
+def _check_pipeline(path, *, scan_records, index):
+    outputs = _pipeline_outputs(path)
+    if outputs is None:
+        raise AdvisoryInputError(f"{path}: no fiberhmm-pipeline outputs.json")
+    data = _read_json(str(outputs))
+    called = _pipeline_file(outputs, data.get("called_bam"))
+    if called is None:
+        raise AdvisoryInputError(f"{outputs}: records no called BAM (the run did not finish)")
+    found, fiberhmm_output = _check_bam(called, scan_records=scan_records, sidecars=False,
+                                    index=index)
+    qc = data.get("qc") if isinstance(data.get("qc"), dict) else {}
+    qc_report = _pipeline_file(outputs, data.get("qc_report") or qc.get("json"))
+    if qc_report is not None:
+        found.extend(check_qc(qc_report, index=index))
+    return found, fiberhmm_output
 
 
 def check_path(path, *, scan_records: int = DEFAULT_SCAN_RECORDS, sidecars: bool = True,
@@ -1401,11 +1524,14 @@ def check_path(path, *, scan_records: int = DEFAULT_SCAN_RECORDS, sidecars: bool
         return check_qc(path, index=index)
     if kind == "posteriors":
         return check_posteriors(path, index=index)
+    if kind == "pipeline":
+        return check_pipeline(path, scan_records=scan_records, index=index)
     return check_consensus(path, index=index)
 
 
 def overall_status(advisories: Iterable[Advisory]) -> str:
-    """``clean``, ``info``, ``rerun-recommended`` or ``rerun-required``: the worst severity."""
+    """``clean``, ``info``, ``unverifiable``, ``rerun-recommended`` or
+    ``rerun-required``: the worst severity."""
     severities = {advisory.severity for advisory in advisories}
     for severity in SEVERITIES:
         if severity in severities:
@@ -1416,6 +1542,10 @@ def overall_status(advisories: Iterable[Advisory]) -> str:
 def report(path, *, scan_records: int = DEFAULT_SCAN_RECORDS, sidecars: bool = True,
            index: Optional[dict] = None) -> dict:
     """JSON-ready report for one output (``fiberhmm.advisory_report.v1``).
+
+    ``status`` is the worst severity present (see :func:`overall_status`),
+    ``clean``, or ``not-fiberhmm`` for a BAM with nothing FiberHMM made (no
+    FiberHMM ``@PG``, MA-TYPES or call tags in the scanned records).
 
     Never raises for a bad input: missing, unreadable, malformed or unknown
     paths (and any other failure while checking one) give ``status: "error"``
@@ -1433,23 +1563,35 @@ def report(path, *, scan_records: int = DEFAULT_SCAN_RECORDS, sidecars: bool = T
 
     def error_report(message: str) -> dict:
         return {**base, "kind": None, "status": "error", "needs_rerun": None,
-                "confirmed": None, "error": message, "advisories": []}
+                "confirmed": None, "unverifiable": None, "error": message, "advisories": []}
 
     try:
         data = index if index is not None else load_index()
         base["checked_with"]["advisories_revision"] = data.get("revision")
         kind = output_kind(path)
-        advisories = check_path(path, scan_records=scan_records, sidecars=sidecars, index=data)
+        fiberhmm_output = True
+        if kind == "bam":
+            advisories, fiberhmm_output = _check_bam(path, scan_records=scan_records,
+                                                 sidecars=sidecars, index=data)
+        elif kind == "pipeline":
+            advisories, fiberhmm_output = _check_pipeline(path, scan_records=scan_records, index=data)
+        else:
+            advisories = check_path(path, scan_records=scan_records, sidecars=sidecars,
+                                    index=data)
     except AdvisoryInputError as error:
         return error_report(str(error))
     except Exception as error:  # noqa: BLE001 - one bad input must not abort a batch
         return error_report(f"{path}: cannot check ({type(error).__name__}: {error})")
+    status = overall_status(advisories)
+    if status == "clean" and not fiberhmm_output:
+        status = "not-fiberhmm"  # nothing FiberHMM made to check (e.g. a raw BAM)
     return {
         **base,
         "kind": kind,
-        "status": overall_status(advisories),
+        "status": status,
         "needs_rerun": any(a.needs_rerun for a in advisories),
         "confirmed": any(a.needs_rerun and a.status == AFFECTED for a in advisories),
+        "unverifiable": any(a.severity == "unverifiable" for a in advisories),
         "error": None,
         "advisories": [a.to_dict() for a in advisories],
     }

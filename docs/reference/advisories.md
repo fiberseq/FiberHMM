@@ -4,10 +4,12 @@
 before a fix or default change that alters it, from the provenance the output
 records. It reads BAMs (their header and a bounded sample of records, plus the
 QC report `fiberhmm-call` writes beside them), `fiberhmm-qc` reports,
-`fiberhmm-posteriors` files and `fiberhmm-consensus` result directories.
+`fiberhmm-posteriors` files, `fiberhmm-consensus` result directories and
+`fiberhmm-pipeline` output directories (the called BAM and QC report their
+`outputs.json` records).
 
 ```bash
-fiberhmm-check calls.bam other.bam qc/sample.qc.json consensus_out/
+fiberhmm-check calls.bam other.bam qc/sample.qc.json consensus_out/ pipeline_out/
 ```
 
 ```text
@@ -28,9 +30,24 @@ calls_v3.bam: clean
 
 | Exit status | Meaning |
 |---|---|
-| 0 | nothing to re-run: every path is clean or has only `info` advisories |
+| 0 | nothing to re-run: every path is clean, has only `info` advisories, or is not a FiberHMM output (for example an uncalled BAM) |
 | 3 | at least one path has a `rerun-required` or `rerun-recommended` advisory (affected or possibly affected) |
-| 2 | a path could not be read or is not a FiberHMM output |
+| 4 | no re-run advisory, but at least one path holds calls without FiberHMM provenance (`unverifiable`): they cannot be checked, so re-run them if they came from FiberHMM < 3.0 |
+| 2 | a path could not be read or is not an output `fiberhmm-check` knows |
+
+When paths fall in several rows, the exit status is the first that applies in
+the order 2, 3, 4, 0. Only 2 means the check itself failed; 3 and 4 are
+recommendations.
+
+A file whose reads carry footprint calls but whose header records no
+FiberHMM `@PG` (a 2.x file whose header was replaced, or calls made by an old
+release that wrote none) is reported as
+
+```text
+calls.bam: CANNOT VERIFY: calls without FiberHMM provenance; re-run recommended if they came from FiberHMM < 3.0
+```
+
+never as clean: nothing in it shows which version or tables made the calls.
 
 `--json` prints one document for scripts and GUIs (see
 [JSON](#json-output)); `--list` lists every known advisory;
@@ -47,6 +64,7 @@ Each advisory has a **severity**, fixed per advisory:
 |---|---|
 | `rerun-required` | made by code or tables with a known error (for example the 2.x Nanopore Hia5 table); re-run it |
 | `rerun-recommended` | made under rules 3.0 corrects (for example DAF dedup by orientation); re-run where those rules matter |
+| `unverifiable` | FiberHMM results without FiberHMM provenance: no fix can be ruled out; re-run if made by FiberHMM < 3.0 (exit 4) |
 | `info` | a default changed; the output is not wrong, but a 3.0 run with defaults would differ |
 
 and a **status** with a **confidence** for this output:
@@ -119,11 +137,12 @@ of its region files is recognised and does not count.)
 | `tag-m5c-missing-ucg` | rerun-recommended | calls | `fiberhmm-tag-m5c` before 3.0 (no `ddda_ucg`) |
 | `posteriors-reverse-frame` | rerun-required | posteriors | `fiberhmm-posteriors` files before 3.0 |
 | `qc-nanopore-opportunities` | rerun-recommended | QC | Nanopore `fiberhmm-qc` reports before 3.0 |
+| `qc-assay-misdetected` | rerun-recommended | QC | QC reports graded under an assay mode that is not one (`mode=flag` taken from `fiberhmm-dedup`'s `@PG`) |
 | `recaller-tier-double-count` | rerun-recommended | consensus tiers | lattice-recaller results with edge/loose tiers before the fix |
 | `hia5-nanopore-ml-threshold` | info | calls | ONT Hia5 called at the 2.x default ML threshold |
 | `primary-only-default` | info | calls | secondary/supplementary alignments called (2.x default) |
 | `ddda-cpg-mask-default` | info | calls | DddA recall with CpG observations (2.x default) |
-| `untracked-calls` | info | calls | calls without any FiberHMM `@PG` (cannot be checked) |
+| `untracked-calls` | unverifiable | calls | calls without any FiberHMM `@PG` (cannot be checked) |
 
 QC reports, posteriors files and `fiberhmm-dedup`/`fiberhmm-merge` BAMs record
 their FiberHMM version since 3.0; older ones without it are reported as
@@ -143,6 +162,7 @@ their FiberHMM version since 3.0; older ones without it are reported as
   "status": "rerun-required",
   "needs_rerun": true,
   "confirmed": true,
+  "unverifiable": false,
   "error": null,
   "checked_with": {"fiberhmm_version": "3.0.0", "advisories_revision": 1},
   "advisories": [
@@ -165,13 +185,16 @@ their FiberHMM version since 3.0; older ones without it are reported as
 }
 ```
 
-- `kind`: `bam`, `qc`, `posteriors`, `consensus`, or `null` on error.
-- `status`: `clean`, `info`, `rerun-recommended`, `rerun-required` (the
-  worst severity present), or `error` (then `error` holds the message and
-  `advisories` is empty).
-- `needs_rerun`: any advisory other than `info`; `confirmed`: any such
-  advisory has status `affected` (a GUI can show "needs re-run" vs
-  "may need re-run").
+- `kind`: `bam`, `qc`, `posteriors`, `consensus`, `pipeline`, or `null` on
+  error.
+- `status`: `clean`, `info`, `unverifiable`, `rerun-recommended`,
+  `rerun-required` (the worst severity present), `not-fiberhmm` (a BAM with
+  no FiberHMM `@PG`, MA-TYPES or calls in the scanned records), or `error`
+  (then `error` holds the message and `advisories` is empty).
+- `needs_rerun`: any `rerun-required` or `rerun-recommended` advisory;
+  `confirmed`: any such advisory has status `affected` (a GUI can show "needs
+  re-run" vs "may need re-run"); `unverifiable`: any `unverifiable` advisory
+  (results that cannot be checked).
 - `advisories[].artifact`: `calls`, `dedup flags`, `QC`, `posteriors` or
   `consensus tiers`; `program` is the `@PG` ID matched (null for file-level
   checks); `path` is the file concerned (a QC report beside a BAM has its own

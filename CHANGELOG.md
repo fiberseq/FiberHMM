@@ -137,12 +137,15 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   CPUs; `@PG` records the ML threshold, primary-only setting and CpG masking.
 - Every `fiberhmm-*` command accepts `--version` (prints `fiberhmm <version>`).
 - **`fiberhmm-check`: which outputs need re-running.** Reads the provenance
-  of BAMs (header and a bounded record sample), QC reports, posteriors files
-  and consensus result directories and lists the fixes and default changes
-  in this release that apply, each with severity (`rerun-required`,
-  `rerun-recommended`, `info`), the evidence matched and the exact command to
-  re-run; `--json` for scripts and GUIs; exit status 3 when something needs
-  re-running. Merged (`samtools merge`), concatenated (`samtools cat`) and
+  of BAMs (header and a bounded record sample), QC reports, posteriors files,
+  consensus result directories and `fiberhmm-pipeline` output directories and
+  lists the fixes and default changes in this release that apply, each with
+  severity (`rerun-required`, `rerun-recommended`, `unverifiable`, `info`),
+  the evidence matched and the exact command to re-run; `--json` for scripts
+  and GUIs; exit status 3 when something needs re-running, 4 when calls carry
+  no FiberHMM provenance and cannot be verified (re-run them if they came from
+  FiberHMM < 3.0), 2 when a path cannot be checked. A BAM with nothing
+  FiberHMM made is reported as not a FiberHMM output rather than clean. Merged (`samtools merge`), concatenated (`samtools cat`) and
   cyclic `@PG` histories are never reported clean: every calling branch is
   checked, and what the header cannot settle is at least "possibly
   affected". The advisory list ships as `fiberhmm/advisories.json` with the
@@ -421,7 +424,8 @@ fiberhmm-check data/*.bam qc/*.qc.json consensus_out/
   3.0 (they were called as PacBio), and 2.x `fiberhmm-posteriors` output.
   `fiberhmm-check` lists these and the recommended re-runs (DAF duplicates,
   QC, custom tables, `tag-m5c`, recaller tiers) per file, with the command
-  to use; it exits 3 when something needs re-running.
+  to use; it exits 3 when something needs re-running and 4 for calls it
+  cannot verify (no FiberHMM provenance in the header).
 - Re-calling with 3.0 also applies the new defaults above (ML 248 for Hia5
   Nanopore, primary-only, the TF decoder, DddA models, thinning and CpG-aware
   recall), so numbers move even where no fix applies. Most have an option to

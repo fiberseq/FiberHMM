@@ -46,7 +46,7 @@ default_prob_threshold("dddb", None)                   # 128
 ```python
 from fiberhmm.advisories import report, check_path, check_bam, check_header
 
-report("calls.bam")["status"]      # "clean" | "info" | "rerun-recommended" | "rerun-required" | "error"
+report("calls.bam")["status"]      # "clean" | "not-fiberhmm" | "info" | "unverifiable" | "rerun-recommended" | "rerun-required" | "error"
 check_bam("calls.bam", scan_records=0)   # list[Advisory], header only
 ```
 
