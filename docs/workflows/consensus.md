@@ -460,10 +460,13 @@ and resume between stages:
 ```bash
 fiberhmm-consensus --engine staged_native_families --bam calls.bam --bed windows.bed \
     --stop-after native --output native_run
-fiberhmm-consensus --resume native_run --start-at consolidation --consolidation-bp 5 \
-    --output consolidated_run
+fiberhmm-consensus --resume native_run/window_000001 --start-at consolidation \
+    --consolidation-bp 5 --output consolidated_run
 ```
 
+As for any replay, `--resume` takes one window directory of a `--bed` run
+(`native_run/window_000001`, `window_000002`, ...), not the run's parent
+directory; resume each window you need into its own `--output`.
 `--start-at consolidation` requires exact native checkpoints and fails rather
 than refitting; `--cache DIR` keeps a persistent native-fit cache. Its BAMs
 use `tf_consensus` (CR/SR) or `tf_cross_consensus` (XCR), where `q0` is the

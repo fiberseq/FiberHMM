@@ -126,7 +126,11 @@ def _process_bam_streaming_pipeline_fused(
     effort: unsorted output stays unindexed, as before).
     """
     from fiberhmm.cli.provenance import output_header_with_provenance
+    from fiberhmm.inference.tf_recaller import require_recall_models
 
+    # Refuse a recall table the workers cannot use before any work starts.
+    require_recall_models(recall_model_path or model_path,
+                          nuc_model_path if recall_nucs else None)
     configure_daf_snp_mask(daf_snp_mask_path)
     ref_fasta = None
     pysam.set_verbosity(0)

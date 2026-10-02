@@ -127,7 +127,6 @@ The production policy `bidirectional_five_fiber_v1` requires, independently
 in each conversion-direction class, a mismatch fraction ≥ 0.2, depth ≥ 5 and
 at least 5 mismatch-carrying reads. Duplicate-flagged reads are excluded.
 Amplicons need at least 20 reads to be summarized.
-Amplicons need at least 20 reads to be summarized.
 
 Reference bases come from each read's `MD` tag; the reference FASTA
 (`--reference`) is used only for reads without a usable `MD`. A read whose
@@ -214,6 +213,11 @@ On the demo data:
 ```text
 [tag_m5c] defined_islands=2, reads=377, eligible_reads=74, overlapped_islands=86, methylated_islands=0, unmethylated_islands=50, uninformative_islands=36, tagged_reads=50
 ```
+
+The last step, `fiberhmm-recall-tfs`, re-derives deaminations from each read
+and does not re-apply the SNP mask the first `fiberhmm-call` used; it prints
+a `WARNING` saying so, and masked sites count as deaminations again in the
+final calls (see [Recalling](recalling.md)).
 
 Given an `MD`-only BAM, `fiberhmm-tag-m5c` stops:
 

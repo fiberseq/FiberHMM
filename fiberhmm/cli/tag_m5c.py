@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shlex
 import sys
 
 import numpy as np
@@ -18,18 +19,49 @@ from fiberhmm.daf.m5c import (
 )
 
 
+_KNOWN_ENZYMES = ("ddda", "dddb", "hia5", "ecogii", "sssi")
+_DS_ENZYME_RE = re.compile(r"(?:^|[\s;(])enzyme=([a-z0-9]+)")
+
+
+def _cl_enzymes(command_line: str) -> set[str]:
+    """Values of ``--enzyme X`` / ``--enzyme=X`` among a command line's
+    arguments (paths and other arguments never count)."""
+    try:
+        tokens = shlex.split(command_line)
+    except ValueError:
+        tokens = command_line.split()
+    found = set()
+    for index, token in enumerate(tokens):
+        if token == "--enzyme" and index + 1 < len(tokens):
+            found.add(tokens[index + 1].lower())
+        elif token.startswith("--enzyme="):
+            found.add(token.split("=", 1)[1].lower())
+    return found
+
+
 def _declared_enzymes(header) -> set[str]:
-    """Find enzyme names explicitly recorded in BAM @PG/@CO provenance."""
+    """Enzymes the BAM's FiberHMM provenance declares.
+
+    Read from the ``FIBERHMM-CHEMISTRY`` declarations and, for FiberHMM
+    ``@PG`` records, the ``--enzyme`` argument of ``CL`` and the ``enzyme=``
+    field of ``DS``. Other programs' records, file and directory names never
+    count (an aligner run on ``/data/ddda_vs_hia5/reads.fastq`` declares
+    nothing).
+    """
+    from fiberhmm.io.bam_header import declared_chemistries
+
     data = header.to_dict() if hasattr(header, "to_dict") else dict(header)
-    text = "\n".join([
-        *(str(value) for value in data.get("CO", [])),
-        *(" ".join(str(value) for value in record.values())
-          for record in data.get("PG", [])),
-    ]).lower()
-    return {
-        enzyme for enzyme in ("ddda", "dddb", "hia5", "ecogii", "sssi")
-        if re.search(rf"(?<![a-z0-9]){enzyme}(?![a-z0-9])", text)
+    enzymes = {
+        str(declaration.get("enzyme", "")).lower()
+        for declaration in declared_chemistries(data)
     }
+    for record in data.get("PG", []):
+        program = str(record.get("PN") or record.get("ID") or "").lower()
+        if not program.startswith("fiberhmm"):
+            continue
+        enzymes.update(_cl_enzymes(str(record.get("CL", ""))))
+        enzymes.update(_DS_ENZYME_RE.findall(str(record.get("DS", "")).lower()))
+    return {enzyme for enzyme in enzymes if enzyme in _KNOWN_ENZYMES}
 
 
 def _preflight_input(path: str, max_primary_reads: int = 5000) -> None:

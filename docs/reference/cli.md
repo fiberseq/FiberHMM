@@ -284,7 +284,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `PATH` | — | BAM/CRAM/SAM, &lt;prefix&gt;.qc.json, posteriors .tsv(.gz)/.h5, or a fiberhmm-consensus output directory |
+| `PATH` | — | BAM/CRAM/SAM, &lt;prefix&gt;.qc.json, posteriors .tsv(.gz)/.h5, a fiberhmm-consensus output directory, or a fiberhmm-pipeline output directory |
 | `--json` | off | Print one JSON document (schema fiberhmm.advisory_check.v1) with a fiberhmm.advisory_report.v1 report per path |
 | `--scan-records` | — | BAM records to scan for read-level evidence (duplicate, pairing and call tags); 0 reads the header only (default: 5000) |
 | `--no-sidecars` | off | Do not also check the QC report fiberhmm-call writes beside a BAM (qc/&lt;name&gt;.qc.json) |

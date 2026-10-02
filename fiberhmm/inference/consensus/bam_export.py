@@ -19,6 +19,7 @@ import pysam
 from ...io.bam_header import append_ma_types, append_pg_record
 from ...io.ma_tags import annotation_tags, parse_aq_array, parse_ma_tag, parse_an_tag, format_an_tag, llr_to_tq
 from ..tf_family_ids import allocate_repeating_family_ids, TFFamilyInterval
+from ...io.output_files import mkstemp_shared
 from .artifacts import digest, write_json
 from .native_presentation import Q0_SEMANTICS
 
@@ -417,7 +418,7 @@ def _export_source_bams(analyses, output_dir, scope):
             raise ValueError('Source BAM changed since evidence preparation: '+str(source))
         target=out/f'{index:03d}_{source.stem}.families.bam'
         if target.exists() or Path(str(target)+'.csi').exists(): raise ValueError('BAM output already exists: '+str(target))
-        fd,name=tempfile.mkstemp(prefix='.families-',suffix='.bam',dir=out);os.close(fd);temporary=Path(name)
+        fd,name=mkstemp_shared(prefix='.families-',suffix='.bam',dir=out);os.close(fd);temporary=Path(name)
         seen=defaultdict(int);matched=set();annotations=0;written=0
         windows=_source_windows(analyses,str(source))
         try:

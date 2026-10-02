@@ -23,7 +23,6 @@ import json
 import math
 import os
 import sys
-import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -49,6 +48,7 @@ except ImportError:  # pragma: no cover - exercised only on non-POSIX hosts
 
 from fiberhmm import __version__ as FIBERHMM_VERSION
 from fiberhmm.core.model_io import load_model_with_metadata
+from fiberhmm.io.output_files import mkstemp_shared
 from fiberhmm.inference.strand_rescue import (
     DEFAULT_ACCESSIBLE_SITE_GAP,
     MIN_MAPPED_ANNOTATION_FRACTION,
@@ -305,7 +305,7 @@ def _mkstemp_with_permission_retry(
 ) -> Tuple[int, str]:
     """Create one destination-local stage despite a short sharing lock."""
     return _retry_transient_permission(
-        lambda: tempfile.mkstemp(
+        lambda: mkstemp_shared(
             prefix=prefix,
             suffix=suffix,
             dir=str(directory),
@@ -1536,6 +1536,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
     except ValueError as error:
         parser.error(str(error))
+    region_chrom = args.region[0]
+    for bam_path in args.bam:
+        try:
+            with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as handle:
+                contigs = list(handle.references)
+        except (OSError, ValueError):
+            continue  # unreadable input: reported where it is loaded
+        if region_chrom not in contigs:
+            shown = ", ".join(contigs[:8]) + (", ..." if len(contigs) > 8 else "")
+            parser.error(
+                f"--region contig {region_chrom!r} is not in {bam_path} "
+                f"(its contigs: {shown or 'none'})"
+            )
     model, context_size, mode = load_model_with_metadata(model_path)
     nuc_model, nuc_context_size, nuc_mode = load_model_with_metadata(nuc_model_path)
     if (nuc_context_size, nuc_mode) != (context_size, mode):

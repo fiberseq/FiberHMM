@@ -18,8 +18,10 @@ lists the fixes below that apply to it, with the exact command to re-run:
 fiberhmm-check data/*.bam qc/*.qc.json consensus_out/
 ```
 
-It exits 0 when nothing needs re-running and 3 when something does, and
-`--json` gives the same result for scripts. BAMs record the digests of the
+It exits 0 when nothing needs re-running, 3 when something does, and 4 when
+a file holds calls without FiberHMM provenance, which cannot be checked
+(re-run them if they came from FiberHMM < 3.0); `--json` gives the same
+result for scripts. BAMs record the digests of the
 tables they were called with since 3.0, so later releases can tell exactly;
 for 2.x BAMs the check uses the version and command line, and says so when
 that cannot decide (development builds reported 2.16.8 on both sides of some
@@ -103,7 +105,6 @@ These now either work or stop with a clear message:
 |---|---|
 | `fiberhmm-run` | `fiberhmm-call`, piped into `ft fire` if needed |
 | `python apply_model.py`, `extract_tags.py`, `train_model.py`, `generate_probs.py`, `export_posteriors.py`, `fiberhmm_utils.py` | the `fiberhmm-*` commands |
-| `fiberhmm-site-consensus`, targeted families (development builds only) | `fiberhmm-consensus` |
 | `fiberhmm-crossstrand`, `fiberhmm-duplex` (development builds only) | `fiberhmm-pair` |
 | `fiberhmm-merge` (development builds only) | still installed but deprecated: `fiberhmm-pair --from-paired` |
 | `fiberhmm-call --ddda-mcg` (development builds only) | `fiberhmm-tag-m5c`, then `fiberhmm-recall-tfs` ([DAF-seq](workflows/daf-seq.md#ddda-cpg-island-methylation)) |

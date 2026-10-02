@@ -825,7 +825,8 @@ def test_generator_publication_retries_transient_permission_errors(
 def test_generator_stage_creation_retries_transient_permission_errors(
     tmp_path, monkeypatch
 ):
-    real_mkstemp = strand_rescue_cli.tempfile.mkstemp
+    # Stages are created by mkstemp_shared (umask-honouring, audit M12).
+    real_mkstemp = strand_rescue_cli.mkstemp_shared
     calls = []
     sleeps = []
 
@@ -835,7 +836,7 @@ def test_generator_stage_creation_retries_transient_permission_errors(
             raise PermissionError(errno.EACCES, "transient staging denial")
         return real_mkstemp(*args, **kwargs)
 
-    monkeypatch.setattr(strand_rescue_cli.tempfile, "mkstemp", flaky_mkstemp)
+    monkeypatch.setattr(strand_rescue_cli, "mkstemp_shared", flaky_mkstemp)
     monkeypatch.setattr(strand_rescue_cli.time, "sleep", sleeps.append)
     registry = strand_rescue_cli._StagingRegistry()
 

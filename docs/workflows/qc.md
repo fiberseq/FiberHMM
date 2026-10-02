@@ -33,8 +33,10 @@ the directory. After `fiberhmm-call` the prefix is
 `<output BAM directory>/qc/<BAM stem>` unless `--qc-output-prefix` is set.
 
 Several inputs write each sample's files plus
-`combined.qc.{json,tsv,png,pdf,html}`; `combined.qc.html` is a
-self-contained index page. Inputs from different directories need `-o`.
+`combined.qc.{json,tsv,html}` (and `combined.qc.{png,pdf}` with
+`fiberhmm[plots]`); `combined.qc.html` is a self-contained index page.
+Inputs from different directories need `-o`. With `fiberhmm[plots]`
+installed:
 
 ```text
 out/qc_compare/combined.qc.html

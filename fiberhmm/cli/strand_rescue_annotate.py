@@ -30,6 +30,7 @@ import pysam
 from fiberhmm import __version__ as FIBERHMM_VERSION
 from fiberhmm.cli.strand_rescue import parse_region
 from fiberhmm.io.bam_header import append_ma_types, append_pg_record
+from fiberhmm.io.output_files import mkstemp_shared
 from fiberhmm.io.ma_tags import (
     flip_interval_frame,
     format_an_tag,
@@ -2097,7 +2098,7 @@ def write_overlay_bam(
         if _canonical_path(candidate) in forbidden:
             raise ValueError(f"refusing to overwrite an input BAM: {candidate}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
+    descriptor, temporary_name = mkstemp_shared(
         prefix=f".{output_path.stem}.", suffix=".bam", dir=str(output_path.parent)
     )
     os.close(descriptor)
@@ -2306,7 +2307,7 @@ def write_streaming_overlay_bam(
             raise ValueError(f"refusing to overwrite an input or provenance file: {candidate}")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
+    descriptor, temporary_name = mkstemp_shared(
         prefix=f".{output_path.stem}.", suffix=".bam", dir=str(output_path.parent)
     )
     os.close(descriptor)

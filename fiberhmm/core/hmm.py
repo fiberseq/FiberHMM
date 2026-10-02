@@ -41,6 +41,26 @@ except ImportError:
     HAS_NUMBA = False
 
 
+# Two-term log-sum-exp shared by forward, backward and the Baum-Welch E-step.
+# The plain "x + log1p(exp(y - x))" gives NaN when both terms are -inf (a
+# state unreachable on both incoming edges, possible with a zero start or
+# transition probability in a custom or trained model); this returns -inf.
+# For finite inputs the result is the same expression, bit for bit.
+def _lse2(x, y):
+    """log(exp(x) + exp(y)); -inf when both are -inf (never NaN)."""
+    if x >= y:
+        if y == -np.inf:
+            return x
+        return x + np.log1p(np.exp(y - x))
+    if x == -np.inf:
+        return y
+    return y + np.log1p(np.exp(x - y))
+
+
+if HAS_NUMBA:
+    _lse2 = jit(nopython=True, cache=False)(_lse2)
+
+
 # =============================================================================
 # Numba JIT-compiled HMM algorithms (much faster than pure Python)
 # =============================================================================
@@ -146,26 +166,17 @@ if HAS_NUMBA:
             # State 0: logsumexp(a0 + trans_00, a1 + trans_10)
             x0 = a0_prev + log_trans_00
             y0 = a1_prev + log_trans_10
-            if x0 >= y0:
-                alpha[t, 0] = x0 + np.log1p(np.exp(y0 - x0)) + log_emissionprob[0, o]
-            else:
-                alpha[t, 0] = y0 + np.log1p(np.exp(x0 - y0)) + log_emissionprob[0, o]
+            alpha[t, 0] = _lse2(x0, y0) + log_emissionprob[0, o]
 
             # State 1: logsumexp(a0 + trans_01, a1 + trans_11)
             x1 = a0_prev + log_trans_01
             y1 = a1_prev + log_trans_11
-            if x1 >= y1:
-                alpha[t, 1] = x1 + np.log1p(np.exp(y1 - x1)) + log_emissionprob[1, o]
-            else:
-                alpha[t, 1] = y1 + np.log1p(np.exp(x1 - y1)) + log_emissionprob[1, o]
+            alpha[t, 1] = _lse2(x1, y1) + log_emissionprob[1, o]
 
         # Final log prob
         a0_final = alpha[T-1, 0]
         a1_final = alpha[T-1, 1]
-        if a0_final >= a1_final:
-            log_prob = a0_final + np.log1p(np.exp(a1_final - a0_final))
-        else:
-            log_prob = a1_final + np.log1p(np.exp(a0_final - a1_final))
+        log_prob = _lse2(a0_final, a1_final)
 
         return alpha, log_prob
 
@@ -195,18 +206,12 @@ if HAS_NUMBA:
             # beta[t, 0] = logsumexp(trans_00 + emit_0 + b0, trans_01 + emit_1 + b1)
             x0 = log_trans_00 + emit_0 + b0_next
             y0 = log_trans_01 + emit_1 + b1_next
-            if x0 >= y0:
-                beta[t, 0] = x0 + np.log1p(np.exp(y0 - x0))
-            else:
-                beta[t, 0] = y0 + np.log1p(np.exp(x0 - y0))
+            beta[t, 0] = _lse2(x0, y0)
 
             # beta[t, 1] = logsumexp(trans_10 + emit_0 + b0, trans_11 + emit_1 + b1)
             x1 = log_trans_10 + emit_0 + b0_next
             y1 = log_trans_11 + emit_1 + b1_next
-            if x1 >= y1:
-                beta[t, 1] = x1 + np.log1p(np.exp(y1 - x1))
-            else:
-                beta[t, 1] = y1 + np.log1p(np.exp(x1 - y1))
+            beta[t, 1] = _lse2(x1, y1)
 
         return beta
 
@@ -241,25 +246,16 @@ if HAS_NUMBA:
             # alpha[t, 0] = logsumexp(trans_00 + a0, trans_10 + a1) + emit
             x0 = log_trans_00 + a0_prev
             y0 = log_trans_10 + a1_prev
-            if x0 >= y0:
-                alpha[t, 0] = x0 + np.log1p(np.exp(y0 - x0)) + log_emissionprob[0, o]
-            else:
-                alpha[t, 0] = y0 + np.log1p(np.exp(x0 - y0)) + log_emissionprob[0, o]
+            alpha[t, 0] = _lse2(x0, y0) + log_emissionprob[0, o]
 
             x1 = log_trans_01 + a0_prev
             y1 = log_trans_11 + a1_prev
-            if x1 >= y1:
-                alpha[t, 1] = x1 + np.log1p(np.exp(y1 - x1)) + log_emissionprob[1, o]
-            else:
-                alpha[t, 1] = y1 + np.log1p(np.exp(x1 - y1)) + log_emissionprob[1, o]
+            alpha[t, 1] = _lse2(x1, y1) + log_emissionprob[1, o]
 
         # Final log prob
         a0_final = alpha[T-1, 0]
         a1_final = alpha[T-1, 1]
-        if a0_final >= a1_final:
-            log_prob = a0_final + np.log1p(np.exp(a1_final - a0_final))
-        else:
-            log_prob = a1_final + np.log1p(np.exp(a0_final - a1_final))
+        log_prob = _lse2(a0_final, a1_final)
 
         # Backward pass
         beta = np.empty((T, 2))
@@ -275,17 +271,11 @@ if HAS_NUMBA:
 
             x0 = log_trans_00 + emit_0 + b0_next
             y0 = log_trans_01 + emit_1 + b1_next
-            if x0 >= y0:
-                beta[t, 0] = x0 + np.log1p(np.exp(y0 - x0))
-            else:
-                beta[t, 0] = y0 + np.log1p(np.exp(x0 - y0))
+            beta[t, 0] = _lse2(x0, y0)
 
             x1 = log_trans_10 + emit_0 + b0_next
             y1 = log_trans_11 + emit_1 + b1_next
-            if x1 >= y1:
-                beta[t, 1] = x1 + np.log1p(np.exp(y1 - x1))
-            else:
-                beta[t, 1] = y1 + np.log1p(np.exp(x1 - y1))
+            beta[t, 1] = _lse2(x1, y1)
 
         # Compute gamma for start counts
         gamma_0 = alpha[0, 0] + beta[0, 0] - log_prob
@@ -409,24 +399,15 @@ class FiberHMM:
 
             x0 = a0_prev + log_trans_00
             y0 = a1_prev + log_trans_10
-            if x0 >= y0:
-                alpha[t, 0] = x0 + np.log1p(np.exp(y0 - x0)) + log_emit[0, o]
-            else:
-                alpha[t, 0] = y0 + np.log1p(np.exp(x0 - y0)) + log_emit[0, o]
+            alpha[t, 0] = _lse2(x0, y0) + log_emit[0, o]
 
             x1 = a0_prev + log_trans_01
             y1 = a1_prev + log_trans_11
-            if x1 >= y1:
-                alpha[t, 1] = x1 + np.log1p(np.exp(y1 - x1)) + log_emit[1, o]
-            else:
-                alpha[t, 1] = y1 + np.log1p(np.exp(x1 - y1)) + log_emit[1, o]
+            alpha[t, 1] = _lse2(x1, y1) + log_emit[1, o]
 
         a0_final = alpha[-1, 0]
         a1_final = alpha[-1, 1]
-        if a0_final >= a1_final:
-            log_prob = a0_final + np.log1p(np.exp(a1_final - a0_final))
-        else:
-            log_prob = a1_final + np.log1p(np.exp(a0_final - a1_final))
+        log_prob = _lse2(a0_final, a1_final)
 
         return alpha, log_prob
 
@@ -463,17 +444,11 @@ class FiberHMM:
 
             x0 = log_trans_00 + emit_0 + b0_next
             y0 = log_trans_01 + emit_1 + b1_next
-            if x0 >= y0:
-                beta[t, 0] = x0 + np.log1p(np.exp(y0 - x0))
-            else:
-                beta[t, 0] = y0 + np.log1p(np.exp(x0 - y0))
+            beta[t, 0] = _lse2(x0, y0)
 
             x1 = log_trans_10 + emit_0 + b0_next
             y1 = log_trans_11 + emit_1 + b1_next
-            if x1 >= y1:
-                beta[t, 1] = x1 + np.log1p(np.exp(y1 - x1))
-            else:
-                beta[t, 1] = y1 + np.log1p(np.exp(x1 - y1))
+            beta[t, 1] = _lse2(x1, y1)
 
         return beta
 

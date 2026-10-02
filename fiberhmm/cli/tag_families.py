@@ -24,7 +24,6 @@ import json
 import os
 import shlex
 import sys
-import tempfile
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +37,7 @@ from fiberhmm.io.bam_header import append_pg_record, declared_ma_types
 from fiberhmm.io.ma_tags import parse_aq_array, parse_ma_tag
 from fiberhmm.core.bam_reader import cigar_to_query_ref
 from fiberhmm.io.footprint_bam import _ma_interval_to_query, _project_query_interval
+from fiberhmm.inference.bam_output import commit_output, index_paths_for, temporary_output_path
 from fiberhmm.inference.tf_family_ids import DEFAULT_FAMILY_SEPARATION_BP
 
 
@@ -296,13 +296,10 @@ def tag_tf_families(
     counts: Counter = Counter()
     observed_occurrences: defaultdict[str, int] = defaultdict(int)
     applied: set[Tuple[str, int, int]] = set()
-    temporary_path = None
-    temporary_index = None
+    # A hidden sibling created by pysam itself, so the published BAM gets the
+    # user's umask permissions (tempfile would make it owner-only).
+    temporary_path = Path(temporary_output_path(str(output)))
     try:
-        with tempfile.NamedTemporaryFile(
-            prefix=f".{output.name}.", suffix=".bam", dir=output.parent, delete=False
-        ) as temporary:
-            temporary_path = Path(temporary.name)
         with pysam.AlignmentFile(source, "rb", check_sq=False) as input_handle:
             comments = [str(value) for value in input_handle.header.to_dict().get("CO", [])]
             if "tf_sr" not in declared_ma_types(input_handle.header):
@@ -439,20 +436,16 @@ def tag_tf_families(
         ]
         if len(index_candidates) != 1:
             raise ValueError("indexing did not produce exactly one BAI/CSI index")
-        temporary_index = index_candidates[0]
-        index_suffix = temporary_index.suffix
-        os.replace(temporary_path, output)
-        os.replace(temporary_index, Path(str(output) + index_suffix))
-        alternate_suffix = ".csi" if index_suffix == ".bai" else ".bai"
-        alternate_index = Path(str(output) + alternate_suffix)
-        if force and alternate_index.exists():
-            alternate_index.unlink()
+        # Publish the BAM with its new index as one transaction: an earlier
+        # output's index is never left beside the new BAM, and a failure
+        # part-way restores the earlier BAM and index.
+        commit_output(str(temporary_path), str(output))
         temporary_path = None
-        temporary_index = None
     finally:
-        for candidate in (temporary_path, temporary_index):
-            if candidate is not None and candidate.exists():
-                candidate.unlink()
+        if temporary_path is not None:
+            for candidate in (str(temporary_path), *index_paths_for(str(temporary_path))):
+                if os.path.lexists(candidate):
+                    os.unlink(candidate)
 
     return {
         "schema": "fiberhmm.tf_family_tagging.v1",

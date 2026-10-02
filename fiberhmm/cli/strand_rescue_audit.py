@@ -7,7 +7,6 @@ import hashlib
 import json
 import os
 import re
-import tempfile
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import DefaultDict, List, Mapping, Optional, Sequence
@@ -25,6 +24,7 @@ from fiberhmm.cli.strand_rescue_annotate import (
     V6_HEADER_PREFIX,
 )
 from fiberhmm.io.bam_header import declared_ma_types
+from fiberhmm.io.output_files import mkstemp_shared
 from fiberhmm.io.ma_tags import parse_an_tag, parse_aq_array, parse_ma_tag
 from fiberhmm.cli.tag_families import (
     FAMILY_HEADER_PREFIX,
@@ -1111,7 +1111,7 @@ def audit_bams(paths: Sequence[str], *, max_errors: int = 100) -> dict:
 
 def _atomic_json(path: Path, value: Mapping[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
+    descriptor, temporary_name = mkstemp_shared(
         prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
     )
     try:

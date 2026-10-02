@@ -213,7 +213,7 @@ finds the two planted sites:
 ```text
 class_id   channel            start    end      status     molecules  prevalence
 class_001  dataset_1::pooled  10041.0  10064.5  supported  176        0.5555
-class_002  dataset_1::pooled  10110.0  10126.0  supported  176        0.4807
+class_002  dataset_1::pooled  10110.0  10126.0  supported  176        0.4108
 ```
 
 (columns selected from `out/classes/classes.tsv`; the planted occupancies were

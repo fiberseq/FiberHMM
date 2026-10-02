@@ -268,7 +268,7 @@ def test_untracked_calls_and_empty_headers():
     assert check_header({"HD": {"VN": "1.6"}}) == []
     header = {"HD": {"VN": "1.6"}, "CO": ["MA-TYPES:v1:nuc,msp,tf"]}
     (advisory,) = check_header(header)
-    assert advisory.id == "untracked-calls" and advisory.severity == "info"
+    assert advisory.id == "untracked-calls" and advisory.severity == "unverifiable"
 
 
 # --- files ---------------------------------------------------------------------

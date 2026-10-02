@@ -45,10 +45,11 @@ matching FiberBrowser's flavour codes.
 
 ## Row format
 
-One BED12 row per read and feature type: the row spans the read's features,
-each feature is a block, `name` is the read name, `strand` the alignment
-strand, and `score` the mean quality byte of the read's features (for `tf`,
-the mean `tq`). Every schema ends with `isDuplicate` (1 when the read carried
+One BED12 row per read and feature type (one row per feature with
+`--circular-groups`, below): the row spans the read's features, each feature
+is a block, `name` is the read name, `strand` the alignment strand, and
+`score` the mean quality byte of the read's features (for `tf`, the mean
+`tq`). Every schema ends with `isDuplicate` (1 when the read carried
 flag `0x400`); FiberBrowser hides those rows by default.
 
 ```text
@@ -66,9 +67,13 @@ BED12 | per-block scores | circular grouping | hp | ps | isDuplicate
   nucleosomes, `blockAq` for MSPs, `blockMl` for m6A/5mC,
   `blockTq`/`blockEl`/`blockEr` for TFs), so a browser can show per-feature
   quality without a sidecar.
-- `--circular-groups`: `circId`, `circPart`, `circParts`, `molStart`,
-  `molLength`, to reassemble features that wrap the origin of circular
-  molecules.
+- `--circular-groups`: changes the row model to **one row per feature**
+  (a single block; `score` is that feature's own quality byte) and adds
+  `circId`, `circPart`, `circParts`, `molStart`, `molLength`, to reassemble
+  features that wrap the origin of circular molecules. A feature that wraps
+  is written as its pieces, each named `<read>|<type>|<circId>|<part>/<parts>`;
+  other features keep the read name and `circId` `.`. Expect many more rows
+  than reads.
 - `--haplotype-fields`: the read's `HP` and `PS` tags as signed integers,
   `-1` when absent. Extraction only copies them; it does not phase.
 

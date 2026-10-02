@@ -4,9 +4,14 @@ Reads what an output records about how it was made (BAM @PG/@CO provenance,
 QC report, posteriors metadata, consensus manifest) and lists the known
 FiberHMM fixes and default changes that apply to it (fiberhmm/advisories.json).
 
-Exit status: 0 when no output needs re-running (clean, or only info-level
-default changes), 3 when at least one output has a re-run advisory (affected or
-possibly affected), 2 when a path could not be checked.
+Exit status (the first that applies, over all paths):
+
+- 2: a path could not be checked;
+- 3: at least one output has a re-run advisory (affected or possibly affected);
+- 4: at least one output holds calls without FiberHMM provenance, which cannot
+  be verified (re-run recommended if they came from FiberHMM < 3.0);
+- 0: nothing to re-run (clean, only info-level default changes, or not a
+  FiberHMM output at all).
 """
 from __future__ import annotations
 
@@ -18,10 +23,14 @@ import textwrap
 EXIT_CLEAN = 0
 EXIT_ERROR = 2
 EXIT_ADVISORIES = 3
+EXIT_UNVERIFIABLE = 4
 
 _LABELS = {
     "clean": "clean",
+    "not-fiberhmm": "not a FiberHMM output (no FiberHMM calls or @PG found; nothing to check)",
     "info": "no re-run needed (default changes only)",
+    "unverifiable": ("CANNOT VERIFY: calls without FiberHMM provenance; re-run recommended "
+                     "if they came from FiberHMM < 3.0"),
     "rerun-recommended": "RE-RUN RECOMMENDED",
     "rerun-required": "RE-RUN REQUIRED",
     "error": "ERROR",
@@ -34,15 +43,18 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "List the FiberHMM fixes and default changes that apply to existing "
             "outputs (BAMs, QC reports, posteriors files, consensus result "
-            "directories), from the provenance they record. Exit status: 0 no "
-            "re-run needed, 3 at least one re-run advisory, 2 a path could not be "
-            "checked."
+            "directories, fiberhmm-pipeline output directories), from the provenance "
+            "they record. Exit status: 0 nothing to re-run, 3 at least one re-run "
+            "advisory, 4 calls without FiberHMM provenance that cannot be verified "
+            "(re-run recommended if they came from FiberHMM < 3.0), 2 a path could "
+            "not be checked."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("paths", nargs="*", metavar="PATH",
                         help="BAM/CRAM/SAM, <prefix>.qc.json, posteriors .tsv(.gz)/.h5, "
-                             "or a fiberhmm-consensus output directory")
+                             "a fiberhmm-consensus output directory, or a "
+                             "fiberhmm-pipeline output directory")
     parser.add_argument("--json", action="store_true",
                         help="Print one JSON document (schema fiberhmm.advisory_check.v1) "
                              "with a fiberhmm.advisory_report.v1 report per path")
@@ -125,6 +137,8 @@ def main(argv=None) -> int:
         return EXIT_ERROR
     if any(item["needs_rerun"] for item in reports):
         return EXIT_ADVISORIES
+    if any(item["unverifiable"] for item in reports):
+        return EXIT_UNVERIFIABLE
     return EXIT_CLEAN
 
 

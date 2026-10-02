@@ -48,6 +48,13 @@ from fiberhmm.posteriors.region_tsv import (
 )
 
 
+def _note(*args, **kwargs) -> None:
+    """Progress, banners and summaries of a region-parallel run go to stderr,
+    with the rest of the run's log; stdout is left for data."""
+    kwargs.setdefault("file", sys.stderr)
+    print(*args, **kwargs)
+
+
 def _plan_work_items(input_bam, temp_dir, region_size, skip_scaffolds, chroms,
                      with_tsv=False):
     """Region work items (processing + pass-through) in output order."""
@@ -72,7 +79,7 @@ def _enforce_region_failures(aggregation) -> None:
         failures,
         aggregation.total_reads + failures,
         aggregation.failure_messages,
-        log=sys.stdout,
+        log=sys.stderr,
         label='region worker',
     )
 
@@ -117,14 +124,14 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
 
     # Check that BAM is indexed
     if not os.path.exists(input_bam + '.bai') and not os.path.exists(input_bam.replace('.bam', '.bai')):
-        print("Indexing input BAM for region-parallel processing...")
+        _note("Indexing input BAM for region-parallel processing...")
         pysam.index(input_bam)
     require_indexed_bam(input_bam)
 
-    print(f"Planning regions with {n_cores} cores...")
+    _note(f"Planning regions with {n_cores} cores...")
     if return_posteriors:
-        print(f"Posteriors will be written to: {output_posteriors}")
-    sys.stdout.flush()
+        _note(f"Posteriors will be written to: {output_posteriors}")
+    sys.stderr.flush()
 
     # Create temp directory in output folder for easier cleanup
     output_dir = ensure_parent_dir(output_bam)
@@ -158,7 +165,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
             with_tsv=return_posteriors,
         )
         regions = work_items
-        print(f"Processing {n_regions} regions "
+        _note(f"Processing {n_regions} regions "
               f"(+{len(work_items) - n_regions} pass-through)...")
 
         # Process regions in parallel
@@ -166,8 +173,8 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
         first_result_time = None
 
         # Use initializer to load model once per worker
-        print(f"  Initializing {n_cores} worker processes (loading HMM model in each)...")
-        sys.stdout.flush()
+        _note(f"  Initializing {n_cores} worker processes (loading HMM model in each)...")
+        sys.stderr.flush()
         pool_start = time.time()
 
         with ProcessPoolExecutor(
@@ -191,38 +198,38 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
                     if first_result_time is None:
                         first_result_time = time.time()
                         init_time = first_result_time - pool_start
-                        print(f"  Workers ready ({init_time:.1f}s). Processing regions...")
-                        sys.stdout.flush()
+                        _note(f"  Workers ready ({init_time:.1f}s). Processing regions...")
+                        sys.stderr.flush()
 
                     elapsed = time.time() - start_time
                     rate = aggregation.total_reads / elapsed if elapsed > 0 else 0
-                    print(f"\r  Regions: {aggregation.completed}/{len(regions)} | "
+                    _note(f"\r  Regions: {aggregation.completed}/{len(regions)} | "
                           f"Reads: {aggregation.total_reads:,} | "
                           f"With footprints: {aggregation.reads_with_footprints:,} | "
                           f"{rate:.1f} reads/s", end='')
-                    sys.stdout.flush()
+                    sys.stderr.flush()
 
                 except Exception as e:
-                    print(f"\nError processing region: {e}")
+                    _note(f"\nError processing region: {e}")
                     raise
 
-        print()  # Newline after progress
+        _note()  # Newline after progress
 
         # Print skip reasons summary
         if aggregation.total_skipped > 0:
             total_encountered = aggregation.total_reads + aggregation.total_skipped
-            print(
+            _note(
                 f"  Processed: {aggregation.total_reads:,} | "
                 f"Skipped: {aggregation.total_skipped:,} | "
                 f"With footprints: {aggregation.reads_with_footprints:,}"
             )
-            print("  Skip reasons:")
+            _note("  Skip reasons:")
             for reason, count in sorted(
                 aggregation.skip_reasons.items(), key=lambda x: -x[1]
             ):
                 if count > 0:
                     pct = 100 * count / total_encountered
-                    print(f"    {reason}: {count:,} ({pct:.1f}%)")
+                    _note(f"    {reason}: {count:,} ({pct:.1f}%)")
 
         # Sort temp BAMs by region order and filter to non-empty
         aggregation.temp_bams.sort(key=lambda x: x[0])
@@ -234,10 +241,10 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
         def _finalize(path):
             # Index (sorting first if needed) the closed temporary; the BAM
             # and its index are published together afterwards.
-            sys.stdout.flush()
+            sys.stderr.flush()
             output_size_gb = os.path.getsize(path) / (1024**3)
-            print(f"Output BAM: {output_size_gb:.2f}GB")
-            print("Step: Index/Sort...")
+            _note(f"Output BAM: {output_size_gb:.2f}GB")
+            _note("Step: Index/Sort...")
             _sort_and_index_bam(path, threads=n_cores)
 
         with atomic_output(output_bam, finalize=_finalize) as output_path:
@@ -246,7 +253,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
 
         # Merge temp TSV files if posteriors were requested
         if return_posteriors and aggregation.temp_tsvs:
-            print(f"Merging {len(aggregation.temp_tsvs)} posterior files...")
+            _note(f"Merging {len(aggregation.temp_tsvs)} posterior files...")
             merge_start = time.time()
             n_fibers = _merge_region_posteriors_tsv(
                 aggregation.temp_tsvs, output_posteriors,
@@ -259,17 +266,17 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
 
             if os.path.exists(tsv_path):
                 file_size = os.path.getsize(tsv_path) / (1024 * 1024)
-                print(
+                _note(
                     f"Posteriors: {n_fibers:,} fibers -> {tsv_path} "
                     f"({file_size:.1f} MB, {merge_time:.1f}s)"
                 )
                 if output_posteriors.endswith('.h5'):
-                    print("  HDF5 output needs fiberhmm-posteriors (pip install "
+                    _note("  HDF5 output needs fiberhmm-posteriors (pip install "
                           "\"fiberhmm[posteriors]\"); the TSV above holds the same data.")
 
         elapsed = time.time() - start_time
         rate = aggregation.total_reads / elapsed if elapsed > 0 else 0
-        print(
+        _note(
             f"Completed: {aggregation.total_reads:,} reads | "
             f"{aggregation.reads_with_footprints:,} with footprints | "
             f"{rate:.1f} reads/s | {elapsed:.1f}s"
@@ -310,13 +317,13 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
 
     # Check that BAM is indexed
     if not os.path.exists(input_bam + '.bai') and not os.path.exists(input_bam.replace('.bam', '.bai')):
-        print("Indexing input BAM for region-parallel processing...")
+        _note("Indexing input BAM for region-parallel processing...")
         pysam.index(input_bam)
 
     # Get regions
     regions = _get_genome_regions(input_bam, region_size, skip_scaffolds, chroms)
-    print(f"Processing {len(regions)} regions with {n_cores} cores (BED output)...")
-    sys.stdout.flush()
+    _note(f"Processing {len(regions)} regions with {n_cores} cores (BED output)...")
+    sys.stderr.flush()
 
     # Create temp directory for BED files (small compared to BAMs)
     output_dir = ensure_parent_dir(output_bed)
@@ -347,8 +354,8 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
         aggregation = RegionBedAggregation()
         first_result_time = None
 
-        print(f"  Initializing {n_cores} worker processes (loading HMM model in each)...")
-        sys.stdout.flush()
+        _note(f"  Initializing {n_cores} worker processes (loading HMM model in each)...")
+        sys.stderr.flush()
         pool_start = time.time()
 
         with ProcessPoolExecutor(
@@ -369,30 +376,30 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
                     if first_result_time is None:
                         first_result_time = time.time()
                         init_time = first_result_time - pool_start
-                        print(f"  Workers ready ({init_time:.1f}s). Processing regions...")
-                        sys.stdout.flush()
+                        _note(f"  Workers ready ({init_time:.1f}s). Processing regions...")
+                        sys.stderr.flush()
 
                     elapsed = time.time() - start_time
                     rate = aggregation.total_reads / elapsed if elapsed > 0 else 0
-                    print(f"\r  Regions: {aggregation.completed}/{len(regions)} | "
+                    _note(f"\r  Regions: {aggregation.completed}/{len(regions)} | "
                           f"Reads: {aggregation.total_reads:,} | "
                           f"With footprints: {aggregation.reads_with_footprints:,} | "
                           f"{rate:.1f} reads/s", end='')
-                    sys.stdout.flush()
+                    sys.stderr.flush()
 
                 except Exception as e:
-                    print(f"\nError processing region: {e}")
+                    _note(f"\nError processing region: {e}")
                     raise
 
-        print()  # Newline after progress
+        _note()  # Newline after progress
 
         # Sort temp BEDs by region order and concatenate
         aggregation.temp_beds.sort(key=lambda x: x[0])
         non_empty_beds = [bed for _, bed in aggregation.temp_beds
                          if os.path.exists(bed) and os.path.getsize(bed) > 0]
 
-        print(f"Concatenating {len(non_empty_beds)} region BED files...")
-        sys.stdout.flush()
+        _note(f"Concatenating {len(non_empty_beds)} region BED files...")
+        sys.stderr.flush()
 
         with open(output_bed, 'wb') as fout:
             for bed_path in non_empty_beds:
@@ -401,7 +408,7 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
 
         elapsed = time.time() - start_time
         rate = aggregation.total_reads / elapsed if elapsed > 0 else 0
-        print(
+        _note(
             f"Completed: {aggregation.total_reads:,} reads | "
             f"{aggregation.reads_with_footprints:,} with footprints | "
             f"{rate:.1f} reads/s | {elapsed:.1f}s"
@@ -471,6 +478,11 @@ def _process_bam_region_parallel_fused(
     """
     start_time = time.time()
 
+    from fiberhmm.inference.tf_recaller import require_recall_models
+
+    # Refuse a recall table the workers cannot use before any work starts.
+    require_recall_models(recall_model_path or apply_model_path,
+                          nuc_model_path if recall_nucs else None)
     require_indexed_bam(input_bam)
     # Validate the plan (unknown --chroms, nothing left to process) before
     # creating any temporary state.
@@ -566,13 +578,13 @@ def _process_bam_region_parallel_fused(
         def _bp(item):
             return 0 if item.passthrough else max(0, item.region[2] - item.region[1])
         pending_bp = sum(_bp(item) for _, item in pending)
-        print(f"Processing {n_regions} regions "
+        _note(f"Processing {n_regions} regions "
               f"(+{len(work_items) - n_regions} pass-through) with {n_cores} "
               "cores (fused apply+recall)...")
         if reused:
-            print(f"  Resuming: {len(reused)}/{len(work_items)} regions already "
+            _note(f"  Resuming: {len(reused)}/{len(work_items)} regions already "
                   f"finished in {temp_dir}; {len(pending)} to run.")
-        sys.stdout.flush()
+        sys.stderr.flush()
         emit('start', regions_total=len(work_items), regions_done=len(reused),
              regions_reused=len(reused), work_dir=temp_dir if work else None,
              output=os.path.abspath(output_bam))
@@ -581,8 +593,8 @@ def _process_bam_region_parallel_fused(
         new_reads = 0
         done_bp = 0
         if pending:
-            print(f"  Initializing {n_cores} workers (loading apply model + LLR tables)...")
-            sys.stdout.flush()
+            _note(f"  Initializing {n_cores} workers (loading apply model + LLR tables)...")
+            sys.stderr.flush()
             pool_start = time.time()
             first_result = None
             initializer, initargs = _init_fused_region_worker, (
@@ -610,19 +622,19 @@ def _process_bam_region_parallel_fused(
                     done_bp += _bp(work_items[index])
                     if first_result is None:
                         first_result = time.time()
-                        print(f"  Workers ready ({first_result - pool_start:.1f}s). Processing...")
-                        sys.stdout.flush()
+                        _note(f"  Workers ready ({first_result - pool_start:.1f}s). Processing...")
+                        sys.stderr.flush()
                     elapsed = time.time() - dispatch_start
                     rate = new_reads / elapsed if elapsed > 0 else 0
                     eta = (elapsed * (pending_bp - done_bp) / done_bp
                            if done_bp > 0 else None)
-                    print(f"\r  Regions: {aggregation.completed}/{len(regions)} | "
+                    _note(f"\r  Regions: {aggregation.completed}/{len(regions)} | "
                           f"Reads: {aggregation.total_reads:,} | "
                           f"With FP: {aggregation.reads_with_footprints:,} | "
                           f"{rate:.0f} r/s"
                           f"{f' | ETA {eta / 60:.1f} min' if eta is not None and aggregation.completed < len(regions) else ''}",
                           end='')
-                    sys.stdout.flush()
+                    sys.stderr.flush()
                     emit('region', region=list(work_items[index].region),
                          regions_done=aggregation.completed,
                          regions_total=len(regions), regions_reused=len(reused),
@@ -637,24 +649,24 @@ def _process_bam_region_parallel_fused(
                 raise
             else:
                 executor.shutdown(wait=True)
-            print()
+            _note()
 
         if aggregation.total_skipped > 0:
             total_enc = aggregation.total_reads + aggregation.total_skipped
-            print(
+            _note(
                 f"  Processed: {aggregation.total_reads:,} | "
                 f"Skipped: {aggregation.total_skipped:,} | "
                 f"With FP: {aggregation.reads_with_footprints:,}"
             )
-            print("  Skip reasons:")
+            _note("  Skip reasons:")
             for reason, count in sorted(
                 aggregation.skip_reasons.items(), key=lambda x: -x[1]
             ):
                 if count > 0:
-                    print(f"    {reason}: {count:,} ({100*count/total_enc:.1f}%)")
+                    _note(f"    {reason}: {count:,} ({100*count/total_enc:.1f}%)")
 
         if ddda_mcg:
-            print(
+            _note(
                 f"  DddA mCG: {aggregation.metrics.get('ddda_mcg_spans', 0):,} "
                 f"spans on {aggregation.metrics.get('ddda_mcg_reads', 0):,} "
                 f"reads; per-read failures="
@@ -683,7 +695,7 @@ def _process_bam_region_parallel_fused(
 
         elapsed = time.time() - start_time
         rate = aggregation.total_reads / elapsed if elapsed > 0 else 0
-        print(
+        _note(
             f"  Total: {aggregation.total_reads:,} reads, "
             f"{aggregation.reads_with_footprints:,} with footprints, "
             f"{rate:.1f} r/s"
@@ -711,7 +723,7 @@ def _process_bam_region_parallel_fused(
             else:
                 advice = ("Fix the cause and rerun with --resume (finished regions "
                           f"are reused), or delete {temp_dir} to start over.")
-            print(f"\n  Stopped ({type(exc).__name__}): {done}/{total} regions "
+            _note(f"\n  Stopped ({type(exc).__name__}): {done}/{total} regions "
                   f"finished and kept in {temp_dir}; nothing was published. "
                   f"{advice}", file=sys.stderr)
             emit('stopped', reason=type(exc).__name__, regions_done=done,

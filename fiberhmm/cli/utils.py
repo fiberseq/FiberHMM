@@ -905,20 +905,21 @@ def _rewrite_bam_ma_types_in_place(bam_path, annotation_names, io_threads=1):
 
     BAM headers cannot generally grow in place. The complete BAM is therefore
     copied to a validated temporary file in the same directory. Any existing
-    BAI/CSI indexes are rebuilt before the BAM and indexes are atomically
-    replaced. The original files remain untouched if writing, validation, or
-    indexing fails.
+    BAI/CSI indexes are rebuilt (as ``<bam>.bai``/``<bam>.csi``) and published
+    together with the BAM by :func:`fiberhmm.inference.bam_output.commit_output`.
+    The original files remain untouched if writing, validation, or indexing
+    fails, and are restored if publication fails part-way.
 
     Returns ``(missing_names, copied_records, rebuilt_index_paths)``. When no
     names are missing, no files are rewritten and the latter two values are
     zero/an empty list.
     """
-    import shutil
     import stat
     import tempfile
 
     import pysam
 
+    from fiberhmm.inference.bam_output import commit_output
     from fiberhmm.io.bam_header import append_ma_types, declared_ma_types
 
     annotation_names = _parse_ma_type_arguments(annotation_names)
@@ -943,7 +944,6 @@ def _rewrite_bam_ma_types_in_place(bam_path, annotation_names, io_threads=1):
     )
     os.close(descriptor)
     temp_artifacts = {temp_bam}
-    prepared_indexes = []
     copied_records = 0
     try:
         with pysam.AlignmentFile(
@@ -968,41 +968,28 @@ def _rewrite_bam_ma_types_in_place(bam_path, annotation_names, io_threads=1):
                     ','.join(still_missing)
                 )
 
+        # Rebuild one index of each kind the BAM had (BAI and/or CSI). They are
+        # published with the BAM as one transaction (commit_output): an old
+        # index is never left beside the new BAM, and a failure part-way
+        # restores the original BAM and its indexes.
         index_targets = _existing_bam_indexes(bam_path)
-        built_by_kind = {}
+        rebuilt = []
         for kind in dict.fromkeys(kind for _path, kind in index_targets):
             index_args = ['-@', str(io_threads)]
             if kind == 'csi':
                 index_args.insert(0, '-c')
             pysam.index(*index_args, temp_bam)
             built_path = temp_bam + f'.{kind}'
+            temp_artifacts.add(built_path)
             if not os.path.exists(built_path):
                 raise RuntimeError(f"indexer did not create {built_path}")
-            built_by_kind[kind] = built_path
-            temp_artifacts.add(built_path)
+            original = next(path for path, path_kind in index_targets if path_kind == kind)
+            os.chmod(built_path, stat.S_IMODE(os.stat(original).st_mode))
+            rebuilt.append(f"{bam_path}.{kind}")
 
-        # Prepare one temporary index file per existing target before changing
-        # the original BAM, including the unusual case where both accepted BAI
-        # naming forms exist.
-        used_kind = set()
-        for index_number, (target, kind) in enumerate(index_targets):
-            source_index = built_by_kind[kind]
-            if kind in used_kind:
-                install_index = f"{source_index}.copy{index_number}"
-                shutil.copyfile(source_index, install_index)
-                temp_artifacts.add(install_index)
-            else:
-                install_index = source_index
-                used_kind.add(kind)
-            os.chmod(install_index, stat.S_IMODE(os.stat(target).st_mode))
-            prepared_indexes.append((install_index, target))
-
-        os.replace(temp_bam, bam_path)
-        temp_artifacts.discard(temp_bam)
-        for install_index, target in prepared_indexes:
-            os.replace(install_index, target)
-            temp_artifacts.discard(install_index)
-        return missing, copied_records, [target for _source, target in prepared_indexes]
+        commit_output(temp_bam, bam_path)
+        temp_artifacts.clear()
+        return missing, copied_records, rebuilt
     finally:
         for path in temp_artifacts:
             try:
@@ -1171,6 +1158,7 @@ def cmd_fix_bigbed(args):
     bigBedToBed -> bedToBigBed, without re-running fiberhmm-extract.
     """
     import shutil
+    import stat
     import subprocess
     import tempfile
 
@@ -1189,13 +1177,23 @@ def cmd_fix_bigbed(args):
               file=sys.stderr)
         sys.exit(1)
 
+    from fiberhmm.inference.bam_output import ensure_parent_dir, temporary_output_path
+
     n_fixed = 0
+    n_failed = 0
     for bb_path in inputs:
         if not os.path.exists(bb_path):
-            print(f"  [skip] not found: {bb_path}", file=sys.stderr)
+            print(f"  [fail] not found: {bb_path}", file=sys.stderr)
+            n_failed += 1
             continue
 
-        field_count, autosql = _bigbed_info_as(bb_path)
+        try:
+            field_count, autosql = _bigbed_info_as(bb_path)
+            sizes = _bigbed_chrom_sizes(bb_path) if autosql is not None else None
+        except RuntimeError as error:
+            print(f"  [fail] {error}", file=sys.stderr)
+            n_failed += 1
+            continue
         if autosql is None:
             print(f"  [skip] no embedded autoSQL to fix: {bb_path}\n"
                   f"         (re-run fiberhmm-extract to add a schema)",
@@ -1206,7 +1204,6 @@ def cmd_fix_bigbed(args):
         token = sample_token(raw_sample)
         new_autosql = _patch_autosql_sample(autosql, token)
 
-        sizes = _bigbed_chrom_sizes(bb_path)
         n_extra = max(0, (field_count or 12) - 12)
         type_flag = f'-type=bed12+{n_extra}' if n_extra > 0 else '-type=bed12'
 
@@ -1218,16 +1215,21 @@ def cmd_fix_bigbed(args):
             base = bb_path[:-3] if bb_path.lower().endswith('.bb') else bb_path
             out_path = base + '.fixed.bb'
 
+        # Scratch (BED, schema, sizes) may live anywhere; the new bigBed is
+        # built as a hidden sibling of its destination so publishing it is an
+        # atomic rename on one filesystem.
+        ensure_parent_dir(out_path)
+        bb_tmp = temporary_output_path(out_path)
         tmpdir = tempfile.mkdtemp(prefix='fiberhmm_fixbb_')
         try:
             bed_path = os.path.join(tmpdir, 'data.bed')
             as_path = os.path.join(tmpdir, 'schema.as')
             sizes_path = os.path.join(tmpdir, 'chrom.sizes')
-            bb_tmp = os.path.join(tmpdir, 'out.bb')
 
             res = _run_capture(['bigBedToBed', bb_path, bed_path])
             if res.returncode != 0:
                 print(f"  [fail] bigBedToBed: {res.stderr.strip()}", file=sys.stderr)
+                n_failed += 1
                 continue
             with open(as_path, 'w') as f:
                 f.write('\n'.join(new_autosql) + '\n')
@@ -1239,18 +1241,28 @@ def cmd_fix_bigbed(args):
                 ['bedToBigBed', f'-as={as_path}', type_flag,
                  bed_path, sizes_path, bb_tmp],
                 capture_output=True, text=True)
-            if res.returncode != 0:
+            if res.returncode != 0 or not os.path.exists(bb_tmp):
                 print(f"  [fail] bedToBigBed: {res.stderr.strip()}", file=sys.stderr)
+                n_failed += 1
                 continue
 
-            shutil.move(bb_tmp, out_path)
+            if os.path.exists(out_path):
+                # Replacing a file keeps its permissions.
+                os.chmod(bb_tmp, stat.S_IMODE(os.stat(out_path).st_mode))
+            os.replace(bb_tmp, out_path)
             print(f"  [ok] {os.path.basename(bb_path)} -> "
                   f"{os.path.basename(out_path)}  (Sample: {token})")
             n_fixed += 1
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
+            if os.path.exists(bb_tmp):
+                os.remove(bb_tmp)
 
     print(f"\nFixed {n_fixed}/{len(inputs)} bigBed file(s).")
+    if n_failed:
+        print(f"Error: {n_failed} bigBed file(s) could not be fixed (see above).",
+              file=sys.stderr)
+        sys.exit(1)
 
 
 # =============================================================================
