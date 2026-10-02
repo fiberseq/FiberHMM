@@ -27,8 +27,8 @@ from fiberhmm.pipeline.runner import Pipeline, PipelineConfig, PipelineError
 
 sys.path.insert(0, str(Path(__file__).parent))
 from test_pipeline import (  # noqa: E402
-    REPO, _events, _pieces, _record, _run_cli, needs_minimap2, plasmid_run, random_seq,
-    write_genbank,
+    REPO, _events, _pieces, _record, _run_cli, _write_reads, needs_minimap2, plasmid_run,
+    random_seq, write_genbank, write_snapgene,
 )
 
 assert plasmid_run  # the fixture, re-exported for this module
@@ -877,3 +877,127 @@ def test_qc_step_states_the_called_assay(tmp_path, monkeypatch, enzyme, seq, exp
     at = cmd.index("--mode")
     assert cmd[at:at + 4] == expected
     p.close()
+
+
+# ---------------------------------------------------------------------------
+# minimap2 index cache (audit H2)
+# ---------------------------------------------------------------------------
+
+def test_index_digest_covers_contig_names():
+    from fiberhmm.pipeline import aligner as mm2
+
+    aligner = mm2.Aligner("minimap2", "/bin/minimap2", "2.30-r1287")
+    md5 = sequence_md5("ACGT" * 100)
+    n1 = [("N1", 400, md5)]
+    assert mm2.index_digest(n1, "map-ont", aligner) == mm2.index_digest(
+        [("N1", 400, md5)], "map-ont", aligner)
+    assert mm2.index_digest(n1, "map-ont", aligner) != mm2.index_digest(
+        [("construct", 400, md5)], "map-ont", aligner)
+    assert mm2.index_digest(n1, "map-ont", aligner) != mm2.index_digest(
+        n1, "map-hifi", aligner)
+
+
+@needs_minimap2
+def test_cached_index_without_matching_sidecar_is_rebuilt(tmp_path, monkeypatch):
+    from fiberhmm.pipeline import aligner as mm2
+
+    monkeypatch.setenv("FIBERHMM_MINIMAP2_INDEX_DIR", str(tmp_path / "mmi"))
+    sequence = random_seq(3000, 5)
+    fasta = tmp_path / "p.fa"; fasta.write_text(">p\n" + sequence + "\n")
+    contigs = [("p", 3000, sequence_md5(sequence))]
+    aligner = mm2.find_aligner("minimap2")
+    target, built = mm2.ensure_index(str(fasta), contigs, "map-ont", aligner, threads=1)
+    assert built
+    assert json.loads(Path(target + ".json").read_text())["contigs"] == [list(contigs[0])]
+    assert mm2.ensure_index(str(fasta), contigs, "map-ont", aligner, threads=1) == (target, False)
+    for sidecar in (None, {"contigs": [["other", 3000, contigs[0][2]]]}):
+        if sidecar is None:
+            os.remove(target + ".json")       # interrupted write / older FiberHMM entry
+        else:
+            Path(target + ".json").write_text(json.dumps(sidecar))
+        assert mm2.ensure_index(str(fasta), contigs, "map-ont", aligner, threads=1) == (
+            target, True)
+
+
+def _snapgene_run(tmp_path, name, ref, reads, index_dir, outdir):
+    dna = tmp_path / f"{name}.dna"
+    if not dna.exists():
+        write_snapgene(dna, ref)
+    env_index = {"FIBERHMM_MINIMAP2_INDEX_DIR": str(index_dir)}
+    with patch.dict(os.environ, env_index):
+        return _run_cli([str(reads), "--reference", str(dna), "--enzyme", "dddb",
+                         "-o", str(outdir), "-c", "1", "--min-read-length", "500",
+                         "--no-qc"])
+
+
+@needs_minimap2
+def test_renamed_plasmid_map_gets_its_own_index(tmp_path):
+    # Audit H2: N1.dna and an identical construct.dna share a sequence but not
+    # a contig name; the second run reused N1's index and failed
+    # ("contig 'N1' is not in the reference").
+    ref = random_seq(5000, 31)
+    reads = tmp_path / "reads.fastq"
+    _write_reads(reads, ref, 40, 32, circular=True)
+    index_dir = tmp_path / "mmi"
+    first = _snapgene_run(tmp_path, "N1", ref, reads, index_dir, tmp_path / "o1")
+    assert first.returncode == 0, first.stderr[-3000:]
+    second = _snapgene_run(tmp_path, "construct", ref, reads, index_dir, tmp_path / "o2")
+    assert second.returncode == 0, second.stderr[-3000:]
+    outputs = json.loads((tmp_path / "o2" / "outputs.json").read_text())
+    with pysam.AlignmentFile(outputs["called_bam"]) as bam:
+        assert bam.references == ("construct",)
+        assert sum(1 for _ in bam.fetch(until_eof=True)) > 0
+    assert len(list(index_dir.glob("*.mmi"))) == 2
+
+
+@needs_minimap2
+def test_stale_index_entry_is_detected_at_alignment_and_rebuilt(tmp_path):
+    from fiberhmm.pipeline import aligner as mm2
+
+    ref = random_seq(5000, 41)
+    reads = tmp_path / "reads.fastq"
+    _write_reads(reads, ref, 40, 42, circular=True)
+    index_dir = tmp_path / "mmi"
+    first = _snapgene_run(tmp_path, "N1", ref, reads, index_dir, tmp_path / "o1")
+    assert first.returncode == 0, first.stderr[-3000:]
+    (old_index,) = index_dir.glob("*.mmi")
+    # Plant N1's index under construct's key, with a sidecar that claims
+    # construct's contigs (a damaged entry the sidecar check cannot see).
+    contigs = [["construct", 5000, sequence_md5(ref)]]
+    aligner = mm2.find_aligner("minimap2")
+    digest = mm2.index_digest(contigs, "map-ont", aligner)
+    planted = index_dir / f"{digest}.mmi"
+    planted.write_bytes(old_index.read_bytes())
+    Path(str(planted) + ".json").write_text(json.dumps({"contigs": contigs}))
+    second = _snapgene_run(tmp_path, "construct", ref, reads, index_dir, tmp_path / "o2")
+    assert second.returncode == 0, second.stderr[-3000:]
+    assert "the cached index was removed and is rebuilt" in second.stderr
+    outputs = json.loads((tmp_path / "o2" / "outputs.json").read_text())
+    with pysam.AlignmentFile(outputs["called_bam"]) as bam:
+        assert bam.references == ("construct",)
+    assert planted.read_bytes() != old_index.read_bytes()
+
+
+def test_tests_never_use_the_real_index_cache():
+    # Audit L2: the suite wrote pytest-of-* entries into ~/.fiberhmm/minimap2_index.
+    from fiberhmm.pipeline import aligner as mm2
+
+    home_cache = os.path.join(os.path.expanduser("~"), ".fiberhmm", "minimap2_index")
+    assert os.path.abspath(mm2.index_cache_dir()) != os.path.abspath(home_cache)
+
+
+def test_reference_digest_memo_drops_entries_of_gone_files(tmp_path):
+    from fiberhmm.pipeline.reference import cached_fasta_digests
+
+    cache = tmp_path / "cache"
+    paths = []
+    for i in range(3):
+        path = tmp_path / f"g{i}.fa"; path.write_text(f">c{i}\nACGT\n")
+        paths.append(path)
+    cached_fasta_digests(str(paths[0]), str(cache))
+    cached_fasta_digests(str(paths[1]), str(cache))
+    paths[0].unlink()
+    cached_fasta_digests(str(paths[2]), str(cache))
+    memo = json.loads((cache / "reference_digests.json").read_text())
+    kept = sorted(Path(key.rsplit("|", 5)[0]).name for key in memo)
+    assert kept == ["g1.fa", "g2.fa"]

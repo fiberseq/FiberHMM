@@ -6,13 +6,17 @@ lab's DAF-seq standard, ``minimap2 -a -x map-ont --MD -Y`` (``-Y`` keeps the
 full read sequence on supplementary records, soft-clipped).
 
 Indexes are cached under ``~/.fiberhmm/minimap2_index/<digest>.mmi`` (override
-with ``FIBERHMM_MINIMAP2_INDEX_DIR``); the digest covers the reference FASTA's
-contents, the preset and the index format, so a later run on the same genome
-starts aligning at once.
+with ``FIBERHMM_MINIMAP2_INDEX_DIR``); the digest covers what the index holds
+(every contig's name, length and sequence MD5, in order), the preset and the
+index format, so a later run on the same genome starts aligning at once. A
+plasmid map's contig is named after its file, so a renamed copy of the same map
+gets its own index. Each index has a ``.json`` sidecar recording its contigs; an
+entry whose sidecar is missing or names other contigs is rebuilt.
 """
 from __future__ import annotations
 
 import array
+import contextlib
 import gzip
 import hashlib
 import os
@@ -93,21 +97,67 @@ def find_aligner(prefer: str = "auto") -> Aligner:
     raise AlignerNotFound(INSTALL_HELP)
 
 
-def index_digest(reference_sha256: str, preset: str, aligner: Aligner) -> str:
-    text = f"{reference_sha256}|{preset}|{aligner.index_format}"
+def contig_identity(contigs) -> list[list]:
+    """``[[name, length, sequence md5], ...]`` in reference order.
+
+    ``contigs`` are :class:`~fiberhmm.pipeline.reference.Contig` objects or
+    ``(name, length, md5)`` tuples. This is what a minimap2 index holds (the
+    topology is not part of it).
+    """
+    out = []
+    for contig in contigs:
+        if isinstance(contig, (tuple, list)):
+            name, length, md5 = contig[:3]
+        else:
+            name, length, md5 = contig.name, contig.length, contig.md5
+        out.append([str(name), int(length), str(md5)])
+    return out
+
+
+def index_digest(contigs, preset: str, aligner: Aligner) -> str:
+    identity = "\n".join("\t".join(map(str, item)) for item in contig_identity(contigs))
+    text = f"{hashlib.sha256(identity.encode()).hexdigest()}|{preset}|{aligner.index_format}"
     return hashlib.sha256(text.encode()).hexdigest()[:24]
 
 
-def ensure_index(fasta: str, reference_sha256: str, preset: str, aligner: Aligner,
+def _sidecar_contigs(target: str):
+    import json
+    try:
+        with open(target + ".json", encoding="utf-8") as handle:
+            return json.load(handle).get("contigs")
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def discard_index(target: str) -> None:
+    """Remove a cached index and its sidecar (a stale or damaged entry)."""
+    for path in (target, target + ".json"):
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+
+
+def ensure_index(fasta: str, contigs, preset: str, aligner: Aligner,
                  threads: int = 4, log=None) -> tuple[str, bool]:
-    """Return ``(index path, built_now)``; build and cache the index if needed."""
+    """Return ``(index path, built_now)``; build and cache the index if needed.
+
+    ``contigs`` describe ``fasta`` (see :func:`contig_identity`). A cached
+    index is reused only when its sidecar records exactly these contigs;
+    otherwise (an entry from an older FiberHMM, an interrupted write, a
+    damaged sidecar) it is rebuilt in place.
+    """
+    import json
     cache = index_cache_dir()
     os.makedirs(cache, exist_ok=True)
-    digest = index_digest(reference_sha256, preset, aligner)
+    expected = contig_identity(contigs)
+    digest = index_digest(expected, preset, aligner)
     target = os.path.join(cache, f"{digest}.mmi")
-    if os.path.exists(target) and os.path.getsize(target) > 0:
+    if (os.path.exists(target) and os.path.getsize(target) > 0
+            and _sidecar_contigs(target) == expected):
         return target, False
     tmp = f"{target}.tmp{os.getpid()}"
+    sidecar_tmp = f"{target}.json.tmp{os.getpid()}"
     try:
         if aligner.kind == "minimap2":
             cmd = [aligner.path, "-x", preset, "-t", str(max(1, threads)), "-d", tmp, fasta]
@@ -124,16 +174,40 @@ def ensure_index(fasta: str, reference_sha256: str, preset: str, aligner: Aligne
             mappy.Aligner(fasta, preset=preset, n_threads=max(1, threads), fn_idx_out=tmp)
             if not os.path.exists(tmp):
                 raise RuntimeError("mappy did not write the index")
+        # The sidecar goes in last: an index without one is rebuilt next time.
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(target + ".json")
         os.replace(tmp, target)
-        with open(target + ".json", "w", encoding="utf-8") as handle:
-            handle.write(
-                '{"reference": %s, "reference_sha256": "%s", "preset": "%s", '
-                '"aligner": "%s"}\n' % (_json_str(os.path.abspath(fasta)),
-                                        reference_sha256, preset, aligner.describe()))
+        with open(sidecar_tmp, "w", encoding="utf-8") as handle:
+            json.dump({"reference": os.path.abspath(fasta), "contigs": expected,
+                       "preset": preset, "aligner": aligner.describe()}, handle)
+            handle.write("\n")
+        os.replace(sidecar_tmp, target + ".json")
     finally:
-        if os.path.exists(tmp):
-            os.remove(tmp)
+        for leftover in (tmp, sidecar_tmp):
+            if os.path.exists(leftover):
+                os.remove(leftover)
     return target, True
+
+
+def index_mismatch(stream, contigs) -> Optional[str]:
+    """Why the index an alignment stream loaded does not hold ``contigs``
+    (None when it does): the last guard against a stale cache entry."""
+    expected = [(name, length) for name, length, _md5 in contig_identity(contigs)]
+    if isinstance(stream, MappyStream):
+        # mappy reports the index's names; lengths come from the reference.
+        found = list(stream.aligner.seq_names)
+        if found == [name for name, _length in expected]:
+            return None
+    else:
+        header = stream.header
+        found = list(zip(header.references, header.lengths))
+        if found == expected:
+            return None
+        found = [f"{name} ({length:,} bp)" for name, length in found]
+    shown = ", ".join(str(item) for item in found[:3])
+    return (f"the minimap2 index holds {shown or 'no contigs'}"
+            f"{' ...' if len(found) > 3 else ''}, not this reference's contigs")
 
 
 def _json_str(value: str) -> str:
@@ -470,6 +544,16 @@ class Minimap2Stream:
     def __iter__(self):
         return iter(self.bam)
 
+    def abort(self) -> None:
+        """Stop minimap2 without reading its output (the stream is discarded)."""
+        with contextlib.suppress(OSError):
+            self.proc.kill()
+        with contextlib.suppress(Exception):
+            self.bam.close()
+        self.proc.wait()
+        self.thread.join(timeout=5)
+        self.stderr_handle.close()
+
     def close(self) -> None:
         try:
             self.bam.close()
@@ -567,6 +651,9 @@ class MappyStream:
             tags = [("NM", hit.NM, "i"), ("MD", hit.MD, "Z"), ("RG", self.read_group_id, "Z")]
             read.set_tags(tags + extra)
             yield read
+
+    def abort(self) -> None:
+        self.aligner = None
 
     def close(self) -> None:
         if self.feeder.error is not None:

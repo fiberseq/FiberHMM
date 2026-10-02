@@ -735,7 +735,7 @@ class Pipeline:
         t0 = time.time()
         try:
             self.index_path, built = mm2.ensure_index(
-                self.reference.fasta, self.reference.source_sha256, cfg.preset(),
+                self.reference.fasta, self.reference.contigs, cfg.preset(),
                 self.aligner, threads=cfg.cores)
         except RuntimeError as exc:
             raise PipelineError(str(exc), hint="See the minimap2 message above.")
@@ -859,29 +859,33 @@ class Pipeline:
             (rf.kind == "fastq" and mm2.fastq_has_sam_tags(rf.path))
             or (rf.kind != "fastq" and mm2.bam_has_mod_tags(rf.path))
             for rf in self.read_files)
-        feeder = mm2.ReadFeeder(self.read_files, carry_tags)
         rg = {"ID": self.sample, "SM": self.sample,
               "PL": "ONT" if (cfg.resolved_seq() or "nanopore") == "nanopore" else "PACBIO"}
-        rg_line = "@RG\\t" + "\\t".join(f"{k}:{v}" for k, v in rg.items())
         tmpdir = os.path.join(self.outdir, STATE_DIR, "tmp")
         os.makedirs(tmpdir, exist_ok=True)
         log_path = os.path.join(self.outdir, "logs", "minimap2.log")
-        if self.aligner.kind == "minimap2":
-            cmd = mm2.minimap2_command(self.aligner, self.index_path, preset, cfg.cores,
-                                       rg_line, carry_tags)
-            self.log("align: " + " ".join(shlex.quote(c) for c in cmd))
-            stream = mm2.Minimap2Stream(cmd, feeder, log_path)
-            _register(stream.proc)
-            source_program = {"ID": "minimap2", "PN": "minimap2",
-                              "VN": self.aligner.version, "CL": " ".join(cmd)}
-        else:
-            source_program = {"ID": "mappy", "PN": "mappy", "VN": self.aligner.version,
-                              "CL": f"mappy preset={preset} MD=True (as minimap2 -ax "
-                                    f"{preset} --MD -Y)"}
-            header = mm2.mappy_header(ref.contigs, rg, source_program)
-            self.log(f"align: mappy {self.aligner.version}, preset {preset}")
-            stream = mm2.MappyStream(self.index_path, preset, cfg.cores, feeder, header,
-                                     carry_tags, self.sample)
+        stream, feeder, source_program = self._open_alignment(preset, rg, carry_tags,
+                                                              log_path)
+        stale = mm2.index_mismatch(stream, ref.contigs)
+        if stale:
+            # A cache entry that does not hold this reference (it would place
+            # reads on other contigs): drop it, rebuild, and start again.
+            self._abort_stream(stream)
+            mm2.discard_index(self.index_path)
+            self.log(f"index: {stale}; the cached index was removed and is rebuilt",
+                     "warning")
+            try:
+                self.index_path, _ = mm2.ensure_index(ref.fasta, ref.contigs, preset,
+                                                      self.aligner, threads=cfg.cores)
+            except RuntimeError as exc:
+                raise PipelineError(str(exc), hint="See the minimap2 message above.")
+            stream, feeder, source_program = self._open_alignment(preset, rg, carry_tags,
+                                                                  log_path)
+            stale = mm2.index_mismatch(stream, ref.contigs)
+            if stale:
+                self._abort_stream(stream)
+                raise PipelineError(f"alignment index: {stale}",
+                                    hint=f"Remove {self.index_path} and run again.")
 
         header = stream.header.to_dict()
         if not any(pg.get("ID") == source_program["ID"] for pg in header.get("PG", [])):
@@ -966,6 +970,35 @@ class Pipeline:
                 hint="Check that the reference matches the sample (for a plasmid, "
                      "the plasmid map; for amplicons, the genome).")
         return stats
+
+    def _open_alignment(self, preset: str, rg: dict, carry_tags: bool, log_path: str):
+        """Start the aligner on a fresh read feeder: ``(stream, feeder, @PG record)``."""
+        cfg = self.config
+        feeder = mm2.ReadFeeder(self.read_files, carry_tags)
+        if self.aligner.kind == "minimap2":
+            rg_line = "@RG\\t" + "\\t".join(f"{k}:{v}" for k, v in rg.items())
+            cmd = mm2.minimap2_command(self.aligner, self.index_path, preset, cfg.cores,
+                                       rg_line, carry_tags)
+            self.log("align: " + " ".join(shlex.quote(c) for c in cmd))
+            stream = mm2.Minimap2Stream(cmd, feeder, log_path)
+            _register(stream.proc)
+            source_program = {"ID": "minimap2", "PN": "minimap2",
+                              "VN": self.aligner.version, "CL": " ".join(cmd)}
+        else:
+            source_program = {"ID": "mappy", "PN": "mappy", "VN": self.aligner.version,
+                              "CL": f"mappy preset={preset} MD=True (as minimap2 -ax "
+                                    f"{preset} --MD -Y)"}
+            header = mm2.mappy_header(self.reference.contigs, rg, source_program)
+            self.log(f"align: mappy {self.aligner.version}, preset {preset}")
+            stream = mm2.MappyStream(self.index_path, preset, cfg.cores, feeder, header,
+                                     carry_tags, self.sample)
+        return stream, feeder, source_program
+
+    @staticmethod
+    def _abort_stream(stream) -> None:
+        stream.abort()
+        if isinstance(stream, mm2.Minimap2Stream):
+            _unregister(stream.proc)
 
     def _process_group(self, group, circular, sequences, stats, name=None):
         cfg = self.config
