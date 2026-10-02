@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from typing import Optional
 
 import numpy as np
@@ -100,7 +101,7 @@ def _init_region_worker(model_path: str, params: dict):
     except Exception as e:
         import traceback
 
-        print(f"Region worker init error: {e}")
+        print(f"Region worker init error: {e}", file=sys.stderr)
         traceback.print_exc()
         raise
 
@@ -315,7 +316,7 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
         )
 
     except Exception as e:
-        print(f"\nWorker error in region {chrom}:{start}-{end}: {e}")
+        print(f"\nWorker error in region {chrom}:{start}-{end}: {e}", file=sys.stderr)
         traceback.print_exc()
         raise
 
@@ -452,7 +453,7 @@ def _process_region_to_bed(args: RegionBedWorkItem) -> RegionBedResult:
     except Exception as e:
         import traceback
 
-        print(f"\nWorker error in region {chrom}:{start}-{end}: {e}")
+        print(f"\nWorker error in region {chrom}:{start}-{end}: {e}", file=sys.stderr)
         traceback.print_exc()
         raise
 

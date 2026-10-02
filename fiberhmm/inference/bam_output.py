@@ -231,6 +231,13 @@ def atomic_output(path, finalize=None):
         raise
 
 
+def _note(*args, **kwargs) -> None:
+    """Progress and diagnostics of sorting, indexing and concatenating go to
+    stderr with the rest of a run's log; stdout is left for data."""
+    kwargs.setdefault("file", sys.stderr)
+    print(*args, **kwargs)
+
+
 def _sorting_path(output_bam: str) -> str:
     """Scratch path for sorting ``output_bam`` (a ``.bam`` sibling)."""
     return output_bam + '.sorting.bam'
@@ -277,7 +284,7 @@ def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4)
     # Try indexing directly first (using samtools with threads for speed)
     try:
         if verbose:
-            print(f"  Indexing BAM ({bam_size_gb:.1f}GB) - trying direct index (no sort)...")
+            _note(f"  Indexing BAM ({bam_size_gb:.1f}GB) - trying direct index (no sort)...")
             sys.stdout.flush()
 
         idx_start = time.time()
@@ -286,35 +293,35 @@ def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4)
             if verbose:
                 idx_time = time.time() - idx_start
                 speed = bam_size_gb / idx_time if idx_time > 0 else 0
-                print(f"  ✓ Index created in {idx_time:.1f}s ({speed:.2f} GB/s) - BAM was already sorted!")
+                _note(f"  ✓ Index created in {idx_time:.1f}s ({speed:.2f} GB/s) - BAM was already sorted!")
             return
 
         # samtools failed - check if it's a sort issue
         if 'not sorted' in result.stderr.lower() or 'coordinate' in result.stderr.lower():
             if verbose:
-                print("  ✗ Direct index failed - BAM is NOT sorted")
-                print(f"    Error: {result.stderr.strip()}")
+                _note("  ✗ Direct index failed - BAM is NOT sorted")
+                _note(f"    Error: {result.stderr.strip()}")
             # Fall through to sorting
         else:
             # Some other error, try pysam
             if verbose:
-                print(f"  samtools index error: {result.stderr.strip()}, trying pysam...")
+                _note(f"  samtools index error: {result.stderr.strip()}, trying pysam...")
             pysam.index(output_bam)
             if verbose:
                 idx_time = time.time() - idx_start
-                print(f"  ✓ Index created (pysam) in {idx_time:.1f}s")
+                _note(f"  ✓ Index created (pysam) in {idx_time:.1f}s")
             return
 
     except FileNotFoundError:
         # samtools not found, try pysam
         if verbose:
-            print("  samtools not found, using pysam...")
+            _note("  samtools not found, using pysam...")
         try:
             idx_start = time.time()
             pysam.index(output_bam)
             if verbose:
                 idx_time = time.time() - idx_start
-                print(f"  ✓ Index created (pysam) in {idx_time:.1f}s")
+                _note(f"  ✓ Index created (pysam) in {idx_time:.1f}s")
             return
         except pysam.utils.SamtoolsError:
             pass
@@ -323,8 +330,8 @@ def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4)
 
     # Indexing failed - BAM is not sorted, need to sort first
     if verbose:
-        print(f"  Sorting BAM ({bam_size_gb:.1f}GB) with samtools sort -@ {threads}...")
-        print("    (This means samtools cat did not preserve sort order)")
+        _note(f"  Sorting BAM ({bam_size_gb:.1f}GB) with samtools sort -@ {threads}...")
+        _note("    (This means samtools cat did not preserve sort order)")
         sys.stdout.flush()
 
     # Sort using samtools (faster than pysam for large files)
@@ -336,22 +343,22 @@ def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4)
             if verbose:
                 sort_time = time.time() - sort_start
                 speed = bam_size_gb / sort_time if sort_time > 0 else 0
-                print(f"  Sorted in {sort_time:.1f}s ({speed:.2f} GB/s)")
+                _note(f"  Sorted in {sort_time:.1f}s ({speed:.2f} GB/s)")
         except (subprocess.CalledProcessError, FileNotFoundError):
             # Fallback to pysam
             if verbose:
-                print("  Using pysam sort (slower)...")
+                _note("  Using pysam sort (slower)...")
             pysam.sort("-o", sorted_bam, output_bam)
             if verbose:
                 sort_time = time.time() - sort_start
-                print(f"  Sorted (pysam) in {sort_time:.1f}s")
+                _note(f"  Sorted (pysam) in {sort_time:.1f}s")
         os.replace(sorted_bam, output_bam)
     except BaseException:
         _remove_quietly(sorted_bam)
         raise
 
     if verbose:
-        print("  Indexing sorted BAM...")
+        _note("  Indexing sorted BAM...")
         sys.stdout.flush()
 
     # Index the sorted BAM
@@ -364,7 +371,7 @@ def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4)
     if verbose:
         idx_time = time.time() - idx_start
         speed = bam_size_gb / idx_time if idx_time > 0 else 0
-        print(f"  ✓ Index created in {idx_time:.1f}s ({speed:.2f} GB/s)")
+        _note(f"  ✓ Index created in {idx_time:.1f}s ({speed:.2f} GB/s)")
 
 
 def _write_bam_list_file(bam_files: List[str], list_file: str) -> None:
@@ -380,11 +387,13 @@ def _samtools_cat_bams(bam_files: List[str], output_bam: str, list_file: str) ->
     ``-h bam_files[0]`` forces the output header to the first region BAM's header
     verbatim. Without it, ``samtools cat`` merges the @PG lines from every input,
     which would duplicate FiberHMM's @PG provenance line once per region.
+    ``--no-PG``: the caller's own @PG already records the run; a ``samtools
+    cat`` record would only list temporary work-directory paths.
     """
     _write_bam_list_file(bam_files, list_file)
     try:
         result = subprocess.run(
-            ['samtools', 'cat', '-h', bam_files[0], '-b', list_file,
+            ['samtools', 'cat', '--no-PG', '-h', bam_files[0], '-b', list_file,
              '-o', output_bam],
             capture_output=True, text=True
         )
@@ -423,10 +432,10 @@ def _remove_partial_output_bam(output_bam: str, verbose: bool = True) -> None:
     try:
         os.remove(output_bam)
         if verbose:
-            print("    Removed partial output file")
+            _note("    Removed partial output file")
     except Exception as rm_err:
         if verbose:
-            print(f"    Warning: Could not remove partial file: {rm_err}")
+            _note(f"    Warning: Could not remove partial file: {rm_err}")
 
 
 def _ensure_output_dir_writable(output_bam: str, verbose: bool = True) -> None:
@@ -437,7 +446,7 @@ def _ensure_output_dir_writable(output_bam: str, verbose: bool = True) -> None:
 
     if not os.path.exists(output_dir_path):
         if verbose:
-            print(f"    Creating output directory: {output_dir_path}")
+            _note(f"    Creating output directory: {output_dir_path}")
         os.makedirs(output_dir_path, exist_ok=True)
 
     test_file = os.path.join(output_dir_path, '.write_test')
@@ -447,9 +456,9 @@ def _ensure_output_dir_writable(output_bam: str, verbose: bool = True) -> None:
         os.remove(test_file)
     except Exception as write_err:
         if verbose:
-            print(f"    ERROR: Cannot write to output directory: {write_err}")
-            print(f"    Directory: {output_dir_path}")
-            print(f"    Directory exists: {os.path.exists(output_dir_path)}")
+            _note(f"    ERROR: Cannot write to output directory: {write_err}")
+            _note(f"    Directory: {output_dir_path}")
+            _note(f"    Directory exists: {os.path.exists(output_dir_path)}")
         raise
 
 
@@ -468,22 +477,22 @@ def _concatenate_bams_with_pysam(
 ) -> None:
     """Concatenate BAMs by reading and writing records with pysam."""
     if verbose:
-        print(f"    Reading header from: {bam_files[0]}")
+        _note(f"    Reading header from: {bam_files[0]}")
     with pysam.AlignmentFile(bam_files[0], "rb", check_sq=False) as first_bam:
         header = first_bam.header
 
     if verbose:
-        print(f"    Opening output file: {output_bam}")
+        _note(f"    Opening output file: {output_bam}")
     with pysam.AlignmentFile(output_bam, "wb", header=header) as outbam:
         for i, bam_path in enumerate(bam_files):
             with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as inbam:
                 for read in inbam:
                     outbam.write(read)
             if verbose and progress_every > 0 and (i + 1) % progress_every == 0:
-                print(f"\r    Concatenated {i+1}/{len(bam_files)} BAMs...", end='')
+                _note(f"\r    Concatenated {i+1}/{len(bam_files)} BAMs...", end='')
                 sys.stdout.flush()
     if verbose:
-        print()
+        _note()
 
 
 def _concatenate_region_bams(
@@ -500,7 +509,7 @@ def _concatenate_region_bams(
     total_temp_size_gb = total_temp_size / (1024**3)
 
     if verbose:
-        print(f"Concatenating {len(bam_files)} region BAMs ({total_temp_size_gb:.1f}GB total)...")
+        _note(f"Concatenating {len(bam_files)} region BAMs ({total_temp_size_gb:.1f}GB total)...")
         sys.stdout.flush()
 
     concat_start = time.time()
@@ -520,7 +529,7 @@ def _concatenate_region_bams(
             concat_time = time.time() - concat_start
             output_size_gb = os.path.getsize(output_bam) / (1024**3)
             speed_gbs = output_size_gb / concat_time if concat_time > 0 else 0
-            print(
+            _note(
                 f"  Concatenated with samtools cat in {concat_time:.1f}s "
                 f"({output_size_gb:.1f}GB, {speed_gbs:.2f} GB/s)"
             )
@@ -529,10 +538,10 @@ def _concatenate_region_bams(
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         if verbose:
             if hasattr(e, 'stderr') and e.stderr:
-                print(f"  WARNING: samtools cat failed: {e.stderr.strip()}")
+                _note(f"  WARNING: samtools cat failed: {e.stderr.strip()}")
             else:
-                print(f"  WARNING: samtools cat failed: {e}")
-            print("  Falling back to pysam (slower, reads each record)...")
+                _note(f"  WARNING: samtools cat failed: {e}")
+            _note("  Falling back to pysam (slower, reads each record)...")
 
         _remove_partial_output_bam(output_bam, verbose=verbose)
         _ensure_output_dir_writable(output_bam, verbose=verbose)
@@ -541,24 +550,24 @@ def _concatenate_region_bams(
         _concatenate_bams_with_pysam(bam_files, output_bam, verbose=verbose)
         if verbose:
             concat_time = time.time() - concat_start
-            print(f"  Concatenated with pysam in {concat_time:.1f}s")
+            _note(f"  Concatenated with pysam in {concat_time:.1f}s")
 
     except Exception as pysam_err:
         if verbose:
             output_dir_path = os.path.dirname(output_bam)
-            print(f"  ERROR: pysam fallback also failed: {pysam_err}")
-            print(f"    Output path: {output_bam}")
-            print(f"    Output dir exists: {os.path.exists(output_dir_path)}")
-            print("  Attempting manual BAM concatenation via samtools merge...")
+            _note(f"  ERROR: pysam fallback also failed: {pysam_err}")
+            _note(f"    Output path: {output_bam}")
+            _note(f"    Output dir exists: {os.path.exists(output_dir_path)}")
+            _note("  Attempting manual BAM concatenation via samtools merge...")
 
         try:
             _samtools_merge_bams(bam_files, output_bam, bam_list_file)
             if verbose:
                 concat_time = time.time() - concat_start
-                print(f"  Concatenated with samtools merge in {concat_time:.1f}s")
+                _note(f"  Concatenated with samtools merge in {concat_time:.1f}s")
         except Exception as merge_err:
             if verbose:
-                print(f"  ERROR: All concatenation methods failed: {merge_err}")
+                _note(f"  ERROR: All concatenation methods failed: {merge_err}")
             raise
 
 

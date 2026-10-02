@@ -1536,6 +1536,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
     except ValueError as error:
         parser.error(str(error))
+    region_chrom = args.region[0]
+    for bam_path in args.bam:
+        try:
+            with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as handle:
+                contigs = list(handle.references)
+        except (OSError, ValueError):
+            continue  # unreadable input: reported where it is loaded
+        if region_chrom not in contigs:
+            shown = ", ".join(contigs[:8]) + (", ..." if len(contigs) > 8 else "")
+            parser.error(
+                f"--region contig {region_chrom!r} is not in {bam_path} "
+                f"(its contigs: {shown or 'none'})"
+            )
     model, context_size, mode = load_model_with_metadata(model_path)
     nuc_model, nuc_context_size, nuc_mode = load_model_with_metadata(nuc_model_path)
     if (nuc_context_size, nuc_mode) != (context_size, mode):
