@@ -63,12 +63,20 @@ def build_parser() -> argparse.ArgumentParser:
                    help="minimap2 threads and fiberhmm-call worker processes "
                         "(default 4).")
     p.add_argument("--seq", choices=["nanopore", "pacbio"], default=None,
-                   help="Sequencing platform. Default: nanopore for ddda/dddb; for "
-                        "hia5, detected from the reads (MM tags of the first "
-                        "reads: T-a = PacBio, A+a only = Nanopore; BAM @RG/@PG), "
-                        "an error when they do not settle it. Sets the minimap2 "
-                        "preset (map-ont / map-hifi), the read group's PL and "
-                        "fiberhmm-call's --seq.")
+                   help="Sequencing platform. Default: detected from the reads. "
+                        "ddda/dddb: a BAM's FIBERHMM-CHEMISTRY declaration or "
+                        "@RG PL/@PG records; reads with no record are Nanopore "
+                        "when aligned here, and keep fiberhmm-call's default when "
+                        "called as given. hia5: also the MM tags of the first "
+                        "reads (T-a = PacBio, A+a only = Nanopore), an error when "
+                        "nothing settles it. Sets the minimap2 preset (map-ont / "
+                        "map-hifi), the read group's PL and fiberhmm-call's --seq.")
+    p.add_argument("--force-chemistry", action="store_true",
+                   help="Run although the reads contradict --enzyme/--seq (a "
+                        "FIBERHMM-CHEMISTRY declaration naming another enzyme or "
+                        "platform; m6A-tagged reads without deaminations for "
+                        "ddda/dddb; deaminated or untagged reads for hia5). "
+                        "Default: refuse.")
     p.add_argument("--topology", choices=["auto", "circular", "linear"], default="auto",
                    help="Reference topology. auto (default): a plasmid map's own "
                         "topology, FASTA contigs linear. circular: every contig is "
@@ -188,6 +196,7 @@ def config_from_args(args):
         call_mode=args.call_mode,
         tracks=args.tracks,
         aligner=args.aligner,
+        force_chemistry=args.force_chemistry,
         redo=args.redo,
         verbose=args.verbose,
         quiet=args.quiet,

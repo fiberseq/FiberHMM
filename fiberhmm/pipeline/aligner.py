@@ -349,6 +349,52 @@ def fastq_platform_votes(path: str, records: int = 200) -> dict:
     return counts
 
 
+def read_chemistry_evidence(path: str, records: int = 200) -> dict:
+    """What the first primary reads of a FASTQ/BAM carry, for the chemistry check.
+
+    ``{"records": n, "m6a": reads with an m6A MM spec (A+a / T-a),
+    "iupac": reads with R/Y-encoded deaminations}``. Bounded: at most
+    ``records`` primary records are read.
+    """
+    from fiberhmm.cli.common import _mm_spec_platform
+    counts = {"records": 0, "m6a": 0, "iupac": 0}
+
+    def tally(sequence: str, mm: Optional[str]) -> None:
+        counts["records"] += 1
+        if mm and _mm_spec_platform(mm):
+            counts["m6a"] += 1
+        upper = sequence.upper()
+        if "R" in upper or "Y" in upper:
+            counts["iupac"] += 1
+
+    if path.lower().endswith(FASTQ_EXTENSIONS):
+        with _open_binary(path) as handle:
+            header = None
+            for i, line in enumerate(handle):
+                if i % 4 == 0:
+                    header = line.decode("utf-8", "replace")
+                elif i % 4 == 1:
+                    mm = next((token[5:] for token in header.split()[1:]
+                               if token.startswith(("MM:Z:", "Mm:Z:"))), None)
+                    tally(line.decode("ascii", "replace").strip(), mm)
+                    if counts["records"] >= records:
+                        break
+        return counts
+    with pysam.AlignmentFile(path, check_sq=False) as bam:
+        for read in bam.fetch(until_eof=True):
+            if read.is_secondary or read.is_supplementary:
+                continue
+            mm = None
+            for tag in ("MM", "Mm"):
+                if read.has_tag(tag):
+                    mm = str(read.get_tag(tag))
+                    break
+            tally(read.query_sequence or "", mm)
+            if counts["records"] >= records:
+                break
+    return counts
+
+
 def bam_has_mod_tags(path: str, records: int = 200) -> bool:
     with pysam.AlignmentFile(path, check_sq=False) as bam:
         for i, read in enumerate(bam.fetch(until_eof=True)):

@@ -141,8 +141,14 @@ def test_hia5_platform_is_decided_from_the_reads(tmp_path):
     p._setup(); p.close()
     assert p.config.seq == "nanopore" and p.config.preset() == "map-ont"
     plain = tmp_path / "plain.fastq"; plain.write_text("@r\nACGT\n+\nIIII\n")
-    with pytest.raises(PipelineError, match="sequencing platform") as error:
+    # Reads without m6A calls are refused as Hia5 data first (audit M3) ...
+    with pytest.raises(PipelineError, match="no m6A") as error:
         Pipeline(config(tmp_path / "o3", plain, ref, enzyme="hia5"))._setup()
+    assert "--force-chemistry" in error.value.hint
+    # ... and, when forced, still need a platform.
+    with pytest.raises(PipelineError, match="sequencing platform") as error:
+        Pipeline(config(tmp_path / "o3b", plain, ref, enzyme="hia5",
+                        force_chemistry=True))._setup()
     assert "--seq" in error.value.hint
     with pytest.raises(PipelineError, match="disagree"):
         Pipeline(config(tmp_path / "o4", [pacbio, nanopore], ref, enzyme="hia5"))._setup()
@@ -1001,3 +1007,137 @@ def test_reference_digest_memo_drops_entries_of_gone_files(tmp_path):
     memo = json.loads((cache / "reference_digests.json").read_text())
     kept = sorted(Path(key.rsplit("|", 5)[0]).name for key in memo)
     assert kept == ["g1.fa", "g2.fa"]
+
+
+# ---------------------------------------------------------------------------
+# Chemistry and platform of the input (audit M3, M27)
+# ---------------------------------------------------------------------------
+
+def _bam_input(path, sequence, *, mm=None, encode=False, rg_pl=None, declaration=None,
+               aligned=False, n=6):
+    header = {"HD": {"VN": "1.6", "SO": "coordinate" if aligned else "unknown"}}
+    if aligned:
+        header["SQ"] = [{"SN": "p", "LN": len(sequence)}]
+    if rg_pl:
+        header["RG"] = [{"ID": "rg", "SM": "s", "PL": rg_pl}]
+    if declaration:
+        header["CO"] = ["FIBERHMM-CHEMISTRY:v1:" + declaration]
+    h = pysam.AlignmentHeader.from_dict(header)
+    with pysam.AlignmentFile(str(path), "wb", header=h) as out:
+        for i in range(n):
+            start = 200 * i
+            seq = sequence[start:start + 1500]
+            r = pysam.AlignedSegment(h); r.query_name = f"r{i}"
+            if encode:
+                seq = seq.replace("C", "Y", 20)
+            r.query_sequence = seq
+            if aligned:
+                r.reference_id = 0; r.reference_start = start; r.mapping_quality = 60
+                r.cigarstring = f"{len(seq)}M"; r.set_tag("MD", str(len(seq)))
+            else:
+                r.flag = 4
+            if mm:
+                r.set_tag("MM", mm); r.set_tag("ML", array.array("B", [255, 255]))
+            if rg_pl:
+                r.set_tag("RG", "rg")
+            out.write(r)
+    if aligned:
+        pysam.index(str(path))
+    return path
+
+
+def test_chemistry_problems_name_the_contradiction(tmp_path):
+    sequence = random_seq(4000, 7)
+    m6a = _bam_input(tmp_path / "hia5.bam", sequence, mm="A+a.,0;T-a.,0;")
+    (problem,) = runner.chemistry_problems([str(m6a)], "dddb", None)
+    assert "m6A calls" in problem and "not DAF-seq" in problem
+    assert runner.chemistry_problems([str(m6a)], "hia5", None) == []
+    encoded = _bam_input(tmp_path / "daf.bam", sequence, encode=True)
+    assert runner.chemistry_problems([str(encoded)], "dddb", None) == []
+    (problem,) = runner.chemistry_problems([str(encoded)], "hia5", "pacbio")
+    assert "R/Y-encoded" in problem
+    # m6A-model basecalls on encoded DAF reads are not refused.
+    both = _bam_input(tmp_path / "both.bam", sequence, mm="A+a.,0;", encode=True)
+    assert runner.chemistry_problems([str(both)], "ddda", None) == []
+    plain = _bam_input(tmp_path / "plain.bam", sequence)
+    assert runner.chemistry_problems([str(plain)], "ddda", None) == []
+    (problem,) = runner.chemistry_problems([str(plain)], "hia5", "pacbio")
+    assert "no m6A" in problem or "carries an m6A call" in problem
+    declared = _bam_input(tmp_path / "declared.bam", sequence, encode=True,
+                          declaration="assay=daf;enzyme=dddb;platform=nanopore;mode=daf")
+    (problem,) = runner.chemistry_problems([str(declared)], "ddda", None)
+    assert "declares dddb" in problem
+    (problem,) = runner.chemistry_problems([str(declared)], "dddb", "pacbio")
+    assert "declares nanopore" in problem
+    assert runner.chemistry_problems([str(declared)], "dddb", "nanopore") == []
+    fastq = _pacbio_fastq(tmp_path / "pb.fastq", sequence)
+    assert runner.chemistry_problems([str(fastq)], "hia5", None) == []
+    assert "m6A calls" in runner.chemistry_problems([str(fastq)], "dddb", None)[0]
+
+
+def test_daf_enzyme_on_m6a_reads_is_refused_unless_forced(tmp_path):
+    # Audit M3: --enzyme dddb on a PacBio Hia5 BAM realigned it as Nanopore and
+    # called it as DddB, rc 0.
+    sequence = random_seq(4000, 8)
+    ref = tmp_path / "ref.fa"; ref.write_text(">p\n" + sequence + "\n")
+    m6a = _bam_input(tmp_path / "hia5.bam", sequence, mm="A+a.,0;T-a.,0;")
+    p = Pipeline(config(tmp_path / "o1", m6a, ref, enzyme="dddb"))
+    with pytest.raises(PipelineError, match="look like Fiber-seq") as refused:
+        p._setup()
+    p.close()
+    assert "--force-chemistry" in refused.value.hint
+    p = Pipeline(config(tmp_path / "o2", m6a, ref, enzyme="dddb", force_chemistry=True))
+    p._setup(); p.close()
+    assert any("--force-chemistry" in note[0] for note in p._notes if isinstance(note, tuple))
+
+
+def test_pipeline_cli_has_force_chemistry():
+    from fiberhmm.cli.pipeline import config_from_args, parse_args
+
+    args = parse_args(["r.fastq", "--reference", "ref.fa", "--enzyme", "dddb", "-o", "o",
+                       "--force-chemistry"])
+    assert config_from_args(args).force_chemistry is True
+    assert config_from_args(parse_args(["r.fastq", "--reference", "ref.fa", "--enzyme",
+                                        "dddb", "-o", "o"])).force_chemistry is False
+
+
+def test_daf_platform_comes_from_the_reads(tmp_path):
+    # Audit M27: every DAF run was declared Nanopore.
+    sequence = random_seq(4000, 9)
+    ref = tmp_path / "ref.fa"; ref.write_text(">p\n" + sequence + "\n")
+    pacbio = _bam_input(tmp_path / "pb.bam", sequence, encode=True, rg_pl="PACBIO")
+    p = Pipeline(config(tmp_path / "o1", pacbio, ref, enzyme="ddda"))
+    p._setup(); p.step_prepare_reference(); p.close()
+    assert p.config.seq == "pacbio" and p.config.preset() == "map-hifi"
+    assert p.config.calling_settings()["seq"] == "pacbio"
+
+    # FASTQ without a platform record: aligned here as Nanopore, stated to the call.
+    fastq = tmp_path / "daf.fastq"
+    fastq.write_text("@r\n" + sequence[:1500] + "\n+\n" + "I" * 1500 + "\n")
+    p = Pipeline(config(tmp_path / "o2", fastq, ref, enzyme="dddb"))
+    p._setup()
+    assert p.config.seq is None
+    p.step_prepare_reference(); p.close()
+    assert p.config.seq == "nanopore" and p.config.preset() == "map-ont"
+    cmd, _ = p.call_command(set())
+    assert cmd[cmd.index("--seq") + 1] == "nanopore"
+
+    # Aligned DAF BAM called as given, no platform record: no --seq (fiberhmm-call's
+    # own default), and no Nanopore claim in the settings.
+    aligned = _bam_input(tmp_path / "aligned.bam", sequence, aligned=True)
+    p = Pipeline(config(tmp_path / "o3", aligned, ref, enzyme="ddda"))
+    p._setup(); p.step_prepare_reference(); p.close()
+    assert p.use_aligned_input == str(aligned)
+    assert p.config.seq is None and p.config.calling_settings()["seq"] == "auto"
+    cmd, _ = p.call_command(set())
+    assert "--seq" not in cmd
+
+
+def test_explicit_seq_contradicting_the_reads_warns(tmp_path):
+    sequence = random_seq(4000, 10)
+    ref = tmp_path / "ref.fa"; ref.write_text(">p\n" + sequence + "\n")
+    pacbio = _pacbio_fastq(tmp_path / "pb.fastq", sequence)
+    p = Pipeline(config(tmp_path / "o1", pacbio, ref, enzyme="hia5", seq="nanopore"))
+    p._setup(); p.close()
+    (warning,) = [n for n in p._notes if isinstance(n, tuple)]
+    assert warning[1] == "warning" and "looks like pacbio" in warning[0]

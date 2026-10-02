@@ -108,14 +108,20 @@ class PipelineConfig:
     call_mode: str = "auto"  # auto | streaming | resumable
     tracks: bool = False
     aligner: str = "auto"
+    force_chemistry: bool = False  # run although the reads contradict --enzyme/--seq
     redo: Optional[str] = None  # "all" or a step: redo it and the later ones
     verbose: bool = False
     quiet: bool = False
 
     def resolved_seq(self) -> Optional[str]:
-        if self.seq:
-            return self.seq
-        return "nanopore" if self.enzyme in DAF_ENZYMES else None
+        """The platform the run states: ``--seq``, or what the reads record.
+
+        None for DAF reads with no platform record that are called as given
+        (fiberhmm-call then applies its own default); DAF reads aligned here
+        without a record are aligned and declared as Nanopore (the
+        Pipeline sets ``seq`` when it decides to align).
+        """
+        return self.seq or None
 
     def resolved_hard_clip(self) -> bool:
         if self.hard_clip is not None:
@@ -199,6 +205,109 @@ def validate_sample_name(name: str) -> str:
             hint="Use one name without path separators, spaces or a leading '.'/'-', "
                  "e.g. --sample run1 (letters, digits, '_', '-' and '.').")
     return text
+
+
+def infer_daf_platform(paths: list[str]) -> tuple[Optional[str], str]:
+    """``(platform or None, evidence)`` for DAF reads, from header records only.
+
+    The same evidence ``fiberhmm-call`` accepts for a DAF enzyme: a FIBERHMM
+    chemistry declaration, ``@RG PL`` or aligner/basecaller ``@PG`` records
+    (DAF reads carry no platform-specific MM pattern). FASTQ files carry
+    none. Raises :class:`PipelineError` when the files disagree.
+    """
+    from fiberhmm.cli.common import sniff_sequencing_platform
+    votes: dict[str, list[str]] = {}
+    for path in paths:
+        if not path.lower().endswith((".bam", ".cram", ".sam")):
+            continue
+        name = os.path.basename(path)
+        evidence = sniff_sequencing_platform(path, inspect_reads=False)
+        if evidence.conflict:
+            raise PipelineError(f"cannot tell the sequencing platform of {name}: "
+                                f"{evidence.conflict}",
+                                hint="Pass --seq pacbio or --seq nanopore.")
+        if evidence.platform:
+            votes.setdefault(evidence.platform, []).append(f"{name} ({evidence.source})")
+    if len(votes) > 1:
+        detail = "; ".join(f"{platform}: {', '.join(src)}" for platform, src in sorted(votes.items()))
+        raise PipelineError(f"the read files disagree about the sequencing platform ({detail})",
+                            hint="Pass --seq pacbio or --seq nanopore.")
+    if not votes:
+        return None, "no platform record in the read files"
+    platform, sources = next(iter(votes.items()))
+    return platform, "; ".join(sources)
+
+
+def chemistry_problems(paths: list[str], enzyme: str, seq: Optional[str]) -> list[str]:
+    """Why the reads do not look like ``enzyme`` (and ``--seq``) data.
+
+    Checked on the inputs themselves, before alignment, from strong evidence
+    only: a FIBERHMM-CHEMISTRY declaration naming another enzyme (or, with an
+    explicit ``seq``, another platform); for a DAF enzyme, reads that mostly
+    carry m6A calls (MM A+a/T-a) and no R/Y-encoded deaminations; for Hia5,
+    reads that mostly carry R/Y-encoded deaminations, or no m6A call at all.
+    """
+    from fiberhmm.io.bam_header import declared_chemistries
+    problems: list[str] = []
+    for path in paths:
+        name = os.path.basename(path)
+        if path.lower().endswith((".bam", ".cram", ".sam")):
+            with pysam.AlignmentFile(path, check_sq=False) as bam:
+                declarations = declared_chemistries(bam.header)
+            enzymes = {str(d.get("enzyme", "")).lower() for d in declarations} - {"", "custom"}
+            if enzymes and enzyme not in enzymes:
+                problems.append(f"{name} declares {'/'.join(sorted(enzymes))} chemistry "
+                                f"(FIBERHMM-CHEMISTRY), not {enzyme}")
+            platforms = {("nanopore" if str(d.get("platform", "")).lower() == "ont"
+                          else str(d.get("platform", "")).lower())
+                         for d in declarations} & {"pacbio", "nanopore"}
+            if seq and platforms and seq not in platforms:
+                problems.append(f"{name} declares {'/'.join(sorted(platforms))} reads "
+                                f"(FIBERHMM-CHEMISTRY), not --seq {seq}")
+        found = mm2.read_chemistry_evidence(path)
+        n, m6a, iupac = found["records"], found["m6a"], found["iupac"]
+        if not n:
+            continue
+        if enzyme in DAF_ENZYMES and m6a * 2 > n and not iupac:
+            problems.append(
+                f"{m6a} of the first {n} reads of {name} carry m6A calls (MM A+a/T-a) and "
+                "none carries R/Y-encoded deaminations: these look like Fiber-seq (Hia5) "
+                "reads, not DAF-seq")
+        elif enzyme == "hia5" and iupac * 2 > n and not m6a:
+            problems.append(
+                f"{iupac} of the first {n} reads of {name} carry R/Y-encoded deaminations "
+                "and none an m6A call: these look like DAF-seq reads, not Hia5 Fiber-seq")
+        elif enzyme == "hia5" and not m6a:
+            problems.append(
+                f"none of the first {n} reads of {name} carries an m6A call (MM/ML A+a or "
+                "T-a): Hia5 calling would find no m6A")
+    return problems
+
+
+def explicit_seq_warnings(paths: list[str], enzyme: str, seq: str) -> list[str]:
+    """Warnings for an explicit ``--seq`` the reads' own records disagree with.
+
+    An explicit ``--seq`` is authoritative (as in ``fiberhmm-call``); a
+    disagreeing chemistry declaration is refused by :func:`chemistry_problems`,
+    other evidence (MM pattern for Hia5, @RG/@PG records) only warns.
+    """
+    from fiberhmm.cli.common import sniff_sequencing_platform
+    warnings = []
+    for path in paths:
+        name = os.path.basename(path)
+        if path.lower().endswith((".bam", ".cram", ".sam")):
+            evidence = sniff_sequencing_platform(path, inspect_reads=enzyme == "hia5")
+            found, source = evidence.platform, evidence.source
+        elif enzyme == "hia5":
+            counts = mm2.fastq_platform_votes(path)
+            found = max(counts, key=counts.get) if any(counts.values()) else None
+            source = f"MM tags of {sum(counts.values())} read(s)"
+        else:
+            continue
+        if found and found != seq and "declaration" not in str(source):
+            warnings.append(f"platform: --seq {seq} was given, but {name} looks like "
+                            f"{found} ({source}); using --seq {seq} as requested")
+    return warnings
 
 
 def infer_read_platform(paths: list[str]) -> tuple[Optional[str], str]:
@@ -490,12 +599,41 @@ class Pipeline:
         for path in (self.aligned_bam, self.called_bam, self.qc_prefix):
             if os.path.commonpath([self.outdir, os.path.abspath(path)]) != self.outdir:
                 raise PipelineError(f"output {path} would be outside {self.outdir}")
+        self._check_chemistry()
+        if cfg.seq:
+            self._notes.extend((warning, "warning") for warning in
+                               explicit_seq_warnings(cfg.reads, cfg.enzyme, cfg.seq))
         if cfg.enzyme == "hia5" and not cfg.seq:
             # The minimap2 preset, the read group's PL and fiberhmm-call's
             # model all follow the platform: decide it once, from the reads.
             platform, evidence = infer_read_platform(cfg.reads)
             cfg.seq = platform
             self._notes.append(f"platform: {platform} (detected from {evidence})")
+        elif cfg.enzyme in DAF_ENZYMES and not cfg.seq:
+            platform, evidence = infer_daf_platform(cfg.reads)
+            if platform:
+                cfg.seq = platform
+                self._notes.append(f"platform: {platform} (detected from {evidence})")
+
+    def _check_chemistry(self) -> None:
+        """Refuse reads that contradict --enzyme/--seq (unless --force-chemistry)."""
+        cfg = self.config
+        try:
+            problems = chemistry_problems(cfg.reads, cfg.enzyme, cfg.seq)
+        except (OSError, ValueError) as exc:
+            raise PipelineError(f"cannot read the input: {exc}")
+        if not problems:
+            return
+        if cfg.force_chemistry:
+            for problem in problems:
+                self._notes.append((f"chemistry: {problem}; continuing (--force-chemistry)",
+                                    "warning"))
+            return
+        raise PipelineError(
+            f"the reads do not look like --enzyme {cfg.enzyme}"
+            + (f" --seq {cfg.seq}" if cfg.seq else "") + " data: " + "; ".join(problems),
+            hint="Check --enzyme and --seq. If the data really are what you said, add "
+                 "--force-chemistry.")
 
     # -- messages ------------------------------------------------------------
     def log(self, message: str, level: str = "info") -> None:
@@ -586,7 +724,8 @@ class Pipeline:
                                steps=list(self.steps), outdir=self.outdir,
                                settings=self.config.calling_settings())
             for note in self._notes:
-                self.log(note)
+                message, level = note if isinstance(note, tuple) else (note, "info")
+                self.log(message, level)
             self.step_prepare_reference()
             self.step_index()
             self.step_align()
@@ -697,6 +836,16 @@ class Pipeline:
         return staged
 
     def _decide_alignment(self) -> None:
+        self._decide_input_alignment()
+        cfg = self.config
+        if cfg.enzyme in DAF_ENZYMES and not cfg.seq and not self.use_aligned_input:
+            # Reads aligned here need a preset and a read-group platform:
+            # without a record in the reads, DAF-seq is taken as Nanopore.
+            cfg.seq = "nanopore"
+            self.log("platform: nanopore (the DAF-seq default; the reads record no "
+                     "platform). Pass --seq pacbio for PacBio reads.")
+
+    def _decide_input_alignment(self) -> None:
         cfg = self.config
         aligned = [rf for rf in self.read_files if rf.kind == "aligned"]
         if not aligned or len(aligned) != len(self.read_files):
@@ -722,7 +871,8 @@ class Pipeline:
                      "so the output is sorted and indexed")
             return
         self.use_aligned_input = path
-        self.log(f"align: {os.path.basename(path)} is already aligned to this reference")
+        self.log(f"align: {os.path.basename(path)} is already aligned to this reference; "
+                 f"it is used in place (no {self.sample}.aligned.bam is written)")
 
     # -- index -----------------------------------------------------------------
     def step_index(self) -> None:
