@@ -1227,7 +1227,9 @@ def check_qc(path, *, index: Optional[dict] = None) -> list[Advisory]:
     payload = _read_json(path)
     samples = payload.get("samples") if isinstance(payload.get("samples"), list) else [payload]
     rule = idx.rules["qc-nanopore-opportunities"]
+    assay_rule = idx.rules.get("qc-assay-misdetected")
     findings = []
+    assay_findings = []
     for sample in samples:
         if not isinstance(sample, dict):
             raise AdvisoryInputError(f"{path}: malformed QC report (a sample is not a JSON object)")
@@ -1236,6 +1238,14 @@ def check_qc(path, *, index: Optional[dict] = None) -> list[Advisory]:
             raise AdvisoryInputError(f"{path}: malformed QC report (assay is not a JSON object)")
         mode = str(assay.get("mode") or "").lower()
         profile = str(assay.get("reference_profile") or "").lower()
+        valid_modes = (assay_rule or {}).get("match", {}).get("mode_not_in", ())
+        if assay_rule and mode and mode not in valid_modes:
+            # The mode itself is the evidence: no QC code that knows the assay
+            # writes another value.
+            label = sample.get("input") or sample.get("sample") or "a sample"
+            assay_findings.append(_Finding(AFFECTED, "high", [
+                f"QC report of {label} records assay mode {mode!r}, not one of "
+                f"{', '.join(valid_modes)}"]))
         if mode != "nanopore-fiber" and "nanopore" not in profile:
             continue
         finding = _file_finding(
@@ -1245,7 +1255,11 @@ def check_qc(path, *, index: Optional[dict] = None) -> list[Advisory]:
         if finding:
             findings.append(finding)
     combined = _combine(findings)
-    return [_make(rule, combined, path=path)] if combined else []
+    out = [_make(rule, combined, path=path)] if combined else []
+    assay_combined = _combine(assay_findings)
+    if assay_combined:
+        out.insert(0, _make(assay_rule, assay_combined, path=path))
+    return out
 
 
 def check_posteriors(path, *, index: Optional[dict] = None) -> list[Advisory]:
