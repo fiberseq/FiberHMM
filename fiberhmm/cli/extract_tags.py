@@ -293,15 +293,31 @@ def _annotate_circular_parts(annotations, read_length: int):
     return annotations
 
 
+def _query_span_to_ref_block(query_to_ref, qstart, qend):
+    """Reference block ``[start, end)`` covered by query span ``[qstart, qend)``.
+
+    The block runs from the first aligned base at or after ``qstart`` to the
+    last aligned base before ``qend``, so an interval whose first or last
+    base is soft-clipped or inserted keeps its aligned part instead of being
+    dropped. Returns None only when no base inside the span is aligned.
+    """
+    lo = max(0, int(qstart))
+    hi = min(len(query_to_ref), int(qend))
+    if hi <= lo:
+        return None
+    span = np.asarray(query_to_ref[lo:hi])
+    aligned = np.flatnonzero(span >= 0)
+    if aligned.size == 0:
+        return None
+    first = int(span[aligned[0]])
+    last = int(span[aligned[-1]])
+    return min(first, last), max(first, last) + 1
+
+
 def _annotation_to_ref_block(ann, query_to_ref):
     qstart = int(ann['start'])
     qend = qstart + int(ann['length'])
-    ref_start = _q2r_lookup(query_to_ref, qstart)
-    ref_end = _q2r_lookup(query_to_ref, qend - 1)
-    if ref_start is None or ref_end is None:
-        return None
-    ref_start, ref_end = min(ref_start, ref_end), max(ref_start, ref_end) + 1
-    return ref_start, ref_end
+    return _query_span_to_ref_block(query_to_ref, qstart, qend)
 
 
 def _extract_ma_interval_type(
@@ -618,13 +634,10 @@ def _extract_footprints(read, bed_out, with_scores: bool,
     for i, (qstart, length) in enumerate(zip(ns, nl)):
         qend = qstart + length
 
-        ref_start = _q2r_lookup(query_to_ref, qstart)
-        ref_end = _q2r_lookup(query_to_ref, qend - 1)
-
-        if ref_start is None or ref_end is None:
+        block = _query_span_to_ref_block(query_to_ref, qstart, qend)
+        if block is None:
             continue
-
-        ref_start, ref_end = min(ref_start, ref_end), max(ref_start, ref_end) + 1
+        ref_start, ref_end = block
 
         score = 0
         if scores is not None and i < len(scores):
@@ -737,12 +750,10 @@ def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int,
     blocks = []  # (ref_start, ref_end, tq, el, er)
     for qstart, length, tq, el, er in tfs_with_quality:
         qend = qstart + length
-        ref_start = _q2r_lookup(query_to_ref, qstart)
-        ref_end = _q2r_lookup(query_to_ref, qend - 1)
-        if ref_start is None or ref_end is None:
+        block = _query_span_to_ref_block(query_to_ref, qstart, qend)
+        if block is None:
             continue
-        ref_start, ref_end = min(ref_start, ref_end), max(ref_start, ref_end) + 1
-        blocks.append((ref_start, ref_end, tq, el, er))
+        blocks.append((block[0], block[1], tq, el, er))
 
     if not blocks:
         return 0
@@ -817,13 +828,10 @@ def _extract_msps(read, bed_out, with_scores: bool,
     for i, (qstart, length) in enumerate(zip(as_starts, al_lengths)):
         qend = qstart + length
 
-        ref_start = _q2r_lookup(query_to_ref, qstart)
-        ref_end = _q2r_lookup(query_to_ref, qend - 1)
-
-        if ref_start is None or ref_end is None:
+        block = _query_span_to_ref_block(query_to_ref, qstart, qend)
+        if block is None:
             continue
-
-        ref_start, ref_end = min(ref_start, ref_end), max(ref_start, ref_end) + 1
+        ref_start, ref_end = block
 
         score = 0
         if scores is not None and i < len(scores):
@@ -1289,12 +1297,10 @@ def _extract_both_strand(read, bed_out, query_to_ref=None,
 
     blocks = []
     for query_start, query_end in _interval_intersection(plus, minus):
-        ref_start = _q2r_lookup(query_to_ref, query_start)
-        ref_end = _q2r_lookup(query_to_ref, query_end - 1)
-        if ref_start is None or ref_end is None:
+        block = _query_span_to_ref_block(query_to_ref, query_start, query_end)
+        if block is None:
             continue
-        ref_start, ref_end = min(ref_start, ref_end), max(ref_start, ref_end) + 1
-        blocks.append((ref_start, ref_end))
+        blocks.append(block)
     if not blocks:
         return 0
     blocks.sort()
