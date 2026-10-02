@@ -247,6 +247,21 @@ def declared_run_mask(header) -> Optional[tuple]:
     return found
 
 
+def _last_fiberhmm_writer(header) -> Optional[dict]:
+    """``{program, version}`` of the last FiberHMM footprint writer in @PG."""
+    from fiberhmm.io.annotation_frame import FIBERHMM_FOOTPRINT_PROGRAMS
+
+    try:
+        programs = (header.to_dict() if hasattr(header, "to_dict") else dict(header)).get("PG", [])
+    except (TypeError, ValueError, AttributeError):
+        return None
+    found = None
+    for program in programs:
+        if program.get("PN") in FIBERHMM_FOOTPRINT_PROGRAMS:
+            found = {"program": program.get("PN"), "version": program.get("VN")}
+    return found
+
+
 def _sample_order(reads, seed: int) -> list:
     """Indices of ``reads`` in a seeded hash order (a random, reproducible
     order, whatever order the sampler returned them in)."""
@@ -522,9 +537,11 @@ def compute_state_rates(
             stack.enter_context(pysam.FastaFile(reference_fasta))
             if reference_fasta else None
         )
-        # Calling's SNP mask is a process-wide setting that QC never changes
-        # (QC may run inside fiberhmm-call, whose mask is the same one); the
-        # QC mask is applied per read below.
+        # The QC mask replaces calling's process-wide one in this context only
+        # (QC may run inside fiberhmm-call or beside other jobs): extraction
+        # drops masked events before the chimera filter, as calling does, and
+        # the masked sites are also removed as opportunities below.
+        stack.enter_context(engine.daf_snp_mask_scope(snp_mask or {}))
 
         for read, intervals in zip(eligible, tagged):
             if caller is not None:
@@ -626,8 +643,11 @@ def compute_state_rates(
             float(np.median(msp_fraction_per_read)) if msp_fraction_per_read else None),
         "terminal_excluded_opportunities": int(totals["excluded_opps"]),
     })
-    if source == "tags":
+    if source in ("tags", "fibertools_tags"):
         block["tag_frames"] = {"MA": frames.get("MA"), "legacy": frames.get("legacy")}
+        # Which FiberHMM wrote the calls: graded against this release's calls,
+        # so older producers are worth a look when a grade is borderline.
+        block["tag_producer"] = _last_fiberhmm_writer(header)
         block["reads"]["reads_with_calls"] = int(n_tagged)
     else:
         block["light_call"] = {

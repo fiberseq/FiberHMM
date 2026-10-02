@@ -147,6 +147,10 @@ one read in progress finishes; a time-stopped subset depends on machine
 speed) (`source: light_call`, with model, SHA-256, reads called and what
 stopped it). fibertools' own calls (`Ma` without `MA`) are reported as
 `fibertools_tags` and not graded, since the references are FiberHMM calls.
+Calls from any FiberHMM version are graded against references called by this
+release (`state_rates.tag_producer` records the writer); tagged reads are
+re-encoded with the bundled model's context size and a 10-bp edge trim, as
+linear molecules.
 `--state-source tags|light-call|none` forces a source or skips.
 
 **Opportunities** are read off the observation encoding calling uses, so they

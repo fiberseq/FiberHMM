@@ -254,11 +254,15 @@ def test_daf_snp_mask_removes_opportunities_without_touching_calling_state(tmp_p
                         if b == "C" and p not in mods and _in_planted_msp(p) and p > CAP)
     snp = {"chr1": {1000 + masked_event, 1000 + masked_plain}}
     sentinel = {"chrX": {1}}
+    plain, _ = compute_state_rates([read], "daf", "dddb", header=header)
     engine._DAF_SNP_MASK, previous = sentinel, engine._DAF_SNP_MASK
     try:
-        plain, _ = compute_state_rates([read], "daf", "dddb", header=header)
         block, _ = compute_state_rates([read], "daf", "dddb", header=header, snp_mask=snp)
         assert engine._DAF_SNP_MASK is sentinel
+        # A calling process's own mask never leaks into QC's counts.
+        engine._DAF_SNP_MASK = {"chr1": {1000 + masked_event}}
+        ambient, _ = compute_state_rates([read], "daf", "dddb", header=header)
+        assert ambient["msp"] == plain["msp"]
     finally:
         engine._DAF_SNP_MASK = previous
     assert block["msp"]["n_opportunities"] == plain["msp"]["n_opportunities"] - 2
@@ -560,3 +564,32 @@ def test_pipeline_qc_verdicts_carry_state_fields(tmp_path):
     assert set(qc_verdicts(str(path))) == {
         "overall", "overall_score", "signal", "signal_score",
         "periodicity", "periodicity_score"}
+
+
+def test_snp_masked_opposite_strand_events_do_not_make_a_read_chimeric():
+    """The QC mask reaches extraction before the strand-swap chimera filter,
+    as calling's mask does."""
+    header = pysam.AlignmentHeader.from_dict({
+        "HD": {"VN": "1.6"}, "SQ": [{"SN": "chr1", "LN": 100_000}],
+        "PG": [{"ID": "fiberhmm-call", "PN": "fiberhmm-call",
+                "DS": "mode=daf enzyme=dddb coord=molecular daf_run_mask=off"}]})
+    molecule = list(_sequence(seed=10))
+    cs = [p for p, b in enumerate(molecule) if b == "C"]
+    gs = [p for p, b in enumerate(molecule) if b == "G" and p > 2000]
+    for p in cs[: len(cs) // 2:3]:
+        molecule[p] = "Y"
+    for p in gs[:8]:
+        molecule[p] = "R"
+    read = pysam.AlignedSegment(header)
+    read.query_name, read.flag, read.reference_id = "chim", 0, 0
+    read.query_sequence = "".join(molecule)
+    read.reference_start, read.mapping_quality = 0, 60
+    read.cigartuples = [(0, L)]
+    read.set_tag("st", "CT")
+    read.set_tag("MA", f"{L};msp.:301-400")
+    unmasked, _ = compute_state_rates([read], "daf", "dddb", header=header)
+    masked, _ = compute_state_rates([read], "daf", "dddb", header=header,
+                                    snp_mask={"chr1": set(gs[:8])})
+    assert unmasked["reads"]["reads_chimera_skipped"] == 1
+    assert masked["reads"]["reads_chimera_skipped"] == 0
+    assert masked["reads"]["reads_used"] == 1
