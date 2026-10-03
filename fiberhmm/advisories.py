@@ -1372,8 +1372,9 @@ def check_consensus(path, *, index: Optional[dict] = None) -> list[Advisory]:
     run_manifest = root / "consensus_run.json"
     if not manifests and not run_manifest.is_file():
         raise AdvisoryInputError(f"{path}: no consensus manifest.json or consensus_run.json")
-    rule = idx.rules["recaller-tier-double-count"]
-    findings = []
+    tiers_rule = idx.rules["recaller-tier-double-count"]
+    discovery_rule = idx.rules["recaller-lumped-discovery"]
+    tier_findings, discovery_findings = [], []
     versions = []
     if run_manifest.is_file():
         attempts = _read_json(str(run_manifest)).get("attempts", [])
@@ -1387,8 +1388,20 @@ def check_consensus(path, *, index: Optional[dict] = None) -> list[Advisory]:
         recaller = manifest.get("recaller") or {}
         if not isinstance(recaller, dict):
             raise AdvisoryInputError(f"{manifest_path}: malformed recaller (not a JSON object)")
+        where = manifest_path.parent.name if manifest_path.parent != root else root.name
+        parameters = manifest.get("parameters")
+        recorded = parameters.get("recaller") if isinstance(parameters, dict) else None
+        if isinstance(recorded, dict):
+            if "core_resplit_depth" not in recorded:
+                discovery_findings.append(_Finding(AFFECTED, "medium", [
+                    f"{where}: lattice-recaller parameters have no recaller.core_resplit_depth, "
+                    "which the same fix added"]))
+        else:
+            discovery_findings.append(_Finding(POSSIBLY, "low", [
+                f"{where}: lattice-recaller manifest records no recaller parameters, so whether "
+                "discovery re-split candidates that failed the core rule is unknown"]))
         if "unscored_classes" in recaller:
-            continue  # written by code with the fix (same commit added the field)
+            continue  # written by code with the tier fix (same commit added the field)
         classes = manifest_path.parent / "classes.tsv"
         tiers = None
         if classes.is_file():
@@ -1399,20 +1412,23 @@ def check_consensus(path, *, index: Optional[dict] = None) -> list[Advisory]:
                 raise AdvisoryInputError(f"{classes}: {error}") from error
         if tiers is False:
             continue  # predates prevalence tiers
-        if versions and all(v and _version_tuple(v) >= _version_tuple(rule["fixed_in"]["version"])
+        if versions and all(v and _version_tuple(v) >= _version_tuple(tiers_rule["fixed_in"]["version"])
                             for v in versions):
             continue
-        where = manifest_path.parent.name if manifest_path.parent != root else root.name
         if tiers:
-            findings.append(_Finding(AFFECTED, "medium", [
+            tier_findings.append(_Finding(AFFECTED, "medium", [
                 f"{where}: lattice-recaller manifest has prevalence tiers but no "
                 "recaller.unscored_classes, which the same fix added"]))
         else:
-            findings.append(_Finding(POSSIBLY, "low", [
+            tier_findings.append(_Finding(POSSIBLY, "low", [
                 f"{where}: lattice-recaller manifest predates the fix; classes.tsv is "
                 "missing, so whether it has prevalence tiers is unknown"]))
-    combined = _combine(findings)
-    return [_make(rule, combined, path=str(root))] if combined else []
+    found = []
+    for rule, findings in ((tiers_rule, tier_findings), (discovery_rule, discovery_findings)):
+        combined = _combine(findings)
+        if combined:
+            found.append(_make(rule, combined, path=str(root)))
+    return found
 
 
 def _read_json(path: str) -> dict:

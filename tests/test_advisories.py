@@ -347,23 +347,37 @@ def test_posteriors_files(tmp_path):
 
 
 def test_consensus_results(tmp_path):
-    def result(name, recaller, columns):
+    def result(name, recaller, columns, parameters=None):
         folder = tmp_path / name
         folder.mkdir()
-        (folder / "manifest.json").write_text(json.dumps(
-            {"schema": "fiberhmm.consensus.v1", "cr_mode": "lattice_recaller",
-             "recaller": recaller}))
+        manifest = {"schema": "fiberhmm.consensus.v1", "cr_mode": "lattice_recaller", "recaller": recaller}
+        if parameters is not None:
+            manifest["parameters"] = {"recaller": parameters}
+        (folder / "manifest.json").write_text(json.dumps(manifest))
         (folder / "classes.tsv").write_text("\t".join(columns) + "\n")
         return folder
 
-    before = result("before", {"classes": 3}, ["class_id", "prevalence", "prevalence_edge"])
-    (advisory,) = check_path(before)
-    assert advisory.id == "recaller-tier-double-count" and advisory.status == "affected"
+    fixed_parameters = {"stringency": 0.9, "core_resplit_depth": 2}
+    before = result("before", {"classes": 3}, ["class_id", "prevalence", "prevalence_edge"], {"stringency": 0.9})
+    found = {a.id: a for a in check_path(before)}
+    assert set(found) == {"recaller-tier-double-count", "recaller-lumped-discovery"}
+    assert found["recaller-tier-double-count"].status == "affected"
+    assert found["recaller-lumped-discovery"].status == "affected"
+    assert found["recaller-lumped-discovery"].severity == "rerun-recommended"
     fixed = result("fixed", {"classes": 3, "unscored_classes": []},
-                   ["class_id", "prevalence", "prevalence_edge"])
+                   ["class_id", "prevalence", "prevalence_edge"], fixed_parameters)
     assert check_path(fixed) == []
-    no_tiers = result("no_tiers", {"classes": 3}, ["class_id", "prevalence"])
+    no_tiers = result("no_tiers", {"classes": 3}, ["class_id", "prevalence"], fixed_parameters)
     assert check_path(no_tiers) == []
+    # Tier fix present, discovery fix absent (a run between the two fixes).
+    between = result("between", {"classes": 3, "unscored_classes": []},
+                     ["class_id", "prevalence", "prevalence_edge"], {"stringency": 0.9})
+    (advisory,) = check_path(between)
+    assert advisory.id == "recaller-lumped-discovery" and advisory.status == "affected"
+    # No recorded parameters: cannot tell, never clean.
+    unknown = result("unknown", {"classes": 3, "unscored_classes": []}, ["class_id", "prevalence", "prevalence_edge"])
+    (advisory,) = check_path(unknown)
+    assert advisory.id == "recaller-lumped-discovery" and advisory.status == "possibly_affected"
 
 
 # --- report / CLI --------------------------------------------------------------

@@ -139,6 +139,7 @@ of its region files is recognised and does not count.)
 | `qc-nanopore-opportunities` | rerun-recommended | QC | Nanopore `fiberhmm-qc` reports before 3.0 |
 | `qc-assay-misdetected` | rerun-required | QC | QC reports graded under an assay mode that is not one (`mode=flag`/`collapse` taken from `fiberhmm-dedup`'s `@PG`) |
 | `recaller-tier-double-count` | rerun-recommended | consensus tiers | lattice-recaller results with edge/loose tiers before the fix |
+| `recaller-lumped-discovery` | rerun-recommended | consensus classes | lattice-recaller results whose parameters lack `recaller.core_resplit_depth`: candidates that pooled neighbouring footprints were dropped, and stability came from one split-half |
 | `hia5-nanopore-ml-threshold` | info | calls | ONT Hia5 called at the 2.x default ML threshold |
 | `primary-only-default` | info | calls | secondary/supplementary alignments called (2.x default) |
 | `ddda-cpg-mask-default` | info | calls | DddA recall with CpG observations (2.x default) |
