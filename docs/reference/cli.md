@@ -41,7 +41,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `reads` | required | Read files: FASTQ (.fastq/.fq, optionally .gz), unaligned BAM, a BAM aligned to --reference, or a directory of them. All reads given form one sample. |
+| `reads` | required | Read files: FASTQ (.fastq/.fq, optionally .gz), unaligned BAM, a BAM aligned to --reference, raw Nanopore POD5 files (basecalled with dorado first), or a directory of them (a directory with POD5 files, searched recursively, is raw input). All reads given form one sample. |
 | `--reference` | required | Reference FASTA, or a plasmid map (.dna, .gb/.gbk/.genbank, .embl) converted to a FASTA whose contig is named as FiberBrowser names the map. |
 | `--enzyme` | required | Chemistry: ddda / dddb (DAF-seq) or hia5 (Fiber-seq). Choices: `ddda`, `dddb`, `hia5`. |
 | `-o` / `--outdir` | required | Output directory. |
@@ -72,8 +72,18 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--call-args` | — | Other fiberhmm-call options, quoted as one string (e.g. --call-args "--with-scores --min-llr 6"). |
 | `--call-mode` | `auto` | auto (default): fiberhmm-call's resumable region-parallel mode for genome-scale data (&gt;=20,000 reads over at least --cores regions), streaming for targeted runs (one amplicon or plasmid), which it calls faster. Choices: `auto`, `streaming`, `resumable`. |
 | `--no-qc` | off | Skip fiberhmm-qc. |
+| `--basecaller-info` | — | Record the basecaller of reads whose files do not say (FASTQ), or correct it: key=value pairs, e.g. "program=dorado version=0.9.6 basecall_model=dna_r10.4.1_e8.2_400bps_sup@v5.0.0" (keys: program, version, basecall_model, modbase_models). Takes precedence over the input headers. |
+| `--modbase-model` | — | The modification model that called the MM/ML tags (e.g. dna_r10.4.1_e8.2_400bps_sup@v5.0.0_6mA@v2; repeatable or comma-separated; 'none' for none). Takes precedence over the input headers. |
+| `--dorado` | — | The dorado program (or its install folder). Default: $FIBERHMM_DORADO, PATH, then the usual install locations. |
+| `--dorado-model` | — | dorado basecalling model: fast/hac/sup[@vX.Y.Z], a model complex such as sup,6mA, or a model folder (default sup). |
+| `--dorado-modified-bases` | — | dorado --modified-bases codes (default: 6mA for hia5, none for ddda/dddb, whose deaminations are read from the sequence); 'none' to basecall without a modification model. |
+| `--dorado-modbase-models` | — | dorado --modified-bases-models: comma-separated model names or paths (instead of --dorado-modified-bases). |
+| `--dorado-device` | `auto` | dorado --device: auto (default), metal, cuda:all, cuda:0, cpu. |
+| `--dorado-batchsize` | — | dorado --batchsize (default: dorado chooses). |
+| `--dorado-models-dir` | — | Where dorado keeps downloaded models (default $FIBERHMM_DORADO_MODELS_DIR or ~/.fiberhmm/dorado_models). |
+| `--dorado-args` | — | Other dorado basecaller options, quoted as one string (e.g. --dorado-args "--min-qscore 8"). |
 | `--tracks` | off | Also extract nucleosome/MSP/TF/deamination (or m6A) tracks into OUTDIR/tracks (bigBed; BED without bedToBigBed). |
-| `--redo` | — | Redo this step and the later ones although complete (also needed to change the inputs or settings of an existing OUTDIR; discards an interrupted call's resumable state). Choices: `all`, `align`, `call`, `qc`, `tracks`. |
+| `--redo` | — | Redo this step and the later ones although complete (also needed to change the inputs or settings of an existing OUTDIR; discards an interrupted call's resumable state). 'all' is every step after basecalling; only --redo basecall basecalls again. Choices: `all`, `basecall`, `align`, `call`, `qc`, `tracks`. |
 | `--progress-json` | — | Append JSON-lines progress events to FILE ('-' for stdout). |
 | `-v` / `--verbose` | off | Echo the output of fiberhmm-call, -qc and -extract. |
 | `-q` / `--quiet` | off | No progress messages on stderr. |
@@ -89,6 +99,8 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--enzyme` | — | Bundled enzyme preset. Choices: `ddda`, `dddb`, `hia5`. |
 | `--seq` | — | Sequencing platform. For Hia5 it selects the model; when omitted it is detected from the input (MM specs: PacBio T-a vs Nanopore A+a only; header records) and the run stops if the evidence conflicts. A given --seq that the reads contradict is refused (see --force-seq). For dddb/ddda it only sets the declared platform. Choices: `pacbio`, `nanopore`. |
 | `--force-seq` | off | Use the given --seq even when the input's MM specs or header say the reads come from the other platform (normally refused: the wrong platform model changes the calls, e.g. ~100x more TF calls for Nanopore reads called as PacBio), and run Hia5 even when the first reads carry no m6A calls. |
+| `--basecaller-info` | — | Basecaller provenance to record when the input does not say (or says wrongly): key=value pairs, e.g. "program=dorado version=0.9.6 basecall_model=dna_r10.4.1_e8.2_400bps_sup@v5.0.0" (keys: program, version, basecall_model, modbase_models). Default: read from the input header (@RG DS &gt; @PG CL &gt; per-read RG). |
+| `--modbase-model` | — | Modification model that called the input's MM/ML tags (repeatable or comma-separated; 'none' for none). Overrides the header. |
 | `--replace-chemistry` | off | Replace, instead of reconcile with, the input BAM's FIBERHMM-CHEMISTRY declaration (re-calling a BAM with a deliberately different chemistry). |
 | `--reference` | — | Reference FASTA for DAF-seq BAMs that lack both R/Y IUPAC encoding and MD tags. When present, acts as a fallback source for deamination-site detection (R/Y codes and a usable MD tag take precedence). Must match the BAM's assembly and be faidx-indexed. |
 | `-k` / `--context-size` | — | Context size override. Default: from model. |
