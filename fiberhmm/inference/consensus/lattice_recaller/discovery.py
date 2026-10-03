@@ -97,9 +97,13 @@ def nominate(units, opt):
     """Candidates at the chosen k: the largest k <= kmax with prediction strength >= stringency, each with its
     split-averaged stability (cluster_stability; 1.0 when k = 1)."""
     X, meta = features(units, opt.censor_bp)
+    return _nominate(X, meta, [units[m[0]]['uid'] for m in meta], opt)
+
+
+def _nominate(X, meta, groups, opt, prefix='c'):
+    """nominate() on given calls (features X, their meta rows and molecule IDs); candidate IDs are prefix + cluster."""
     if len(X) < 2:
         return [], 0, []
-    groups = [units[m[0]]['uid'] for m in meta]
     kmax = max(2, min(opt.kmax, len(X)//(2*MIN_MOLECULES)))
     scored = {k: prediction_strength(X, groups, k, opt.seed, opt.prediction_splits) for k in range(1, kmax + 1)}
     choice = [(k, scored[k][0]) for k in range(1, kmax + 1)]
@@ -110,7 +114,7 @@ def nominate(units, opt):
         idx = np.where(lab == j)[0]
         if len(idx) < opt.minimum_candidate_calls:
             continue
-        cands.append(dict(id=f'c{j}', members=[f'c{j}'], calls=[meta[i] for i in idx], X=X[idx],
+        cands.append(dict(id=f'{prefix}{j}', members=[f'{prefix}{j}'], calls=[meta[i] for i in idx], X=X[idx],
                           stability=cluster_stability(idx, scored[k][1]) if k > 1 else 1.0))
     return cands, k, choice
 
@@ -241,19 +245,54 @@ def agglomerate(cands, units, opt, cache=None):
         m = merge(cur[i], cur[j]); cur = [c for t, c in enumerate(cur) if t not in (i, j)] + [m]
 
 
+def core_bp(c, opt):
+    """Protected DNA between a candidate's core-rule boxes (negative when they overlap)."""
+    core = boxes(c, (opt.core_quantile_low, opt.core_quantile_high))
+    return core['R'][0] - core['L'][1]
+
+
+def resplit(c, units, opt, depth, log):
+    """A stable candidate that fails the core rule, clustered again on its own calls.
+
+    Its core-rule boxes overlap: the middle half of its calls share no protected core, so k-means has pooled calls of
+    neighbouring footprints (a tile's k is held down by its least stable cluster). Rather than dropping them all, its
+    calls go through the same discovery again: prediction-strength k, split-averaged stability and identity merging.
+    When that finds two or more candidates they replace it, and any of them that still fails the core rule is split
+    again, up to depth levels. Children meet every rule a first-pass candidate does, so a single dispersed class
+    (k = 1, or children that merge back) is unchanged and still dropped by the core rule."""
+    if depth <= 0 or c['stability'] < opt.stringency or core_bp(c, opt) >= opt.minimum_core_bp:
+        return [c]
+    sub, k, choice = _nominate(c['X'], c['calls'], [units[m[0]]['uid'] for m in c['calls']], opt, prefix=c['id'] + '/')
+    kids, merges = agglomerate(sub, units, opt) if k > 1 else (sub, [])
+    log.append(dict(parent=c['id'], core_bp=core_bp(c, opt), k=k, children=[x['id'] for x in kids], merges=merges))
+    if len(kids) < 2:
+        return [c]
+    return [g for x in kids for g in resplit(x, units, opt, depth - 1, log)]
+
+
 def discover_tile(units, opt):
     """Final classes of one tile: stable merged candidates with their pooled geometry (sorted by left edge)."""
     cands, k, choice = nominate(units, opt)
-    final, log = agglomerate(cands, units, opt)
+    cache = {}
+    final, log = agglomerate(cands, units, opt, cache)
+    splits = []
+    if opt.core_resplit_depth > 0:
+        final = [g for c in final for g in resplit(c, units, opt, opt.core_resplit_depth, splits)]
+        if any(len(s['children']) > 1 for s in splits):
+            # Children can overlap candidates their parent did not (or another parent's children): one identity pass
+            # over the whole set, so they meet the same merge test as first-pass candidates.
+            final, more = agglomerate(final, units, opt, cache)
+            log = log + more
     out = []
     for c in final:
         if c['stability'] < opt.stringency:
             continue
-        g = boxes(c, (opt.edge_quantile_low, opt.edge_quantile_high)); core = boxes(c, (opt.core_quantile_low, opt.core_quantile_high))
-        out.append(dict(g, core_bp=core['R'][0] - core['L'][1], calls=len(c['calls']), stability=c['stability'], candidate=c['id'],
+        g = boxes(c, (opt.edge_quantile_low, opt.edge_quantile_high))
+        out.append(dict(g, core_bp=core_bp(c, opt), calls=len(c['calls']), stability=c['stability'], candidate=c['id'],
                         molecules=len({units[m[0]]['uid'] for m in c['calls']})))
     out.sort(key=lambda g: g['span'][0])
-    return out, dict(k=k, prediction_strength=[[kk, round(ps, 4)] for kk, ps in choice], merges=log)
+    return out, dict(k=k, prediction_strength=[[kk, round(ps, 4)] for kk, ps in choice], merges=log,
+                     **({'resplits': splits} if splits else {}))
 
 
 def core_width(g):

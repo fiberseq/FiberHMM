@@ -12,6 +12,7 @@ from fiberhmm.inference.consensus.lattice_recaller import discovery as D
 from fiberhmm.inference.consensus.parameters import RecallerOptions
 
 SITES = np.arange(0, 1000, 4)
+PA, PP = 0.8, 0.02
 
 
 def _units(n, footprints, jitter, seed=11, prefix='m'):
@@ -21,7 +22,9 @@ def _units(n, footprints, jitter, seed=11, prefix='m'):
     for i in range(n):
         a, b = footprints[i % len(footprints)]
         a += int(rng.integers(-jitter, jitter + 1)); b += int(rng.integers(-jitter, jitter + 1))
-        out.append(dict(uid=f'{prefix}{i}', pos=SITES, hit=(SITES < a) | (SITES >= b), calls=[(a, b, 50.)]))
+        hit = (SITES < a) | (SITES >= b)
+        d = np.where(hit, np.log(PP) - np.log(PA), np.log1p(-PP) - np.log1p(-PA))
+        out.append(dict(uid=f'{prefix}{i}', ch='ds::CT', pos=SITES, hit=hit, d=d, calls=[(a, b, 50.)]))
     return out
 
 
@@ -117,3 +120,51 @@ def test_single_cluster_is_fully_stable():
     units = _units(60, [(300, 340)], jitter=0); opt = _opt(stringency=1.)
     cands, k, choice = D.nominate(units, opt)
     assert k == 1 and len(cands) == 1 and cands[0]['stability'] == 1.0 and choice[0] == (1, 1.0)
+
+
+# ---------------------------------------------------------------- core rule: re-split instead of drop
+NEIGHBOURS = [(300, 330), (345, 380)]     # pooled: the middle half of calls shares no protected core
+
+
+def _pooled(units, opt, cid='c0'):
+    X, meta = D.features(units, opt.censor_bp)
+    return dict(id=cid, members=[cid], calls=meta, X=X, stability=1.0)
+
+
+def test_candidate_failing_the_core_rule_is_split_into_its_footprints():
+    units = _units(240, NEIGHBOURS, jitter=2); opt = _opt()
+    lumped = _pooled(units, opt)
+    assert D.core_bp(lumped, opt) < opt.minimum_core_bp
+    log = []
+    kids = D.resplit(lumped, units, opt, opt.core_resplit_depth, log)
+    assert len(kids) == 2 and all(k['id'].startswith('c0/') for k in kids)
+    spans = sorted(tuple(np.round(D.boxes(k)['span'])) for k in kids)
+    assert all(abs(s[0] - a) <= 3 and abs(s[1] - b) <= 3 for s, (a, b) in zip(spans, NEIGHBOURS))
+    assert all(D.core_bp(k, opt) >= opt.minimum_core_bp and k['stability'] >= opt.stringency for k in kids)
+    assert sorted(m for k in kids for m in k['calls']) == sorted(lumped['calls'])    # every call kept, once
+    assert log[0]['parent'] == 'c0' and log[0]['k'] >= 2     # finer k-means clusters of one footprint merge back (identity test)
+
+
+def test_resplit_leaves_a_single_dispersed_class_and_respects_its_switches():
+    opt = _opt()
+    wide = _units(120, [(300, 320)], jitter=20)       # one footprint whose edges scatter: no core, but one class
+    c = _pooled(wide, opt)
+    assert D.core_bp(c, opt) < opt.minimum_core_bp
+    assert D.resplit(c, wide, opt, 2, []) == [c]       # still dropped by the core rule, as before
+    units = _units(240, NEIGHBOURS, jitter=2); lumped = _pooled(units, opt)
+    assert D.resplit(lumped, units, opt, 0, []) == [lumped]
+    assert D.resplit(lumped, units, _opt(minimum_core_bp=-1000), 2, []) == [lumped]
+    unstable = dict(lumped, stability=.5)
+    assert D.resplit(unstable, units, opt, 2, []) == [unstable]
+
+
+def test_discover_tile_keeps_the_footprints_of_a_lumped_candidate(monkeypatch):
+    units = _units(240, NEIGHBOURS, jitter=2); opt = _opt()
+    monkeypatch.setattr(D, 'nominate', lambda u, o: ([_pooled(u, o)], 1, [(1, 1.0)]))
+    off, _ = D.discover_tile(units, _opt(core_resplit_depth=0))
+    assert len(off) == 1 and off[0]['core_bp'] < opt.minimum_core_bp          # dropped later by the core rule
+    on, diag = D.discover_tile(units, opt)
+    assert len(on) == 2 and all(g['core_bp'] >= opt.minimum_core_bp for g in on)
+    assert diag['resplits'][0]['parent'] == 'c0'
+    again, _ = D.discover_tile(units, opt)
+    assert [(g['span'], g['stability'], g['core_bp']) for g in again] == [(g['span'], g['stability'], g['core_bp']) for g in on]
