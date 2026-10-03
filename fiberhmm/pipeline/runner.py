@@ -487,13 +487,17 @@ def call_parser_defaults() -> dict:
         return {}
     out = {}
     for action in parser._actions:
-        if not action.option_strings or action.dest in ("help", "version"):
+        dest = action.dest
+        if not action.option_strings or dest in ("help", "version") or dest in out:
             continue
-        default = action.default
+        # One value per destination, as argparse resolves it: aliases such as
+        # --primary/--no-primary (store_const, default None) share --alignments'
+        # destination and must not overwrite its default.
+        default = parser.get_default(dest)
         if default is None or isinstance(default, (bool, int, float, str)):
-            out[action.dest] = default
+            out[dest] = default
         else:
-            out[action.dest] = repr(default)
+            out[dest] = repr(default)
     return dict(sorted(out.items()))
 
 

@@ -777,3 +777,12 @@ def test_crossstrand_recall_helper_has_no_periodicity_prior_by_default():
                 if "phase_nrl" in inspect.signature(f).parameters
                 and f.__module__ == recall.__name__)
     assert inspect.signature(func).parameters["phase_nrl"].default == 0
+
+
+def test_call_fingerprint_records_the_alignment_default():
+    """--primary/--no-primary share --alignments' destination; the recorded
+    default is the one fiberhmm-call resolves."""
+    from fiberhmm.pipeline.runner import call_parser_defaults
+    assert call_parser_defaults()["alignments"] == "primary-supplementary"
+    assert call_parser_defaults()["daf_mask_unaligned"] is True
+    assert call_parser_defaults()["daf_insert_consensus"] == "auto"
