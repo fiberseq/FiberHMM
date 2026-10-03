@@ -102,10 +102,14 @@ each class is then scored on each channel.
    has usually pooled the calls of neighbouring footprints, so its calls are
    first clustered again by the same rules (prediction-strength k, stability,
    identity merging), up to `core_resplit_depth` (2) times; only what still
-   fails is dropped. Classes found in two overlapping
-   tiles are deduplicated. `call_max_bp` may not exceed the tile overlap
-   (`tile_bp − tile_step_bp`); larger values are rejected because wide
-   footprints straddling an overlap could not be discovered.
+   fails is dropped. The new candidates then meet the tile's other valid
+   candidates in one more identity pass, which never makes a merge that would
+   fail the core rule. Where many candidates are split (dense, narrow Hia5
+   footprints) discovery and scoring take several times longer. Classes found
+   in two overlapping tiles are deduplicated (after the core rule, so a
+   dropped geometry never hides a valid one). `call_max_bp` may not exceed
+   the tile overlap (`tile_bp − tile_step_bp`); larger values are rejected
+   because wide footprints straddling an overlap could not be discovered.
 3. **Scoring, per overlap group × channel.** Classes whose spans overlap form
    a group. Every molecule that spans the group's edge boxes plus `flank_bp`
    (25) is scored against: each class; broader protection (one interval over

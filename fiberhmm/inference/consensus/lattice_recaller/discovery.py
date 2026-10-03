@@ -224,11 +224,14 @@ def identity_gain(a, b, units, opt):
     return float(gain), int(sum(len(E) for E, _, _ in per_ch))
 
 
-def agglomerate(cands, units, opt, cache=None):
-    """Merge overlapping candidates, smallest held-out gain first, while the gain is below identity_nats."""
+def agglomerate(cands, units, opt, cache=None, admissible=None):
+    """Merge overlapping candidates, smallest held-out gain first, while the gain is below identity_nats.
+
+    cache: {frozenset of two candidate IDs: identity_gain}, shared between passes (an ID always names the same calls).
+    admissible: optional test of a merged candidate; a pair whose merge fails it is not merged."""
     cur = list(cands); cache = {} if cache is None else cache; log = []
     while True:
-        best = None
+        pairs = []
         for i in range(len(cur)):
             for j in range(i + 1, len(cur)):
                 if not overlaps(cur[i], cur[j]):
@@ -237,12 +240,14 @@ def agglomerate(cands, units, opt, cache=None):
                 if key not in cache:
                     cache[key] = identity_gain(cur[i], cur[j], units, opt)
                 g = cache[key][0]
-                if g < opt.identity_nats and (best is None or g < best[0]):
-                    best = (g, i, j)
+                if g < opt.identity_nats:
+                    pairs.append((g, i, j))
+        pairs.sort(key=lambda p: p[0])     # stable: equal gains keep traversal order
+        best = next(((g, i, j, m) for g, i, j in pairs for m in [merge(cur[i], cur[j])] if admissible is None or admissible(m)), None)
         if best is None:
             return cur, log
-        g, i, j = best; log.append((cur[i]['id'], cur[j]['id'], round(g, 2)))
-        m = merge(cur[i], cur[j]); cur = [c for t, c in enumerate(cur) if t not in (i, j)] + [m]
+        g, i, j, m = best; log.append((cur[i]['id'], cur[j]['id'], round(g, 2)))
+        cur = [c for t, c in enumerate(cur) if t not in (i, j)] + [m]
 
 
 def core_bp(c, opt):
@@ -251,23 +256,25 @@ def core_bp(c, opt):
     return core['R'][0] - core['L'][1]
 
 
-def resplit(c, units, opt, depth, log):
+def resplit(c, units, opt, depth, log, cache=None):
     """A stable candidate that fails the core rule, clustered again on its own calls.
 
-    Its core-rule boxes overlap: the middle half of its calls share no protected core, so k-means has pooled calls of
-    neighbouring footprints (a tile's k is held down by its least stable cluster). Rather than dropping them all, its
-    calls go through the same discovery again: prediction-strength k, split-averaged stability and identity merging.
-    When that finds two or more candidates they replace it, and any of them that still fails the core rule is split
-    again, up to depth levels. Children meet every rule a first-pass candidate does, so a single dispersed class
-    (k = 1, or children that merge back) is unchanged and still dropped by the core rule."""
+    Its core-rule boxes leave less than minimum_core_bp of protected DNA (usually they overlap): the middle half of its
+    calls share no protected core, so k-means has pooled calls of neighbouring footprints (a tile's k is held down by
+    its least stable cluster). Rather than dropping them all, its calls go through the same discovery again:
+    prediction-strength k, split-averaged stability (within these calls) and identity merging. When that finds two or
+    more candidates they replace it, and any of them that still fails the core rule is split again, up to depth levels
+    along each lineage. A single dispersed class (k = 1, or children that merge back) is returned unchanged and is still
+    dropped by the core rule. Child IDs are '(parent)/j', so an ID always names the same calls and identity gains can
+    be cached across passes."""
     if depth <= 0 or c['stability'] < opt.stringency or core_bp(c, opt) >= opt.minimum_core_bp:
         return [c]
-    sub, k, choice = _nominate(c['X'], c['calls'], [units[m[0]]['uid'] for m in c['calls']], opt, prefix=c['id'] + '/')
-    kids, merges = agglomerate(sub, units, opt) if k > 1 else (sub, [])
+    sub, k, choice = _nominate(c['X'], c['calls'], [units[m[0]]['uid'] for m in c['calls']], opt, prefix=f"({c['id']})/")
+    kids, merges = agglomerate(sub, units, opt, cache) if k > 1 else (sub, [])
     log.append(dict(parent=c['id'], core_bp=core_bp(c, opt), k=k, children=[x['id'] for x in kids], merges=merges))
     if len(kids) < 2:
         return [c]
-    return [g for x in kids for g in resplit(x, units, opt, depth - 1, log)]
+    return [g for x in kids for g in resplit(x, units, opt, depth - 1, log, cache)]
 
 
 def discover_tile(units, opt):
@@ -277,11 +284,15 @@ def discover_tile(units, opt):
     final, log = agglomerate(cands, units, opt, cache)
     splits = []
     if opt.core_resplit_depth > 0:
-        final = [g for c in final for g in resplit(c, units, opt, opt.core_resplit_depth, splits)]
+        final = [g for c in final for g in resplit(c, units, opt, opt.core_resplit_depth, splits, cache)]
         if any(len(s['children']) > 1 for s in splits):
             # Children can overlap candidates their parent did not (or another parent's children): one identity pass
-            # over the whole set, so they meet the same merge test as first-pass candidates.
-            final, more = agglomerate(final, units, opt, cache)
+            # over the stable candidates that pass the core rule, so children meet the same merge test as first-pass
+            # candidates. Candidates that will be dropped stay out of it, and a merge whose pooled calls would fail
+            # the core rule is not made, so no candidate that passed before the re-split is lost to it.
+            valid = lambda c: c['stability'] >= opt.stringency and core_bp(c, opt) >= opt.minimum_core_bp
+            merged, more = agglomerate([c for c in final if valid(c)], units, opt, cache, admissible=valid)
+            final = merged + [c for c in final if not valid(c)]
             log = log + more
     out = []
     for c in final:

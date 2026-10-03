@@ -156,7 +156,7 @@ def test_candidate_failing_the_core_rule_is_split_into_its_footprints():
     assert D.core_bp(lumped, opt) < opt.minimum_core_bp
     log = []
     kids = D.resplit(lumped, units, opt, opt.core_resplit_depth, log)
-    assert len(kids) == 2 and all(k['id'].startswith('c0/') for k in kids)
+    assert len(kids) == 2 and all(k['id'].startswith('(c0)/') for k in kids)
     spans = sorted(tuple(np.round(D.boxes(k)['span'])) for k in kids)
     assert all(abs(s[0] - a) <= 3 and abs(s[1] - b) <= 3 for s, (a, b) in zip(spans, NEIGHBOURS))
     assert all(D.core_bp(k, opt) >= opt.minimum_core_bp and k['stability'] >= opt.stringency for k in kids)
@@ -187,3 +187,53 @@ def test_discover_tile_keeps_the_footprints_of_a_lumped_candidate(monkeypatch):
     assert diag['resplits'][0]['parent'] == 'c0'
     again, _ = D.discover_tile(units, opt)
     assert [(g['span'], g['stability'], g['core_bp']) for g in again] == [(g['span'], g['stability'], g['core_bp']) for g in on]
+
+
+def _cand(units, opt, cid, stability=1.0):
+    X, meta = D.features(units, opt.censor_bp)
+    return dict(id=cid, members=[cid], calls=meta, X=X, stability=stability)
+
+
+def test_global_identity_pass_never_costs_a_candidate_that_passed(monkeypatch):
+    """After a re-split, the identity pass runs over stable candidates that pass the core rule only, and refuses a
+    merge whose pooled calls would fail it: a doomed child cannot absorb (and so drop) a class that passed before."""
+    opt = _opt()
+    old = _cand(_units(120, [(300, 330)], jitter=2, prefix='a'), opt, 'c0')
+    parent = _cand(_units(240, NEIGHBOURS, jitter=2, prefix='p'), opt, 'c1')
+    good = dict(_cand(_units(120, [(500, 530)], jitter=2, prefix='g'), opt, '(c1)/0'))
+    doomed = _cand(_units(120, [(300, 330), (335, 365)], jitter=2, prefix='d'), opt, '(c1)/1')      # overlaps old
+    assert D.core_bp(old, opt) >= opt.minimum_core_bp > D.core_bp(doomed, opt)
+    units = [dict(uid=f'u{i}') for i in range(240)]       # molecule counts only; identity gains are stubbed
+    monkeypatch.setattr(D, 'nominate', lambda u, o: ([old, parent], 2, [(2, 1.0)]))
+    monkeypatch.setattr(D, 'identity_gain', lambda a, b, u, o: (0.0, 0))      # every overlapping pair "the same"
+    monkeypatch.setattr(D, 'overlaps', lambda a, b: {a['id'], b['id']} in ({'c0', '(c1)/1'}, {'c0', '(c1)/0'}))
+    monkeypatch.setattr(D, 'resplit', lambda c, u, o, depth, log, cache=None:
+                        (log.append(dict(parent=c['id'], children=['(c1)/0', '(c1)/1'])) or [good, doomed]) if c['id'] == 'c1' else [c])
+    out, diag = D.discover_tile(units, opt)
+    kept = [g for g in out if g['core_bp'] >= opt.minimum_core_bp]
+    assert sorted(g['candidate'] for g in kept) == ['(c1)/0', 'c0']        # old unchanged, doomed left to the core rule
+    assert next(g for g in out if g['candidate'] == 'c0')['calls'] == len(old['calls'])
+    # the admissibility test itself: two valid neighbours whose pooled calls share no core are not merged
+    monkeypatch.setattr(D, 'overlaps', lambda a, b: True)
+    left = _cand(_units(120, [(300, 330)], jitter=2, prefix='l'), opt, 'x0')
+    right = _cand(_units(120, [(335, 365)], jitter=2, prefix='r'), opt, 'x1')
+    valid = lambda c: D.core_bp(c, opt) >= opt.minimum_core_bp
+    assert valid(left) and valid(right)
+    merged, log = D.agglomerate([left, right], units, opt, {}, admissible=valid)
+    assert {c['id'] for c in merged} == {'x0', 'x1'} and log == []
+    merged, log = D.agglomerate([left, right], units, opt, {})
+    assert len(merged) == 1 and not valid(merged[0])      # what an unguarded pass would do
+
+
+def test_core_rule_applies_before_tiles_are_deduplicated(monkeypatch):
+    """A geometry the core rule drops (many calls, no core) must not suppress the same class found valid in another
+    tile."""
+    from fiberhmm.inference.consensus.lattice_recaller import workflow as W
+    opt = _opt()
+    invalid = dict(L=[290, 320], R=[310, 340], span=(300., 330.), core_bp=-10, calls=100, stability=1.)
+    valid = dict(L=[296, 302], R=[328, 334], span=(300.5, 330.), core_bp=26, calls=10, stability=1.)
+    tiles = iter([[invalid], [valid]])
+    monkeypatch.setattr(W.Un, 'tile_units', lambda *a, **k: [None]*opt.minimum_channel_units)
+    monkeypatch.setattr(W.D, 'discover_tile', lambda units, o: (next(tiles), dict(k=1, prediction_strength=[], merges=[])))
+    kept, dropped, _tiles, _diag = W.discover([], dict(start=0, end=600), opt, lambda *a, **k: None)
+    assert [g['core_bp'] for g in kept] == [26] and dropped == []
