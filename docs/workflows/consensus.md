@@ -98,10 +98,18 @@ each class is then scored on each channel.
    `_high`, 10/90, quantiles of its calls' censored edge ranges) and a span
    (the median edges). The core rule drops classes whose boxes (at the
    `core_quantile_low`/`_high` quantiles, 25/75) leave less than
-   `minimum_core_bp` (3) of protected DNA. Classes found in two overlapping
-   tiles are deduplicated. `call_max_bp` may not exceed the tile overlap
-   (`tile_bp − tile_step_bp`); larger values are rejected because wide
-   footprints straddling an overlap could not be discovered.
+   `minimum_core_bp` (3) of protected DNA. A stable candidate that fails it
+   has usually pooled the calls of neighbouring footprints, so its calls are
+   first clustered again by the same rules (prediction-strength k, stability,
+   identity merging), up to `core_resplit_depth` (2) times; only what still
+   fails is dropped. The new candidates then meet the tile's other valid
+   candidates in one more identity pass, which never makes a merge that would
+   fail the core rule. Where many candidates are split (dense, narrow Hia5
+   footprints) discovery and scoring take several times longer. Classes found
+   in two overlapping tiles are deduplicated (after the core rule, so a
+   dropped geometry never hides a valid one). `call_max_bp` may not exceed
+   the tile overlap (`tile_bp − tile_step_bp`); larger values are rejected
+   because wide footprints straddling an overlap could not be discovered.
 3. **Scoring, per overlap group × channel.** Classes whose spans overlap form
    a group. Every molecule that spans the group's edge boxes plus `flank_bp`
    (25) is scored against: each class; broader protection (one interval over
@@ -212,6 +220,7 @@ The `recaller` group:
 | `identity_nats`, `identity_folds`, `identity_pad_bp`, `identity_wide_bp`, `identity_max_width_bp` | 5.0, 3, 6, 40, 150 | held-out identity test that merges candidates |
 | `edge_quantile_low` / `_high` | 10 / 90 | edge boxes; 25/75 gives tighter boxes |
 | `minimum_core_bp`, `core_quantile_low` / `_high` | 3, 25 / 75 | core rule (−1000 disables it) |
+| `core_resplit_depth` | 2 | candidates that fail the core rule are clustered again on their own calls this many times before being dropped (0: dropped at once) |
 | `jitter_ddda_bp`, `jitter_dddb_bp`, `jitter_hia5_bp` | 0, 0, 0 | widen edge boxes outward per chemistry (about 10 helped Hia5 at one test site) |
 | `linker`, `linker_bp`, `flank_bp` | `both`, 5, 25 | accessible-linker rule and scoring window; `either` suits footprints against a nucleosome and sparse lattices such as DddB |
 | `class_weighting` | `bp` | weight configurations by the edge positions they cover (`bp`) or uniformly (`configurations`) |

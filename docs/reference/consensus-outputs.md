@@ -44,7 +44,7 @@ windows; and the exported families).
 | `start`, `end` | class span (median discovery edges) |
 | `L0`, `L1`, `R0`, `R1` | left and right edge boxes on this channel (contracted if edge contraction was kept) |
 | `status`, `unscored_reason` | `supported` / `unsupported` / `unscored`, and why a pair is unscored |
-| `calls`, `stability` | discovery calls in the class; prediction strength |
+| `calls`, `stability` | discovery calls in the class; its prediction strength, averaged over the split-halves |
 | `molecules` | molecules scored (for unscored rows: molecules in the window) |
 | `prevalence`, `prevalence_edge`, `prevalence_loose` | core, edge and loose tiers |
 | `prevalence_lower_bound` | Wilson 95% lower bound of the core prevalence |
@@ -110,7 +110,8 @@ receipt of a CL-CR run) and `recaller`:
   channel, reason, molecules);
 - `dropped_by_core_rule` (span and core width of each dropped candidate);
 - `tiles` and per-tile `discovery` diagnostics (k chosen, prediction
-  strength per k, merges);
+  strength per k, merges, and `resplits`: each candidate that failed the core
+  rule and was clustered again, with its core width, k and children);
 - `order_robustness`, only with `--robust N`: `orderings` (N+1),
   `replicates` (N), `salts` (0 is the default order), `robust_fraction`,
   `rule`, `matching`, `discovered_per_ordering`, `supported_per_ordering`,

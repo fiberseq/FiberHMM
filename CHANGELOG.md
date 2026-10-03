@@ -285,6 +285,21 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   checkpoints from earlier runs are not reused). Class
   counts from earlier runs may differ for classes near the thresholds;
   well-supported classes are unchanged.
+- **Footprint-class discovery keeps footprints k-means pooled with a
+  neighbour.** When a tile's k was held down by its least stable cluster,
+  k-means could pool the calls of neighbouring footprints into one
+  candidate. That candidate failed the core rule and was dropped, and every
+  footprint in it was lost. At NAPA's secondary NFR this dropped the
+  strongest class (47,518,363–386) under some read orders. On ind Hia5,
+  whose footprints are narrow and close together, it dropped 15 of 18
+  candidates and left no supported class. Such a candidate is now clustered
+  again on its own calls under the same rules (`recaller.core_resplit_depth`,
+  default 2; 0 restores the old drop). Tiles are now deduplicated after the
+  core rule, so a dropped geometry no longer hides the same class found
+  valid in another tile. Separately, a class's stability is
+  now its prediction strength averaged over every split-half. It used to
+  come from one split, because per-split values were keyed by rounded
+  centroids that rarely matched.
 - **Nanopore Hia5 emission table.** The bundled table was indexed in
   alphabetical (ACGT) context order while the encoder uses A, C, T, G, so every
   context containing G or T read another context's emission in all 2.x
