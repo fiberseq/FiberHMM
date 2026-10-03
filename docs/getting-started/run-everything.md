@@ -54,8 +54,10 @@ model for `hia5`, no modification model for `ddda`/`dddb`. Change them with:
 
 Basecalling resumes: if dorado stops (a cancelled job, a crash), the next
 run keeps the reads already written and asks dorado to continue
-(`--resume-from`); finished basecalling is never repeated. Only
-`--redo basecall` basecalls again (`--redo all` redoes every step after it).
+(`--resume-from`); finished basecalling is never repeated. A run with
+another dorado version, model or POD5 set is refused rather than mixed with
+the earlier basecalls. Only `--redo basecall` basecalls again (`--redo all`
+redoes every step after it).
 Current dorado versions read POD5 only; convert FAST5 with
 `pod5 convert fast5` first.
 
