@@ -92,26 +92,9 @@ It uses the same likelihood-ratio framework as the TF recaller (below) with
 the opposite sign: it looks for accessible stretches *inside* a protected
 footprint. A stretch whose accessible evidence exceeds `--split-min-llr` (4.0
 nats) over at least `--split-min-opps` (3) informative positions is a buried
-linker, and the footprint is split there. The geometry is set by
-`--nuc-recall-policy`:
-
-- `conservative` treats every qualifying accessible run as a cut and then
-  places conservative inner nucleosome edges.
-- `topology` (opt-in) accepts a set of cuts only if every fragment stays at
-  least `--nuc-min-size`, keeps the post-cut HMM fragments as the nucleosome
-  intervals, and records unresolved edges with zero edge bytes. Because it
-  keeps HMM edges and enforces a size floor, it leaves a pile-up just above
-  the floor and the HMM's ~10-bp edge comb in call-length distributions.
-- `auto` (default) uses `conservative` for every chemistry.
-
-An optional **periodicity prior** (`--phase-nrl`, default `off`) lowers the
-split threshold near linkers predicted by the nucleosome repeat length in
-protected blocks at least 1.5 repeat lengths long. `auto` estimates the
-repeat length from the sample (clamped to about 150–215 bp); a number fixes
-it. A cut needs only one local mark, and the 1.5-repeat eligibility cut
-leaves a step in nucleosome call lengths at that size, so it is off by
-default. Finally, nucleosome-sized protected
-calls exposed by the TF scan are promoted back to nucleosomes.
+linker, and the footprint is split there. Each remaining piece then gets
+conservative inner nucleosome edges from its protected evidence. Finally,
+nucleosome-sized protected calls exposed by the TF scan are promoted back to nucleosomes.
 
 ### DddA: phase-aware radial nucleosome recall
 

@@ -373,11 +373,9 @@ Examples:
                         'Reads the deam+/deam- regime and uses C and G targets jointly.')
     p.add_argument('--enzyme', default='ddda', help='Model preset for --recall (default ddda)')
     p.add_argument('--phase-nrl', type=int, default=0,
-                   help='Periodicity prior for consensus recall: nucleosome repeat length '
-                        'in bp, or 0 for off (default 0). DddA radial recall ignores it.')
+                   help=argparse.SUPPRESS)  # retired experimental mode (3.0); kept only to reproduce earlier calls
     p.add_argument('--nuc-recall-policy', choices=['conservative', 'topology'],
-                   default='conservative',
-                   help='Nucleosome geometry policy for consensus recall')
+                   default='conservative', help=argparse.SUPPRESS)  # retired experimental mode (3.0); kept only to reproduce earlier calls
     p.add_argument(
         '--ddda-derived-tf-max-edge-gap', type=int, default=12, metavar='BP',
         help='With --recall, require TF calls exposed solely by DddA radial '
