@@ -105,18 +105,28 @@ def test_merge_recall_keeps_the_declared_platform_of_the_input():
             header("assay=daf;enzyme=dddb;platform=nanopore;mode=daf"), **kwargs)
 
 
-def test_provenance_digest_rehashes_a_same_size_rewrite_with_restored_mtime(tmp_path):
-    """identity.file_sha256 follows the run_state memo rule (dev/inode/size/mtime/ctime):
-    replacing a table's bytes at equal size and restoring its mtime in one process
-    must not return the stale digest."""
+def test_provenance_digest_rehashes_a_same_size_rewrite_with_restored_mtime(tmp_path, monkeypatch):
+    """identity.file_sha256 follows the run_state memo rule (dev/inode/size/mtime/ctime,
+    racily clean): replacing a table's bytes at equal size and restoring its mtime in one
+    process must not return the stale digest -- even when the rewrite lands in the same
+    timestamp tick, so that every stat field is unchanged (seen on WSL2 ext4). The stat
+    key is frozen here to make that case deterministic on any filesystem."""
     import hashlib
     import os
 
+    from fiberhmm import identity
     from fiberhmm.identity import file_sha256
+    from fiberhmm.io import run_state
 
+    monkeypatch.setattr(identity, "_SHA_MEMO", None)
     table = tmp_path / "table.json"
     table.write_bytes(b"AAAA")
     stat = table.stat()
+    frozen = run_state.stat_key(table)
+    real_stat_key = run_state.stat_key
+    monkeypatch.setattr(run_state, "stat_key",
+                        lambda path: frozen if os.path.realpath(path) == str(table.resolve())
+                        else real_stat_key(path))
     first = file_sha256(table)
     assert first == hashlib.sha256(b"AAAA").hexdigest()
     table.write_bytes(b"TTTT")

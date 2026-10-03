@@ -993,8 +993,13 @@ def test_tests_never_use_the_real_index_cache():
     assert os.path.abspath(mm2.index_cache_dir()) != os.path.abspath(home_cache)
 
 
-def test_reference_digest_memo_drops_entries_of_gone_files(tmp_path):
+def test_reference_digest_memo_drops_entries_of_gone_files(tmp_path, monkeypatch):
+    from fiberhmm.io import run_state
     from fiberhmm.pipeline.reference import cached_fasta_digests
+
+    # Hash as if the files were old: just-written files are never remembered (racily clean).
+    real_now = run_state._now_ns
+    monkeypatch.setattr(run_state, "_now_ns", lambda: real_now() + 3600 * 10**9)
 
     cache = tmp_path / "cache"
     paths = []

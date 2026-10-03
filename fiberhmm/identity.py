@@ -79,7 +79,8 @@ def fiberhmm_commit() -> str | None:
 
 # Remembered digests follow the resume rule (fiberhmm.io.run_state): reused only
 # while device, inode, size, mtime and ctime are unchanged, and only remembered
-# when the file did not change while it was being hashed.
+# when the file did not change while it was being hashed and its timestamps
+# were safely older than the hash (not "racily clean").
 _SHA_MEMO = None
 
 
@@ -88,7 +89,8 @@ def file_sha256(path) -> str | None:
 
     Repeated calls in one process reuse a digest only under the
     :class:`fiberhmm.io.run_state.DigestMemo` rule, so a same-size rewrite
-    with its modification time restored is hashed again.
+    with its modification time restored is hashed again, even when it lands
+    in the same filesystem timestamp tick as the write before it.
     """
     global _SHA_MEMO
     if not path:

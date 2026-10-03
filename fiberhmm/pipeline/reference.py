@@ -298,7 +298,8 @@ def _digest_cache_path(cache_dir: str) -> str:
 
 def _prune_digest_memo(memo: dict, n_stat_fields: int) -> dict:
     """Entries whose file still exists unchanged (the memo is otherwise never
-    trimmed: deleted and rewritten files would accumulate)."""
+    trimmed: deleted and rewritten files would accumulate). Entries from before
+    the racily-clean rule (no ``hashed_at_ns``) are dropped: never trusted."""
     from fiberhmm.io.run_state import stat_key
     kept = {}
     for key, entry in memo.items():
@@ -309,7 +310,7 @@ def _prune_digest_memo(memo: dict, n_stat_fields: int) -> dict:
             current = "|".join(str(v) for v in stat_key(parts[0]))
         except OSError:
             continue
-        if current == "|".join(parts[1:]):
+        if current == "|".join(parts[1:]) and isinstance(entry, dict) and "hashed_at_ns" in entry:
             kept[key] = entry
     return kept
 
@@ -319,12 +320,18 @@ def cached_fasta_digests(path: str, cache_dir: Optional[str]) -> tuple[str, list
 
     Hashing a genome takes seconds; the memo keeps later runs instant. An entry
     is reused only while the file's device, inode, size, mtime and ctime are all
-    unchanged (the rule of :mod:`fiberhmm.io.run_state`): a content change with
-    a restored mtime still changes the ctime, so it is hashed again.
+    unchanged and the digests were not taken while those timestamps were fresh
+    (the rule of :mod:`fiberhmm.io.run_state`, including its racily-clean
+    margin): a content change with a restored mtime still changes the ctime,
+    and a rewrite in the same timestamp tick as a just-hashed write is caught
+    because such a digest is never remembered. A file that changes while it is
+    read is read again, so the digest and the contigs describe one version.
     """
-    from fiberhmm.io.run_state import stat_key
+    from fiberhmm.io import run_state
     real = os.path.realpath(path)
-    key = real + "|" + "|".join(str(v) for v in stat_key(real))
+    hashed_at = run_state._now_ns()
+    stat = run_state.stat_key(real)
+    key = real + "|" + "|".join(str(v) for v in stat)
     memo: dict = {}
     memo_path = _digest_cache_path(cache_dir) if cache_dir else None
     if memo_path and os.path.exists(memo_path):
@@ -333,14 +340,30 @@ def cached_fasta_digests(path: str, cache_dir: Optional[str]) -> tuple[str, list
                 memo = json.load(handle)
         except (OSError, ValueError):
             memo = {}
+        if not isinstance(memo, dict):
+            memo = {}
     entry = memo.get(key)
-    if entry:
+    if (isinstance(entry, dict) and "sha256" in entry and "contigs" in entry
+            and run_state.remembered_digest_is_valid(stat, entry.get("hashed_at_ns"), hashed_at)):
         return entry["sha256"], [tuple(item) for item in entry["contigs"]]
-    sha = file_sha256(real)
-    contigs = scan_fasta(real)
+    for attempt in range(run_state.STABLE_READ_ATTEMPTS):
+        if attempt:  # it changed while being read: read it again
+            hashed_at = run_state._now_ns()
+            stat = run_state.stat_key(real)
+            key = real + "|" + "|".join(str(v) for v in stat)
+        sha = file_sha256(real)
+        contigs = scan_fasta(real)
+        stable = run_state.stat_key(real) == stat
+        if stable:
+            break
     if memo_path:
-        memo = _prune_digest_memo(memo, len(stat_key(real)))
-        memo[key] = {"sha256": sha, "contigs": [list(item) for item in contigs]}
+        memo = _prune_digest_memo(memo, len(stat))
+        # Remembered only if the file did not change while it was read and was not racily clean.
+        if stable and run_state.digest_is_trusted(stat, hashed_at):
+            memo[key] = {"sha256": sha, "contigs": [list(item) for item in contigs],
+                         "hashed_at_ns": hashed_at}
+        else:
+            memo.pop(key, None)
         try:
             os.makedirs(cache_dir, exist_ok=True)
             tmp = f"{memo_path}.tmp{os.getpid()}"
@@ -425,9 +448,20 @@ def _copy_plain_fasta(source: str, dest: str) -> None:
         os.remove(stale)
 
 
+def _fai_contigs(fai: str):
+    """``[(name, length)]`` of a ``.fai``, or None when it cannot be read."""
+    try:
+        with open(fai, encoding="ascii", errors="replace") as handle:
+            rows = [line.rstrip("\n").split("\t") for line in handle if line.strip()]
+        return [(row[0], int(row[1])) for row in rows]
+    except (OSError, ValueError, IndexError):
+        return None
+
+
 def _ensure_fai(fasta: str, records: list[tuple[str, int, str]]) -> None:
     fai = fasta + ".fai"
-    if os.path.exists(fai) and os.path.getmtime(fai) >= os.path.getmtime(fasta):
+    if (os.path.exists(fai) and os.path.getmtime(fai) >= os.path.getmtime(fasta)
+            and _fai_contigs(fai) == [(name, length) for name, length, _ in records]):
         return
     if not os.access(os.path.dirname(os.path.abspath(fasta)) or ".", os.W_OK):
         return  # read-only location; FiberBrowser/pysam will report it
