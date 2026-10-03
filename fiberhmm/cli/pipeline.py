@@ -20,7 +20,20 @@ Examples:
   # A Fiber-seq BAM already aligned to hg38: call only
   fiberhmm-pipeline sample.aligned.bam --reference hg38.fa --enzyme hia5 -o out/
 
-OUTDIR gets <sample>.aligned.bam, <sample>.fiberhmm.bam (+ .bai), qc/, the
+  # Raw Nanopore Fiber-seq (POD5): dorado sup + 6mA basecalling first
+  fiberhmm-pipeline run1/pod5/ --reference hg38.fa --enzyme hia5 -o out/
+
+  # An unaligned dorado BAM: its @RG/@PG (models, versions) are carried over
+  fiberhmm-pipeline calls.bam --reference hg38.fa --enzyme hia5 -o out/
+
+Unaligned BAM inputs keep their basecaller provenance: every input's @RG
+lines (IDs made unique across inputs, per-read RG tags rewritten to match),
+@PG chain and @CO lines go into the aligned BAM, with minimap2 and
+fiberhmm-pipeline chained after them; the basecaller, its version and models
+are recorded in the fiberhmm-pipeline @PG DS and outputs.json. FASTQ carries
+no header: pass --basecaller-info / --modbase-model to record them.
+
+OUTDIR gets [<sample>.basecalled.bam,] <sample>.aligned.bam, <sample>.fiberhmm.bam (+ .bai), qc/, the
 reference FASTA (and a copy of the plasmid map), optional tracks/, and
 outputs.json (schema fiberhmm.pipeline.outputs.v1) saying what to open in
 FiberBrowser. Re-running the same command skips completed steps whose outputs
@@ -46,8 +59,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("reads", nargs="+",
                    help="Read files: FASTQ (.fastq/.fq, optionally .gz), unaligned "
-                        "BAM, a BAM aligned to --reference, or a directory of them. "
-                        "All reads given form one sample.")
+                        "BAM, a BAM aligned to --reference, raw Nanopore POD5 files "
+                        "(basecalled with dorado first), or a directory of them (a "
+                        "directory with POD5 files, searched recursively, is raw "
+                        "input). All reads given form one sample.")
     p.add_argument("--reference", required=True,
                    help="Reference FASTA, or a plasmid map (.dna, .gb/.gbk/.genbank, "
                         ".embl) converted to a FASTA whose contig is named as "
@@ -163,16 +178,60 @@ def build_parser() -> argparse.ArgumentParser:
     call.add_argument("--no-qc", dest="qc", action="store_false",
                       help="Skip fiberhmm-qc.")
 
+    prov = p.add_argument_group(
+        "basecaller provenance (read from unaligned BAM headers; needed for FASTQ)")
+    prov.add_argument("--basecaller-info", default=None, metavar="KEY=VALUE ...",
+                      help="Record the basecaller of reads whose files do not say "
+                           "(FASTQ), or correct it: key=value pairs, e.g. "
+                           "\"program=dorado version=0.9.6 "
+                           "basecall_model=dna_r10.4.1_e8.2_400bps_sup@v5.0.0\" "
+                           "(keys: program, version, basecall_model, modbase_models). "
+                           "Takes precedence over the input headers.")
+    prov.add_argument("--modbase-model", action="append", default=[], metavar="MODEL",
+                      help="The modification model that called the MM/ML tags "
+                           "(e.g. dna_r10.4.1_e8.2_400bps_sup@v5.0.0_6mA@v2; "
+                           "repeatable or comma-separated; 'none' for none). Takes "
+                           "precedence over the input headers.")
+
+    raw = p.add_argument_group(
+        "basecalling (raw Nanopore POD5 input; needs dorado, not bundled)")
+    raw.add_argument("--dorado", default=None, metavar="PATH",
+                     help="The dorado program (or its install folder). Default: "
+                          "$FIBERHMM_DORADO, PATH, then the usual install locations.")
+    raw.add_argument("--dorado-model", default=None, metavar="MODEL",
+                     help="dorado basecalling model: fast/hac/sup[@vX.Y.Z], a model "
+                          "complex such as sup,6mA, or a model folder (default sup).")
+    raw.add_argument("--dorado-modified-bases", default=None, metavar="CODES",
+                     help="dorado --modified-bases codes (default: 6mA for hia5, none "
+                          "for ddda/dddb, whose deaminations are read from the "
+                          "sequence); 'none' to basecall without a modification model.")
+    raw.add_argument("--dorado-modbase-models", default=None, metavar="MODELS",
+                     help="dorado --modified-bases-models: comma-separated model names "
+                          "or paths (instead of --dorado-modified-bases).")
+    raw.add_argument("--dorado-device", default="auto", metavar="DEVICE",
+                     help="dorado --device: auto (default), metal, cuda:all, cuda:0, "
+                          "cpu.")
+    raw.add_argument("--dorado-batchsize", type=int, default=None, metavar="N",
+                     help="dorado --batchsize (default: dorado chooses).")
+    raw.add_argument("--dorado-models-dir", default=None, metavar="DIR",
+                     help="Where dorado keeps downloaded models (default "
+                          "$FIBERHMM_DORADO_MODELS_DIR or ~/.fiberhmm/dorado_models).")
+    raw.add_argument("--dorado-args", default=None, metavar="ARGS",
+                     help='Other dorado basecaller options, quoted as one string '
+                          '(e.g. --dorado-args "--min-qscore 8").')
+
     run = p.add_argument_group("outputs and running")
     run.add_argument("--tracks", action="store_true",
                      help="Also extract nucleosome/MSP/TF/deamination (or m6A) "
                           "tracks into OUTDIR/tracks (bigBed; BED without "
                           "bedToBigBed).")
-    run.add_argument("--redo", choices=["all", "align", "call", "qc", "tracks"],
+    run.add_argument("--redo", choices=["all", "basecall", "align", "call", "qc", "tracks"],
                      default=None,
                      help="Redo this step and the later ones although complete (also "
                           "needed to change the inputs or settings of an existing "
-                          "OUTDIR; discards an interrupted call's resumable state).")
+                          "OUTDIR; discards an interrupted call's resumable state). "
+                          "'all' is every step after basecalling; only --redo "
+                          "basecall basecalls again.")
     run.add_argument("--progress-json", default=None, metavar="FILE",
                      help="Append JSON-lines progress events to FILE ('-' for "
                           "stdout).")
@@ -222,6 +281,16 @@ def config_from_args(args):
         aligner=args.aligner,
         force_chemistry=args.force_chemistry,
         redo=args.redo,
+        basecaller_info=args.basecaller_info,
+        modbase_model=list(args.modbase_model or []),
+        dorado=args.dorado,
+        dorado_model=args.dorado_model,
+        dorado_modified_bases=args.dorado_modified_bases,
+        dorado_modbase_models=args.dorado_modbase_models,
+        dorado_device=args.dorado_device,
+        dorado_batchsize=args.dorado_batchsize,
+        dorado_models_dir=args.dorado_models_dir,
+        dorado_args=shlex.split(args.dorado_args or ""),
         verbose=args.verbose,
         quiet=args.quiet,
     )
@@ -230,6 +299,7 @@ def config_from_args(args):
 def main(argv=None) -> int:
     args = parse_args(argv)
     from fiberhmm.pipeline.aligner import AlignerNotFound
+    from fiberhmm.pipeline.basecall import DoradoNotFound
     from fiberhmm.pipeline.progress import ProgressReporter
     from fiberhmm.pipeline.runner import (
         Pipeline,
@@ -243,7 +313,7 @@ def main(argv=None) -> int:
     pipeline = Pipeline(config_from_args(args), progress)
     try:
         outputs = pipeline.run()
-    except AlignerNotFound as exc:
+    except (AlignerNotFound, DoradoNotFound) as exc:
         print(f"\nerror: {exc}", file=sys.stderr)
         return 2
     except PipelineCancelled as exc:
@@ -261,12 +331,16 @@ def main(argv=None) -> int:
         stats = outputs.get("stats", {})
         qc = (outputs.get("qc") or {}).get("verdicts", {})
         print("\nOutputs:", file=sys.stderr)
-        for key in ("called_bam", "aligned_bam", "reference_fasta", "plasmid_map",
-                    "qc_report"):
+        for key in ("called_bam", "aligned_bam", "basecalled_bam", "reference_fasta",
+                    "plasmid_map", "qc_report"):
             if outputs.get(key):
                 print(f"  {key.replace('_', ' '):16s} {outputs[key]}", file=sys.stderr)
         if qc:
             print(f"  QC               {qc.get('overall')}", file=sys.stderr)
+        basecaller = (outputs.get("settings") or {}).get("basecaller")
+        if basecaller:
+            from fiberhmm.io.provenance import describe
+            print(f"  basecaller       {describe(basecaller)}", file=sys.stderr)
         if stats.get("align", {}).get("message"):
             print(f"  reads            {stats['align']['message']}", file=sys.stderr)
         region = outputs["open"].get("region")

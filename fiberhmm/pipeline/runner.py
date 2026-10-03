@@ -1,6 +1,8 @@
 """The ordered steps of ``fiberhmm-pipeline``.
 
-``prepare_reference -> index -> align -> call -> qc [-> tracks]``
+``[basecall ->] prepare_reference -> index -> align -> call -> qc [-> tracks]``
+
+``basecall`` runs only for raw Nanopore input (POD5), with dorado.
 
 Each step reports ``running``/``done``/``skipped`` through a
 :class:`~fiberhmm.pipeline.progress.ProgressReporter` (the FiberBrowser
@@ -33,7 +35,10 @@ import pysam
 from fiberhmm import __version__
 from fiberhmm.identity import fiberhmm_commit
 from fiberhmm.io.run_state import DirectoryBusy, DirectoryLock, load_memo_file, save_memo_file
+from fiberhmm.io import provenance as bcprov
 from fiberhmm.pipeline import aligner as mm2
+from fiberhmm.pipeline import basecall as bc
+from fiberhmm.pipeline.headers import carry_input_headers
 from fiberhmm.pipeline.circular import hard_clip, merge_origin_pieces
 from fiberhmm.pipeline.progress import (
     STATE_DIR,
@@ -62,6 +67,9 @@ DAF_ENZYMES = ("ddda", "dddb")
 CALL_REGION_SIZE = 10_000_000
 RESUMABLE_MIN_RECORDS = 20_000
 READ_PATTERNS = (".fastq", ".fastq.gz", ".fq", ".fq.gz", ".bam")
+# Programs and read group the aligner step writes itself (carried input
+# lines with these IDs are renamed).
+OWN_PROGRAM_IDS = ("minimap2", "mappy", "fiberhmm-pipeline")
 
 
 class PipelineError(RuntimeError):
@@ -116,6 +124,19 @@ class PipelineConfig:
     aligner: str = "auto"
     force_chemistry: bool = False  # run although the reads contradict --enzyme/--seq
     redo: Optional[str] = None  # "all" or a step: redo it and the later ones
+    # Basecaller provenance override (FASTQ inputs carry none):
+    # fiberhmm.io.provenance.parse_override.
+    basecaller_info: Optional[str] = None
+    modbase_model: list[str] = field(default_factory=list)
+    # Raw Nanopore input (POD5): dorado basecalling (fiberhmm.pipeline.basecall).
+    dorado: Optional[str] = None
+    dorado_model: Optional[str] = None
+    dorado_modified_bases: Optional[str] = None
+    dorado_modbase_models: Optional[str] = None
+    dorado_device: str = "auto"
+    dorado_batchsize: Optional[int] = None
+    dorado_models_dir: Optional[str] = None
+    dorado_args: list[str] = field(default_factory=list)
     verbose: bool = False
     quiet: bool = False
 
@@ -144,7 +165,12 @@ class PipelineConfig:
         return mm2.PRESET_FOR_PLATFORM[self.resolved_seq() or "nanopore"]
 
     def steps(self) -> list[str]:
-        return list(BASE_STEPS) + (["tracks"] if self.tracks else [])
+        raw = ["basecall"] if any(bc.is_raw_path(p) for p in self.reads) else []
+        return raw + list(BASE_STEPS) + (["tracks"] if self.tracks else [])
+
+    def basecaller_override(self) -> Optional[dict]:
+        """``--basecaller-info``/``--modbase-model`` as a provenance override."""
+        return bcprov.parse_override(self.basecaller_info, self.modbase_model or None)
 
     def calling_settings(self) -> dict:
         """Effective calling settings (``None`` = the fiberhmm-call default)."""
@@ -182,20 +208,35 @@ class PipelineConfig:
             "qc": self.qc,
             "tracks": self.tracks,
             "call_args": list(self.call_args),
+            "basecaller_override": _override_or_none(self),
         }
 
 
+def _override_or_none(config) -> Optional[dict]:
+    try:
+        return config.basecaller_override()
+    except bcprov.OverrideError:
+        return None
+
+
 def expand_read_inputs(paths: list[str]) -> list[str]:
-    """Files as given; a directory contributes its FASTQ and BAM files (sorted)."""
+    """Files as given; a directory contributes its FASTQ and BAM files (sorted).
+
+    A directory of raw Nanopore files (POD5, searched recursively) stays one
+    input: it is basecalled with dorado.
+    """
     out: list[str] = []
     for path in paths:
-        if os.path.isdir(path):
+        if os.path.isdir(path) and bc.is_raw_path(path):
+            out.append(path)
+        elif os.path.isdir(path):
             found = sorted(
                 os.path.join(path, name) for name in os.listdir(path)
                 if name.lower().endswith(READ_PATTERNS) and not name.startswith("."))
             if not found:
-                raise PipelineError(f"no FASTQ or BAM files in {path}",
-                                    hint="Expected *.fastq, *.fastq.gz, *.fq(.gz) or *.bam")
+                raise PipelineError(f"no FASTQ, BAM or POD5 files in {path}",
+                                    hint="Expected *.fastq, *.fastq.gz, *.fq(.gz), *.bam "
+                                         "or *.pod5")
             out.extend(found)
         else:
             out.append(path)
@@ -204,8 +245,12 @@ def expand_read_inputs(paths: list[str]) -> list[str]:
 
 def default_sample_name(path: str) -> str:
     name = os.path.basename(os.path.normpath(path))
-    for suffix in (".gz", ".fastq", ".fq", ".bam", ".cram", ".sam", ".sorted",
-                   ".unaligned", ".aligned", ".fiberhmm"):
+    if os.path.isdir(path) and re.fullmatch(r"(pod5|fast5)(_(pass|fail|skip))?",
+                                            name.lower()):
+        # MinKNOW's raw-data folder: the run folder above names the sample.
+        name = os.path.basename(os.path.dirname(os.path.abspath(path))) or name
+    for suffix in (".gz", ".fastq", ".fq", ".bam", ".cram", ".sam", ".pod5", ".fast5",
+                   ".sorted", ".unaligned", ".basecalled", ".aligned", ".fiberhmm"):
         if name.lower().endswith(suffix):
             name = name[: -len(suffix)]
     return re.sub(r"[^0-9A-Za-z_.-]+", "_", name).strip("_") or "sample"
@@ -380,6 +425,45 @@ def infer_read_platform(paths: list[str]) -> tuple[Optional[str], str]:
                  "and the calling model).")
     platform, sources = next(iter(votes.items()))
     return platform, "; ".join(sources)
+
+
+def inputs_provenance(paths: list[str], override: Optional[dict] = None) -> dict:
+    """Basecaller provenance of the read files together
+    (:func:`fiberhmm.io.provenance.basecaller_provenance` over their merged
+    ``@RG``/``@PG`` lines and first reads' read groups), plus ``inputs``:
+    ``[{"path", "kind", "available"}]`` per file. FASTQ files carry no header;
+    only read groups in their SAM-tag comments (dorado ``--emit-fastq``)."""
+    headers = []
+    groups: list[str] = []
+    per_input = []
+    for path in paths:
+        lower = path.lower()
+        if lower.endswith((".bam", ".cram", ".sam")):
+            with pysam.AlignmentFile(path, check_sq=False) as bam:
+                header = bam.header.to_dict()
+                found = []
+                for i, read in enumerate(bam.fetch(until_eof=True)):
+                    if i >= 200:
+                        break
+                    if read.has_tag("RG"):
+                        found.append(str(read.get_tag("RG")))
+            kind = "bam"
+        else:
+            header, found, kind = None, bcprov.fastq_read_groups(path), "fastq"
+        headers.append(header)
+        groups += [g for g in found if g not in groups]
+        single = bcprov.basecaller_provenance(header, found)
+        per_input.append({"path": os.path.abspath(path), "kind": kind,
+                          "available": single["available"]})
+    carried = carry_input_headers(headers)
+    merged = {"RG": carried.rg, "PG": carried.pg}
+    result = bcprov.basecaller_provenance(merged, groups, override)
+    result["inputs"] = per_input
+    missing = [item for item in per_input if not item["available"]]
+    if missing and len(missing) < len(per_input):
+        result["notes"].append(f"{len(missing)} of {len(per_input)} input files record "
+                               "no basecaller provenance")
+    return result
 
 
 _REGION = re.compile(r"^(?P<chrom>[^:\s]+):(?P<start>[\d,]+)-(?P<end>[\d,]+)$")
@@ -629,6 +713,12 @@ class Pipeline:
         self._ran: set[str] = set()
         self._notes: list = []  # logged right after the start event (text or (text, level))
         self._replace_chemistry = False
+        self.raw_inputs: list[str] = []
+        self.basecalled_bam: Optional[str] = None
+        self.basecall_info: Optional[dict] = None
+        self.basecaller: Optional[dict] = None
+        self._override: Optional[dict] = None
+        self._carried = None
         self._redo_from = None
         if config.redo:
             self._redo_from = (0 if config.redo == "all" else
@@ -663,6 +753,26 @@ class Pipeline:
         for path in (self.aligned_bam, self.called_bam, self.qc_prefix):
             if os.path.commonpath([self.outdir, os.path.abspath(path)]) != self.outdir:
                 raise PipelineError(f"output {path} would be outside {self.outdir}")
+        try:
+            self._override = cfg.basecaller_override()
+        except bcprov.OverrideError as exc:
+            raise PipelineError(str(exc))
+        self.raw_inputs = [p for p in cfg.reads if bc.is_raw_path(p)]
+        if self.raw_inputs:
+            # Raw Nanopore signal: the reads exist only after basecalling, so
+            # they are inspected then (Pipeline.run).
+            if cfg.seq == "pacbio":
+                raise PipelineError("POD5/FAST5 input is raw Nanopore signal, not PacBio",
+                                    hint="Drop --seq pacbio (or pass --seq nanopore).")
+            cfg.seq = "nanopore"
+            self.basecalled_bam = os.path.join(self.outdir, f"{self.sample}.basecalled.bam")
+            return
+        self._inspect_inputs()
+
+    def _inspect_inputs(self) -> None:
+        """Chemistry and platform checks on the read files, and their
+        basecaller provenance."""
+        cfg = self.config
         self._check_chemistry()
         if cfg.seq:
             self._notes.extend((warning, "warning") for warning in
@@ -678,6 +788,14 @@ class Pipeline:
             if platform:
                 cfg.seq = platform
                 self._notes.append(f"platform: {platform} (detected from {evidence})")
+        try:
+            self.basecaller = inputs_provenance(cfg.reads, self._override)
+        except (OSError, ValueError) as exc:
+            raise PipelineError(f"cannot read the input: {exc}")
+        self._notes.append("basecaller: " + bcprov.describe(self.basecaller))
+        note = bcprov.missing_note(self.basecaller)
+        if note:
+            self._notes.append(f"basecaller: NOTE: {note}")
 
     def _check_chemistry(self) -> None:
         """Refuse reads that contradict --enzyme/--seq (unless --force-chemistry)."""
@@ -714,6 +832,9 @@ class Pipeline:
         self.progress.log(message, level)
 
     def _forced(self, step: str) -> bool:
+        if step == "basecall":
+            # Basecalling takes hours on a GPU: only --redo basecall repeats it.
+            return self.config.redo == "basecall"
         return self._redo_from is not None and self.steps.index(step) >= self._redo_from
 
     def _refuse(self, step: str, changed: list[str], what: str = "result") -> None:
@@ -798,6 +919,9 @@ class Pipeline:
             self.progress.emit("start", version=__version__, sample=self.sample,
                                steps=list(self.steps), outdir=self.outdir,
                                settings=self.config.calling_settings())
+            if self.raw_inputs:
+                self.step_basecall()
+                self._inspect_inputs()
             for note in self._notes:
                 message, level = note if isinstance(note, tuple) else (note, "info")
                 self.log(message, level)
@@ -813,6 +937,10 @@ class Pipeline:
         except mm2.AlignerNotFound as exc:
             self.progress.emit("done", status="error",
                                error="minimap2 was not found", hint=str(exc))
+            raise
+        except bc.DoradoNotFound as exc:
+            self.progress.emit("done", status="error",
+                               error="dorado was not found", hint=str(exc))
             raise
         except PipelineError as exc:
             terminate_children()
@@ -835,6 +963,156 @@ class Pipeline:
         if self._lock is not None:
             self._lock.release()
             self._lock = None
+
+    # -- basecall (raw Nanopore input) -----------------------------------------
+    def _basecall_settings(self) -> "bc.BasecallSettings":
+        cfg = self.config
+        try:
+            return bc.resolve_settings(
+                cfg.enzyme, cfg.dorado_model, cfg.dorado_modified_bases,
+                cfg.dorado_modbase_models, cfg.dorado_device, cfg.dorado_batchsize,
+                cfg.dorado_models_dir, cfg.dorado_args)
+        except ValueError as exc:
+            raise PipelineError(str(exc))
+
+    def step_basecall(self) -> None:
+        """dorado basecaller over the raw inputs -> ``<sample>.basecalled.bam``,
+        which replaces them as the run's reads. Resumes an interrupted run."""
+        cfg = self.config
+        settings = self._basecall_settings()
+        final = self.basecalled_bam
+        state = os.path.join(self.outdir, STATE_DIR)
+        partial = os.path.join(state, f"{self.sample}.basecalled.partial.bam")
+        resume = os.path.join(state, f"{self.sample}.basecalled.resume.bam")
+        partial_info = partial + ".json"
+        self.progress.step("basecall", "running", message="looking for dorado")
+        dorado = bc.find_dorado(cfg.dorado)
+        raw_files = bc.raw_file_identity(self.raw_inputs)
+        if not raw_files:
+            raise PipelineError("no POD5 files in " + ", ".join(self.raw_inputs))
+        fast5 = [item[0] for item in raw_files if item[0].lower().endswith(".fast5")]
+        if fast5 and not bc.accepts_fast5(dorado.version):
+            raise PipelineError(
+                f"dorado {dorado.version} reads POD5 only, and the input has "
+                f"{len(fast5)} FAST5 file(s) (e.g. {fast5[0]})",
+                hint="Convert them first: pip install pod5; "
+                     "pod5 convert fast5 <fast5 folder> --output pod5/ ; "
+                     "then give pod5/ to fiberhmm-pipeline.")
+        fingerprint = {"raw": raw_files, "dorado": dorado.version,
+                       **settings.fingerprint()}
+        others = [p for p in cfg.reads if p not in self.raw_inputs]
+        if not self._is_complete("basecall", fingerprint):
+            self._start_step("basecall")
+            clear_marker(self.outdir, "basecall")
+            self.basecall_info = self._run_dorado(dorado, settings, fingerprint, partial,
+                                                  resume, partial_info, final)
+            self._write_marker("basecall", fingerprint, {"bam": final},
+                               self.basecall_info)
+            self.stats["basecall"] = self.basecall_info
+            self.progress.step("basecall", "done", done=self.basecall_info["reads"],
+                               unit="reads", message=self.basecall_info["message"])
+        else:
+            self.basecall_info = self.stats.get("basecall") or {}
+        cfg.reads = [final] + others
+
+    def _run_dorado(self, dorado, settings, fingerprint, partial, resume,
+                    partial_info, final) -> dict:
+        resume_from = None
+        try:
+            with open(partial_info, encoding="utf-8") as handle:
+                same_setup = json.load(handle) == fingerprint
+        except (OSError, ValueError):
+            same_setup = False
+        if same_setup:
+            # The records an interrupted run wrote completely are kept:
+            # dorado --resume-from copies them and basecalls the rest. A
+            # resumed run that stopped again leaves both files: the one with
+            # more complete records is kept.
+            kept = bc.salvage_bam(partial, resume + ".new") if os.path.exists(partial) else 0
+            earlier = bc.salvage_bam(resume, resume + ".old") if os.path.exists(resume) else 0
+            if kept and kept >= earlier:
+                os.replace(resume + ".new", resume)
+            elif earlier:
+                os.replace(resume + ".old", resume)
+                kept = earlier
+            for leftover in (resume + ".new", resume + ".old"):
+                with contextlib.suppress(FileNotFoundError):
+                    os.remove(leftover)
+            if kept:
+                resume_from = resume
+                self.log(f"basecall: resuming; {kept} read(s) from the interrupted run "
+                         "are kept")
+        if resume_from is None:
+            for leftover in (partial, resume):
+                with contextlib.suppress(FileNotFoundError):
+                    os.remove(leftover)
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(partial)
+        write_json_atomic(partial_info, fingerprint)
+        data, recursive = bc.stage_inputs(
+            self.raw_inputs, os.path.join(self.outdir, STATE_DIR, "basecall_input"))
+        cmd = bc.basecall_command(dorado, settings, data, recursive, resume_from)
+        os.makedirs(settings.models_directory, exist_ok=True)
+        log_path = os.path.join(self.outdir, "logs", "dorado.log")
+        command_text = " ".join(shlex.quote(c) for c in cmd)
+        self.log(f"basecall: {dorado.describe()}")
+        self.log(f"basecall: {command_text} > {partial}")
+        self.progress.step("basecall", "running",
+                           message=f"dorado {dorado.version}, model {settings.model}")
+        started = time.time()
+        with open(partial, "wb") as out, open(log_path, "a", encoding="utf-8") as log:
+            log.write(f"\n$ {command_text} > {partial}\n")
+            log.flush()
+            proc = _register(subprocess.Popen(cmd, stdout=out, stderr=log,
+                                              start_new_session=True))
+
+            def report():
+                with contextlib.suppress(OSError):
+                    written = os.path.getsize(partial) / 1e6
+                    self.progress.step("basecall", "running",
+                                       message=f"dorado {dorado.version}: {written:,.0f} MB "
+                                               f"written, {time.time() - started:,.0f} s")
+
+            ticker = mm2.progress_ticker(10.0, report)
+            try:
+                code = proc.wait()
+            finally:
+                ticker.set()
+                if proc.poll() is None:
+                    terminate_children()
+                _unregister(proc)
+        if code != 0:
+            raise PipelineError(f"dorado failed (exit {code})",
+                                hint=f"Last lines of {log_path}:\n" + _tail(log_path, 20)
+                                + "\nRun the same command again to resume.")
+        try:
+            reads = bc.count_records(partial)
+        except (OSError, ValueError) as exc:
+            raise PipelineError(f"dorado wrote an unreadable BAM ({exc})",
+                                hint=f"See {log_path}")
+        if reads == 0:
+            raise PipelineError("dorado basecalled no reads",
+                                hint=f"Check the POD5 input and {log_path}")
+        os.replace(partial, final)
+        for leftover in (resume, partial_info):
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(leftover)
+        shutil.rmtree(os.path.join(self.outdir, STATE_DIR, "basecall_input"),
+                      ignore_errors=True)
+        message = (f"{reads} reads basecalled with dorado {dorado.version} "
+                   f"({settings.model}"
+                   + (f", modbase {','.join(settings.modbase_models)}"
+                      if settings.modbase_models else
+                      f", modified bases {' '.join(settings.modified_bases)}"
+                      if settings.modified_bases else ", no modification model")
+                   + f") in {time.time() - started:.0f} s")
+        self.log(f"basecall: {message}")
+        return {"reads": reads, "message": message, "dorado": dorado.path,
+                "dorado_version": dorado.version, "command": command_text,
+                "model": settings.model, "modified_bases": settings.modified_bases,
+                "modbase_models": settings.modbase_models, "device": settings.device,
+                "batchsize": settings.batchsize, "resumed": resume_from is not None,
+                "log": log_path}
 
     # -- prepare_reference ----------------------------------------------------
     def step_prepare_reference(self) -> None:
@@ -983,6 +1261,9 @@ class Pipeline:
             "origin_tolerance": cfg.origin_tolerance,
             "regions": [list(r) for r in self.regions],
             "sample": self.sample,
+            # Recorded in the aligned BAM's @PG (keyed only when given, so
+            # earlier results without an override still match).
+            **({"basecaller_override": self._override} if self._override else {}),
         }
 
     def step_align(self) -> None:
@@ -1091,6 +1372,11 @@ class Pipeline:
         os.makedirs(tmpdir, exist_ok=True)
         log_path = os.path.join(self.outdir, "logs", "minimap2.log")
         loaded = mm2.index_identity(self.index_path)
+        # The inputs' own @RG/@PG/@CO lines (basecaller provenance) go into the
+        # output header; per-read RG tags follow their group's output ID.
+        self._carried = carry_input_headers(
+            [self._input_header(rf) for rf in self.read_files],
+            reserved_rg=[self.sample], reserved_pg=OWN_PROGRAM_IDS)
         stream, feeder, source_program = self._open_alignment(preset, rg, carry_tags,
                                                               log_path)
         stale = mm2.index_mismatch(stream, ref.contigs)
@@ -1116,16 +1402,25 @@ class Pipeline:
                                     hint=f"Remove {self.index_path} and run again.")
 
         header = stream.header.to_dict()
-        if not any(pg.get("ID") == source_program["ID"] for pg in header.get("PG", [])):
-            header.setdefault("PG", []).append(source_program)
+        carried = self._carried
+        own = [dict(pg) for pg in header.get("PG", [])]
+        if not any(pg.get("ID") == source_program["ID"] for pg in own):
+            own.append(dict(source_program))
+        if carried.leaf and not own[0].get("PP"):
+            own[0]["PP"] = carried.leaf
+        header["RG"] = list(header.get("RG", [])) + carried.rg
+        header["PG"] = carried.pg + own
+        if carried.co:
+            header["CO"] = carried.co + list(header.get("CO", []) or [])
         decorate_header(header, ref)
-        pgs = header.setdefault("PG", [])
+        pgs = header["PG"]
         pipeline_pg = {
             "ID": "fiberhmm-pipeline", "PN": "fiberhmm-pipeline", "VN": __version__,
             "CL": "fiberhmm-pipeline " + " ".join(shlex.quote(a) for a in sys.argv[1:]),
             "DS": (f"primary MAPQ>={cfg.min_mapq}; alignments={cfg.alignments}; "
                    f"origin_merge={'on' if cfg.origin_merge else 'off'}; "
-                   f"hard_clip={cfg.resolved_hard_clip()}"),
+                   f"hard_clip={cfg.resolved_hard_clip()}; "
+                   + bcprov.ds_tokens(self.basecaller)),
         }
         if pgs:
             pipeline_pg["PP"] = pgs[-1]["ID"]
@@ -1160,10 +1455,13 @@ class Pipeline:
                                      threads=min(4, max(1, cfg.cores))) as out:
                 # Same @SQ lines in the same order: reference ids carry over.
                 for group in _group_by_name(stream):
-                    # One group per input record: restore (and release) its name.
-                    name = feeder.restore_name(group[0].query_name)
+                    # One group per input record: restore (and release) its name
+                    # and read group (the input's, renamed as in the header;
+                    # otherwise the pipeline's own).
+                    name, read_group = feeder.restore(group[0].query_name)
                     for record in self._process_group(group, circular, sequences,
                                                       stats, name):
+                        record.set_tag("RG", read_group or self.sample, "Z")
                         out.write(record)
         except BaseException:
             ticker.set()
@@ -1180,6 +1478,10 @@ class Pipeline:
         finally:
             if isinstance(stream, mm2.Minimap2Stream):
                 _unregister(stream.proc)
+        if feeder.undeclared_groups:
+            self.log(f"align: {feeder.undeclared_groups} read(s) named a read group their "
+                     f"input's header does not declare; they are in read group "
+                     f"{self.sample}", "warning")
         self.progress.step("align", "running", done=stats["reads"], unit="reads",
                            message="sorting and indexing")
         _sort_index_publish(unsorted, self.aligned_bam, cfg.cores)
@@ -1204,7 +1506,8 @@ class Pipeline:
     def _open_alignment(self, preset: str, rg: dict, carry_tags: bool, log_path: str):
         """Start the aligner on a fresh read feeder: ``(stream, feeder, @PG record)``."""
         cfg = self.config
-        feeder = mm2.ReadFeeder(self.read_files, carry_tags)
+        feeder = mm2.ReadFeeder(self.read_files, carry_tags,
+                                rg_maps=self._carried.rg_maps if self._carried else None)
         if self.aligner.kind == "minimap2":
             rg_line = "@RG\\t" + "\\t".join(f"{k}:{v}" for k, v in rg.items())
             cmd = mm2.minimap2_command(self.aligner, self.index_path, preset, cfg.cores,
@@ -1223,6 +1526,13 @@ class Pipeline:
             stream = mm2.MappyStream(self.index_path, preset, cfg.cores, feeder, header,
                                      carry_tags, self.sample)
         return stream, feeder, source_program
+
+    @staticmethod
+    def _input_header(rf) -> Optional[dict]:
+        if rf.kind == "fastq":
+            return None
+        with pysam.AlignmentFile(rf.path, check_sq=False) as bam:
+            return bam.header.to_dict()
 
     @staticmethod
     def _abort_stream(stream) -> None:
@@ -1346,6 +1656,7 @@ class Pipeline:
             "call_defaults": call_parser_defaults(),
             "bundled_models": bundled_model_identity(cfg.enzyme, cfg.resolved_seq()),
             **({"replace_chemistry": True} if self._replace_chemistry else {}),
+            **({"basecaller_override": self._override} if self._override else {}),
         }
 
     def resumable_call(self, supported: set[str]) -> bool:
@@ -1401,6 +1712,10 @@ class Pipeline:
                 cmd += ["--cpg-mask-policy", cfg.cpg_mask_policy]
         if self._replace_chemistry:
             cmd.append("--replace-chemistry")
+        if cfg.basecaller_info:
+            cmd += ["--basecaller-info", cfg.basecaller_info]
+        for model in cfg.modbase_model or ():
+            cmd += ["--modbase-model", model]
         if cfg.force_chemistry:
             # fiberhmm-call checks the reads against --seq (MM specs, m6A
             # presence) itself; --force-chemistry has already accepted them.
@@ -1756,7 +2071,10 @@ class Pipeline:
                           if key in qc},
                 "verdicts": qc_verdicts(qc.get("json")),
             } if qc.get("json") else None,
-            "settings": self.config.calling_settings(),
+            "settings": {**self.config.calling_settings(),
+                         "basecaller": self.basecaller},
+            "basecalled_bam": self.basecalled_bam,
+            "basecall": self.basecall_info,
             "tracks": list(self.track_files),
             "reference_fasta": ref.fasta,
             "plasmid_map": ref.plasmid_map,

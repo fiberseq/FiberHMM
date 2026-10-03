@@ -305,6 +305,24 @@ def _revcomp(seq: str) -> str:
 
 
 _KEEP_BAM_TAGS = ("MM", "ML", "Mm", "Ml", "MN")
+# Tags minimap2 writes itself (-a, -R, --MD, -Y, splice/cs options): a FASTQ
+# comment carrying one would give the record a duplicate tag under -y.
+MINIMAP2_OWN_TAGS = frozenset({"RG", "NM", "MD", "ms", "AS", "nn", "tp", "cm", "s1",
+                               "s2", "de", "dv", "rl", "SA", "ts", "cs", "cg", "zd"})
+
+
+def sanitize_fastq_header(line: bytes) -> bytes:
+    """A FASTQ header line whose comment keeps only SAM tags minimap2 ``-y``
+    may copy: tokens that are not ``TG:T:value`` SAM tags (``runid=...``) and
+    tags minimap2 writes itself (``RG``, ``NM``, ``MD``...) are dropped."""
+    text = line.rstrip(b"\r\n")
+    end = _NAME_END.search(text)
+    if not end:
+        return line
+    kept = [token for token in text[end.start():].split()
+            if _SAM_TAG.match(token.decode("utf-8", "replace"))
+            and token[:2].decode("ascii", "replace") not in MINIMAP2_OWN_TAGS]
+    return text[:end.start()] + b"".join(b"\t" + token for token in kept) + b"\n"
 # SAM B-array subtypes -> Python array type codes.
 _B_ARRAY_CODES = {"c": "b", "C": "B", "s": "h", "S": "H", "i": "i", "I": "I", "f": "f"}
 
@@ -315,6 +333,14 @@ def bam_records_as_fastq(path: str, with_tags: bool) -> Iterator[bytes]:
     Base-modification tags are carried as SAM-tag comments (for minimap2
     ``-y``). Hard-clipped primaries cannot be restored and are skipped.
     """
+    for record, _rg in bam_records_with_groups(path, with_tags):
+        yield record
+
+
+def bam_records_with_groups(path: str, with_tags: bool) -> Iterator[tuple[bytes, Optional[str]]]:
+    """:func:`bam_records_as_fastq` records with each read's ``RG`` tag (or
+    None). The read group is not put in the FASTQ comment: minimap2 ``-R``
+    writes its own ``RG`` and ``-y`` would add a second one."""
     with pysam.AlignmentFile(path, check_sq=False) as bam:
         for read in bam.fetch(until_eof=True):
             if read.is_secondary or read.is_supplementary:
@@ -344,7 +370,9 @@ def bam_records_as_fastq(path: str, with_tags: bool) -> Iterator[bytes]:
                             parts.append(f"{tag}:Z:{value}")
                 if parts:
                     comment = "\t" + "\t".join(parts)
-            yield f"@{read.query_name}{comment}\n{seq}\n+\n{qual}\n".encode()
+            group = read.get_tag("RG") if read.has_tag("RG") else None
+            yield (f"@{read.query_name}{comment}\n{seq}\n+\n{qual}\n".encode(),
+                   str(group) if group is not None else None)
 
 
 def fastq_platform_votes(path: str, records: int = 200) -> dict:
@@ -489,9 +517,17 @@ class ReadFeeder:
     :func:`original_name`), so alignment records group by input record, never
     by a name two molecules happen to share."""
 
-    def __init__(self, files: list[ReadFile], carry_tags: bool):
+    def __init__(self, files: list[ReadFile], carry_tags: bool,
+                 rg_maps: Optional[list] = None):
         self.files = files
         self.carry_tags = carry_tags
+        # Per input file: {input read-group ID: output read-group ID}
+        # (fiberhmm.pipeline.headers.carry_input_headers). A BAM read's RG is
+        # remembered by serial and restored on its output records (restore);
+        # a read naming a group its file does not declare gets none.
+        self.rg_maps = rg_maps
+        self._groups: dict[str, str] = {}
+        self.undeclared_groups = 0
         self.total_bytes = sum(f.size for f in files) or 1
         self.done_bytes = 0
         self.reads = 0
@@ -519,15 +555,35 @@ class ReadFeeder:
     def restore_name(self, internal: str) -> str:
         """The input name behind ``internal`` (inline or long); a long name is
         released, so call it once per input record."""
+        return self.restore(internal)[0]
+
+    def restore(self, internal: str) -> tuple[str, Optional[str]]:
+        """``(input name, output read-group ID or None)`` behind ``internal``;
+        both are released, so call it once per input record."""
+        serial = (internal[:-1] if internal.endswith(LONG_NAME_MARK)
+                  else internal.partition(INTERNAL_NAME_SEPARATOR)[0])
+        with self._long_lock:
+            group = self._groups.pop(serial, None) if _is_serial(serial) else None
         if internal.endswith(LONG_NAME_MARK) and _is_serial(internal[:-1]):
             with self._long_lock:
                 name = self._long_names.pop(internal[:-1], None)
             if name is not None:
-                return name
-        return original_name(internal)
+                return name, group
+        return original_name(internal), group
+
+    def _remember_group(self, index: int, group: Optional[str]) -> None:
+        # Called right after _name: the serial just used is self.reads - 1.
+        if group is None or self.rg_maps is None:
+            return
+        mapped = (self.rg_maps[index] if index < len(self.rg_maps) else {}).get(group)
+        if mapped is None:
+            self.undeclared_groups += 1
+            return
+        with self._long_lock:
+            self._groups["%x" % (self.reads - 1)] = mapped
 
     def chunks(self) -> Iterator[bytes]:
-        for rf in self.files:
+        for index, rf in enumerate(self.files):
             start = self.done_bytes
             if rf.kind == "fastq":
                 with open(rf.path, "rb") as raw:
@@ -539,6 +595,8 @@ class ReadFeeder:
                     for line in handle:
                         if line_no % 4 == 0 and line.startswith(b"@"):
                             line = self._name(line)
+                            if self.carry_tags:
+                                line = sanitize_fastq_header(line)
                         elif line_no % 4 == 0 and line.strip():
                             raise ValueError(f"{rf.path}: malformed FASTQ record "
                                              f"(line {line_no + 1} does not start with '@')")
@@ -557,8 +615,10 @@ class ReadFeeder:
                     if last != b"\n":
                         yield b"\n"
             else:
-                for record in bam_records_as_fastq(rf.path, self.carry_tags):
-                    yield self._name(record)
+                for record, group in bam_records_with_groups(rf.path, self.carry_tags):
+                    named = self._name(record)
+                    self._remember_group(index, group)
+                    yield named
             self.done_bytes = start + rf.size
 
     def fraction(self) -> float:
