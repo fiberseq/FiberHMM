@@ -451,6 +451,18 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   (`gpc`/`cpg`) reverse-aligned reads are encoded in the same C-centred
   context as forward reads. The HMM no longer returns NaN for a state that a
   zero start or transition probability makes unreachable.
+- **Remembered file digests are not reused for racily clean files.** The
+  digest memo behind `--resume`, `--continue`, pipeline step markers,
+  reference digests and provenance header digests reused a SHA-256 while a
+  file's device, inode, size, mtime and ctime were unchanged. File timestamps
+  only advance once per clock tick (a few ms on Linux, 2 s on FAT), so a
+  same-size rewrite made right after hashing could leave every field equal
+  and return the old digest (seen on WSL2 ext4 in every immediate trial). A
+  digest is now remembered only when the file's mtime and ctime were at least
+  3 s older than the start of hashing (git's "racily clean" rule); a file
+  hashed while fresh is hashed again on its next lookup. Old files are still
+  served from the memo. Memo entries written by earlier versions carry no hash
+  time and are rehashed once.
 - **Smaller fixes.** `--region-parallel` progress and logs go to stderr
   (stdout carries data only), and outputs no longer carry a `samtools cat`
   `@PG` listing the temporary work directory. `fiberhmm-call-m5c` refuses

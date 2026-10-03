@@ -6,6 +6,7 @@ consensus --continue.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import multiprocessing as mp
 import os
@@ -18,6 +19,7 @@ import pytest
 
 from fiberhmm.inference import region_resume
 from fiberhmm.inference.consensus import batch
+from fiberhmm.io import run_state
 from fiberhmm.io.run_state import DigestMemo, DirectoryBusy, DirectoryLock, content_identity, stat_key
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -44,6 +46,22 @@ def _record(header, seq, pos=100):
 # Content identity (the digest-reuse rule)
 # ---------------------------------------------------------------------------
 
+def _freeze_stat_key(monkeypatch, path):
+    """Make run_state.stat_key report ``path``'s current key from now on, as when a rewrite lands in the same
+    filesystem timestamp tick (WSL2 ext4: every stat field unchanged after an immediate same-size rewrite)."""
+    from fiberhmm.io import run_state
+    frozen, real_stat_key, target = run_state.stat_key(path), run_state.stat_key, os.path.realpath(path)
+    monkeypatch.setattr(run_state, 'stat_key', lambda p: frozen if os.path.realpath(p) == target else real_stat_key(p))
+    return frozen
+
+
+def _age_files(monkeypatch, seconds=3600):
+    """Hash as if ``seconds`` had passed since every file was written (ctime cannot be set back on disk)."""
+    from fiberhmm.io import run_state
+    real_now = run_state._now_ns
+    monkeypatch.setattr(run_state, '_now_ns', lambda: real_now() + seconds * 10**9)
+
+
 def test_digest_memo_is_not_fooled_by_preserved_metadata(tmp_path):
     path = tmp_path/'ref.fa'
     path.write_text('>p\nACGTACGT\n')
@@ -54,10 +72,58 @@ def test_digest_memo_is_not_fooled_by_preserved_metadata(tmp_path):
     os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))     # mtime restored; ctime cannot be
     second = content_identity(path, DigestMemo(memo.to_json()))
     assert first['size'] == second['size'] and first['sha256'] != second['sha256']
-    # Unchanged files are not rehashed: the remembered digest is used as long as every stat field matches.
-    entries = memo.to_json()
-    entries[str(path.resolve())] = {'stat': stat_key(path.resolve()), 'sha256': 'remembered'}
+    # Unchanged old files are not rehashed: the remembered digest is used as long as every stat field matches and the
+    # file's timestamps were safely older than the hash.
+    key = stat_key(path.resolve())
+    old = max(key[3], key[4]) + run_state.RACY_MARGIN_NS
+    entries = {str(path.resolve()): {'stat': key, 'sha256': 'remembered', 'hashed_at_ns': old}}
     assert DigestMemo(entries).sha256(path) == 'remembered'
+    # ... but not when it was hashed within the margin of its last change, nor when it predates the rule.
+    entries[str(path.resolve())]['hashed_at_ns'] = old - 1
+    assert DigestMemo(entries).sha256(path) == second['sha256']
+    del entries[str(path.resolve())]['hashed_at_ns']
+    assert DigestMemo(entries).sha256(path) == second['sha256']
+
+
+def test_digest_memo_rehashes_a_rewrite_with_identical_stat(tmp_path, monkeypatch):
+    """A same-size rewrite in the same timestamp tick leaves dev/inode/size/mtime/ctime identical; the digest of the
+    just-written file was racily clean, so it is never trusted (deterministic version of the WSL2 failure)."""
+    path = tmp_path/'table.json'
+    path.write_bytes(b'AAAA')
+    _freeze_stat_key(monkeypatch, path)
+    memo = DigestMemo()
+    assert memo.sha256(path) == hashlib.sha256(b'AAAA').hexdigest()
+    assert memo.to_json() == {}                              # just written: not remembered
+    path.write_bytes(b'TTTT')
+    assert memo.sha256(path) == hashlib.sha256(b'TTTT').hexdigest()
+    assert DigestMemo(memo.to_json()).sha256(path) == hashlib.sha256(b'TTTT').hexdigest()
+
+
+def test_digest_memo_serves_old_files_without_rehashing(tmp_path, monkeypatch):
+    path = tmp_path/'model.json'
+    path.write_bytes(b'{"old": true}')
+    calls = []
+    real_sha = run_state.sha256_file
+    monkeypatch.setattr(run_state, 'sha256_file', lambda p: calls.append(p) or real_sha(p))
+    # Just written: hashed every time, never remembered.
+    memo = DigestMemo()
+    memo.sha256(path); memo.sha256(path)
+    assert len(calls) == 2 and memo.to_json() == {}
+    # Old (its timestamps safely precede the hash): hashed once, then served from the memo, also after a round trip.
+    _age_files(monkeypatch)
+    digest = memo.sha256(path)
+    assert len(calls) == 3 and str(path.resolve()) in memo.to_json()
+    assert memo.sha256(path) == digest and DigestMemo(memo.to_json()).sha256(path) == digest
+    assert len(calls) == 3
+
+
+def test_digest_is_trusted_requires_both_timestamps_to_be_old():
+    margin = run_state.RACY_MARGIN_NS
+    key = [1, 2, 3, 10**18, 10**18 + 5]
+    assert run_state.digest_is_trusted(key, 10**18 + 5 + margin)
+    assert not run_state.digest_is_trusted(key, 10**18 + 4 + margin)           # ctime too fresh
+    assert not run_state.digest_is_trusted([1, 2, 3, 10**18 + 9, 10**18], 10**18 + 8 + margin)  # mtime too fresh
+    assert not run_state.digest_is_trusted(key, None) and not run_state.digest_is_trusted(key, 'x')
 
 
 def test_call_input_identity_binds_record_content(tmp_path):
@@ -87,6 +153,38 @@ def test_reference_digest_cache_rehashes_changed_content(tmp_path):
     second = cached_fasta_digests(str(fasta), str(cache))
     assert second != first
     assert second[0] == file_sha256(str(fasta)) and second[1] == scan_fasta(str(fasta))
+
+
+def test_reference_digest_cache_rehashes_a_rewrite_with_identical_stat(tmp_path, monkeypatch):
+    from fiberhmm.pipeline.reference import cached_fasta_digests, file_sha256, scan_fasta
+    fasta = tmp_path/'cached.fa'; cache = tmp_path/'cache'
+    fasta.write_text('>p\nACGTACGT\n')
+    _freeze_stat_key(monkeypatch, fasta)
+    first = cached_fasta_digests(str(fasta), str(cache))
+    assert json.loads((cache/'reference_digests.json').read_text()) == {}   # just written: not remembered
+    fasta.write_text('>p\nTGCAACGT\n')
+    second = cached_fasta_digests(str(fasta), str(cache))
+    assert second != first and second == (file_sha256(str(fasta)), scan_fasta(str(fasta)))
+
+
+def test_reference_digest_cache_serves_old_files_without_rescanning(tmp_path, monkeypatch):
+    from fiberhmm.pipeline import reference
+    fasta = tmp_path/'old.fa'; cache = tmp_path/'cache'
+    fasta.write_text('>p\nACGTACGT\n')
+    calls = []
+    real_scan = reference.scan_fasta
+    monkeypatch.setattr(reference, 'scan_fasta', lambda p: calls.append(p) or real_scan(p))
+    _age_files(monkeypatch)
+    first = reference.cached_fasta_digests(str(fasta), str(cache))
+    assert reference.cached_fasta_digests(str(fasta), str(cache)) == first and len(calls) == 1
+    # An entry written before the racily-clean rule (no hash time) is not trusted, and is replaced.
+    memo_path = cache/'reference_digests.json'
+    memo = json.loads(memo_path.read_text())
+    for entry in memo.values():
+        del entry['hashed_at_ns']; entry['sha256'] = 'legacy'
+    memo_path.write_text(json.dumps(memo))
+    assert reference.cached_fasta_digests(str(fasta), str(cache)) == first and len(calls) == 2
+    assert all(isinstance(e.get('hashed_at_ns'), int) for e in json.loads(memo_path.read_text()).values())
 
 
 # ---------------------------------------------------------------------------

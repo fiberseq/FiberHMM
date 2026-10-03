@@ -39,7 +39,6 @@ from __future__ import annotations
 import argparse
 import csv
 import errno
-import functools
 import hashlib
 import importlib
 import json
@@ -442,21 +441,28 @@ def _source_fingerprint(paths: Sequence[Path]) -> List[Dict[str, Any]]:
             continue
         stat = path.stat()
         records.append(
-            _cached_source_record(
-                str(path.resolve()), int(stat.st_size), int(stat.st_mtime_ns)
-            )
+            {
+                "path": str(path.resolve()),
+                "size_bytes": int(stat.st_size),
+                "mtime_ns": int(stat.st_mtime_ns),
+                "sha256": _source_sha256(path),
+            }
         )
     return records
 
 
-@functools.lru_cache(maxsize=None)
-def _cached_source_record(path: str, size_bytes: int, mtime_ns: int) -> Dict[str, Any]:
-    return {
-        "path": path,
-        "size_bytes": size_bytes,
-        "mtime_ns": mtime_ns,
-        "sha256": _sha256(Path(path)),
-    }
+_SOURCE_DIGESTS = None
+
+
+def _source_sha256(path: Path) -> str:
+    """SHA-256 of a source file, remembered in-process under the DigestMemo rule
+    (stat-unchanged and not racily clean), so an edit is never missed."""
+    global _SOURCE_DIGESTS
+    if _SOURCE_DIGESTS is None:
+        from fiberhmm.io.run_state import DigestMemo
+
+        _SOURCE_DIGESTS = DigestMemo()
+    return _SOURCE_DIGESTS.sha256(path)
 
 
 def _inference_source_fingerprint() -> List[Dict[str, Any]]:
