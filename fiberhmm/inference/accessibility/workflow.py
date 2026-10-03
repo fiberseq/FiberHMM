@@ -302,6 +302,11 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
         warnings.append('No NFR region found: no stretch where more than '
                         f'{opt.detect_threshold:.0%} of callable reads are inside a >= 175-bp gap. Give the NFR region explicitly.')
     nfrs, elements, gaps_by_uid, molecules = [], [], {}, {}
+    # every evidence unit has a molecule record (a run with footprint classes but no NFR still splits class pairs)
+    for u in units:
+        molecules.setdefault(u['unit_id'], dict(read_name=u.get('read_name'), dataset=u['dataset'], strand=u.get('strand'),
+                                                members=sorted({str(m.get('read_name')) for m in u.get('source_members') or () if m.get('read_name')}),
+                                                nfr={}))
     for ni, reg in enumerate(regions):
         nfr_id = f'N{ni + 1}'
         nreg = (reg['start'], reg['end'])
@@ -460,7 +465,10 @@ def _store_molecule_context(molecules, units, cov, region):
             continue
         seen.add(u['unit_id'])
         m['span'] = [u.get('reference_start'), u.get('reference_end')]
-        m['nucs'] = [[a, b] for a, b in G.nucleosomes(u) if b > lo and a < hi]
+        nucs = G.nucleosomes(u)
+        m['nucs'] = [[a, b] for a, b in nucs if b > lo and a < hi]
+        # the read's whole nucleosome-bounded extent (the stored calls are clipped to the window +- the flank)
+        m['nuc_span'] = [nucs[0][0], nucs[-1][1]] if nucs else None
         c = cov.get(u['unit_id'])
         if c is not None:
             m['cov'] = list(c['span'])
@@ -598,6 +606,10 @@ def write_outputs(result, out, payload=None, inputs=None):
     files['combos.tsv'] = _tsv(crow, COMBO_FIELDS).encode()
     slim = {k: v for k, v in result.items() if k not in ('molecules', 'element_states')}
     files['result.json'] = (json.dumps(slim, sort_keys=True, indent=1) + '\n').encode()
+    # the per-read context the analysis views need (schema v1): analysis.load_result(directory) rebuilds the result
+    if result.get('element_states') is not None:
+        files['context.json.gz'] = _gzip_bytes(json.dumps(dict(molecules=result['molecules'], element_states=result['element_states']),
+                                                          sort_keys=True, separators=(',', ':')))
     for name, data in files.items():
         (out/name).write_bytes(data)
     manifest = dict(schema=SCHEMA, experimental=True, note=EXPERIMENTAL_NOTE, tool='fiberhmm-nfr', fiberhmm=_version(),

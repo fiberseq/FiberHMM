@@ -5,6 +5,7 @@ stored nucleosome calls must be the run's, the V-plot matrices follow their defi
 reproduces the run's prevalence.
 """
 import copy
+import json
 
 import numpy as np
 import pytest
@@ -197,3 +198,75 @@ def test_v0_results_still_give_the_views_that_need_only_gaps():
     for fn in (lambda: A.pair_split(old, vid, vid), lambda: A.phasing(old, vid), lambda: A.group_prevalence(old, vid, {})):
         with pytest.raises(A.NeedsRerun):
             fn()
+
+
+# ---------------------------------------------------------------- Codex review regressions (nfr-r2)
+def test_width_histogram_keeps_the_widest_bin_and_grids_are_bounded():
+    from fiberhmm.inference.accessibility.analysis import _hist, _coarse, MAX_BINS
+    assert _hist([215], 210, 220, 10) == [1]
+    assert _coarse(10, 1_000_000) * MAX_BINS >= 1_000_000 and _coarse(10, 500) == 10
+
+
+def test_vplot_bounds_hold_when_ranges_are_not_bin_aligned():
+    c, cv = A.vplot_matrices([(11, 20)], 0, 15, 0, 15, 10, 10)
+    assert c.sum() == 0 and cv.sum() == pytest.approx(.4)   # centre 15.5 outside [0, 15): no centre count; coverage up to hi only
+    c, cv = A.vplot_matrices([(11, 20)], 0, 15, 0, 25, 10, 10)
+    assert c.sum() == 0 and cv[0].sum() == pytest.approx(.4)   # coverage stops at hi = 15
+    c, cv = A.vplot_matrices([(0, 16)], 0, 40, 0, 15, 10, 10)
+    assert c.sum() == 0 and cv.sum() == 0                    # size 16 is outside [0, 15)
+
+
+def test_a_class_only_run_still_splits_its_class_pairs():
+    units, _ = planted([(.5, [])], n=120, seed=2)
+    rng = np.random.default_rng(1)
+    sup = {('class_001', 'd::CT'): dict(start=1000, end=1030, prevalence=.5), ('class_001', 'd::GA'): dict(start=1000, end=1030, prevalence=.5),
+           ('class_002', 'd::CT'): dict(start=1500, end=1530, prevalence=.5), ('class_002', 'd::GA'): dict(start=1500, end=1530, prevalence=.5)}
+    st = {c: {u['unit_id']: (int(rng.random() < .5), f"d::{u['strand']}") for u in units} for c in ('class_001', 'class_002')}
+    res = run_accessibility(payload(units), dict(FAST, pairs='all', nfr_regions=[(2400, 2600)], min_spanning=20, min_marginal=5),
+                            classes=classes_from_rows(sup, st))
+    p = A.find_pair(res, 'class_001', 'class_002')
+    assert p is not None
+    s = A.pair_split(res, 'class_001', 'class_002')
+    assert s['table'] == p['table'] and s['spacing'] is None
+
+
+def test_membership_is_the_tests_own_at_a_threshold_of_one():
+    units, _ = planted([(.5, [(1400, 1700)]), (.5, [])], n=200, seed=12)
+    res = run_accessibility(payload(units), dict(FAST, nfr_regions=[(1380, 1720)], open_threshold=1.0))
+    v = res['nfrs'][0]['variants'][0]
+    exact = A.member_uids(res, v['id'])
+    states = A.elements(res)[v['id']]['state']
+    assert exact == {u for u, s in states.items() if s == 1}
+    assert A.variant_profiles(res, 'N1')['variants'][v['name']]['n'] == len(exact)
+    ph = A.phasing(res, v['id'])
+    assert ph['members']['reads'] == len(exact)
+
+
+def test_profile_coverage_comes_from_the_whole_read_not_the_clipped_calls():
+    """A read whose opening spans the stored window keeps it in the denominator (accessibility 1 there)."""
+    units, _ = planted([(.5, [(1400, 1700)]), (.5, [])], n=200, seed=12)
+    res = run_accessibility(payload(units), dict(FAST, nfr_regions=[(1380, 1720)]))
+    m = next(iter(res['molecules'].values()))
+    assert m['nuc_span'][0] <= min(a for a, _ in m['nucs'])
+    fake = dict(nucs=[], nuc_span=[0, 5000], span=[0, 5000])
+    p = A._profile([fake], 1000, 1100)
+    assert all(a == 1 for a in p['accessibility']) and all(n == 1 for n in p['n'])
+
+
+def test_spacing_needs_each_variants_own_opening():
+    e = dict(id='N1:V2', subtype='variant', nfr='N1', kind='nfr')
+    res = dict(molecules={'u': dict(nfr={'N1': dict(gaps=[[100, 200]], map='V1')})})
+    assert A._gap_for(res, e, 'u') is None
+    whole = dict(id='N1:open', subtype='nfr', nfr='N1', kind='nfr')
+    assert A._gap_for(res, whole, 'u') == (100, 200)
+
+
+def test_an_empty_catalogue_still_reports_closed_and_cli_outputs_reload(tmp_path):
+    units, _ = planted([(1., [])], n=80, seed=3)
+    res = run_accessibility(payload(units), dict(FAST, nfr_regions=[(1380, 1720)]), tmp_path/'out')
+    reads = A._catalogue_reads(res, 'N1')
+    q = A.quantify_frozen(reads, dict(variants=[], log_other=-10., seed=1), bootstrap=5)
+    assert q['n'] == 80 and q['closed'] == pytest.approx(1.)
+    back = A.load_result(tmp_path/'out')
+    assert back['molecules'] == json.loads(json.dumps(res['molecules']))
+    assert A.variant_profiles(back, 'N1')['all']['n'] == 80

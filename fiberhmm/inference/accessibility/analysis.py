@@ -32,6 +32,12 @@ from . import variants as V
 from .workflow import COMPATIBLE_SCHEMAS, SCHEMA, decode_element_states
 
 STEP = 10
+MAX_BINS = 400          # per axis of any grid a view returns (wider extents get coarser bins)
+
+
+def _coarse(step, extent):
+    """The smallest multiple of ``step`` that keeps ``extent`` within MAX_BINS bins."""
+    return int(step*max(1, int(np.ceil(max(extent, 1)/(step*MAX_BINS)))))
 
 
 class NeedsRerun(ValueError):
@@ -134,6 +140,19 @@ def _member(rec, name, thr):
     return p is not None and p >= thr
 
 
+def member_uids(result, variant_id):
+    """The variant's member reads (P >= the open threshold) exactly as the pair tests used them (the stored element
+    states, from unrounded probabilities); runs without them (v0, whole-NFR elements) use the stored probabilities."""
+    block = (result.get('element_states') or {}).get('elements') or {}
+    row = block.get(variant_id)
+    if row is not None and len(row['states']) == len(result['molecules']):
+        return {u for u, c in zip(sorted(result['molecules']), row['states']) if c == '1'}
+    nfr_id, _, name = str(variant_id).partition(':')
+    thr = _threshold(result)
+    return {u for u, m in result['molecules'].items()
+            if (m.get('nfr') or {}).get(nfr_id, {}).get('status') == 'callable' and _member(m['nfr'][nfr_id], name, thr)}
+
+
 # ------------------------------------------------------------------ profiles
 def _profile(mols, lo, hi, step=STEP):
     """Accessibility (1 - nucleosome occupancy) at each position: among reads whose nucleosome-bounded coverage spans
@@ -142,9 +161,10 @@ def _profile(mols, lo, hi, step=STEP):
     cov = np.zeros(len(x)); occ = np.zeros(len(x))
     for m in mols:
         nucs = m.get('nucs') or ()
-        if not nucs:
+        extent = m.get('nuc_span') or ((nucs[0][0], nucs[-1][1]) if nucs else None)
+        if not extent:
             continue
-        s, e = nucs[0][0], nucs[-1][1]
+        s, e = extent
         span = m.get('span') or (s, e)
         s, e = max(s, span[0] if span[0] is not None else s), min(e, span[1] if span[1] is not None else e)
         cov += (x >= s) & (x < e)
@@ -163,7 +183,6 @@ def variant_profiles(result, nfr_id, pad=200, step=STEP):
     nfr = _nfr(result, nfr_id)
     lo, hi = int(nfr['start']) - pad, int(nfr['end']) + pad
     x = np.arange(lo, hi, step) + step/2
-    thr = _threshold(result)
     rows = assigned_gaps(result, nfr_id)
 
     def openness(sel):
@@ -177,7 +196,8 @@ def variant_profiles(result, nfr_id, pad=200, step=STEP):
     allp, n_all = openness(rows)
     out = dict(nfr=nfr_id, x=[float(v) for v in x], step=step, all=dict(profile=allp, n=n_all), variants={})
     for v in nfr.get('variants') or ():
-        prof, n = openness([r for r in rows if _member(r[2], v['name'], thr)])
+        members = member_uids(result, v['id'])
+        prof, n = openness([r for r in rows if r[0] in members])
         out['variants'][v['name']] = dict(profile=prof, n=n)
     return out
 
@@ -268,9 +288,11 @@ def _gap_for(result, e, uid):
     name = str(e['id']).split(':', 1)[1] if ':' in str(e['id']) else ''
     cfg = rec.get('map') or ''
     tokens = cfg.split('+')
-    if len(tokens) == len(gaps) and name in tokens:
-        return gaps[tokens.index(name)]
-    return max(gaps, key=lambda g: g[1] - g[0])
+    if e.get('subtype') == 'variant' or (name.startswith('V') and name[1:].isdigit()):
+        # a variant's opening is the gap its read's configuration assigns it; none when that configuration does not
+        # carry it (membership can pass the threshold without the single most likely configuration holding it)
+        return gaps[tokens.index(name)] if len(tokens) == len(gaps) and name in tokens else None
+    return max(gaps, key=lambda g: g[1] - g[0])          # whole-NFR / depth elements: the widest opening
 
 
 def _spacing(result, A, B, both):
@@ -295,7 +317,7 @@ def _spacing(result, A, B, both):
                     note=f'On {len(d):,} molecules with both open, {kind} separates the two openings '
                          f'(median {med:.0f} bp, IQR {np.percentile(d, 25):.0f}–{np.percentile(d, 75):.0f}).')
     nf, tf = (A, B) if A['kind'] == 'nfr' else (B, A)
-    if tf['kind'] != 'tf':
+    if tf['kind'] != 'tf' or nf['kind'] != 'nfr':
         return None
     c = (tf['start'] + tf['end'])/2
     inside = edge = 0
@@ -334,7 +356,8 @@ def combo_split(result, ids):
 
 # ------------------------------------------------------------------ size and shape
 def _hist(values, lo, hi, step):
-    edges = np.arange(lo, hi + step, step)
+    """Counts in [lo, hi) by step (hi is the last bin's right edge)."""
+    edges = np.arange(lo, hi + step/2, step)
     c, _ = np.histogram(values, edges) if len(values) else (np.zeros(len(edges) - 1, int), edges)
     return [int(v) for v in c]
 
@@ -362,12 +385,14 @@ def size_shape(result, variant_id, step=STEP, max_points=4000):
             widths.setdefault(t, []).append(b - a)
             points.append((a, b, t))
     allw = [w for ws in widths.values() for w in ws]
+    step = _coarse(step, max(allw, default=0) - min(allw, default=0))
     wlo = int(min(allw, default=0)//step*step); whi = int(max(allw, default=step)//step*step + step)
-    sizes = dict(step=step, lo=wlo, hi=whi, variants={n: dict(summary=_quantiles(widths[n]), hist=_hist(widths[n], wlo, whi - step, step))
+    sizes = dict(step=step, lo=wlo, hi=whi, variants={n: dict(summary=_quantiles(widths[n]), hist=_hist(widths[n], wlo, whi, step))
                                                       for n in names if n in widths})
     # edge density (all openings) on a common grid
     if points:
         L = np.array([p[0] for p in points]); R = np.array([p[1] for p in points])
+        step = _coarse(step, max(L.max() - L.min(), R.max() - R.min()))
         llo, lhi = int(L.min()//step*step), int(L.max()//step*step + step)
         rlo, rhi = int(R.min()//step*step), int(R.max()//step*step + step)
         H, _, _ = np.histogram2d(L, R, [np.arange(llo, lhi + step, step), np.arange(rlo, rhi + step, step)])
@@ -407,16 +432,15 @@ def vplot_matrices(gaps, lo, hi, size_lo, size_hi, step=STEP, size_step=STEP):
     row, the share of every position bin it covers (so a row's sum is its width / step inside the window)."""
     nx = max(1, int(np.ceil((hi - lo)/step))); ny = max(1, int(np.ceil((size_hi - size_lo)/size_step)))
     centre = np.zeros((ny, nx)); cover = np.zeros((ny, nx))
-    edges = lo + np.arange(nx + 1)*step
+    edges = np.minimum(lo + np.arange(nx + 1)*step, hi)     # a last partial bin ends at hi
     for a, b in gaps:
         w = b - a
-        r = int((w - size_lo)//size_step)
-        if r < 0 or r >= ny:
+        if not size_lo <= w < size_hi:
             continue
+        r = int((w - size_lo)//size_step)
         c = (a + b)/2
-        ci = int(np.floor((c - lo)/step))
-        if 0 <= ci < nx:
-            centre[r, ci] += 1
+        if lo <= c < hi:
+            centre[r, int((c - lo)//step)] += 1
         ov = np.clip(np.minimum(edges[1:], b) - np.maximum(edges[:-1], a), 0, None)/step
         cover[r] += ov
     return centre, cover
@@ -432,6 +456,8 @@ def vplots(result, variant_id, pad=300, step=STEP, size_step=STEP):
     mine = [(a, b) for *_x, gaps in rows for a, b, t in gaps if t == v['name']]
     lo = int(min([nfr['start']] + [a for a, _ in allg])) - pad
     hi = int(max([nfr['end']] + [b for _, b in allg])) + pad
+    # bounded grids: coarser bins rather than more than MAX_BINS per axis
+    step = _coarse(step, hi - lo); size_step = _coarse(size_step, max([0] + [b - a for a, b in allg]))
     lo, hi = lo//step*step, -(-hi//step)*step
     size_lo = int((result.get('parameters') or {}).get('min_gap_bp', 60))//size_step*size_step
     size_hi = int(max([size_lo + size_step] + [b - a for a, b in allg]))//size_step*size_step + size_step
@@ -450,11 +476,11 @@ def phasing(result, variant_id, flank=1000, step=STEP):
     check(result)
     _need_context(result, 'Nucleosome phasing')
     nfr, v = _variant(result, variant_id)
-    thr = _threshold(result)
     rows = assigned_gaps(result, nfr['id'])
     lo, hi = int(nfr['start']) - flank, int(nfr['end']) + flank
-    members = [m for _u, m, rec, _g in rows if _member(rec, v['name'], thr)]
-    others = [m for _u, m, rec, _g in rows if not _member(rec, v['name'], thr)]
+    mine = member_uids(result, v['id'])
+    members = [m for u, m, _rec, _g in rows if u in mine]
+    others = [m for u, m, _rec, _g in rows if u not in mine]
 
     def occupancy(mols):
         p = _profile(mols, lo, hi, step)
@@ -485,10 +511,8 @@ def quantify_frozen(reads, cat, bootstrap=200, seed=None):
     # 'cand' first, as discovery's variants: quantify finds the reference with list.index, and dict equality must
     # stop at a differing plain key before it reaches the arrays
     vs = [dict(cand=x['name'], mu=np.asarray(x['mu'], float), cov=np.asarray(x['cov'], float)) for x in cat['variants']]
-    if not vs:
-        return dict(n=len(reads), variants={})
     if not reads:
-        return dict(n=0, variants={x['name']: dict(prevalence=None, strict=None, ci=None) for x in cat['variants']})
+        return dict(n=0, closed=None, variants={x['name']: dict(prevalence=None, strict=None, ci=None) for x in cat['variants']})
     opt = SimpleNamespace(seed=int(cat.get('seed', 1)) if seed is None else seed, bootstrap=int(bootstrap), shift_bp=25)
     q = V.quantify(reads, vs, SimpleNamespace(log_other=float(cat['log_other'])), opt)
     out = {}
@@ -499,7 +523,7 @@ def quantify_frozen(reads, cat, bootstrap=200, seed=None):
     return dict(n=len(q['reads']), closed=round(float(q['closed']), 4), variants=out)
 
 
-def group_prevalence(result, variant_id, groups, bootstrap=200):
+def group_prevalence(result, variant_id, groups, bootstrap=None):
     """groups: {label: [unit_id, ...]}. Per group, the variant's prevalence among the group's callable reads, by the
     configuration EM with the run's catalogue frozen (geometry fixed, weights refitted on the group), with a read
     bootstrap; plus 'all' (every callable read: the run's own numbers)."""
@@ -508,6 +532,8 @@ def group_prevalence(result, variant_id, groups, bootstrap=200):
     cat = nfr.get('catalogue')
     if not cat:
         raise NeedsRerun('Prevalence per group needs a run made with this version (it stores the variant catalogue); run Find variants again.')
+    if bootstrap is None:      # the run's replicate count (with its seed, 'all' reproduces the run's interval)
+        bootstrap = int((result.get('parameters') or {}).get('bootstrap', 200))
     out = []
     for label, uids in list(groups.items()) + [('all', None)]:
         reads = _catalogue_reads(result, nfr['id'], uids)
@@ -520,7 +546,7 @@ def group_prevalence(result, variant_id, groups, bootstrap=200):
                      'intervals: read bootstrap, conditional on that catalogue.')
 
 
-def transfer(payload, result, nfr_id, bootstrap=200):
+def transfer(payload, result, nfr_id, bootstrap=None):
     """Quantify an NFR's frozen catalogue on another payload (other datasets at the same locus): per dataset, the
     callable reads (both flanking nucleosomes seen) and each variant's prevalence."""
     check(result)
@@ -528,6 +554,8 @@ def transfer(payload, result, nfr_id, bootstrap=200):
     cat = nfr.get('catalogue')
     if not cat:
         raise NeedsRerun('Quantifying in other datasets needs a run made with this version; run Find variants again.')
+    if bootstrap is None:
+        bootstrap = int((result.get('parameters') or {}).get('bootstrap', 200))
     units = G.units_of(payload)
     reads = G.collect(units, tuple(cat['region']), cat['min_gap_bp'], cat['max_gaps'])
     out = {}
@@ -536,3 +564,19 @@ def transfer(payload, result, nfr_id, bootstrap=200):
         q = quantify_frozen([r for r in sub if r['callable']], cat, bootstrap)
         out[ds] = dict(reads=len(sub), callable=q['n'], variants=q['variants'], closed=q.get('closed'))
     return dict(nfr=nfr_id, region=cat['region'], datasets=out)
+
+
+def load_result(directory):
+    """A run written by ``fiberhmm-nfr`` (result.json + context.json.gz) as the in-memory result these views take."""
+    import gzip
+    import json
+    from pathlib import Path
+    d = Path(directory)
+    result = json.loads((d/'result.json').read_text())
+    ctx = d/'context.json.gz'
+    if not ctx.is_file():
+        raise NeedsRerun(f'{d}: no context.json.gz (fiberhmm-nfr writes it from schema v1 on); run it again for these views.')
+    with gzip.open(ctx, 'rt') as fh:
+        result.update(json.load(fh))
+    check(result)
+    return result
