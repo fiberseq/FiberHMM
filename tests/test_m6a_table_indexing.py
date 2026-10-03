@@ -51,8 +51,8 @@ def test_builder_codes_match_nanopore_encoder_on_both_strands(seed):
         assert encoder_code('GGGGGGGG' + reverse_complement(ctx) + 'GGGGGGGG', 8 + K, True) == encoder_context_code(ctx, 'A')
 
 
-def test_hia5_nanopore_table_is_the_legacy_table_in_encoder_order():
-    new = np.array(json.loads((MODELS / 'hia5_nanopore.json').read_text())['emissionprob'])
+def test_reindexed_v29_table_is_the_gt_swapped_table_in_encoder_order():
+    new = np.array(json.loads((MODELS / 'legacy' / 'hia5_nanopore_v2.9_reindexed_legacy.json').read_text())['emissionprob'])
     old = np.array(json.loads((MODELS / 'legacy' / 'hia5_nanopore_gt_swapped_legacy.json').read_text())['emissionprob'])
     alphabetical = {c: i for i, c in enumerate(sorted(CONTEXTS))}
     for ctx in CONTEXTS[::37]:
@@ -60,17 +60,24 @@ def test_hia5_nanopore_table_is_the_legacy_table_in_encoder_order():
         assert np.allclose(new[:, e], old[:, a]) and np.allclose(new[:, OFF + e], old[:, OFF + a])
 
 
-@pytest.mark.parametrize('name,reference', [
-    ('hia5_nanopore.json', 'hia5_pacbio.json'),
-    ('ecogii_pacbio.json', 'hia5_pacbio.json'),
-    ('hia5_pacbio.json', 'ecogii_pacbio.json'),
+@pytest.mark.parametrize('name,reference,states', [
+    # The control-built Nanopore table's protected state is basecaller background on untreated
+    # DNA, which has no methylase context preference to share; compare its accessible state only.
+    ('hia5_nanopore.json', 'hia5_pacbio.json', 'accessible'),
+    ('legacy/hia5_nanopore_v2.9_reindexed_legacy.json', 'hia5_pacbio.json', 'both'),
+    ('ecogii_pacbio.json', 'hia5_pacbio.json', 'both'),
+    ('hia5_pacbio.json', 'ecogii_pacbio.json', 'both'),
 ])
-def test_bundled_m6a_tables_agree_with_each_other_in_encoder_order(name, reference):
+def test_bundled_m6a_tables_agree_with_each_other_in_encoder_order(name, reference, states):
     """Adenine-methylase context preferences are shared across tables. A G/T digit-order
     bug makes the G/T relabelling fit far better than the identity (legacy Hia5 Nanopore:
     0.61/0.39 swapped vs 0.12/0.04 as used)."""
     table, ref = meth_rate(name), meth_rate(reference)
-    for s in range(table.shape[0]):
+    rows = range(table.shape[0])
+    if states == 'accessible':
+        rows = [int(np.argmax(table.mean(axis=1)))]
+        assert rows[0] == int(np.argmax(ref.mean(axis=1)))
+    for s in rows:
         score = {m: np.corrcoef(table[s][digit_perm(m)], ref[s])[0, 1] for m in itertools.permutations(range(4))}
         top2 = sorted(score, key=score.get, reverse=True)[:2]
         assert (0, 1, 2, 3) in top2, (name, s, sorted(score.items(), key=lambda kv: -kv[1])[:3])
@@ -102,3 +109,16 @@ def test_counter_round_trip_nanopore_reverse_reads_count_like_forward_reads():
 def test_alphabetical_numbering_is_refused():
     with pytest.raises(ValueError):
         ContextCounter(K, 'A').get_probabilities(K, encode_by_code=False)
+
+
+def test_hia5_nanopore_table_provenance():
+    """The bundled Nanopore Hia5 table is the 2026-10-02 control build: naked-DNA (accessible) and untreated
+    (protected) yw 2-4 h embryo libraries, m6A at ML >= 248, with the Hia5 PacBio start/transition probabilities."""
+    model = json.loads((MODELS / 'hia5_nanopore.json').read_text())
+    pacbio = json.loads((MODELS / 'hia5_pacbio.json').read_text())
+    assert model['mode'] == 'nanopore-fiber' and model['context_size'] == K
+    assert model['startprob'] == pacbio['startprob'] and model['transmat'] == pacbio['transmat']
+    for words in ('naked', 'untreated', '-p 248', 'encoder-order', 'hia5_pacbio.json'):
+        assert words in model['note'], words
+    acc, prot = sorted(meth_rate('hia5_nanopore.json'), key=lambda r: -r.mean())
+    assert 0.15 < acc.mean() < 0.35 and prot.mean() < 0.002

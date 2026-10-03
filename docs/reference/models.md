@@ -11,7 +11,7 @@ if the file's own metadata disagrees; a custom model uses its embedded
 | File | `--enzyme` | `--seq` | Mode | Role |
 |---|---|---|---|---|
 | `hia5_pacbio.json` | `hia5` | `pacbio` | `pacbio-fiber` | HMM and TF recall |
-| `hia5_nanopore.json` | `hia5` | `nanopore` | `nanopore-fiber` | HMM and TF recall (reindexed to encoder order in 3.0) |
+| `hia5_nanopore.json` | `hia5` | `nanopore` | `nanopore-fiber` | HMM and TF recall (rebuilt from naked-DNA and untreated controls in 3.0) |
 | `dddb_nanopore.json` | `dddb` | any | `daf` | HMM and TF recall (in-vivo accessible-state rates on the reindexed naked table, 3.0) |
 | `ddda_nuc.json` | `ddda` | any | `daf` | first-pass nucleosome HMM |
 | `ddda_TF.json` | `ddda` | any | `daf` | TF recall ([model card](https://github.com/fiberseq/FiberHMM/blob/main/fiberhmm/models/ddda_TF.MODEL_CARD.md)) |
@@ -47,6 +47,7 @@ selected by a preset.
 | File | What it is |
 |---|---|
 | `hia5_nanopore_gt_swapped_legacy.json` | the Nanopore Hia5 table as shipped through 2.x, with contexts in alphabetical order (every context with a G or T read another context's emission) |
+| `hia5_nanopore_v2.9_reindexed_legacy.json` | the 2.x Nanopore Hia5 values in encoder order, bundled in 3.0 development builds before the control-built table (3.0 development builds only) |
 | `dddb_nanopore_gt_swapped_legacy.json` | the DddB table before its reindexing, with the same error |
 | `dddb_nanopore_naked_2f10003c.json` | the reindexed naked DddB table the in-vivo table is built on (3.0 development builds only) |
 | `ddda_nuc_refine_context_v2.6.json` | the earlier per-context radial-nucleosome likelihoods (3.0 development builds only) |

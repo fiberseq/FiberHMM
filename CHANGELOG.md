@@ -236,11 +236,22 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
 - **Nanopore Hia5 emission table.** The bundled table was indexed in
   alphabetical (ACGT) context order while the encoder uses A, C, T, G, so every
   context containing G or T read another context's emission in all 2.x
-  releases. The table is reindexed (emission values unchanged); ONT Hia5 calls
-  from 2.x should be re-run with 3.0. About 75–83% of calls keep both edges
-  within 5 bp; call totals are about unchanged. The 2.x table is kept as
+  releases. Reindexing alone (emission values unchanged) kept both edges
+  within 5 bp for about 75–83% of calls; 3.0 then replaces the table with one
+  rebuilt from matched controls (next entry), so ONT Hia5 calls from 2.x
+  should be re-run with 3.0. The 2.x table is kept as
   `fiberhmm/models/legacy/hia5_nanopore_gt_swapped_legacy.json` to reproduce
   old calls. The model builder now always numbers contexts in encoder order.
+- **New Nanopore Hia5 emission table from matched controls.** The bundled
+  table is rebuilt with `fiberhmm-probs` from Hia5-treated naked DNA
+  (accessible state) and untreated DNA (protected state), both Drosophila
+  2–4 h embryo genomic DNA sequenced on R10.4.1 with dorado
+  `sup@v5.2.0` and the `6mA@v1` model, counted at the preset's ML ≥ 248.
+  Naked-DNA reads in a low-methylation component (carryover) are excluded.
+  Start and transition probabilities are the Hia5 PacBio model's. On 2–4 h
+  embryo reads the median nucleosome call moves from 166 to 151 bp and the
+  fraction of bases in MSPs from 15% to 24%. The reindexed 2.9 values are
+  kept as `legacy/hia5_nanopore_v2.9_reindexed_legacy.json`.
 - **DddB emission table** reindexed from ACGT to encoder context order (the
   same error, also in every 2.x release); DddB calls from 2.x should be
   re-run. The old table is kept as

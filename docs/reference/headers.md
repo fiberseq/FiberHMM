@@ -56,7 +56,7 @@ fields (keys sorted):
 | `pg` | the `@PG` ID of the run the declaration belongs to |
 
 ```text
-@CO	FIBERHMM-CHEMISTRY:v1:assay=fiber-seq;enzyme=hia5;platform=nanopore;mode=nanopore-fiber;apply_sha256=9e6ea94c…;fiberhmm_commit=…;fiberhmm_version=3.0.0;model=hia5_nanopore;pg=fiberhmm-call;recall_sha256=9e6ea94c…
+@CO	FIBERHMM-CHEMISTRY:v1:assay=fiber-seq;enzyme=hia5;platform=nanopore;mode=nanopore-fiber;apply_sha256=ff7c7790…;fiberhmm_commit=…;fiberhmm_version=3.0.0;model=hia5_nanopore;pg=fiberhmm-call;recall_sha256=ff7c7790…
 ```
 
 A BAM processed several times holds one declaration per run.
