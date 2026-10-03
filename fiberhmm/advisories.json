@@ -400,7 +400,7 @@
     "models/dddb_nanopore.json"
    ],
    "first_commit": "497618320a54c559b73b3b0312674d5433b63dc1",
-   "last_commit": "58ffdc10c32b7f7962236687cfabec2bc2c5cb3b",
+   "last_commit": "3e73a295da6382e1d9edac5c73bc8739dcfe9cc5",
    "releases": []
   },
   {
@@ -426,7 +426,7 @@
     "models/legacy/dddb_nanopore_gt_swapped_legacy.json"
    ],
    "first_commit": "d047c4df9ced4c49b2ebe10184f337cb48fff613",
-   "last_commit": "58ffdc10c32b7f7962236687cfabec2bc2c5cb3b",
+   "last_commit": "3e73a295da6382e1d9edac5c73bc8739dcfe9cc5",
    "releases": [
     "2.0.0",
     "2.1.0",
@@ -494,7 +494,7 @@
     "models/hia5_nanopore.json"
    ],
    "first_commit": "2397fcf8d300ae77b655cdf94bb2e36b7dd7f602",
-   "last_commit": "58ffdc10c32b7f7962236687cfabec2bc2c5cb3b",
+   "last_commit": "3e73a295da6382e1d9edac5c73bc8739dcfe9cc5",
    "releases": []
   },
   {
@@ -520,7 +520,7 @@
     "models/legacy/hia5_nanopore_gt_swapped_legacy.json"
    ],
    "first_commit": "0d53ea62bb085dbcb8d498985ed22ed8fdbdba53",
-   "last_commit": "58ffdc10c32b7f7962236687cfabec2bc2c5cb3b",
+   "last_commit": "3e73a295da6382e1d9edac5c73bc8739dcfe9cc5",
    "releases": [
     "2.9.1",
     "2.9.2",
@@ -3955,7 +3955,96 @@
     "cecdbf146bf8cb79930cbb9131112de1d7dfead0",
     "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
    ]
+  },
+  "3bbb8160bab9dcacd5a57ff369fb6ef8d89c1829": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "cecdbf146bf8cb79930cbb9131112de1d7dfead0",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "612aaae6bc2fb37c9ddc290b045c131b063245d9": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "9e4b657256f919ce7681e0c69b5f6168d905a943": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "cecdbf146bf8cb79930cbb9131112de1d7dfead0",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "12bbe46d945ca2e3921ec1ab2793ae74a0cec122": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "cecdbf146bf8cb79930cbb9131112de1d7dfead0",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "889aff67e43b9267d1cc61259c65e63eb53ae48e": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "cecdbf146bf8cb79930cbb9131112de1d7dfead0",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "3e73a295da6382e1d9edac5c73bc8739dcfe9cc5": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "cecdbf146bf8cb79930cbb9131112de1d7dfead0",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
   }
  },
- "commits_through": "58ffdc10c32b7f7962236687cfabec2bc2c5cb3b"
+ "commits_through": "3e73a295da6382e1d9edac5c73bc8739dcfe9cc5"
 }
