@@ -223,6 +223,12 @@ def test_global_identity_pass_never_costs_a_candidate_that_passed(monkeypatch):
     assert {c['id'] for c in merged} == {'x0', 'x1'} and log == []
     merged, log = D.agglomerate([left, right], units, opt, {})
     assert len(merged) == 1 and not valid(merged[0])      # what an unguarded pass would do
+    # a refused lowest-gain pair does not block the next admissible one
+    twin = _cand(_units(60, [(300, 330)], jitter=2, prefix='t'), opt, 'x2')
+    gains = {frozenset(['x0', 'x1']): 0.0, frozenset(['x0', 'x2']): 1.0, frozenset(['x1', 'x2']): 2.0}
+    monkeypatch.setattr(D, 'identity_gain', lambda a, b, u, o: (gains.get(frozenset([a['id'], b['id']]), 9.0), 0))
+    merged, log = D.agglomerate([left, right, twin], units, opt, {}, admissible=valid)
+    assert log == [('x0', 'x2', 1.0)] and sorted(c['id'] for c in merged) == ['x0+x2', 'x1']
 
 
 def test_core_rule_applies_before_tiles_are_deduplicated(monkeypatch):
@@ -237,3 +243,10 @@ def test_core_rule_applies_before_tiles_are_deduplicated(monkeypatch):
     monkeypatch.setattr(W.D, 'discover_tile', lambda units, o: (next(tiles), dict(k=1, prediction_strength=[], merges=[])))
     kept, dropped, _tiles, _diag = W.discover([], dict(start=0, end=600), opt, lambda *a, **k: None)
     assert [g['core_bp'] for g in kept] == [26] and dropped == []
+    # dropped lists every rejected geometry no kept class covers, even one a covered reject would have deduplicated
+    kept_g = dict(L=[294, 300], R=[326, 332], span=(298., 328.), core_bp=26, calls=10, stability=1.)
+    covered = dict(invalid, span=(300., 330.), calls=100)
+    uncovered = dict(invalid, span=(302., 332.), calls=50)
+    tiles = iter([[kept_g], [covered, uncovered]])
+    kept, dropped, _tiles, _diag = W.discover([], dict(start=0, end=600), opt, lambda *a, **k: None)
+    assert [g['span'] for g in kept] == [(298., 328.)] and [d['span'] for d in dropped] == [[302., 332.]]

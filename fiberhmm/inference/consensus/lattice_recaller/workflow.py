@@ -85,8 +85,8 @@ def discover(sources, region, opt, progress, cores=1):
         found += classes; diagnostics.append(dict(tile=[w0, w1], classes=len(classes), **diag))
     # The core rule before deduplication: a geometry it drops must not suppress a valid one found in another tile.
     kept = D.dedupe([g for g in found if D.core_width(g) >= opt.minimum_core_bp])
-    dropped = [dict(span=[round(g['span'][0], 1), round(g['span'][1], 1)], core_bp=D.core_width(g))
-               for g in D.dedupe([g for g in found if D.core_width(g) < opt.minimum_core_bp]) if not any(D.same_class(g, o) for o in kept)]
+    rejected = [g for g in found if D.core_width(g) < opt.minimum_core_bp and not any(D.same_class(g, o) for o in kept)]
+    dropped = [dict(span=[round(g['span'][0], 1), round(g['span'][1], 1)], core_bp=D.core_width(g)) for g in D.dedupe(rejected)]
     for i, g in enumerate(kept):
         g['id'] = f'class_{i + 1:03d}'
     return kept, dropped, tiles, diagnostics
