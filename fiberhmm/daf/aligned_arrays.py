@@ -313,6 +313,29 @@ def matched_base_arrays(
     return qpos, rpos, ref_codes, query_codes
 
 
+def unaligned_query_positions(cigartuples, query_length: Optional[int] = None) -> set:
+    """SEQ positions with no reference counterpart: CIGAR I and S bases.
+
+    DAF deamination evidence is a read-versus-reference comparison, so these
+    bases can never carry a mark; callers treat them as no evidence. A record
+    without a CIGAR (unmapped) returns an empty set: nothing is aligned, and
+    unmapped DAF input keeps its previous handling. Hard clips (H) are not in
+    SEQ and are skipped. ``query_length`` bounds the result when given.
+    """
+    out: set = set()
+    if not cigartuples:
+        return out
+    q = 0
+    for op, length in cigartuples:
+        if op == 1 or op == 4:
+            out.update(range(q, q + length))
+        if _QUERY_OPS[op] if 0 <= op < 10 else False:
+            q += length
+    if query_length is not None and q > query_length:
+        out = {p for p in out if p < query_length}
+    return out
+
+
 __all__ = [
     "BASE_A",
     "BASE_C",
@@ -324,4 +347,5 @@ __all__ = [
     "md_deletion_spans_insertion",
     "md_disagrees_with_cigar",
     "md_reference_length",
+    "unaligned_query_positions",
 ]

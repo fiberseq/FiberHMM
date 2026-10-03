@@ -2,6 +2,8 @@
 
 from typing import Optional, Tuple
 
+import os
+
 import numpy as np
 import pysam
 
@@ -532,7 +534,48 @@ def _daf_reference_mask(read):
     return wrapped_reference_sites(read, sites)
 
 
-def _daf_excluded_query_positions(read):
+# DAF unaligned-base mask. Deamination evidence is a read-versus-reference
+# comparison on matched pairs, so query bases with no reference counterpart
+# (CIGAR I insertions, S soft clips) can never carry a mark; without the mask
+# their unconverted C/G would count as unmodified (protected) targets and an
+# insertion or clip would be called nucleosome-packed. Masked like SNP sites:
+# no evidence either way. On by default; mirrored into the environment so
+# spawned workers inherit an opt-out.
+_DAF_UNALIGNED_MASK_ENV = 'FIBERHMM_DAF_MASK_UNALIGNED'
+_DAF_UNALIGNED_MASK = None
+
+
+def configure_daf_unaligned_mask(enabled: bool = True) -> None:
+    """Mask (default) or keep DAF query bases with no reference counterpart."""
+    global _DAF_UNALIGNED_MASK
+    _DAF_UNALIGNED_MASK = bool(enabled)
+    os.environ[_DAF_UNALIGNED_MASK_ENV] = '1' if enabled else '0'
+
+
+def daf_unaligned_mask_enabled() -> bool:
+    global _DAF_UNALIGNED_MASK
+    if _DAF_UNALIGNED_MASK is None:
+        _DAF_UNALIGNED_MASK = os.environ.get(_DAF_UNALIGNED_MASK_ENV, '1') != '0'
+    return _DAF_UNALIGNED_MASK
+
+
+def daf_unaligned_query_positions(read):
+    """SEQ positions of ``read``'s CIGAR I/S bases (empty when the mask is off,
+    for unmapped records and for slim stubs without a CIGAR)."""
+    if not daf_unaligned_mask_enabled():
+        return set()
+    from fiberhmm.daf.aligned_arrays import unaligned_query_positions
+    try:
+        cigar = getattr(read, 'cigartuples', None)
+    except (ValueError, TypeError):
+        return set()
+    if not cigar:
+        return set()
+    seq = getattr(read, 'query_sequence', None)
+    return unaligned_query_positions(cigar, len(seq) if seq else None)
+
+
+def _daf_snp_masked_query_positions(read):
     reference_mask = _daf_reference_mask(read)
     if not reference_mask or not hasattr(read, "get_aligned_pairs"):
         return set()
@@ -546,6 +589,172 @@ def _daf_excluded_query_positions(read):
         }
     except (ValueError, TypeError, IndexError):
         return set()
+
+
+# Insert evidence (fiberhmm.daf.insert_consensus): per-record deaminations of
+# inserted bases re-encoded against a local consensus of the insertion's
+# carriers, keyed by insert_consensus.record_key. Empty unless a consensus
+# pre-pass configured it.
+_DAF_INSERT_EVIDENCE: dict = {}
+
+
+def configure_daf_insert_evidence(evidence=None) -> None:
+    """Load per-record insert evidence (a dict, or a pickle path) once per process."""
+    global _DAF_INSERT_EVIDENCE
+    if evidence is None:
+        _DAF_INSERT_EVIDENCE = {}
+        return
+    if isinstance(evidence, (str, bytes, os.PathLike)):
+        import pickle
+        with open(evidence, 'rb') as handle:
+            evidence = pickle.load(handle)
+    _DAF_INSERT_EVIDENCE = dict(evidence)
+
+
+def daf_insert_evidence(read):
+    """The record's insert evidence, or None."""
+    if not _DAF_INSERT_EVIDENCE or not daf_unaligned_mask_enabled():
+        return None
+    try:
+        key = (read.query_name, int(read.flag) & ~0x400, int(read.reference_id),
+               int(read.reference_start))
+    except (AttributeError, TypeError, ValueError):
+        return None
+    return _DAF_INSERT_EVIDENCE.get(key)
+
+
+def _daf_excluded_query_positions(read):
+    """DAF query positions that carry no evidence: SNP-masked matched bases
+    plus (unless disabled) unaligned I/S bases. Callers drop them from the
+    deamination calls AND encode them as unknown, so a masked unconverted
+    C/G is not counted as an unmodified (protected) target. Inserted bases a
+    local insert consensus gives evidence for are not excluded."""
+    excluded = _daf_snp_masked_query_positions(read)
+    unaligned = daf_unaligned_query_positions(read)
+    if unaligned:
+        evidence = daf_insert_evidence(read)
+        if evidence is not None:
+            unaligned = unaligned - evidence.known
+        excluded = excluded | unaligned if excluded else unaligned
+    return excluded
+
+
+def daf_unaligned_without_evidence(read):
+    """Unaligned (I/S) SEQ positions minus those an insert consensus covers."""
+    unaligned = daf_unaligned_query_positions(read)
+    if unaligned:
+        evidence = daf_insert_evidence(read)
+        if evidence is not None:
+            unaligned = unaligned - evidence.known
+    return unaligned
+
+
+def _insert_evidence_parts(read):
+    """``(mods, strand, inserted)`` of a read's insert evidence, or None.
+
+    ``inserted``: every CIGAR-insertion SEQ position, whose own marks the
+    consensus replaces. Slim stubs carry the tuple precomputed."""
+    parts = getattr(read, '_daf_insert_mods', None)
+    if parts is not None:
+        return parts
+    evidence = daf_insert_evidence(read)
+    if evidence is None:
+        return None
+    from fiberhmm.daf.insert_consensus import inserted_query_positions
+    return (set(evidence.mods), evidence.strand,
+            inserted_query_positions(getattr(read, 'cigartuples', None)))
+
+
+def _merge_insert_mods(read, mods, strand_tag):
+    """Replace the marks of a read's inserted bases with the insert-consensus
+    deaminations (when it has evidence on ``strand_tag``, 'CT'/'GA'/'+'/'-').
+    Returns the updated set."""
+    parts = _insert_evidence_parts(read)
+    if parts is None:
+        return mods
+    insert_mods, strand, inserted = parts
+    mods = set(mods) - set(inserted)
+    wanted = 0 if strand_tag in ('CT', '+') else 1
+    if strand == wanted:
+        mods |= set(insert_mods)
+    return mods
+
+
+def _insert_evidence_strand(read):
+    """'CT'/'GA' of a read's insert evidence (when its own aligned bases give
+    no deamination to decide the strand), or None."""
+    parts = _insert_evidence_parts(read)
+    if parts is None or not parts[0]:
+        return None
+    return 'CT' if parts[1] == 0 else 'GA'
+
+
+def _daf_insert_mods(read, strand_tag):
+    """Insert-consensus deaminations for a read called on ``strand_tag``."""
+    parts = _insert_evidence_parts(read)
+    if parts is None:
+        return set()
+    wanted = 0 if strand_tag in ('CT', '+') else 1
+    return set(parts[0]) if parts[1] == wanted else set()
+
+
+def daf_no_call_blocks(read):
+    """Long unaligned (I/S) SEQ spans of a live DAF ``read`` from which calls
+    are removed (:mod:`fiberhmm.inference.no_evidence`)."""
+    if not daf_unaligned_mask_enabled():
+        return []
+    try:
+        cigar = getattr(read, 'cigartuples', None)
+    except (ValueError, TypeError):
+        return []
+    if not cigar:
+        return []
+    from fiberhmm.inference.no_evidence import unaligned_blocks
+    seq = getattr(read, 'query_sequence', None)
+    blocks = unaligned_blocks(cigar, query_length=len(seq) if seq else None)
+    evidence = daf_insert_evidence(read)
+    if blocks and evidence is not None and evidence.known:
+        # Stretches the insert consensus covers are evidence, not blocks; what
+        # remains uncovered (>= the block length) stays uncalled.
+        from fiberhmm.inference.no_evidence import NO_CALL_MIN_BLOCK
+        kept = []
+        for start, end in blocks:
+            run = None
+            for pos in range(start, end + 1):
+                free = pos < end and pos not in evidence.known
+                if free and run is None:
+                    run = pos
+                elif not free and run is not None:
+                    if pos - run >= NO_CALL_MIN_BLOCK:
+                        kept.append((run, pos))
+                    run = None
+        blocks = kept
+    return blocks
+
+
+def read_no_call_blocks(read, mode):
+    """SEQ spans of ``read`` that get no calls: a DAF read's long unaligned
+    blocks, and the soft clips of any supplementary record (those bases are
+    the primary record's; a supplementary record is called on its aligned
+    part only). Slim stubs carry the spans precomputed by their producer."""
+    blocks = getattr(read, '_no_call_blocks', None)
+    if blocks is not None:
+        return list(blocks)
+    out = list(daf_no_call_blocks(read)) if mode == 'daf' else []
+    if getattr(read, 'is_supplementary', False):
+        from fiberhmm.inference.no_evidence import supplementary_clip_blocks
+        out += supplementary_clip_blocks(read)
+    if len(out) > 1:
+        from fiberhmm.inference.no_evidence import merge_blocks
+        out = merge_blocks(out)
+    return out
+
+
+def _stub_or_live_excluded(read):
+    excluded = getattr(read, '_daf_excluded_query_positions', None)
+    if excluded is None:
+        excluded = _daf_excluded_query_positions(read)
+    return excluded
 
 
 class _ApplyPayloadRead:
@@ -564,10 +773,12 @@ class _ApplyPayloadRead:
     does not implement).
     """
     __slots__ = ('query_name', 'query_sequence', 'is_reverse', '_tags',
-                 '_daf_md_result', '_daf_excluded_query_positions')
+                 '_daf_md_result', '_daf_excluded_query_positions',
+                 '_no_call_blocks', '_daf_insert_mods')
 
     def __init__(self, query_name, query_sequence, is_reverse, tags,
-                 daf_md_result=None, daf_excluded_query_positions=None):
+                 daf_md_result=None, daf_excluded_query_positions=None,
+                 no_call_blocks=None, daf_insert_mods=None):
         self.query_name = query_name
         self.query_sequence = query_sequence
         self.is_reverse = is_reverse
@@ -576,6 +787,8 @@ class _ApplyPayloadRead:
         self._daf_excluded_query_positions = set(
             daf_excluded_query_positions or ()
         )
+        self._no_call_blocks = list(no_call_blocks or ())
+        self._daf_insert_mods = daf_insert_mods
 
     def has_tag(self, t):
         return t in self._tags
@@ -637,6 +850,9 @@ def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None,
         excluded_query_positions = _daf_excluded_query_positions(read)
         if excluded_query_positions:
             payload['_daf_excluded_query_positions'] = excluded_query_positions
+        insert_parts = _insert_evidence_parts(read)
+        if insert_parts is not None:
+            payload['_daf_insert_mods'] = insert_parts
         if not has_iupac_encoding(seq):
             from fiberhmm.daf.encoder import get_daf_positions
             md_res = get_daf_positions(
@@ -644,6 +860,10 @@ def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None,
                 ref_fasta=ref_fasta,
                 excluded_reference_positions=_daf_reference_mask(read),
             )
+            if md_res is None and _insert_evidence_strand(read) is not None:
+                # No deamination on the aligned bases: the insert consensus
+                # decides the strand.
+                md_res = ([], [], _insert_evidence_strand(read))
             if md_res is not None:
                 payload['_daf_md_result'] = md_res   # (ct_list, ga_list, strand_tag)
         elif _DAF_CHIMERA_CFG['filter']:
@@ -654,6 +874,10 @@ def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None,
             rest = _daf_raw_mismatch_lists(read, ref_fasta)
             if rest is not None:
                 payload['_daf_md_result'] = rest
+
+    no_call_blocks = read_no_call_blocks(read, mode)
+    if no_call_blocks:
+        payload['_no_call_blocks'] = no_call_blocks
 
     if mode == 'daf' and read.has_tag('MA'):
         # DddA CpG-aware recall reads the molecule's own tag-m5c island calls
@@ -691,6 +915,8 @@ def extract_fiber_read_from_payload(payload: dict, mode: str, prob_threshold: in
             daf_excluded_query_positions=payload.get(
                 '_daf_excluded_query_positions'
             ),
+            no_call_blocks=payload.get('_no_call_blocks'),
+            daf_insert_mods=payload.get('_daf_insert_mods'),
         ),
         mode, prob_threshold,
     )
@@ -764,6 +990,18 @@ def _is_iupac_daf_chimera(read, query_sequence: str, excluded_query_positions,
                           purity=_DAF_CHIMERA_CFG['purity'])
 
 
+def _with_unknown(fiber_read: dict, unknown_positions, read=None) -> dict:
+    """Attach no-evidence positions (encoded as non-target) and the long
+    no-call blocks of a DAF read to a fiber_read."""
+    if unknown_positions:
+        fiber_read['unknown_query_positions'] = set(unknown_positions)
+    if read is not None:
+        blocks = read_no_call_blocks(read, 'daf')
+        if blocks:
+            fiber_read['no_call_blocks'] = blocks
+    return fiber_read
+
+
 def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
                                     ref_fasta=None) -> Optional[dict]:
     """Extract minimal data needed for HMM processing from a pysam read.
@@ -779,27 +1017,22 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
     if mode == 'daf' and has_iupac_encoding(query_sequence):
         st_tag = read.get_tag('st') if read.has_tag('st') else None
         mod_positions, strand, conv_seq = extract_daf_iupac_positions(query_sequence, st_tag)
-        excluded_query_positions = getattr(
-            read,
-            '_daf_excluded_query_positions',
-            None,
-        )
-        if excluded_query_positions is None:
-            excluded_query_positions = _daf_excluded_query_positions(read)
+        excluded_query_positions = _stub_or_live_excluded(read)
         # Strand-swap chimera filter, same policy as the MD path below.
         if _DAF_CHIMERA_CFG['filter'] and _is_iupac_daf_chimera(
                 read, query_sequence, excluded_query_positions, ref_fasta):
             return CHIMERA_SKIP
         mod_positions.difference_update(excluded_query_positions)
+        mod_positions = _merge_insert_mods(read, mod_positions, strand)
         if not mod_positions:
             return None
-        return {
+        return _with_unknown({
             'read_id': read.query_name,
             'query_sequence': conv_seq,       # Y→T, R→A (pure ACGT)
             'm6a_query_positions': mod_positions,
             'query_length': len(conv_seq),
             '_daf_strand': strand,            # pre-computed from st tag
-        }
+        }, excluded_query_positions, read)
 
     # MD fallback for DAF mode: raw aligned BAM (no R/Y in sequence yet).
     # Parse MD on the fly into the same (mod_positions, strand) the R/Y
@@ -820,6 +1053,8 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
                 ref_fasta=ref_fasta,
                 excluded_reference_positions=_daf_reference_mask(read),
             )
+            if md_result is None and _insert_evidence_strand(read) is not None:
+                md_result = ([], [], _insert_evidence_strand(read))
         if md_result is not None:
             ct_pos, ga_pos, strand_tag = md_result
             # Strand-swap chimera filter (DAF only): a read deaminated CT in one
@@ -832,17 +1067,23 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
                                   purity=_DAF_CHIMERA_CFG['purity']):
                     return CHIMERA_SKIP
             mod_positions = set(ct_pos) if strand_tag == 'CT' else set(ga_pos)
+            # SNP-masked sites are already out of the mismatch lists (they
+            # were excluded by reference position); the same set, plus the
+            # unaligned bases, is encoded as no evidence below.
+            excluded_query_positions = _stub_or_live_excluded(read)
+            mod_positions.difference_update(excluded_query_positions)
+            mod_positions = _merge_insert_mods(read, mod_positions, strand_tag)
             if not mod_positions:
                 return None
             # query_sequence is already raw ACGT (no R/Y to decode);
             # uppercase to match what extract_daf_iupac_positions emits.
-            return {
+            return _with_unknown({
                 'read_id': read.query_name,
                 'query_sequence': query_sequence.upper(),
                 'm6a_query_positions': mod_positions,
                 'query_length': len(query_sequence),
                 '_daf_strand': '+' if strand_tag == 'CT' else '-',
-            }
+            }, excluded_query_positions, read)
 
     # Legacy MM/ML path: use the fast vectorized parser instead of
     # read.modified_bases.  pysam's modified_bases returns a dict of
@@ -886,13 +1127,23 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
         return None
 
     if mode == 'daf':
-        # SNP mask applies to MM/ML-native deamination calls too.
-        excluded_query_positions = getattr(
-            read, '_daf_excluded_query_positions', None)
-        if excluded_query_positions is None:
-            excluded_query_positions = _daf_excluded_query_positions(read)
+        # The SNP and unaligned-base masks apply to MM/ML-native deamination
+        # calls too (DAF evidence is a reference comparison whatever its
+        # carrier): masked bases are dropped and encoded as no evidence.
+        excluded_query_positions = _stub_or_live_excluded(read)
         if excluded_query_positions:
             mod_pos_set.difference_update(excluded_query_positions)
+            unknown_pos_set = set(unknown_pos_set) | set(excluded_query_positions)
+        if _insert_evidence_parts(read) is not None:
+            strand = detect_daf_strand(query_sequence, mod_pos_set)
+            if strand == '.':
+                strand = _insert_evidence_strand(read) or '.'
+            mod_pos_set = _merge_insert_mods(read, mod_pos_set, strand)
+            # Consensus-covered inserted bases are evidence, not '?' unknowns.
+            parts = _insert_evidence_parts(read)
+            if unknown_pos_set and parts is not None:
+                covered = set(parts[2]) - set(excluded_query_positions or ())
+                unknown_pos_set = set(unknown_pos_set) - covered
 
     fiber_read = {
         'read_id': read.query_name,
@@ -902,8 +1153,12 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
         'is_reverse': bool(read.is_reverse),
     }
     if unknown_pos_set:
-        # Bases left unlisted by a '?' MM entry: no call, not "unmodified".
+        # Bases left unlisted by a '?' MM entry (and, for DAF, masked bases):
+        # no call, not "unmodified".
         fiber_read['unknown_query_positions'] = unknown_pos_set
+    blocks = read_no_call_blocks(read, mode)
+    if blocks:
+        fiber_read['no_call_blocks'] = blocks
     return fiber_read
 
 
@@ -986,6 +1241,12 @@ def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool
             'tiled_as': fp_result['tiled_as'],
             'tiled_al': fp_result['tiled_al'],
         })
+
+    # DAF: no calls inside long no-evidence (unaligned) blocks.
+    no_call_blocks = fiber_read.get('no_call_blocks')
+    if no_call_blocks and not result.get('circular'):
+        from fiberhmm.inference.no_evidence import suppress_calls_in_blocks
+        suppress_calls_in_blocks(result, no_call_blocks)
 
     # Include posteriors data if requested
     if return_posteriors and fp_result.get('posteriors') is not None:

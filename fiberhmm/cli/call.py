@@ -153,13 +153,8 @@ def parse_args():
                         '(uBAM) input, off (pass-through) for indexed aligned '
                         'BAMs. A run that skips >90%% of records as unmapped '
                         'fails unless --no-process-unmapped is given.')
-    p.add_argument('--primary', action=argparse.BooleanOptionalAction,
-                   default=True,
-                   help='Call primary alignments only (default); secondary and '
-                        'supplementary records are passed through uncalled. '
-                        '--no-primary also calls them. Hard-clipped records '
-                        'whose MM/ML cannot match SEQ are always skipped '
-                        '(hard_clipped_mm).')
+    from fiberhmm.inference.read_filters import add_alignment_args
+    add_alignment_args(p)
 
     # --- Recall params ---
     p.add_argument('--min-llr', type=float, default=None,
@@ -250,6 +245,27 @@ def parse_args():
     p.add_argument('--daf-run-policy', choices=['keep-one', 'drop'], default='keep-one',
                    help='With --daf-mask-runs: keep the 5\'-most target of each run '
                         '(keep-one, default) or remove the whole run (drop).')
+    p.add_argument('--daf-mask-unaligned', action=argparse.BooleanOptionalAction,
+                   default=True,
+                   help='DAF only: treat query bases with no reference counterpart '
+                        '(CIGAR insertions and soft clips) as no evidence, like '
+                        'SNP-masked sites, and leave unaligned stretches of >= 50 bp '
+                        'uncalled (default on). Deaminations are read-versus-reference '
+                        'mismatches, so these bases can never carry one; '
+                        '--no-daf-mask-unaligned restores the pre-3.0 encoding, which '
+                        'counts them as protected.')
+    p.add_argument('--daf-insert-consensus', choices=['auto', 'off'], default='auto',
+                   help='DAF only: give insertions carried by many reads real evidence. '
+                        'A pre-pass clusters CIGAR insertions >= 50 bp by breakpoint, '
+                        'builds a deamination-aware consensus of each cluster with '
+                        'enough carriers (a column that is sometimes C and sometimes T '
+                        'on C->T reads is a C; G/A likewise) and re-encodes each '
+                        'carrier\'s inserted bases against it; other insertions stay '
+                        'masked. auto (default): on for file input with '
+                        '--daf-mask-unaligned; off: mask only.')
+    p.add_argument('--daf-insert-min-carriers', type=int, default=20,
+                   help='Carriers an insertion needs for --daf-insert-consensus '
+                        '(default 20).')
     p.add_argument('--daf-snp-mask', default=None,
                    help='DAF only: 0-based BED of recurrent C>T/G>A SNP sites '
                         'to exclude from deamination observations. MD is preserved.')
@@ -1142,6 +1158,8 @@ def _main(args):
     args.daf_mask_runs, args.daf_run_policy = resolve_daf_run_mask(
         args.daf_mask_runs if mode == 'daf' else 0, args.daf_run_policy, args.enzyme)
     configure_daf_run_mask(args.daf_mask_runs, args.daf_run_policy)
+    from fiberhmm.inference.engine import configure_daf_unaligned_mask
+    configure_daf_unaligned_mask(bool(args.daf_mask_unaligned) and mode == 'daf')
     if (args.daf_call_snps or args.daf_snp_mask) and mode != 'daf':
         print("error: DAF SNP masking requires --mode daf", file=sys.stderr)
         sys.exit(2)
@@ -1195,6 +1213,8 @@ def _main(args):
     # finally that removes the dedup temp BAM however the run ends.
     working_input = args.input
     dedup_tmp = None
+    insert_tmpdir = None
+    insert_summary = None
     dedup_stats = None
     try:
         # PCR dedup runs FIRST (DAF only). The default mark/retain mode preserves
@@ -1327,6 +1347,45 @@ def _main(args):
 
             snp_mask_sites = mask_summary(snp_mask_path)['n_sites']
 
+        # DAF insert consensus pre-pass: evidence inside insertions carried by
+        # enough reads (fiberhmm.daf.insert_consensus).
+        insert_evidence_path = None
+        insert_state = 'n/a' if mode != 'daf' else 'off'
+        if (mode == 'daf' and args.daf_insert_consensus == 'auto'
+                and args.daf_mask_unaligned
+                and args.input != '-' and args.output != '-'):
+            import tempfile as _tempfile
+            from pathlib import Path as _Path
+            from fiberhmm.daf.insert_consensus import run_insert_consensus_prepass
+            output_path = _Path(args.output)
+            # Evidence goes to a private temp dir (removed in the finally);
+            # the report is published with the other outputs once calling
+            # has succeeded.
+            insert_tmpdir = _tempfile.mkdtemp(prefix='.fiberhmm_insert_')
+            insert_report_path = str(
+                output_path.parent / 'qc'
+                / f"{output_path.with_suffix('').name}.insert_consensus.json")
+            insert_summary = run_insert_consensus_prepass(
+                working_input, insert_tmpdir,
+                min_carriers=args.daf_insert_min_carriers,
+                min_mapq=args.min_mapq,
+                reference=getattr(args, 'reference', None),
+            )
+            insert_state = (f"on/{insert_summary['clusters_used']}of"
+                            f"{insert_summary['clusters']}/min{args.daf_insert_min_carriers}")
+            if insert_summary['clusters_used']:
+                insert_evidence_path = insert_summary['evidence_path']
+            print(
+                f"  DAF insert consensus: {insert_summary['clusters_used']:,} of "
+                f"{insert_summary['clusters']:,} insertion clusters (>= 50 bp) with "
+                f">= {args.daf_insert_min_carriers} carriers; "
+                f"{insert_summary['records_with_evidence']:,} records re-encoded "
+                f"(report: {insert_report_path})",
+                file=sys.stderr,
+            )
+        from fiberhmm.inference.engine import configure_daf_insert_evidence
+        configure_daf_insert_evidence(insert_evidence_path)
+
         # Freeze DddA nucleosome-refinement likelihoods independently of the TF
         # recaller. NRL estimation is part of nuc refinement and uses the same
         # frozen model.
@@ -1355,6 +1414,8 @@ def _main(args):
                        else f"j{args.dedup_min_jaccard}"
                             f"{'/collapse' if args.dedup_collapse else '/mark'}"
                             f"/ends{args.dedup_max_end_diff}")
+        unaligned_state = ('n/a' if mode != 'daf'
+                           else ('on' if args.daf_mask_unaligned else 'off'))
         if snp_mask_path:
             snp_state = f"on/{snp_mask_sites}sites"
         elif snp_preflight is not None and not snp_preflight['run']:
@@ -1394,7 +1455,7 @@ def _main(args):
                    f"(ns/nl/as/al/MA in molecular original-fiber coordinates); "
                    f"mode={mode} enzyme={args.enzyme or 'custom'} "
                    f"prob_threshold={args.prob_threshold} "
-                   f"primary_only={'on' if args.primary else 'off'} "
+                   f"primary_only={'on' if args.alignments == 'primary' else 'off'} alignments={args.alignments} "
                    f"tf_decoder={TF_DECODER_VERSION} tf_interval_penalty={min_llr} "
                    f"recall_nucs={recall_nucs} "
                    f"nuc_recall_policy={nuc_recall_policy} "
@@ -1405,6 +1466,8 @@ def _main(args):
                    f"{derived_tf_max_edge_ambiguity if derived_tf_max_edge_ambiguity is not None else 'off'} "
                    f"chimera_filter={chimera_state} dedup={dedup_state} "
                    f"daf_snp_mask={snp_state} "
+                   f"daf_unaligned_mask={unaligned_state} "
+                   f"daf_insert_consensus={insert_state} "
                    f"daf_run_mask={('>=' + str(args.daf_mask_runs) + '/' + args.daf_run_policy) if args.daf_mask_runs else 'off'} "
                    f"cpg_mask={cpg_mask_policy or 'off'}"),
         }
@@ -1418,7 +1481,7 @@ def _main(args):
             f"  nuc likelihood model: {nuc_model_path or '(reuse recall model)'}\n"
             f"  mode={mode} k={k} enzyme={args.enzyme or 'custom'} "
             f"prob-threshold={args.prob_threshold} "
-            f"primary-only={'on' if args.primary else 'off'}\n"
+            f"alignments={args.alignments}\n"
             f"  min_llr={min_llr} min_opps={args.min_opps} "
             f"unify_threshold={args.unify_threshold} uplift={uplift}\n"
             f"  tf-decoder={TF_DECODER_VERSION} interval-penalty={min_llr}\n"
@@ -1463,6 +1526,9 @@ def _main(args):
                         'max_end_diff': args.dedup_max_end_diff,
                     },
                     'daf_run_mask': [args.daf_mask_runs, args.daf_run_policy],
+                    'daf_unaligned_mask': unaligned_state,
+                    'daf_insert_consensus': [args.daf_insert_consensus,
+                                             args.daf_insert_min_carriers],
                     'reference': reference_identity(args.reference, memo),
                     'process_unmapped': process_unmapped,
                 }
@@ -1494,7 +1560,7 @@ def _main(args):
                 skip_scaffolds=args.skip_scaffolds,
                 chroms=chroms_set,
                 io_threads=args.io_threads,
-                primary_only=args.primary,
+                primary_only=args.alignments,
                 ref_fasta_path=args.reference,
                 recall_nucs=recall_nucs,
                 split_min_llr=args.split_min_llr,
@@ -1510,6 +1576,7 @@ def _main(args):
                 pg_record=pg_record,
                 ddda_mcg=ddda_mcg,
                 daf_snp_mask_path=snp_mask_path,
+                daf_insert_evidence_path=insert_evidence_path,
                 cpg_mask_policy=cpg_mask_policy,
                 work_dir=args.work_dir or str(default_work_dir(args.output)),
                 resume=args.resume,
@@ -1548,7 +1615,7 @@ def _main(args):
                 chunk_size=args.chunk_size,
                 io_threads=args.io_threads,
                 process_unmapped=process_unmapped,
-                primary_only=args.primary,
+                primary_only=args.alignments,
                 ref_fasta_path=args.reference,
                 recall_nucs=recall_nucs,
                 split_min_llr=args.split_min_llr,
@@ -1579,6 +1646,10 @@ def _main(args):
         # The pre-footprinting dedup temp is no longer needed; removing it here
         # (as well as in the finally below) keeps the disk footprint low during QC.
         _remove_dedup_temp(dedup_tmp)
+
+        if insert_summary is not None and not stdout_mode:
+            from fiberhmm.daf.insert_consensus import write_report
+            write_report(insert_summary, insert_report_path)
 
         # Preserve only aggregate full-run deduplication statistics beside QC.
         # This lets a later standalone/multi-BAM fiberhmm-qc reproduce the exact
@@ -1655,6 +1726,9 @@ def _main(args):
 
     finally:
         _remove_dedup_temp(dedup_tmp)
+        if insert_tmpdir is not None:
+            import shutil as _shutil
+            _shutil.rmtree(insert_tmpdir, ignore_errors=True)
 
 if __name__ == '__main__':
     main()

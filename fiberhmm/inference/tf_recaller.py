@@ -866,8 +866,11 @@ def extract_modification_calls(read, mode: str, context_size: int = 3,
     ``unknown_positions`` are SEQ-frame target bases an MM ``?`` entry left
     unlisted (no call, SAM spec); pass them to
     :func:`encode_from_query_sequence` as ``unknown_positions`` so they are
-    non-target rather than misses. Empty for R/Y, MD and fully listed
-    (``.``/unflagged) MM data, whose encoding is therefore unchanged.
+    non-target rather than misses. In DAF mode they also include the
+    read's CIGAR insertion and soft-clip bases (no reference counterpart, so
+    no deamination evidence; skipped when the unaligned mask is off). Empty
+    for fully aligned R/Y, MD and fully listed (``.``/unflagged) MM data,
+    whose encoding is therefore unchanged.
 
     Returns None if the read can't be processed (no MM tag, no sequence).
     Uses the manual MM/ML parser instead of pysam.modified_bases (the
@@ -876,13 +879,33 @@ def extract_modification_calls(read, mode: str, context_size: int = 3,
     seq = read.query_sequence
     if seq is None or len(seq) < 2 * context_size + 1:
         return None
+    # DAF: CIGAR I/S bases have no reference counterpart, so they carry no
+    # deamination evidence either way (see engine.daf_unaligned_query_positions).
+    # Slim payload stubs carry the set precomputed by their producer.
+    unaligned = set()
+    if mode == 'daf':
+        unaligned = getattr(read, '_daf_unaligned_query_positions', None)
+        if unaligned is None:
+            from fiberhmm.inference.engine import daf_unaligned_without_evidence
+            unaligned = daf_unaligned_without_evidence(read)
+
+    def merge_insert(mods, strand_tag):
+        # Insert-consensus deaminations replace the inserted bases' own marks
+        # (fiberhmm.daf.insert_consensus).
+        if mode != 'daf':
+            return set(mods)
+        from fiberhmm.inference.engine import _merge_insert_mods
+        return _merge_insert_mods(read, set(mods), strand_tag)
+
     if mode == 'daf' and has_iupac_encoding(seq):
         try:
             st_tag = read.get_tag('st')
         except KeyError:
             st_tag = None
         mod_pos, strand, seq = extract_daf_iupac_positions(seq, st_tag)
-        return mod_pos, strand, seq, set()
+        mod_pos.difference_update(unaligned)
+        mod_pos = merge_insert(mod_pos, strand)
+        return mod_pos, strand, seq, set(unaligned)
     try:
         mm_tag = read.get_tag('MM') if read.has_tag('MM') else read.get_tag('Mm')
     except KeyError:
@@ -897,17 +920,38 @@ def extract_modification_calls(read, mode: str, context_size: int = 3,
             if md_result is None and hasattr(read, 'get_aligned_pairs'):
                 from fiberhmm.daf.encoder import get_daf_positions
                 md_result = get_daf_positions(read)
+            if md_result is None:
+                from fiberhmm.inference.engine import _insert_evidence_strand
+                fallback = _insert_evidence_strand(read)
+                if fallback is not None:
+                    md_result = ([], [], fallback)
             if md_result is not None:
                 ct_pos, ga_pos, strand_tag = md_result
                 if strand_tag == 'CT':
-                    return set(ct_pos), '+', seq.upper(), set()
-                return set(ga_pos), '-', seq.upper(), set()
+                    return (merge_insert(ct_pos, 'CT'), '+', seq.upper(),
+                            set(unaligned))
+                return (merge_insert(ga_pos, 'GA'), '-', seq.upper(),
+                        set(unaligned))
         return None
     mod_pos, unknown_pos = parse_mm_tag_query_calls(
         mm_tag, ml_tag, seq, read.is_reverse,
         prob_threshold=prob_threshold, mode=mode,
     )
     if mode == 'daf':
+        if unaligned:
+            mod_pos.difference_update(unaligned)
+            unknown_pos = set(unknown_pos) | set(unaligned)
+        from fiberhmm.inference.engine import (
+            _insert_evidence_parts,
+            _insert_evidence_strand,
+        )
+        parts = _insert_evidence_parts(read)
+        if parts is not None:
+            strand = detect_daf_strand(seq, mod_pos)
+            if strand == '.':
+                strand = _insert_evidence_strand(read) or '.'
+            mod_pos = merge_insert(mod_pos, strand)
+            unknown_pos = set(unknown_pos) - (set(parts[2]) - set(unaligned))
         strand = detect_daf_strand(seq, mod_pos)
     else:
         strand = '.'

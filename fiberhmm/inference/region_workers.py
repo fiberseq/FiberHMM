@@ -554,6 +554,8 @@ def _init_fused_region_worker(
         params.get('chimera_purity', 0.8),
     )
     configure_daf_snp_mask(params.get('daf_snp_mask_path'))
+    from fiberhmm.inference.engine import configure_daf_insert_evidence
+    configure_daf_insert_evidence(params.get('daf_insert_evidence_path'))
 
     from fiberhmm.core.hmm import HAS_NUMBA
 

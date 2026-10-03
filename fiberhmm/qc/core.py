@@ -630,11 +630,24 @@ def _daf_signal_profile(
     # Fallback for unaligned/MD-less encoded DAF BAMs. This is less exact but
     # preserves support for files that have no recoverable reference bases.
     positions, unknown = _daf_marks(read, reference_handle, prob_threshold)
+    # Insertion and soft-clip bases have no reference counterpart, so they
+    # carry no DAF evidence (as in calling): neither events nor opportunities.
+    from fiberhmm.daf.aligned_arrays import unaligned_query_positions
+    try:
+        cigar = read.cigartuples
+    except (AttributeError, ValueError, TypeError):
+        cigar = None
+    unaligned = unaligned_query_positions(cigar, len(sequence))
+    if unaligned:
+        positions = np.asarray(
+            [p for p in positions if int(p) not in unaligned], dtype=np.int64)
     opportunities = _opportunities(sequence, positions, "daf")
-    if unknown:
-        # Unlisted '?' bases counted above (C/G/R/Y; events are never unknown).
+    no_evidence = set(int(p) for p in unknown) | unaligned if (unknown or unaligned) else ()
+    if no_evidence:
+        # Unlisted '?' and unaligned bases counted above (C/G/R/Y; events
+        # are never unknown).
         opportunities -= sum(
-            1 for position in unknown
+            1 for position in no_evidence
             if 0 <= int(position) < len(sequence)
             and sequence[int(position)] in "CGRY"
         )
@@ -968,6 +981,8 @@ def analyze_sample(
     duplicate_flagged = 0
     dedup_tagged = 0
     dedup_cluster_sizes: dict[int, int] = {}
+    unaligned = {"n_reads": 0, "query_bases": 0, "unaligned_bases": 0,
+                 "n_reads_with_unaligned": 0, "n_reads_with_no_call_blocks": 0}
     reference_handle = pysam.FastaFile(reference_fasta) if reference_fasta else None
     try:
         for read in reads:
@@ -990,6 +1005,8 @@ def analyze_sample(
             # represent original molecules rather than PCR copy number.
             if is_duplicate:
                 continue
+            if mode == "daf":
+                _count_unaligned(read, unaligned)
             positions, n_opportunities, span_start, span_end = _signal_profile(
                 read,
                 mode,
@@ -1141,6 +1158,18 @@ def analyze_sample(
         ),
         "overall": {"score": overall_score, "status": overall_status},
     }
+    if mode == "daf":
+        result["unaligned_masking"] = {
+            **unaligned,
+            "fraction_unaligned": (
+                unaligned["unaligned_bases"] / unaligned["query_bases"]
+                if unaligned["query_bases"] else None
+            ),
+            "note": ("insertion and soft-clip bases have no reference "
+                     "counterpart: fiberhmm-call encodes them as no evidence "
+                     "and leaves stretches >= 50 bp uncalled "
+                     "(--no-daf-mask-unaligned turns this off)"),
+        }
     arrays = {
         "rates": rate_values,
         "phasogram": curve,
@@ -1150,6 +1179,25 @@ def analyze_sample(
         "read_examples": read_examples,
     }
     return result, arrays
+
+
+def _count_unaligned(read, counts: dict) -> None:
+    """Tally a sampled DAF read's insertion/soft-clip (no-evidence) bases."""
+    from fiberhmm.daf.aligned_arrays import unaligned_query_positions
+    from fiberhmm.inference.no_evidence import unaligned_blocks
+    try:
+        cigar = read.cigartuples
+    except (AttributeError, ValueError, TypeError):
+        cigar = None
+    sequence = getattr(read, "query_sequence", None) or ""
+    counts["n_reads"] += 1
+    counts["query_bases"] += len(sequence)
+    if not cigar:
+        return
+    n = len(unaligned_query_positions(cigar, len(sequence)))
+    counts["unaligned_bases"] += n
+    counts["n_reads_with_unaligned"] += int(n > 0)
+    counts["n_reads_with_no_call_blocks"] += int(bool(unaligned_blocks(cigar)))
 
 
 def _summarize_deduplication(
@@ -1421,6 +1469,15 @@ def format_terminal(result: dict) -> str:
         )
     else:
         lines.append("  PCR deduplication: not run")
+    unaligned_masking = result.get("unaligned_masking")
+    if unaligned_masking and unaligned_masking.get("unaligned_bases"):
+        lines.append(
+            f"  Unaligned bases (no DAF evidence): "
+            f"{unaligned_masking['unaligned_bases']:,} of "
+            f"{unaligned_masking['query_bases']:,} sampled read bases "
+            f"({100 * (unaligned_masking['fraction_unaligned'] or 0):.2f}%); "
+            f"{unaligned_masking['n_reads_with_no_call_blocks']:,} reads with "
+            f">= 50 bp uncalled stretches")
     variant_masking = result.get("variant_masking", {})
     if variant_masking.get("applied"):
         policy = variant_masking.get("threshold_policy") or {}

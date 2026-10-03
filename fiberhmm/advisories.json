@@ -251,6 +251,35 @@
    "match": {}
   },
   {
+   "id": "daf-unaligned-evidence",
+   "severity": "rerun-recommended",
+   "artifact": "calls",
+   "title": "DAF insertions and soft clips were called as protected",
+   "reason": "Before 3.0 the unconverted C/G of DAF read bases without a reference counterpart (CIGAR insertions and soft clips) were counted as protected targets, although a deamination can only be seen against the reference. Calls inside insertions and clips were therefore nucleosomes whatever the chromatin (a synthetic 2 kb open insert was called as a nucleosome array), and nucleosome/MSP edges next to small indels and clips shifted slightly. SNP-masked sites had the same flaw. Calls on fully aligned stretches are unaffected.",
+   "fix": "Re-call with FiberHMM >= 3.0 where insertions, soft clips or SNP-masked sites matter (structural variants, insert views, read ends); 3.0 treats these bases as no evidence and leaves unaligned stretches of 50 bp or more uncalled.",
+   "fixed_in": {
+    "version": "3.0.0",
+    "commit": "cecdbf146bf8cb79930cbb9131112de1d7dfead0"
+   },
+   "changelog": "3.0.0 / Fixed / DAF insertions and soft clips are no longer called as protected",
+   "detector": "run",
+   "match": {
+    "programs": [
+     "fiberhmm-call",
+     "fiberhmm-apply",
+     "fiberhmm-recall-tfs",
+     "fiberhmm-recall-nucs"
+    ],
+    "scope": "current",
+    "mode": [
+     "daf"
+    ],
+    "ds_lacks_all": [
+     "daf_unaligned_mask="
+    ]
+   }
+  },
+  {
    "id": "hia5-nanopore-ml-threshold",
    "severity": "info",
    "artifact": "calls",
@@ -289,14 +318,14 @@
    "id": "primary-only-default",
    "severity": "info",
    "artifact": "calls",
-   "title": "Secondary and supplementary alignments were called",
-   "reason": "3.0 fiberhmm-call and fiberhmm-apply call primary alignments only by default (secondary/supplementary records pass through uncalled). This run did not choose, so it called every alignment.",
-   "fix": "Nothing is wrong. To match 3.0 defaults re-call with FiberHMM >= 3.0; --no-primary keeps the old behaviour.",
+   "title": "Secondary alignments were called",
+   "reason": "3.0 fiberhmm-call and fiberhmm-apply call primary and supplementary alignments by default and pass secondary records (alternative placements of the same bases) through uncalled. This run did not choose, so it called every alignment, secondary records included (and, before 3.0, never DAF supplementary records).",
+   "fix": "Nothing is wrong with the primary calls. To match 3.0 defaults re-call with FiberHMM >= 3.0; --no-primary (--alignments all) keeps calling every record.",
    "fixed_in": {
     "version": "3.0.0",
     "commit": "b0064097a70d06655d3032df1105d5591f2cd052"
    },
-   "changelog": "3.0.0 / Changed defaults / Primary alignments only",
+   "changelog": "3.0.0 / Changed defaults / Primary and supplementary alignments",
    "detector": "run",
    "match": {
     "programs": [
@@ -306,10 +335,12 @@
     "scope": "current",
     "cl_lacks_all": [
      "--primary",
-     "--no-primary"
+     "--no-primary",
+     "--alignments"
     ],
     "ds_lacks_all": [
-     "primary_only="
+     "primary_only=",
+     "alignments="
     ]
    }
   },

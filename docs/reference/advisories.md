@@ -96,7 +96,7 @@ Strongest first:
 4. **Options.** `@PG CL`/`DS` decide whether an advisory applies at all:
    `--enzyme`/`--seq`/`mode=` pick the chemistry, `-m` without `--enzyme`
    marks a custom-table run, an explicit `--prob-threshold` or
-   `--primary` silences the matching default-change note.
+   `--primary`/`--alignments` silences the matching default-change note.
 5. **Records** (BAMs, when scanned): `di`/`ds` duplicate-cluster tags,
    pairing tags and calls without any FiberHMM `@PG`.
 
@@ -140,7 +140,8 @@ of its region files is recognised and does not count.)
 | `qc-assay-misdetected` | rerun-required | QC | QC reports graded under an assay mode that is not one (`mode=flag`/`collapse` taken from `fiberhmm-dedup`'s `@PG`) |
 | `recaller-tier-double-count` | rerun-recommended | consensus tiers | lattice-recaller results with edge/loose tiers before the fix |
 | `hia5-nanopore-ml-threshold` | info | calls | ONT Hia5 called at the 2.x default ML threshold |
-| `primary-only-default` | info | calls | secondary/supplementary alignments called (2.x default) |
+| `daf-unaligned-evidence` | rerun-recommended | calls | DAF calls before 3.0 counted insertion, soft-clip and SNP-masked bases as protected |
+| `primary-only-default` | info | calls | secondary alignments called (2.x default) |
 | `ddda-cpg-mask-default` | info | calls | DddA recall with CpG observations (2.x default) |
 | `untracked-calls` | unverifiable | calls | calls without any FiberHMM `@PG` (cannot be checked) |
 

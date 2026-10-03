@@ -52,7 +52,8 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--topology` | `auto` | Reference topology. auto (default): a plasmid map's own topology, FASTA contigs linear. circular: every contig is circular (a plasmid FASTA). Choices: `auto`, `circular`, `linear`. |
 | `--region` | — | Keep only reads overlapping this region (1-based, inclusive; repeatable). The first region is the one outputs.json asks FiberBrowser to open. |
 | `--min-mapq` | `20` | Keep primary alignments with at least this MAPQ (default 20); also passed to fiberhmm-call and fiberhmm-qc. |
-| `--keep-soft-clips` | off | Keep unaligned read arms as soft clips. Default: hard-clip them for ddda/dddb (concatemer and chimera arms), keep them for hia5. |
+| `--keep-soft-clips` | off | Keep unaligned read arms as soft clips everywhere. Default: kept on linear contigs (DAF calling treats them as no evidence); for ddda/dddb hard-clipped on circular contigs (concatemer arms beyond one full circle). |
+| `--hard-clip` | off | Hard-clip unaligned read arms on every contig (the earlier ddda/dddb default). |
 | `--no-origin-merge` | off | Do not join the two pieces of reads that run through the origin of a circular reference (keep the primary piece). |
 | `--aligner` | `auto` | The minimap2 program on PATH or the mappy module (default: auto, program first). Choices: `auto`, `minimap2`, `mappy`. |
 | `--min-read-length` | — | Minimum aligned read length to call (default 1000). |
@@ -60,8 +61,11 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--dedup-mode` | `flag` | flag (default): mark duplicates 0x400 and keep them; collapse: keep one read per duplicate cluster. Choices: `flag`, `collapse`. |
 | `--snp-screen` | `auto` | DAF recurrent-SNP screen and mask (default auto: after a depth preflight). Choices: `auto`, `on`, `off`. |
 | `--snp-mask` | — | DAF: your own BED of SNP sites to exclude. |
+| `--daf-mask-unaligned` / `--no-daf-mask-unaligned` | on | DAF: treat insertion and soft-clip bases as no evidence and leave unaligned stretches &gt;= 50 bp uncalled (default on). |
 | `--chimera-filter` / `--no-chimera-filter` | on | DAF: skip strand-swap chimeric reads (default on). |
-| `--primary` / `--no-primary` | on | Call primary alignments only (default on). |
+| `--alignments` | `primary-supplementary` | Alignment records to keep and call (default primary-supplementary: a read's primary and supplementary records, i.e. both sides of a split alignment, on linear contigs; secondary records are dropped). primary: the primary record only; all: as primary-supplementary here (the aligner step never keeps secondary records) and passed to fiberhmm-call. Choices: `primary`, `primary-supplementary`, `all`. |
+| `--primary` | — | Same as --alignments primary. |
+| `--no-primary` | — | Same as --alignments all. |
 | `--prob-threshold` | — | ML threshold override, 0-255 (default: chemistry preset). |
 | `--use-m5c` / `--no-use-m5c` | auto | DddA CpG-aware recall (default: on for ddda). |
 | `--cpg-mask-policy` | — | DddA CpG mask policy (default unmethylated-only). Choices: `unmethylated-only`, `methylated-only`. |
@@ -97,7 +101,9 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--with-scores` / `--scores` | off | Write the HMM posterior-mean nq score of baseline nucleosomes (with --no-recall-nucs; nucleosome recall writes its own LLR-based nq). No aq is written. --scores is the fiberhmm-apply spelling. |
 | `-r` / `--circular` | off | Enable circular molecule mode (3x tile internally, emit wrapped MA/AQ/AN annotations). |
 | `--process-unmapped` / `--no-process-unmapped` | auto | Call unmapped reads that carry SEQ + MM/ML. Default: automatic -- on for stdin, unindexed and unaligned (uBAM) input, off (pass-through) for indexed aligned BAMs. A run that skips &gt;90% of records as unmapped fails unless --no-process-unmapped is given. |
-| `--primary` / `--no-primary` | on | Call primary alignments only (default); secondary and supplementary records are passed through uncalled. --no-primary also calls them. Hard-clipped records whose MM/ML cannot match SEQ are always skipped (hard_clipped_mm). |
+| `--alignments` | `primary-supplementary` | Alignment records to call (default primary-supplementary): primary and supplementary records, the parts of a split read (e.g. both sides of a structural variant); secondary records, alternative placements of the same bases, pass through uncalled. On a supplementary record only its aligned bases are called. "primary" calls primary records only; "all" also calls secondary records. Hard-clipped records whose MM/ML cannot match SEQ are always skipped (hard_clipped_mm). Choices: `primary`, `primary-supplementary`, `all`. |
+| `--primary` | — | Same as --alignments primary. |
+| `--no-primary` | — | Same as --alignments all. |
 | `--min-llr` | — | Native LLR cost per TF interval in joint decoding (default: enzyme preset; not a calibrated FDR threshold). |
 | `--min-opps` | `3` | Min informative target positions per TF call (default 3). |
 | `--unify-threshold` | `90` | v2 nucs with nl &lt; this may be demoted to tf+ (default 90). |
@@ -117,6 +123,9 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--chimera-purity` | `0.8` | DAF chimera: min same-strand purity per segment (default 0.8). |
 | `--daf-mask-runs` | — | DAF only: thin targets lying in same-strand runs of &gt;= N original C (CT) or G (GA) bases (CC/GG and longer at N=2; see --daf-run-policy). Adjacent conversions are coupled and do not follow the per-site emission model. Default: 2 with keep-one for --enzyme ddda (duplex-validated), off otherwise; 0 disables. |
 | `--daf-run-policy` | `keep-one` | With --daf-mask-runs: keep the 5'-most target of each run (keep-one, default) or remove the whole run (drop). Choices: `keep-one`, `drop`. |
+| `--daf-mask-unaligned` / `--no-daf-mask-unaligned` | on | DAF only: treat query bases with no reference counterpart (CIGAR insertions and soft clips) as no evidence, like SNP-masked sites, and leave unaligned stretches of &gt;= 50 bp uncalled (default on). Deaminations are read-versus-reference mismatches, so these bases can never carry one; --no-daf-mask-unaligned restores the pre-3.0 encoding, which counts them as protected. |
+| `--daf-insert-consensus` | `auto` | DAF only: give insertions carried by many reads real evidence. A pre-pass clusters CIGAR insertions &gt;= 50 bp by breakpoint, builds a deamination-aware consensus of each cluster with enough carriers (a column that is sometimes C and sometimes T on C-&gt;T reads is a C; G/A likewise) and re-encodes each carrier's inserted bases against it; other insertions stay masked. auto (default): on for file input with --daf-mask-unaligned; off: mask only. Choices: `auto`, `off`. |
+| `--daf-insert-min-carriers` | `20` | Carriers an insertion needs for --daf-insert-consensus (default 20). |
 | `--daf-snp-mask` | — | DAF only: 0-based BED of recurrent C&gt;T/G&gt;A SNP sites to exclude from deamination observations. MD is preserved. |
 | `--daf-call-snps` | auto | DAF only: force two-pass recurrent opposite-conversion SNP masking. By default file-based DddA/DddB runs screen automatically after a bounded depth preflight. |
 | `--no-daf-call-snps` | auto | Disable automatic recurrent SNP screening. |
@@ -175,7 +184,9 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--prob-threshold` | — | Minimum MM/ML probability (0-255) to call a modification. Default: chemistry preset -- 248 for Hia5 Nanopore (--seq nanopore, given or detected), 128 otherwise. R/Y- and MD-encoded DAF input is binary and ignores it. |
 | `--min-read-length` | `1000` | Minimum aligned read length in bp; shorter reads are written to output unchanged without footprint/nucleosome tags. Set to 0 to attempt calling on all reads regardless of length (default: 1000) |
 | `-t` / `--train-reads` | — | TSV file of read IDs used in training (to exclude) |
-| `--primary` / `--no-primary` | on | Call primary alignments only (default); secondary and supplementary records are passed through uncalled. --no-primary also calls them. Hard-clipped records whose MM/ML cannot match SEQ are always skipped (hard_clipped_mm). |
+| `--alignments` | `primary-supplementary` | Alignment records to call (default primary-supplementary): primary and supplementary records, the parts of a split read (e.g. both sides of a structural variant); secondary records, alternative placements of the same bases, pass through uncalled. On a supplementary record only its aligned bases are called. "primary" calls primary records only; "all" also calls secondary records. Hard-clipped records whose MM/ML cannot match SEQ are always skipped (hard_clipped_mm). Choices: `primary`, `primary-supplementary`, `all`. |
+| `--primary` | — | Same as --alignments primary. |
+| `--no-primary` | — | Same as --alignments all. |
 | `--process-unmapped` / `--no-process-unmapped` | auto | Process unmapped reads that have sequences and modification tags. Default: automatic -- on for stdin, unindexed and unaligned (uBAM) input. A run that skips &gt;90% of records as unmapped fails unless --no-process-unmapped is given. |
 | `--edge-trim` / `-e` | `10` | Bases to trim from read edges (default: 10) |
 | `-r` / `--circular` | off | Enable circular mode (tiles reads 3x) |
@@ -190,6 +201,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--debug-timing` | off | Show per-read timing breakdown |
 | `--daf-mask-runs` | — | Thin DAF targets in same-strand runs of &gt;= N original C (CT) or G (GA) bases (N=2: CC/GG and longer). Default: 2 with keep-one for DddA (duplex-validated), off otherwise; 0 disables. |
 | `--daf-run-policy` | `keep-one` | With --daf-mask-runs: keep each run's 5'-most target (default) or drop the run. Choices: `keep-one`, `drop`. |
+| `--daf-mask-unaligned` / `--no-daf-mask-unaligned` | on | DAF only: treat insertion and soft-clip bases as no evidence and leave unaligned stretches of &gt;= 50 bp uncalled (default on, as in fiberhmm-call). |
 
 ## fiberhmm-recall-tfs
 
@@ -204,6 +216,9 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--replace-chemistry` | off | Replace, instead of reconcile with, the input BAM's FIBERHMM-CHEMISTRY declaration. By default a custom --model inherits the input's enzyme/platform when its observation mode matches, and a conflicting --enzyme/--seq is refused. |
 | `--daf-mask-runs` | — | DAF only: thin targets lying in same-strand runs of &gt;= N original C (CT) or G (GA) bases (CC/GG and longer at N=2; see --daf-run-policy). Adjacent conversions are coupled and do not follow the per-site emission model. Default: 2 with keep-one for --enzyme ddda (duplex-validated), off otherwise; 0 disables. |
 | `--daf-run-policy` | `keep-one` | With --daf-mask-runs: keep each run's 5'-most target (default) or drop the run. Choices: `keep-one`, `drop`. |
+| `--daf-mask-unaligned` / `--no-daf-mask-unaligned` | on | DAF only: treat CIGAR insertion and soft-clip bases as no evidence and leave unaligned stretches of &gt;= 50 bp uncalled (default on, as in fiberhmm-call). |
+| `--daf-insert-consensus` | `auto` | DAF only: re-encode insertions carried by enough reads against their deamination-aware consensus, as in fiberhmm-call (default auto: file input). Choices: `auto`, `off`. |
+| `--daf-insert-min-carriers` | `20` | Carriers an insertion needs for --daf-insert-consensus (default 20). |
 | `--min-llr` | — | Override native LLR cost per TF interval in joint decoding (nats; default: enzyme preset; not an FDR threshold). |
 | `--prob-threshold` | — | Min MM/ML probability 0-255 for re-reading modification calls. Default: chemistry preset -- 248 for Hia5 Nanopore (--seq nanopore, or the input's declared chemistry), 125 otherwise. R/Y- and MD-encoded DAF input is binary and ignores it. |
 | `--min-opps` | `3` | Min informative target positions per call (default 3) |
@@ -241,6 +256,9 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--replace-chemistry` | off | Replace, instead of reconcile with, the input BAM's FIBERHMM-CHEMISTRY declaration. By default a custom --model inherits the input's enzyme/platform when its observation mode matches, and a conflicting --enzyme/--seq is refused. |
 | `--daf-mask-runs` | — | DAF only: thin targets lying in same-strand runs of &gt;= N original C (CT) or G (GA) bases (CC/GG and longer at N=2; see --daf-run-policy). Adjacent conversions are coupled and do not follow the per-site emission model. Default: 2 with keep-one for --enzyme ddda (duplex-validated), off otherwise; 0 disables. |
 | `--daf-run-policy` | `keep-one` | With --daf-mask-runs: keep each run's 5'-most target (default) or drop the run. Choices: `keep-one`, `drop`. |
+| `--daf-mask-unaligned` / `--no-daf-mask-unaligned` | on | DAF only: treat CIGAR insertion and soft-clip bases as no evidence and leave unaligned stretches of &gt;= 50 bp uncalled (default on, as in fiberhmm-call). |
+| `--daf-insert-consensus` | `auto` | DAF only: re-encode insertions carried by enough reads against their deamination-aware consensus, as in fiberhmm-call (default auto: file input). Choices: `auto`, `off`. |
+| `--daf-insert-min-carriers` | `20` | Carriers an insertion needs for --daf-insert-consensus (default 20). |
 | `--min-llr` | — | Override native LLR cost per TF interval in joint decoding (nats; default: enzyme preset; not an FDR threshold). |
 | `--prob-threshold` | — | Min MM/ML probability 0-255 for re-reading modification calls. Default: chemistry preset -- 248 for Hia5 Nanopore (--seq nanopore, or the input's declared chemistry), 125 otherwise. R/Y- and MD-encoded DAF input is binary and ignores it. |
 | `--min-opps` | `3` | Min informative target positions per call (default 3) |

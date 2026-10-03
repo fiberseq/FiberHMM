@@ -215,6 +215,7 @@ def run_dedup(in_bam, out_bam, min_jaccard=0.95, min_deam=10, ignore_strand=Fals
     group_keys: List[Optional[tuple]] = []
     endpoints: List[Optional[tuple[int, int]]] = []
     quals: List[tuple] = []
+    names: dict = {}   # record index -> query name, for fingerprinted records
     n_total = n_fingerprintable = n_lowdeam = n_unmapped = 0
 
     with pysam.AlignmentFile(in_bam, "rb", check_sq=False) as bam:
@@ -246,6 +247,7 @@ def run_dedup(in_bam, out_bam, min_jaccard=0.95, min_deam=10, ignore_strand=Fals
             group_keys.append((read.reference_id, flavour_key))
             endpoints.append((int(read.reference_start), int(read.reference_end)))
             quals.append(_read_quality(read))
+            names[len(pos_sets) - 1] = read.query_name
             n_fingerprintable += 1
 
     if n_fingerprintable == 0:
@@ -283,6 +285,13 @@ def run_dedup(in_bam, out_bam, min_jaccard=0.95, min_deam=10, ignore_strand=Fals
         if c not in best_in_cluster or quals[idx] > quals[best_in_cluster[c]]:
             best_in_cluster[c] = idx
     representatives = set(best_in_cluster.values())
+    # A duplicate molecule's supplementary/secondary records (other parts or
+    # placements of the same read, which are not fingerprinted) follow its
+    # primary record: flagged too, and dropped with it under collapse.
+    duplicate_names = {
+        names[idx] for idx, c in enumerate(labels)
+        if c >= 0 and idx not in representatives
+    }
 
     print(f"Clustering (Jaccard >= {min_jaccard}; ends ±{max_end_diff} bp): "
           f"{n_fingerprintable:,} reads -> "
@@ -305,7 +314,7 @@ def run_dedup(in_bam, out_bam, min_jaccard=0.95, min_deam=10, ignore_strand=Fals
     # Published atomically: a failed pass 2 never leaves a partial BAM at
     # out_bam (or replaces an earlier one there).
     from fiberhmm.inference.bam_output import atomic_output
-    n_written = n_flagged = 0
+    n_written = n_flagged = n_flagged_parts = 0
     with atomic_output(out_bam) as out_path, \
             pysam.AlignmentFile(in_bam, "rb", check_sq=False) as bam:
         header = _dedup_output_header(
@@ -327,15 +336,24 @@ def run_dedup(in_bam, out_bam, min_jaccard=0.95, min_deam=10, ignore_strand=Fals
                         n_flagged += 1
                         if collapse:
                             continue
+                elif ((read.is_supplementary or read.is_secondary)
+                      and read.query_name in duplicate_names):
+                    read.is_duplicate = True
+                    n_flagged_parts += 1
+                    if collapse:
+                        continue
                 out.write(read)
                 n_written += 1
 
     mode = "collapsed" if collapse else "flagged"
-    print(f"Pass 2: wrote {n_written:,} reads ({n_flagged:,} duplicates {mode}) "
-          f"-> {out_bam} [{time.time()-t0:.0f}s]", file=sys.stderr)
+    print(f"Pass 2: wrote {n_written:,} reads ({n_flagged:,} duplicates {mode}"
+          + (f", plus {n_flagged_parts:,} of their supplementary/secondary records"
+             if n_flagged_parts else "")
+          + f") -> {out_bam} [{time.time()-t0:.0f}s]", file=sys.stderr)
     return {
         'n_total': n_total, 'n_fingerprintable': n_fingerprintable,
         'n_clusters': n_clusters, 'n_duplicates': n_dups,
+        'n_duplicate_supplementary_records': n_flagged_parts,
         'duplication_pct': dup_pct, 'n_written': n_written,
         'n_below_min_deam': n_lowdeam, 'n_unmapped': n_unmapped,
         'n_singleton_molecules': singletons,

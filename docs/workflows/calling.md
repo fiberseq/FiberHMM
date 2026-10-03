@@ -146,8 +146,25 @@ Region-parallel runs emit every event; streaming runs emit only `start` and
 
 ## Which records are called
 
-- **Primary alignments only** (default). Secondary and supplementary records
-  are written through uncalled; `--no-primary` calls them too.
+- **Primary and supplementary alignments** (default, `--alignments
+  primary-supplementary`). A supplementary record is another part of the
+  read (the far side of a structural variant, an insertion's TE copy) and is
+  called on its aligned bases only; its soft clips are the primary record's
+  sequence. Secondary records (alternative placements of the same bases) are
+  written through uncalled. `--primary` calls primary records only,
+  `--no-primary` (`--alignments all`) every record.
+- **DAF bases without a reference counterpart** (insertions, soft clips) and
+  SNP-masked sites are no evidence: a deamination is a read-versus-reference
+  mismatch, so these bases can show none. Unaligned stretches of 50 bp or more
+  get no calls (no nucleosome, MSP or TF; calls running into them are trimmed
+  at their edge). `--no-daf-mask-unaligned` turns this off. Fiber-seq m6A is
+  read-intrinsic: insertions and clips are called normally.
+- **DAF insertions carried by many reads** (at least
+  `--daf-insert-min-carriers`, default 20, within ±30 bp) are re-encoded
+  against a deamination-aware consensus of the carriers' inserts, so they get
+  real calls (`--daf-insert-consensus off` keeps them masked). The
+  consensus, its per-base confidence and the carriers per strand are written
+  to `qc/<output>.insert_consensus.json`.
 - **Hard-clipped records whose MM/ML cannot match SEQ** are always skipped
   (`hard_clipped_mm` in the skip report). minimap2 hard-clips supplementary
   alignments unless run with `-Y`, and their `MM`/`ML` still describe the

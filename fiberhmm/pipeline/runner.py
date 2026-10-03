@@ -91,7 +91,10 @@ class PipelineConfig:
     regions: list[str] = field(default_factory=list)
     min_mapq: int = 20
     min_read_length: Optional[int] = None
-    hard_clip: Optional[bool] = None  # None: on for DAF enzymes
+    # None: DAF reads on circular contigs only (concatemer arms beyond one
+    # full circle); linear-contig soft clips are kept (DAF calling treats them
+    # as no evidence, and they are the read's own sequence for SV views).
+    hard_clip: Optional[bool] = None
     origin_merge: bool = True
     origin_tolerance: int = 100
     dedup: str = "auto"  # auto | on | off (fiberhmm-call: automatic for DAF files)
@@ -99,7 +102,9 @@ class PipelineConfig:
     snp_screen: str = "auto"  # auto | on | off
     snp_mask: Optional[str] = None  # user BED of SNP sites to mask
     chimera_filter: bool = True
-    primary: bool = True
+    daf_mask_unaligned: bool = True  # DAF: insertion/soft-clip bases are no evidence
+    # Records kept by the aligner step and called: see read_filters.ALIGNMENT_SETS.
+    alignments: str = "primary-supplementary"
     prob_threshold: Optional[int] = None
     use_m5c: Optional[bool] = None  # None: fiberhmm-call default (on for ddda)
     cpg_mask_policy: Optional[str] = None
@@ -123,10 +128,16 @@ class PipelineConfig:
         """
         return self.seq or None
 
-    def resolved_hard_clip(self) -> bool:
+    def resolved_hard_clip(self) -> str:
+        """``on``, ``off``, or ``circular`` (DAF default: hard-clip records on
+        circular contigs only)."""
         if self.hard_clip is not None:
-            return self.hard_clip
-        return self.enzyme in DAF_ENZYMES
+            return "on" if self.hard_clip else "off"
+        return "circular" if self.enzyme in DAF_ENZYMES else "off"
+
+    def hard_clips(self, circular_contig: bool) -> bool:
+        mode = self.resolved_hard_clip()
+        return mode == "on" or (mode == "circular" and circular_contig)
 
     def preset(self) -> str:
         return mm2.PRESET_FOR_PLATFORM[self.resolved_seq() or "nanopore"]
@@ -147,7 +158,14 @@ class PipelineConfig:
             "snp_screen": self.snp_screen if daf else "off",
             "snp_mask": os.path.abspath(self.snp_mask) if self.snp_mask else None,
             "chimera_filter": self.chimera_filter if daf else None,
-            "primary_only": self.primary,
+            "daf_unaligned_mask": self.daf_mask_unaligned if daf else None,
+            # fiberhmm-call's default; --call-args "--daf-insert-consensus off"
+            # turns it off.
+            "daf_insert_consensus": (
+                ("off" if "off" in _call_arg_value(self.call_args, "--daf-insert-consensus")
+                 else "auto") if daf and self.daf_mask_unaligned else None),
+            "primary_only": self.alignments == "primary",
+            "alignments": self.alignments,
             "prob_threshold": self.prob_threshold if self.prob_threshold is not None
             else "auto",
             "use_m5c": ("auto" if self.use_m5c is None else self.use_m5c)
@@ -915,6 +933,7 @@ class Pipeline:
             "preset": cfg.preset(),
             "min_mapq": cfg.min_mapq,
             "hard_clip": cfg.resolved_hard_clip(),
+            "alignments": cfg.alignments,
             "origin_merge": cfg.origin_merge,
             "origin_tolerance": cfg.origin_tolerance,
             "regions": [list(r) for r in self.regions],
@@ -1059,9 +1078,9 @@ class Pipeline:
         pipeline_pg = {
             "ID": "fiberhmm-pipeline", "PN": "fiberhmm-pipeline", "VN": __version__,
             "CL": "fiberhmm-pipeline " + " ".join(shlex.quote(a) for a in sys.argv[1:]),
-            "DS": (f"primary MAPQ>={cfg.min_mapq}; "
+            "DS": (f"primary MAPQ>={cfg.min_mapq}; alignments={cfg.alignments}; "
                    f"origin_merge={'on' if cfg.origin_merge else 'off'}; "
-                   f"hard_clip={'on' if cfg.resolved_hard_clip() else 'off'}"),
+                   f"hard_clip={cfg.resolved_hard_clip()}"),
         }
         if pgs:
             pipeline_pg["PP"] = pgs[-1]["ID"]
@@ -1077,8 +1096,8 @@ class Pipeline:
                     sequences[name] = fasta.fetch(name).upper()
 
         stats = {"reads": 0, "unmapped": 0, "low_mapq": 0, "outside_regions": 0,
-                 "kept": 0, "origin_merged": 0, "hard_clipped_reads": 0,
-                 "hard_clipped_bases": 0}
+                 "kept": 0, "supplementary_kept": 0, "origin_merged": 0,
+                 "hard_clipped_reads": 0, "hard_clipped_bases": 0}
         unsorted = os.path.join(tmpdir, f"{self.sample}.unsorted.bam")
         started = time.time()
 
@@ -1098,8 +1117,8 @@ class Pipeline:
                 for group in _group_by_name(stream):
                     # One group per input record: restore (and release) its name.
                     name = feeder.restore_name(group[0].query_name)
-                    record = self._process_group(group, circular, sequences, stats, name)
-                    if record is not None:
+                    for record in self._process_group(group, circular, sequences,
+                                                      stats, name):
                         out.write(record)
         except BaseException:
             ticker.set()
@@ -1125,10 +1144,12 @@ class Pipeline:
             + (f", {stats['outside_regions']} outside --region" if self.regions else "")
             + (f"; {stats['origin_merged']} joined across a circular origin"
                if circular else "")
+            + (f"; {stats['supplementary_kept']} supplementary records kept"
+               if stats["supplementary_kept"] else "")
             + (f"; {stats['hard_clipped_reads']} hard-clipped"
-               if cfg.resolved_hard_clip() else ""))
+               if stats["hard_clipped_reads"] else ""))
         self.log(f"align: {stats['message']}")
-        if stats["kept"] == 0:
+        if stats["kept"] == 0 and stats["supplementary_kept"] == 0:
             raise PipelineError(
                 "no reads aligned to the reference",
                 hint="Check that the reference matches the sample (for a plasmid, "
@@ -1165,6 +1186,9 @@ class Pipeline:
             _unregister(stream.proc)
 
     def _process_group(self, group, circular, sequences, stats, name=None):
+        """The records kept for one read: its primary (joined with an origin
+        piece on a circular contig) and, unless ``alignments`` is
+        ``primary``, its other supplementary records on linear contigs."""
         cfg = self.config
         stats["reads"] += 1
         primary = None
@@ -1178,35 +1202,64 @@ class Pipeline:
                 primary = read
         if primary is None or primary.is_unmapped:
             stats["unmapped"] += 1
-            return None
-        if primary.mapping_quality < cfg.min_mapq:
+            return []
+        # Each piece is filtered on its own MAPQ: a uniquely aligned
+        # supplementary arm (an SV partner) is kept even when the primary
+        # piece maps ambiguously.
+        record = primary if primary.mapping_quality >= cfg.min_mapq else None
+        if record is None:
             stats["low_mapq"] += 1
-            return None
-        record = primary
         contig = primary.reference_name
-        if contig in circular and cfg.origin_merge:
+        merged_piece = None
+        if record is not None and contig in circular and cfg.origin_merge:
             for sup in supplementary:
                 merged = merge_origin_pieces(primary, sup, sequences[contig],
                                              cfg.origin_tolerance)
                 if merged is not None:
                     record = merged
+                    merged_piece = sup
                     stats["origin_merged"] += 1
                     break
-        if not self._overlaps_regions(record):
-            stats["outside_regions"] += 1
-            return None
         # The feeder numbered every input record (records sharing a name stay
         # separate molecules); the output keeps the name the reads came with.
-        record.query_name = name if name is not None else mm2.original_name(record.query_name)
-        if record.has_tag("SA"):
-            record.set_tag("SA", None)
-        if cfg.resolved_hard_clip():
-            removed = hard_clip(record)
-            if removed:
-                stats["hard_clipped_reads"] += 1
-                stats["hard_clipped_bases"] += removed
-        stats["kept"] += 1
-        return record
+        out_name = name if name is not None else mm2.original_name(record.query_name)
+        # Supplementary records on linear contigs are other parts of the read
+        # (the far side of an SV, an insertion's TE copy); on a circular
+        # contig they are origin pieces or concatemer copies of the same
+        # plasmid sequence, which would annotate the molecule twice.
+        extra = []
+        if cfg.alignments != "primary":
+            extra = [sup for sup in supplementary
+                     if sup is not merged_piece
+                     and sup.reference_name not in circular
+                     and sup.mapping_quality >= cfg.min_mapq]
+        if record is None and cfg.alignments == "primary":
+            return []
+        kept = []
+        if record is not None:
+            if self._overlaps_regions(record):
+                kept.append(record)
+            else:
+                stats["outside_regions"] += 1
+        kept += [sup for sup in extra if self._overlaps_regions(sup)]
+        if not kept:
+            return []
+        all_pieces_kept = (record is not None and merged_piece is None
+                           and len(kept) == 1 + len(supplementary))
+        for rec in kept:
+            rec.query_name = out_name
+            # SA lists the read's other pieces; it stays valid only when all
+            # of them are kept, and is dropped where pieces were joined or dropped.
+            if rec.has_tag("SA") and not all_pieces_kept:
+                rec.set_tag("SA", None)
+            if cfg.hard_clips(rec.reference_name in circular):
+                removed = hard_clip(rec)
+                if removed:
+                    stats["hard_clipped_reads"] += 1
+                    stats["hard_clipped_bases"] += removed
+        stats["kept"] += 1 if record is not None and kept[0] is record else 0
+        stats["supplementary_kept"] += sum(1 for rec in kept if rec is not record)
+        return kept
 
     # -- call + qc -------------------------------------------------------------
     def _call_arg_files(self) -> list[dict]:
@@ -1235,7 +1288,8 @@ class Pipeline:
             "snp_screen": cfg.snp_screen,
             "snp_mask": file_fingerprint(cfg.snp_mask, self.memo) if cfg.snp_mask else None,
             "chimera_filter": cfg.chimera_filter,
-            "primary": cfg.primary,
+            "daf_mask_unaligned": cfg.daf_mask_unaligned,
+            "alignments": cfg.alignments,
             "prob_threshold": cfg.prob_threshold,
             "use_m5c": cfg.use_m5c,
             "cpg_mask_policy": cfg.cpg_mask_policy,
@@ -1275,8 +1329,8 @@ class Pipeline:
             cmd += ["--seq", cfg.resolved_seq()]
         if cfg.min_read_length is not None:
             cmd += ["--min-read-length", str(cfg.min_read_length)]
-        if not cfg.primary:
-            cmd.append("--no-primary")
+        if cfg.alignments != "primary-supplementary":
+            cmd += ["--alignments", cfg.alignments]
         if cfg.prob_threshold is not None:
             cmd += ["--prob-threshold", str(cfg.prob_threshold)]
         if cfg.enzyme in DAF_ENZYMES:
@@ -1289,6 +1343,8 @@ class Pipeline:
                 cmd += ["--daf-snp-mask", os.path.abspath(cfg.snp_mask)]
             if not cfg.chimera_filter:
                 cmd.append("--keep-chimeras")
+            if not cfg.daf_mask_unaligned:
+                cmd.append("--no-daf-mask-unaligned")
         if cfg.enzyme == "ddda":
             if cfg.use_m5c is not None:
                 cmd.append("--use-m5c" if cfg.use_m5c else "--no-use-m5c")
@@ -1700,6 +1756,16 @@ def _empty_locked_dir(path: str) -> None:
         else:
             with contextlib.suppress(FileNotFoundError):
                 os.remove(entry.path)
+
+
+def _call_arg_value(call_args, flag) -> str:
+    """The value given to ``flag`` in a --call-args list ('' when absent)."""
+    for index, argument in enumerate(call_args or ()):
+        if argument == flag and index + 1 < len(call_args):
+            return call_args[index + 1]
+        if argument.startswith(flag + "="):
+            return argument.split("=", 1)[1]
+    return ""
 
 
 def _group_by_name(records):

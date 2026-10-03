@@ -29,6 +29,8 @@ nondeterministic, so it cannot be frozen):
   verbatim copy renamed them one at a time, so when two amplicons swapped
   places both calls ended up naming the same amplicon (a bug, fixed in
   ``fiberhmm.daf.snps`` too).
+* ``get_daf_positions`` evaluates secondary and supplementary records (3.0
+  calls supplementary records by default; callers filter record types).
 """
 from __future__ import annotations
 
@@ -806,8 +808,10 @@ def get_daf_positions(
         supplementary, no mismatches, or ambiguous strand with
         no ``force_strand``).
     """
-    # Skip unmapped / secondary / supplementary
-    if read.is_unmapped or read.is_secondary or read.is_supplementary:
+    # Skip unmapped records. (3.0, fh-sv-daf: secondary and supplementary
+    # records are compared like any other alignment; callers choose which
+    # records to call.)
+    if read.is_unmapped:
         return None
 
     seq = read.query_sequence

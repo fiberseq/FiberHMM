@@ -64,7 +64,9 @@ accessible state. **Re-train models built this way with 2.x**;
 | Change | 2.x | 3.0 | To get the 2.x behaviour |
 |---|---|---|---|
 | ML threshold for Hia5 Nanopore (`call`, `apply`, `recall-tfs`/`-nucs`, `extract`, `qc`, `posteriors`) | 128 / 125 | **248** | `--prob-threshold 128` (or 125) |
-| Alignments called by `call`/`apply` | all | **primary only** | `--no-primary` |
+| Alignments called by `call`/`apply` | all (DAF: primary only) | **primary + supplementary** (supplementary: aligned bases only) | `--no-primary` (all), `--primary` (primary only) |
+| DAF insertion / soft-clip / SNP-masked bases | counted as protected | **no evidence**; unaligned stretches >= 50 bp uncalled | `--no-daf-mask-unaligned` |
+| `fiberhmm-pipeline` DAF soft clips | hard-clipped | **kept on linear contigs** (hard-clipped on circular ones); supplementary records kept | `--hard-clip`, `--alignments primary` |
 | Bases trimmed at read ends by `posteriors` | 100 | **10** (as `call`/`apply`) | `--edge-trim 100` |
 | DddA CpG-aware recall in `call` and `pair`/`merge` joint recall | off | **on** (`ddda_ucg` islands exempt), as in `recall-tfs` | `--no-use-m5c` |
 | DAF tools reading MM/ML dU (`dedup`, `pair`, `merge`) | ML 0 | **ML 128** | `--prob-threshold 0` |

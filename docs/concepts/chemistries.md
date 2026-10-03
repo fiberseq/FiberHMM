@@ -69,8 +69,12 @@ Notes:
 - Other tools keep their own defaults: `fiberhmm-probs` 128, `fiberhmm-train` 125,
   `fiberhmm-utils transfer` 128, `fiberhmm-consensus` 125 for Hia5 PacBio and
   248 for Hia5 Nanopore.
-- `fiberhmm-call` and `fiberhmm-apply` call **primary alignments only**
-  (`--no-primary` to also call secondary and supplementary records).
+- `fiberhmm-call` and `fiberhmm-apply` call **primary and supplementary
+  alignments** (supplementary records on their aligned bases only);
+  `--primary` calls primary records only, `--no-primary` every record.
+- DAF: insertion and soft-clip bases (no reference counterpart) and
+  SNP-masked sites are no evidence; unaligned stretches >= 50 bp are left
+  uncalled (`--no-daf-mask-unaligned` to turn off).
 
 ## Hia5 on PacBio and on Nanopore
 

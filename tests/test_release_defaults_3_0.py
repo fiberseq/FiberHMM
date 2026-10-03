@@ -4,9 +4,10 @@
    resolves a threshold (call, apply, recall-tfs/-nucs, extract, qc); every
    other chemistry keeps its tool's historical default; an explicit
    --prob-threshold always wins.
-2. fiberhmm-call and fiberhmm-apply call primary alignments only by default
-   (--no-primary restores the old behaviour); secondary/supplementary records
-   pass through uncalled.
+2. fiberhmm-call and fiberhmm-apply call primary and supplementary alignments
+   by default (--alignments primary-supplementary; a supplementary record is
+   another part of the read) and pass secondary records through uncalled;
+   --primary calls primary records only, --no-primary every record.
 3. DddA CpG-aware recall (the recall-tfs policy) is on by default in
    fiberhmm-call and in the joint recall of fiberhmm-pair/-merge.
 4. DAF tools (dedup/pair/merge) read MM/ML-native dU at 128, like call.
@@ -246,22 +247,19 @@ def test_call_hia5_nanopore_end_to_end_records_248(tmp_path):
 
 
 # --------------------------------------------------------------------------
-# 2. primary-only by default
+# 2. primary + supplementary by default
 # --------------------------------------------------------------------------
 
-def test_primary_is_default_for_call_and_apply(monkeypatch):
+def test_primary_and_supplementary_is_default_for_call_and_apply(monkeypatch):
     from fiberhmm.cli import apply, call
 
-    monkeypatch.setattr(sys, "argv", ["fiberhmm-call", "-i", "x", "-o", "y"])
-    assert call.parse_args().primary is True
-    monkeypatch.setattr(sys, "argv", ["fiberhmm-call", "-i", "x", "-o", "y",
-                                      "--no-primary"])
-    assert call.parse_args().primary is False
-    monkeypatch.setattr(sys, "argv", ["fiberhmm-apply", "-i", "x", "-o", "y"])
-    assert apply.parse_args().primary is True
-    monkeypatch.setattr(sys, "argv", ["fiberhmm-apply", "-i", "x", "-o", "y",
-                                      "--no-primary"])
-    assert apply.parse_args().primary is False
+    for module, prog in ((call, "fiberhmm-call"), (apply, "fiberhmm-apply")):
+        for extra, expected in (((), "primary-supplementary"),
+                                (("--primary",), "primary"),
+                                (("--no-primary",), "all"),
+                                (("--alignments", "primary"), "primary")):
+            monkeypatch.setattr(sys, "argv", [prog, "-i", "x", "-o", "y", *extra])
+            assert module.parse_args().alignments == expected
 
 
 def _bam_with_supplementary(tmp_path):
@@ -280,10 +278,11 @@ def _bam_with_supplementary(tmp_path):
 
 
 @pytest.mark.parametrize("extra, supplementary_called", [
-    ((), False),
+    ((), True),
+    (("--primary",), False),
     (("--no-primary",), True),
 ])
-def test_call_passes_supplementary_through_uncalled(tmp_path, benchmark_model_path,
+def test_call_supplementary_by_default(tmp_path, benchmark_model_path,
                                                     extra, supplementary_called):
     bam = _bam_with_supplementary(tmp_path)
     out = tmp_path / "out.bam"
@@ -304,10 +303,11 @@ def test_call_passes_supplementary_through_uncalled(tmp_path, benchmark_model_pa
 
 @pytest.mark.parametrize("mode_args", [(), ("--streaming",)])
 @pytest.mark.parametrize("extra, supplementary_called", [
-    ((), False),
+    ((), True),
+    (("--primary",), False),
     (("--no-primary",), True),
 ])
-def test_apply_passes_supplementary_through_uncalled(tmp_path, benchmark_model_path,
+def test_apply_supplementary_by_default(tmp_path, benchmark_model_path,
                                                      mode_args, extra,
                                                      supplementary_called):
     """Both apply paths (-c 1 chunk pipeline and --streaming)."""

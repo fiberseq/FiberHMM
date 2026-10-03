@@ -450,6 +450,7 @@ def _process_bam_region_parallel_fused(
     pg_record: dict = None,
     ddda_mcg: bool = False,
     daf_snp_mask_path: str = None,
+    daf_insert_evidence_path: str = None,
     cpg_mask_policy: Optional[str] = None,
     work_dir: Optional[str] = None,
     resume: bool = False,
@@ -518,6 +519,7 @@ def _process_bam_region_parallel_fused(
         'ddda_mcg': ddda_mcg,
         'cpg_mask_policy': cpg_mask_policy,
         'daf_snp_mask_path': daf_snp_mask_path,
+        'daf_insert_evidence_path': daf_insert_evidence_path,
         'pg_record': pg_record,
         # Path string, NOT an open handle: pysam.FastaFile is not fork-safe,
         # so each worker opens it lazily in _init_fused_region_worker.
@@ -549,6 +551,7 @@ def _process_bam_region_parallel_fused(
                     nuc_profile=file_digest(nuc_profile_path, memo),
                     nuc_model=file_digest(nuc_model_path, memo),
                     daf_snp_mask=file_digest(daf_snp_mask_path, memo),
+                    daf_insert_evidence=file_digest(daf_insert_evidence_path, memo),
                     reference=reference_identity(ref_fasta_path, memo),
                 ),
                 region_plan=[[list(item.region), bool(item.passthrough)]

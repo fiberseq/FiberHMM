@@ -277,3 +277,41 @@ def test_call_auto_dedup_uses_flavour_key(tmp_path):
     records = list(pysam.AlignmentFile(temporary_bam, check_sq=False))
     assert stats["n_clusters"] == 1
     assert sum(read.is_duplicate for read in records) == 1
+
+
+@pytest.mark.parametrize("collapse", [False, True])
+def test_supplementary_records_follow_their_duplicate_primary(tmp_path, collapse):
+    """Supplementary records are called by default in 3.0; a PCR duplicate's
+    supplementary record (another part of the same read) is flagged with it
+    (and dropped with it under collapse); a representative's is kept."""
+    path = tmp_path / "split.bam"
+    _make_bam(path, [(f"A{index}", A_SITES, False, 60) for index in range(3)])
+    header = pysam.AlignmentFile(str(path)).header
+    records = list(pysam.AlignmentFile(str(path)))
+    for index in range(3):
+        supp = pysam.AlignedSegment(header)
+        supp.query_name = f"A{index}"
+        supp.flag = 2048
+        supp.reference_id = 0
+        supp.reference_start = 500
+        supp.mapping_quality = 60
+        supp.cigarstring = "200M"
+        supp.query_sequence = "A" * 200
+        records.append(supp)
+    with pysam.AlignmentFile(str(path), "wb", header=header) as out:
+        for read in records:
+            out.write(read)
+    output = tmp_path / "out.bam"
+    stats = run_dedup(str(path), str(output), min_jaccard=0.95, min_deam=10,
+                      collapse=collapse)
+    out = list(pysam.AlignmentFile(str(output), check_sq=False))
+    primaries = {r.query_name: r for r in out if not r.is_supplementary}
+    supps = {r.query_name: r for r in out if r.is_supplementary}
+    assert stats["n_duplicates"] == 2
+    assert stats["n_duplicate_supplementary_records"] == 2
+    if collapse:
+        assert set(supps) == set(primaries) and len(primaries) == 1
+    else:
+        for name, supp in supps.items():
+            assert supp.is_duplicate == primaries[name].is_duplicate
+        assert sum(r.is_duplicate for r in supps.values()) == 2
