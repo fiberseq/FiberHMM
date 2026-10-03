@@ -497,13 +497,14 @@ def test_pod5_to_called_bam_with_fake_dorado_resumes(tmp_path, fake_dorado):
     missing = _run_cli(args[:-1] + [str(tmp_path / "no-dorado")], env)
     assert missing.returncode == 2 and "nanoporetech/dorado" in missing.stderr
 
-    # dorado stops after 15 reads: the run fails, the partial BAM stays.
-    crashed = _run_cli(args, {**env, "FAKE_DORADO_FAIL_AFTER": "15"})
+    # dorado is killed after 25 reads (a BAM cut short): the run fails, the
+    # partial BAM stays.
+    crashed = _run_cli(args, {**env, "FAKE_DORADO_FAIL_AFTER": "25"})
     assert crashed.returncode == 1 and "dorado failed" in crashed.stderr
     partial = out / ".fiberhmm-pipeline" / "yw_2_4h.basecalled.partial.bam"
     assert partial.exists()
 
-    # The next run resumes: the 15 finished reads are copied, not redone.
+    # The next run resumes: the complete reads are copied, not redone.
     result = _run_cli(args, env)
     assert result.returncode == 0, result.stderr[-3000:]
     calls = [json.loads(line) for line in log.read_text().splitlines()]
@@ -539,3 +540,87 @@ def test_pod5_to_called_bam_with_fake_dorado_resumes(tmp_path, fake_dorado):
     assert again.returncode == 0, again.stderr[-3000:]
     later = [json.loads(line) for line in log.read_text().splitlines()[before:]]
     assert not any(c[:1] == ["basecaller"] for c in later)
+    assert "resuming" in result.stderr
+
+    # --redo basecall basecalls again from nothing, even over a partial BAM.
+    crashed = _run_cli(args + ["--redo", "basecall"], {**env, "FAKE_DORADO_FAIL_AFTER": "25"})
+    assert crashed.returncode == 1 and partial.exists()
+    before = len(log.read_text().splitlines())
+    redone = _run_cli(args + ["--redo", "basecall"], env)
+    assert redone.returncode == 0, redone.stderr[-3000:]
+    later = [json.loads(line) for line in log.read_text().splitlines()[before:]]
+    rerun = [c for c in later if c[:1] == ["basecaller"]]
+    assert len(rerun) == 1 and "--resume-from" not in rerun[0]
+
+
+# ---------------------------------------------------------------------------
+# Review fixes
+# ---------------------------------------------------------------------------
+
+def test_recorded_override_survives_repeated_runs_and_pipeline_detection(tmp_path):
+    override = bp.parse_override("model=corrected", None)
+    first = bp.basecaller_provenance(dorado_header(), override=override)
+    header = dorado_header()
+    header["PG"].append({"ID": "fiberhmm-pipeline", "PN": "fiberhmm-pipeline",
+                         "PP": "basecaller", "DS": bp.ds_tokens(first)})
+    second = bp.basecaller_provenance(header)  # e.g. fiberhmm-call on that BAM
+    assert second["sources"]["basecall_model"] == "recorded-override"
+    header["PG"].append({"ID": "fiberhmm-call", "PN": "fiberhmm-call",
+                         "PP": "fiberhmm-pipeline", "DS": bp.ds_tokens(second)})
+    third = bp.basecaller_provenance(header)
+    assert third["basecall_model"] == "corrected"
+    assert third["sources"]["basecall_model"] == "recorded-override"
+    # The pipeline's own detection over input files keeps FiberHMM records.
+    bam = tmp_path / "recalled.bam"
+    _ubam(bam, header, [("r1", "ACGT", [])])
+    assert inputs_provenance([str(bam)])["basecall_model"] == "corrected"
+
+
+def test_read_group_program_links_follow_renames():
+    a = {"RG": [{"ID": "g", "PG": "minimap2"}], "PG": [{"ID": "minimap2", "PN": "minimap2"}]}
+    b = {"RG": [{"ID": "h", "PG": "fiberhmm-call"}],
+         "PG": [{"ID": "dorado", "PN": "dorado"},
+                {"ID": "fiberhmm-call", "PN": "fiberhmm-call", "PP": "dorado"}]}
+    c = {"RG": [{"ID": "k", "PG": "missing"}]}
+    carried = carry_input_headers([a, b, c], reserved_pg=["minimap2"])
+    groups = {g["ID"]: g for g in carried.rg}
+    assert groups["g"]["PG"] == "minimap2-2"
+    assert groups["h"]["PG"] == "dorado"  # dropped FiberHMM program: its parent
+    assert "PG" not in groups["k"]
+
+
+def test_salvage_reads_a_bam_cut_mid_file(tmp_path):
+    full = tmp_path / "full.bam"
+    _ubam(full, dorado_header(), [(f"r{i}", "ACGT" * 200, []) for i in range(3000)])
+    data = full.read_bytes()
+    cut = tmp_path / "cut.bam"
+    cut.write_bytes(data[: len(data) // 2])  # no EOF block, a block cut short
+    kept = bc.salvage_bam(str(cut), str(tmp_path / "resume.bam"))
+    assert 0 < kept < 3000
+    assert bc.count_records(str(tmp_path / "resume.bam")) == kept
+    assert bc.salvage_bam(str(tmp_path / "missing.bam"), str(tmp_path / "x.bam")) == 0
+    assert not (tmp_path / "x.bam").exists()
+
+
+def test_mixed_fastq_comments_still_carry_modification_tags(tmp_path):
+    fastq = tmp_path / "mixed.fastq"
+    fastq.write_text("@r1 runid=abc MM:Z:A+a?,0; ML:B:C,250\nACGT\n+\nIIII\n")
+    assert mm2.fastq_has_sam_tags(str(fastq)) is False
+    assert mm2.fastq_has_mod_tags(str(fastq)) is True
+    feeder = mm2.ReadFeeder([mm2.classify_read_file(str(fastq))], carry_tags=True)
+    (_, comment, _, _), = mm2.iter_fastq_entries(feeder.chunks())
+    assert comment == "MM:Z:A+a?,0;\tML:B:C,250"
+
+
+def test_basecall_fingerprint_covers_files_named_in_arguments(tmp_path):
+    ids = tmp_path / "read_ids.txt"
+    ids.write_text("a\n")
+    settings = bc.resolve_settings("hia5", extra_args=["--read-ids", str(ids)])
+    before = settings.fingerprint()
+    ids.write_text("a\nb\n")
+    assert settings.fingerprint() != before
+    model = tmp_path / "dna_model"
+    model.mkdir()
+    (model / "config.toml").write_text("x")
+    assert bc.resolve_settings("hia5", model=str(model)).fingerprint()["files"][0][0] \
+        == str(model / "config.toml")

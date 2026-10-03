@@ -85,21 +85,6 @@ def carry_input_headers(headers: Iterable[Optional[dict]],
         if not header:
             continue
         data = header.to_dict() if hasattr(header, "to_dict") else header
-        for group in data.get("RG", []) or []:
-            group = dict(group)
-            rid = str(group.get("ID", ""))
-            if not rid:
-                continue
-            same = next((new for orig, new in carried_rg if orig == group), None)
-            if same is not None:
-                rg_map[rid] = same
-                continue
-            new = _unique(rid, taken_rg)
-            taken_rg.add(new)
-            carried_rg.append((group, new))
-            rg_map[rid] = new
-            out.rg.append({**group, "ID": new})
-
         programs = [dict(pg) for pg in data.get("PG", []) or [] if pg.get("ID")]
         ids = {pg["ID"] for pg in programs}
         parent_of = {pg["ID"]: pg.get("PP") for pg in programs}
@@ -129,6 +114,29 @@ def carry_input_headers(headers: Iterable[Optional[dict]],
             carried_pg.append((line, new))
             pg_map[pg["ID"]] = new
             out.pg.append({**line, "ID": new})
+
+        # Read groups after programs: a group's PG field follows its program's
+        # new ID (or its nearest kept ancestor; dropped when there is none).
+        for group in data.get("RG", []) or []:
+            group = dict(group)
+            rid = str(group.get("ID", ""))
+            if not rid:
+                continue
+            if group.get("PG"):
+                program = live_parent(group["PG"]) if group["PG"] in ids else None
+                if program is not None and program in pg_map:
+                    group["PG"] = pg_map[program]
+                else:
+                    group.pop("PG")
+            same = next((new for orig, new in carried_rg if orig == group), None)
+            if same is not None:
+                rg_map[rid] = same
+                continue
+            new = _unique(rid, taken_rg)
+            taken_rg.add(new)
+            carried_rg.append((group, new))
+            rg_map[rid] = new
+            out.rg.append({**group, "ID": new})
 
         for comment in data.get("CO", []) or []:
             text = str(comment)

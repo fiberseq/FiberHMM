@@ -455,8 +455,10 @@ def inputs_provenance(paths: list[str], override: Optional[dict] = None) -> dict
         single = bcprov.basecaller_provenance(header, found)
         per_input.append({"path": os.path.abspath(path), "kind": kind,
                           "available": single["available"]})
-    carried = carry_input_headers(headers)
-    merged = {"RG": carried.rg, "PG": carried.pg}
+    # Detection reads the original lines, FiberHMM's own @PG records included
+    # (they hold earlier overrides); only the realigned header drops them.
+    merged = {"RG": [g for h in headers if h for g in h.get("RG", []) or []],
+              "PG": [p for h in headers if h for p in h.get("PG", []) or []]}
     result = bcprov.basecaller_provenance(merged, groups, override)
     result["inputs"] = per_input
     missing = [item for item in per_input if not item["available"]]
@@ -1023,6 +1025,8 @@ class Pipeline:
                 same_setup = json.load(handle) == fingerprint
         except (OSError, ValueError):
             same_setup = False
+        if self._forced("basecall"):
+            same_setup = False  # --redo basecall: start again from nothing
         if same_setup:
             # The records an interrupted run wrote completely are kept:
             # dorado --resume-from copies them and basecalls the rest. A
@@ -1363,7 +1367,7 @@ class Pipeline:
         ref = self.reference
         preset = cfg.preset()
         carry_tags = any(
-            (rf.kind == "fastq" and mm2.fastq_has_sam_tags(rf.path))
+            (rf.kind == "fastq" and mm2.fastq_has_mod_tags(rf.path))
             or (rf.kind != "fastq" and mm2.bam_has_mod_tags(rf.path))
             for rf in self.read_files)
         rg = {"ID": self.sample, "SM": self.sample,

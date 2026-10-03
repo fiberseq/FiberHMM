@@ -20,6 +20,7 @@ configfile: "config.yaml"
 
 OUT = config.get("outdir", "results")
 RAW_SUFFIXES = (".pod5", ".fast5")
+READ_SUFFIXES = (".fastq", ".fq", ".fastq.gz", ".fq.gz", ".bam") + RAW_SUFFIXES
 SHEET_COLUMNS = ("sample", "reads", "enzyme")
 
 
@@ -46,6 +47,21 @@ SAMPLES = _load_samples(config["samples"])
 def reads_of(wildcards):
     # Several inputs of one sample: separated by commas (or spaces).
     return [p for p in SAMPLES[wildcards.sample]["reads"].replace(",", " ").split() if p]
+
+
+def input_files(wildcards):
+    """The files behind the sample's inputs: a folder's read and POD5 files
+    are listed, so a changed or added file inside it reruns the sample."""
+    files = []
+    for path in reads_of(wildcards):
+        if os.path.isdir(path):
+            for root, dirs, names in os.walk(path):
+                dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+                files += [os.path.join(root, n) for n in sorted(names)
+                          if n.lower().endswith(READ_SUFFIXES) and not n.startswith(".")]
+        else:
+            files.append(path)
+    return files
 
 
 def is_raw(path):
@@ -98,15 +114,17 @@ rule all:
 
 rule fiberhmm_pipeline:
     input:
-        reads=reads_of,
+        reads=input_files,
         reference=reference_of,
     output:
         outputs=os.path.join(OUT, "{sample}", "outputs.json"),
         called=os.path.join(OUT, "{sample}", "{sample}.fiberhmm.bam"),
+        index=os.path.join(OUT, "{sample}", "{sample}.fiberhmm.bam.bai"),
     log:
         os.path.join(OUT, "logs", "{sample}.log"),
     params:
         outdir=lambda wc: os.path.join(OUT, wc.sample),
+        reads=lambda wc: " ".join(shlex.quote(p) for p in reads_of(wc)),
         enzyme=lambda wc: SAMPLES[wc.sample]["enzyme"],
         progress=lambda wc: os.path.join(OUT, "logs", f"{wc.sample}.progress.jsonl"),
         args=pipeline_args,
@@ -118,7 +136,7 @@ rule fiberhmm_pipeline:
         slurm_partition=resource("slurm_partition", ""),
         slurm_extra=resource("slurm_extra", ""),
     shell:
-        "fiberhmm-pipeline {input.reads:q} --reference {input.reference:q} "
+        "fiberhmm-pipeline {params.reads} --reference {input.reference:q} "
         "--enzyme {params.enzyme} --sample {wildcards.sample} -o {params.outdir:q} "
         "-c {threads} --progress-json {params.progress:q} {params.args} "
         "> {log:q} 2>&1"

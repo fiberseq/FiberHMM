@@ -378,7 +378,9 @@ def basecaller_provenance(header, reads: Optional[Iterable] = None,
                 recorded = parsed
     if recorded:
         for name, value in recorded["values"].items():
-            source = ("recorded-override" if recorded["sources"].get(name) == "override"
+            # An override stays one through any number of later FiberHMM runs.
+            source = ("recorded-override"
+                      if recorded["sources"].get(name) in ("override", "recorded-override")
                       else "recorded")
             fields[name].offer(_freeze(value), source)
 

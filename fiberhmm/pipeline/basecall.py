@@ -178,11 +178,35 @@ class BasecallSettings:
 
     def fingerprint(self) -> dict:
         """What changes the basecalls (device, batch size and the model
-        folder do not)."""
+        folder do not). Models given as paths, and files named in the extra
+        arguments (e.g. ``--read-ids``), are identified by path, size and
+        modification time of their files."""
         return {"model": self.model, "modified_bases": list(self.modified_bases or []),
-                "modbase_models": [os.path.abspath(m) if os.path.exists(m) else m
-                                   for m in (self.modbase_models or [])],
-                "extra_args": list(self.extra_args)}
+                "modbase_models": list(self.modbase_models or []),
+                "extra_args": list(self.extra_args),
+                "files": path_identity([self.model, *(self.modbase_models or []),
+                                        *self.extra_args])}
+
+
+def path_identity(arguments) -> list[list]:
+    """``[[path, size, mtime_ns], ...]`` for every argument that is an existing
+    file, or a folder (its files, e.g. a dorado model folder)."""
+    out = []
+    for argument in arguments:
+        text = str(argument)
+        if not text or text.startswith("-") or not os.path.exists(text):
+            continue
+        if os.path.isdir(text):
+            for root, dirs, files in os.walk(text):
+                dirs.sort()
+                for name in sorted(files):
+                    path = os.path.join(root, name)
+                    st = os.stat(path)
+                    out.append([os.path.abspath(path), st.st_size, st.st_mtime_ns])
+        else:
+            st = os.stat(text)
+            out.append([os.path.abspath(text), st.st_size, st.st_mtime_ns])
+    return out
 
 
 def resolve_settings(enzyme: str, model: Optional[str] = None,
@@ -258,20 +282,28 @@ def salvage_bam(source: str, target: str) -> int:
     a dorado run that was killed leaves a BAM without its end, which
     ``dorado --resume-from`` needs readable.
     """
+    import contextlib
     import pysam
     count = 0
     tmp = target + ".tmp"
+    src = None
     try:
-        with pysam.AlignmentFile(source, "rb", check_sq=False) as src:
-            with pysam.AlignmentFile(tmp, "wb", header=src.header) as out:
-                try:
-                    for read in src.fetch(until_eof=True):
-                        out.write(read)
-                        count += 1
-                except (OSError, ValueError):
-                    pass  # truncated: keep what was complete
+        # A killed writer leaves no BGZF EOF block (and maybe a cut block):
+        # read what is complete; closing such a file can raise too.
+        src = pysam.AlignmentFile(source, "rb", check_sq=False, ignore_truncation=True)
+        with pysam.AlignmentFile(tmp, "wb", header=src.header) as out:
+            try:
+                for read in src.fetch(until_eof=True):
+                    out.write(read)
+                    count += 1
+            except (OSError, ValueError):
+                pass  # truncated: keep what was complete
     except (OSError, ValueError):
         count = 0
+    finally:
+        if src is not None:
+            with contextlib.suppress(Exception):
+                src.close()
     if count:
         os.replace(tmp, target)
     else:

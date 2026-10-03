@@ -9,13 +9,15 @@ per-read ``RG:Z:<runid>_<model>`` tags. Reads come from the JSON file named by
 written only when a modification model was asked for). ``--resume-from``
 copies that BAM's records first and skips their reads, as dorado does.
 
-``FAKE_DORADO_FAIL_AFTER=N`` stops with exit 1 after N new reads;
+``FAKE_DORADO_FAIL_AFTER=N`` stops with exit 1 after N new reads, leaving a
+BAM cut short (no EOF block, the last block truncated) as a killed dorado does;
 ``FAKE_DORADO_LOG`` gets one JSON line of argv per invocation.
 """
 import array
 import json
 import os
 import sys
+import tempfile
 
 import pysam
 
@@ -75,7 +77,22 @@ def main(argv):
     reads = json.load(open(os.environ["FAKE_DORADO_READS"]))
     fail_after = int(os.environ.get("FAKE_DORADO_FAIL_AFTER", "0") or 0)
     done = set()
-    with pysam.AlignmentFile("-", "wb", header=header) as out:
+    handle, tmp = tempfile.mkstemp(suffix=".bam")
+    os.close(handle)
+    try:
+        code = write(tmp, header, reads, resume, done, mods, rg_id, fail_after)
+        data = open(tmp, "rb").read()
+    finally:
+        os.remove(tmp)
+    if code:
+        data = data[:-40]  # killed: no EOF block, the last block cut short
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+    return code
+
+
+def write(path, header, reads, resume, done, mods, rg_id, fail_after):
+    with pysam.AlignmentFile(path, "wb", header=header) as out:
         if resume:
             with pysam.AlignmentFile(resume, check_sq=False) as previous:
                 for read in previous.fetch(until_eof=True):

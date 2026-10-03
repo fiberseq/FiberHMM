@@ -299,6 +299,21 @@ def fastq_has_sam_tags(path: str, records: int = 50) -> bool:
     return seen > 0
 
 
+def fastq_has_mod_tags(path: str, records: int = 50) -> bool:
+    """True when the first records' header comments carry base-modification
+    tags (``MM:Z:``/``Mm:Z:``), whatever else they hold: the feeder keeps the
+    SAM tags minimap2 ``-y`` may copy and drops the rest
+    (:func:`sanitize_fastq_header`)."""
+    with _open_binary(path) as handle:
+        for i, line in enumerate(handle):
+            if i // 4 >= records:
+                break
+            if i % 4 == 0 and any(token.startswith((b"MM:Z:", b"Mm:Z:"))
+                                  for token in line.split()[1:]):
+                return True
+    return False
+
+
 def _revcomp(seq: str) -> str:
     return seq.translate(str.maketrans("ACGTNacgtnRYKMSWBDHVrykmswbdhv",
                                        "TGCANtgcanYRMKSWVHDByrmkswvhdb"))[::-1]
