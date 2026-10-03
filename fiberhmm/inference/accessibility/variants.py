@@ -9,7 +9,8 @@ The lattice recaller's discovery recipe, applied to nucleosome-bounded gaps inst
    while the 3-fold held-out (folds by unit_id hash) log-likelihood gain of two edge Gaussians over one is below
    ``identity_nats``.
 3. support: a variant stays only if dropping it costs >= ``support_nats`` held-out nats, it has >= ``min_reads``
-   expected member reads, and its prediction-strength stability is >= ``stringency``; otherwise the weakest
+   expected member reads, and its split-averaged prediction-strength stability (the recaller's
+   ``cluster_stability``) is >= ``stringency``; otherwise the weakest
    failing candidate is dropped and the test repeats.
 
 Identity and support use the same fitting rule as the final estimator: geometry is the robust (MinCovDet) centre and
@@ -31,7 +32,7 @@ import itertools
 import numpy as np
 from sklearn.cluster import KMeans
 
-from ..consensus.lattice_recaller.discovery import _hash, prediction_strength
+from ..consensus.lattice_recaller.discovery import _hash, cluster_stability, prediction_strength
 
 SD_FLOOR = 5.0
 TIMER_DEPTHS = ((500, 'actuated'), (300, 'merged'), (175, 'pioneered'))
@@ -160,24 +161,22 @@ def discover(reads, region, opt, salt='', progress=None):
     if len(X) < 2*opt.min_reads:
         return [], diag, es
     kmax = min(opt.kmax, max(2, len(X)//(2*int(opt.min_reads))))     # == the prototype's rule for kmax >= 2
-    curve = []
+    curve, splits = [], {}
     for k in range(1, kmax + 1):
-        ps, _ = prediction_strength(X, gid, k, opt.seed, opt.splits)
+        ps, splits[k] = prediction_strength(X, gid, k, opt.seed, opt.splits)
         curve.append((k, round(ps, 4)))
         if progress:
             progress(k, kmax)
     ok = [k for k, ps in curve if ps >= opt.stringency]
     k = max(ok) if ok else 1
     km = KMeans(k, n_init=10, random_state=opt.seed).fit(X); lab = km.labels_
-    per = prediction_strength(X, gid, k, opt.seed, opt.splits)[1] if k > 1 else {}
     cands = []
     for j in range(k):
         idx = np.where(lab == j)[0]
         if len({gid[i] for i in idx}) < opt.min_reads:
             continue
-        cen = X[idx].mean(0)
-        key = min(per, key=lambda t: abs(t[0] - cen[0]) + abs(t[1] - cen[1])) if per else None
-        cands.append(dict(id=f'k{j}', idx=idx, stability=float(np.mean(per[key])) if key else 1.0))
+        # The recaller's split-averaged stability (cluster_stability over the chosen k's split-halves; 1.0 at k = 1).
+        cands.append(dict(id=f'k{j}', idx=idx, stability=cluster_stability(idx, splits[k]) if k > 1 else 1.0))
     diag.update(k=k, ps_curve=curve, candidates=[dict(id=c['id'], L=float(np.median(X[c['idx'], 0])), R=float(np.median(X[c['idx'], 1])),
                                                       gaps=int(len(c['idx'])), stability=round(c['stability'], 3)) for c in cands])
     folds = np.array([_hash('fold' + u, opt.folds) for u in gid])
