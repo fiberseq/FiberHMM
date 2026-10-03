@@ -35,6 +35,7 @@ from sklearn.cluster import KMeans
 from ..consensus.lattice_recaller.discovery import _hash, cluster_stability, prediction_strength
 
 SD_FLOOR = 5.0
+BOOT_CHUNK = 20         # bootstrap replicates per progress report
 TIMER_DEPTHS = ((500, 'actuated'), (300, 'merged'), (175, 'pioneered'))
 
 
@@ -107,8 +108,24 @@ def loglik(X, VE, log_other, F):
     return float((m[:, 0] + np.log(np.exp(a - m).sum(1))).sum())
 
 
-def robust_geometry(Xc, seed):
-    """Members' robust centre and covariance (MinCovDet, deterministic): k-means cells include neighbours' tails."""
+def robust_geometry(Xc, seed, cache=None):
+    """Members' robust centre and covariance (MinCovDet, deterministic): k-means cells include neighbours' tails.
+
+    ``cache`` (optional dict): memo of earlier results. MinCovDet is a deterministic function of the members' values,
+    their order and the seed, so the key is exactly those (the bytes of ``Xc``); a hit returns copies of the same
+    arrays the fit returned. Discovery fits the same members many times (every held-out test re-fits every group)."""
+    if cache is None:
+        return _robust_geometry(Xc, seed)
+    Xc = np.asarray(Xc)
+    key = (Xc.shape, Xc.dtype.str, seed if isinstance(seed, (int, np.integer)) else repr(seed),
+           np.ascontiguousarray(Xc).tobytes())
+    hit = cache.get(key)
+    if hit is None:
+        hit = cache[key] = _robust_geometry(Xc, seed)
+    return hit[0].copy(), hit[1].copy()
+
+
+def _robust_geometry(Xc, seed):
     from sklearn.covariance import MinCovDet
     if len(Xc) < 10:
         return np.median(Xc, 0), _floor(np.cov(Xc.T) if len(Xc) > 2 else np.diag([400., 400.]))
@@ -116,10 +133,10 @@ def robust_geometry(Xc, seed):
     return m.location_, _floor(m.covariance_)
 
 
-def heldout_gain_groups(X, VE, log_other, folds_of, groups_full, groups_reduced, nfold, seed=1):
+def heldout_gain_groups(X, VE, log_other, folds_of, groups_full, groups_reduced, nfold, seed=1, cache=None):
     """Held-out log-likelihood gain of the full over the reduced model, fitted with the final estimator's rule:
     per training fold, each group's geometry is the MinCovDet centre/covariance of its training members, fixed;
-    only weights are fitted. ``groups_*`` are lists of index arrays into X."""
+    only weights are fitted. ``groups_*`` are lists of index arrays into X. ``cache``: ``robust_geometry``'s memo."""
     g = 0.
     for f in range(nfold):
         tr, te = folds_of != f, folds_of == f
@@ -131,7 +148,7 @@ def heldout_gain_groups(X, VE, log_other, folds_of, groups_full, groups_reduced,
             for idx in groups:
                 t = idx[tr[idx]]
                 if len(t) >= 3:
-                    geo.append(robust_geometry(X[t], seed))
+                    geo.append(robust_geometry(X[t], seed, cache))
             if not geo:
                 lls.append(te.sum()*log_other); continue
             F = fit_mixture(X[tr], VE[tr], log_other, [m for m, _ in geo], covs=[c for _, c in geo], fixed=True)
@@ -151,8 +168,10 @@ def canonical(reads, salt=''):
     return gaps, gid
 
 
-def discover(reads, region, opt, salt='', progress=None):
-    """Supported variants (list of dicts with mu, cov, stability, gain, exp_reads), diagnostics and the EdgeSpace."""
+def discover(reads, region, opt, salt='', progress=None, stage=None):
+    """Supported variants (list of dicts with mu, cov, stability, gain, exp_reads), diagnostics and the EdgeSpace.
+
+    progress(k, kmax): after each prediction-strength k; stage(name): as the identity merge and the support test start."""
     gaps, gid = canonical(reads, salt)
     es = EdgeSpace(gaps, region, opt.min_gap_bp)
     X, VE = es.X, es.VE
@@ -181,6 +200,8 @@ def discover(reads, region, opt, salt='', progress=None):
     diag.update(k=k, ps_curve=curve, candidates=[dict(id=c['id'], L=float(np.median(X[c['idx'], 0])), R=float(np.median(X[c['idx'], 1])),
                                                       gaps=int(len(c['idx'])), stability=round(c['stability'], 3)) for c in cands])
     folds = np.array([_hash('fold' + u, opt.folds) for u in gid])
+    # MinCovDet memo for this discovery: identity merges and support tests re-fit the same members in every fold
+    geo_cache = {}
 
     def mu_of(c):
         return np.median(X[c['idx']], 0)
@@ -189,6 +210,8 @@ def discover(reads, region, opt, salt='', progress=None):
         ma, mb = mu_of(a), mu_of(b)
         return min(ma[1], mb[1]) - max(ma[0], mb[0]) > 0
 
+    if stage:
+        stage('identity')
     merges = []
     while True:
         best = None
@@ -197,7 +220,8 @@ def discover(reads, region, opt, salt='', progress=None):
                 continue
             sel = np.r_[cands[i]['idx'], cands[j]['idx']]
             ni = len(cands[i]['idx']); loc = np.arange(len(sel))
-            g = heldout_gain_groups(X[sel], VE[sel], es.log_other, folds[sel], [loc[:ni], loc[ni:]], [loc], opt.folds, opt.seed)
+            g = heldout_gain_groups(X[sel], VE[sel], es.log_other, folds[sel], [loc[:ni], loc[ni:]], [loc], opt.folds, opt.seed,
+                                    geo_cache)
             if g < opt.identity_nats and (best is None or g < best[0]):
                 best = (g, i, j)
         if best is None:
@@ -208,15 +232,18 @@ def discover(reads, region, opt, salt='', progress=None):
                  stability=max(cands[i]['stability'], cands[j]['stability']))
         cands = [c for t, c in enumerate(cands) if t not in (i, j)] + [m]
     diag['merges'] = merges
+    if stage:
+        stage('support')
     dropped = []
     tests = []
     while cands:
-        geo_s = [robust_geometry(X[c['idx']], opt.seed) for c in cands]
+        geo_s = [robust_geometry(X[c['idx']], opt.seed, geo_cache) for c in cands]
         F = fit_mixture(X, VE, es.log_other, [m for m, _ in geo_s], covs=[c_ for _, c_ in geo_s], fixed=True)
         tests = []
         for t, c in enumerate(cands):
             groups = [cc['idx'] for cc in cands]
-            gain = heldout_gain_groups(X, VE, es.log_other, folds, groups, [gi for s_, gi in enumerate(groups) if s_ != t], opt.folds, opt.seed)
+            gain = heldout_gain_groups(X, VE, es.log_other, folds, groups, [gi for s_, gi in enumerate(groups) if s_ != t], opt.folds, opt.seed,
+                                       geo_cache)
             per_read = {}
             for i, u in enumerate(gid):
                 per_read[u] = max(per_read.get(u, 0.), F['resp'][i, t])
@@ -240,7 +267,7 @@ def discover(reads, region, opt, salt='', progress=None):
     diag['dropped'] = dropped
     if not cands:
         return [], diag, es
-    geo = [robust_geometry(X[c['idx']], opt.seed) for c in cands]
+    geo = [robust_geometry(X[c['idx']], opt.seed, geo_cache) for c in cands]
     F = fit_mixture(X, VE, es.log_other, [g[0] for g in geo], covs=[g[1] for g in geo], fixed=True)
     variants = []
     for t, c in enumerate(cands):
@@ -278,7 +305,8 @@ def relation(v, ref, shift_bp=25):
 
 
 # ------------------------------------------------------------------ read-level EM over configurations
-def _em(LL, iters=2000, w0=None):
+def _em_dense(LL, iters=2000, w0=None):
+    """The configuration EM on the full read x configuration matrix (the reference ``_em`` reproduces exactly)."""
     w = np.full(LL.shape[1], 1/LL.shape[1]) if w0 is None else np.asarray(w0, float).copy()
     p = None
     for _ in range(iters):
@@ -289,6 +317,117 @@ def _em(LL, iters=2000, w0=None):
             w = nw; break
         w = nw
     return w, p
+
+
+def _span_column_sums_reference(Pu, inv, c0, c1, ncol):
+    """Column sums of Pu[inv] in row order, skipping each row's exact zeros outside its span (x + 0.0 == x)."""
+    acc = np.zeros(ncol)
+    for i in range(len(inv)):
+        r = inv[i]
+        for j in range(c0[r], c1[r]):
+            acc[j] += Pu[r, j]
+    return acc
+
+
+try:
+    from numba import njit as _njit
+    _span_column_sums = _njit(cache=True, nogil=True)(_span_column_sums_reference)
+except ImportError:      # without numba the read average is taken over the rebuilt full matrix
+    _span_column_sums = None
+
+
+class _EMRows:
+    """The distinct rows of a read x configuration log-likelihood matrix, each restricted to its span of possible
+    configurations, for computing ``_em_dense`` bit for bit at a fraction of the cost.
+
+    A read's possible configurations are those with one label per gap, so every row is -inf outside one contiguous
+    span of columns (configurations are ordered by length). Outside the span the dense EM computes exp(-inf) = 0
+    exactly; inside it this computes the same elementwise values. Rows are kept at full width (exact zeros outside
+    the span) for the row sums, so each row sum adds the same values in the same order as ``_em_dense``. Identical
+    rows (closed reads, bootstrap duplicates) are computed once. Rows with NaN or +inf, or with no possible
+    configuration, use the dense formula over the whole row.
+
+    The read average: numpy reduces a C-ordered matrix over its rows (the slow axis) by adding row after row, so
+    each column's sum is the row-ordered sum of its non-zero entries (adding an exact +0.0 changes nothing). With
+    Numba that sum is taken over the spans directly, without rebuilding the read x configuration matrix; the first
+    average of every EM is checked bit for bit against numpy's and any difference switches to numpy's."""
+
+    def __init__(self, LL):
+        A = np.ascontiguousarray(LL)
+        self.n, self.c = A.shape
+        _, first, inv = np.unique(A.view(np.dtype((np.void, A.dtype.itemsize*self.c))).ravel(),
+                                  return_index=True, return_inverse=True)
+        U = A[first]
+        live = U > -np.inf                                     # False for -inf and NaN
+        dense = np.isnan(U).any(1) | np.isposinf(U).any(1) | ~live.any(1)
+        c0 = np.where(dense, 0, live.argmax(1))
+        c1 = np.where(dense, self.c, self.c - live[:, ::-1].argmax(1))
+        order = np.lexsort((np.arange(len(U)), c1, c0))       # one contiguous block of distinct rows per span
+        pos = np.empty(len(order), np.intp); pos[order] = np.arange(len(order))
+        self.U, self.inv = U[order], pos[np.asarray(inv).ravel()]
+        self.c0, self.c1 = c0[order].astype(np.int64), c1[order].astype(np.int64)
+        starts = np.flatnonzero(np.r_[True, (self.c0[1:] != self.c0[:-1]) | (self.c1[1:] != self.c1[:-1])])
+        self.blocks = [(int(r0), int(r1), int(self.c0[r0]), int(self.c1[r0]),
+                        np.ascontiguousarray(self.U[r0:r1, self.c0[r0]:self.c1[r0]]))
+                       for r0, r1 in zip(starts, np.r_[starts[1:], len(U)])]
+        # the span sums need numpy's row-after-row reduction: a matrix with one column reduces as a vector
+        self.span_sums = _span_column_sums is not None and self.c > 1
+        self.checked = False
+
+    @classmethod
+    def of(cls, LL):
+        LL = np.asarray(LL)
+        if LL.ndim != 2 or LL.dtype != np.float64 or 0 in LL.shape:
+            return None
+        return cls(LL)
+
+    def posteriors(self, logw):
+        """(``_em_dense``'s p for log-weights ``logw``, one row per distinct row; whether zeros are exact outside spans)."""
+        if not np.isfinite(logw).all():
+            # a non-finite log-weight reaches every column of the dense formula: compute it as the dense EM does
+            a = self.U + logw; m = a.max(1, keepdims=True)
+            p = np.exp(a - m); p /= p.sum(1, keepdims=True)
+            return p, False
+        Pu = np.zeros((len(self.U), self.c))
+        for r0, r1, c0, c1, Ub in self.blocks:
+            a = Ub + logw[c0:c1]; m = a.max(1, keepdims=True)
+            Pu[r0:r1, c0:c1] = np.exp(a - m)
+        s = Pu.sum(1, keepdims=True)
+        for r0, r1, c0, c1, _ in self.blocks:
+            Pu[r0:r1, c0:c1] /= s[r0:r1]                    # outside the span 0/s = 0 (s >= 1: the row max gives exp(0))
+        return Pu, True
+
+    def full(self, Pu):
+        return Pu[self.inv]
+
+    def mean(self, Pu, spans_exact):
+        """``full(Pu).mean(0)``, bit for bit."""
+        if not (self.span_sums and spans_exact):
+            return self.full(Pu).mean(0)
+        nw = _span_column_sums(Pu, self.inv, self.c0, self.c1, self.c)/self.n
+        if not self.checked:
+            self.checked = True
+            ref = self.full(Pu).mean(0)
+            if ref.tobytes() != nw.tobytes():
+                self.span_sums = False
+                return ref
+        return nw
+
+
+def _em(LL, iters=2000, w0=None):
+    """The configuration EM: weights and per-read posteriors. Bit-identical to ``_em_dense`` (see ``_EMRows``)."""
+    rows = _EMRows.of(LL)
+    if rows is None:
+        return _em_dense(LL, iters, w0)
+    w = np.full(LL.shape[1], 1/LL.shape[1]) if w0 is None else np.asarray(w0, float).copy()
+    Pu = None
+    for _ in range(iters):
+        Pu, exact = rows.posteriors(np.log(np.maximum(w, 1e-300)))
+        nw = rows.mean(Pu, exact)
+        if np.abs(nw - w).max() < 1e-9:
+            w = nw; break
+        w = nw
+    return w, (None if Pu is None else rows.full(Pu))
 
 
 def config_loglik(reads, variants, es):
@@ -321,7 +460,7 @@ def config_loglik(reads, variants, es):
     return callable_reads, configs, LL
 
 
-def quantify(reads, variants, es, opt):
+def quantify(reads, variants, es, opt, progress=None):
     """Configuration EM, prevalence (strict to EM), conditional bootstrap intervals, per-read membership, labels."""
     k = len(variants); OTHER = k
     callable_reads, configs, LL = config_loglik(reads, variants, es)
@@ -336,7 +475,9 @@ def quantify(reads, variants, es, opt):
     rng = np.random.default_rng(opt.seed)
     boots = []
     if len(rows):
-        for _ in range(opt.bootstrap):
+        for b in range(opt.bootstrap):
+            if progress and b % BOOT_CHUNK == 0:
+                progress(b, opt.bootstrap)
             s = rng.integers(0, len(LL), len(LL)); wb, _ = _em(LL[s], 500); boots.append(contains @ wb)
     boots = np.array(boots)
     ci = dict(lo=np.percentile(boots, 2.5, 0), hi=np.percentile(boots, 97.5, 0)) if len(boots) else None
@@ -372,10 +513,12 @@ def quantify(reads, variants, es, opt):
                 other_strict=float(np.mean(Pv[:, OTHER] >= 0.9)) if len(Pv) else 0.)
 
 
-def robust(reads, region, variants, opt, n=5, centre_bp=15):
+def robust(reads, region, variants, opt, n=5, centre_bp=15, progress=None):
     """Fraction of n reordered discovery runs that recover each variant (centre within centre_bp, width ratio 0.7-1.43)."""
     hits = np.zeros(len(variants))
     for s in range(n):
+        if progress:
+            progress(s, n)
         vs, _, _ = discover(reads, region, opt, salt=f'order{s}')
         describe(vs)
         for j, v in enumerate(variants):

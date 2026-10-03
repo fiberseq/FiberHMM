@@ -24,6 +24,7 @@ The null does not preserve pairwise associations: enrichment is beyond margins a
 from __future__ import annotations
 
 import itertools
+import math
 from collections import Counter
 
 import numpy as np
@@ -73,7 +74,7 @@ def mantel_haenszel(x, y, strata):
     return lor/np.log(2), (lor - Z95*se)/np.log(2), (lor + Z95*se)/np.log(2)
 
 
-def stratified_perm(x, y, strata, n_perm, rng):
+def _stratified_perm_reference(x, y, strata, n_perm, rng):
     """Null pooled log2 ORs with y permuted within strata (display only: the null centre of the pooled OR)."""
     Y = np.repeat(y[None, :], n_perm, 0)
     for s in np.unique(strata):
@@ -86,10 +87,58 @@ def stratified_perm(x, y, strata, n_perm, rng):
     return np.log2(a*d/(b*c))
 
 
+def stratified_perm(x, y, strata, n_perm, rng):
+    """Null pooled log2 ORs with y permuted within strata (display only: the null centre of the pooled OR).
+
+    The same random draws and permutations as ``_stratified_perm_reference``, counted without building the permuted
+    matrix: a permutation within a stratum keeps its count of 1s, so with binary x and y the four cells of every null
+    table follow from the 1s that land where x is 1 (exact integer counts)."""
+    x, y = np.asarray(x), np.asarray(y)
+    if (x.shape != y.shape or x.ndim != 1 or x.dtype.kind not in 'iub' or y.dtype.kind not in 'iub'
+            or not np.isin(x, (0, 1)).all() or not np.isin(y, (0, 1)).all()):
+        return _stratified_perm_reference(x, y, strata, n_perm, rng)
+    x, y = x.astype(np.int64), y.astype(np.int64)
+    a1 = np.zeros(n_perm, np.int64)
+    for s in np.unique(strata):
+        idx = np.where(strata == s)[0]
+        if len(idx) > 1:
+            perm = np.argsort(rng.random((n_perm, len(idx))), 1)
+            a1 += y[idx][perm][:, x[idx] == 1].sum(1)
+        else:
+            a1 += int(((x[idx] == 1) & (y[idx] == 1)).sum())
+    n1, n0, t1 = int((x == 1).sum()), int((x == 0).sum()), int((y == 1).sum())
+    a = a1 + .5; b = (n1 - a1) + .5
+    c = (t1 - a1) + .5; d = (n0 - (t1 - a1)) + .5
+    return np.log2(a*d/(b*c))
+
+
 def exact_stratified(x, y, strata):
     """Exact conditional test given strata (all margins fixed within each stratum): the 11 count is a sum of
     independent hypergeometrics; two-sided p = probability of outcomes no more likely than the observed one.
     Returns (p, expected 11, observed 11)."""
+    dist = np.array([1.]); lo_tot = 0; t_obs = 0; e = 0.
+    # every stratum's pmf in one call (an elementwise ufunc: the same values as one call per stratum), then the same
+    # convolutions in stratum order
+    ks, ns, bs, as_, spans = [], [], [], [], []
+    for s in np.unique(strata):
+        m = strata == s; n = int(m.sum()); a = int(x[m].sum()); b = int(y[m].sum())
+        t_obs += int((x[m] & y[m]).sum())
+        lo, hi = max(0, a + b - n), min(a, b)
+        k = np.arange(lo, hi + 1)
+        ks.append(k); ns.append(np.full(len(k), n)); bs.append(np.full(len(k), b)); as_.append(np.full(len(k), a))
+        spans.append(len(k)); lo_tot += lo; e += a*b/max(n, 1)
+    if spans:
+        pmfs = np.split(hypergeom.pmf(np.concatenate(ks), np.concatenate(ns), np.concatenate(bs), np.concatenate(as_)),
+                        np.cumsum(spans)[:-1])
+        for pmf in pmfs:
+            dist = np.convolve(dist, pmf)
+    k = t_obs - lo_tot
+    p = float(dist[dist <= dist[k]*(1 + 1e-7)].sum())
+    return min(1., p), e, t_obs
+
+
+def _exact_stratified_reference(x, y, strata):
+    """``exact_stratified`` with one pmf call per stratum (the reference it reproduces)."""
     dist = np.array([1.]); lo_tot = 0; t_obs = 0; e = 0.
     for s in np.unique(strata):
         m = strata == s; n = int(m.sum()); a = int(x[m].sum()); b = int(y[m].sum())
@@ -141,9 +190,89 @@ def element_open_excluding(c, ex):
     return float(1 - c['closed'][keep].mean()) if keep.sum() >= 10 else np.nan
 
 
-def _shared(A, B, gaps, uids):
+class _OpennessIndex:
+    """Per-read openness without given intervals, for many reads at once, equal bit for bit to
+    ``element_open_excluding``. A read qualifies when its grid is integer with a constant positive step (the
+    ``arange`` grids of ``gaps.read_covariates``); the bins an interval [a, b) masks are then found with exact integer
+    arithmetic (integer x >= a iff x >= ceil(a); x < b iff x < ceil(b)), closed bins are counted from a prefix sum and
+    the openness is 1 - closed/kept, the same float operations as the boolean mean. Other reads, and intervals with a
+    non-finite (or beyond 2**53) end, fall back to ``element_open_excluding``."""
+
+    def __init__(self, cov):
+        self.cov = cov
+        self.row, starts, steps, lens, offs, prefix = {}, [], [], [], [], []
+        off = 0
+        for u, c in cov.items():
+            x, closed = np.asarray(c['x']), np.asarray(c['closed'])
+            if (x.ndim != 1 or x.dtype.kind not in 'iu' or closed.shape != x.shape or closed.dtype != bool or not len(x)
+                    or abs(int(x[0])) >= 2**53 or abs(int(x[-1])) >= 2**53):
+                continue
+            step = int(x[1] - x[0]) if len(x) > 1 else 1
+            if step <= 0 or (len(x) > 1 and not np.array_equal(np.diff(x), np.full(len(x) - 1, step))):
+                continue
+            self.row[u] = len(starts)
+            starts.append(int(x[0])); steps.append(step); lens.append(len(x)); offs.append(off)
+            prefix.append(np.r_[0, np.cumsum(closed, dtype=np.int64)]); off += len(x) + 1
+        self.start, self.step, self.len, self.off = (np.array(v, np.int64) for v in (starts, steps, lens, offs))
+        self.prefix = np.concatenate(prefix) if prefix else np.zeros(0, np.int64)
+
+    def openness(self, uids, ex):
+        """{uid: element_open_excluding(cov[uid], ex)} for ``uids``."""
+        if len(ex) != 2 or not all(math.isfinite(v) and abs(v) < 2**53 for iv in ex for v in iv):
+            return {u: element_open_excluding(self.cov[u], ex) for u in uids}
+        fast = [u for u in uids if u in self.row]
+        r = np.array([self.row[u] for u in fast], np.int64)
+        S, St, N, O = self.start[r], self.step[r], self.len[r], self.off[r]
+
+        def first(v):                                   # first grid index with x >= v (x < v before it)
+            return np.clip(-((S - math.ceil(v))//St), 0, N)
+        (l1, h1), (l2, h2) = [(first(a), first(b)) for a, b in ex]
+        h1 = np.maximum(h1, l1); h2 = np.maximum(h2, l2)
+        lo, hi = np.maximum(l1, l2), np.minimum(h1, h2)
+        both = hi > lo
+        P = self.prefix
+
+        def closed(l, h):
+            return P[O + h] - P[O + l]
+        masked = (h1 - l1) + (h2 - l2) - np.where(both, hi - lo, 0)
+        masked_closed = closed(l1, h1) + closed(l2, h2) - np.where(both, closed(np.minimum(lo, hi), hi), 0)
+        kept = N - masked
+        kept_closed = (P[O + N] - P[O]) - masked_closed
+        ok = kept >= 10
+        val = np.full(len(fast), np.nan)
+        val[ok] = 1 - kept_closed[ok].astype(np.float64)/kept[ok].astype(np.float64)
+        out = dict(zip(fast, val.tolist()))
+        return {u: out[u] if u in out else element_open_excluding(self.cov[u], ex) for u in uids}
+
+
+class _GapIndex:
+    """Every read's gaps as flat arrays, for the "shared" rule over many reads at once (``_shared``)."""
+
+    def __init__(self, gaps):
+        self.gaps = gaps
+        own, g0, g1 = [], [], []
+        self.uids = list(gaps)
+        for i, u in enumerate(self.uids):
+            for a, b in gaps[u]:
+                own.append(i); g0.append(a); g1.append(b)
+        self.own, self.g0, self.g1 = np.array(own, np.int64), np.array(g0), np.array(g1)
+        self.exact = all(isinstance(v, (int, np.integer)) and abs(int(v)) < 2**53 for v in g0 + g1)
+
+    def covering(self, lo, hi):
+        """The uids with a gap g0 <= lo and g1 >= hi."""
+        hit = np.zeros(len(self.uids), bool)
+        if len(self.own):
+            hit[self.own[(self.g0 <= lo) & (self.g1 >= hi)]] = True
+        return {u for u, h in zip(self.uids, hit.tolist()) if h}
+
+
+def _shared(A, B, gaps, uids, index=None):
     """(kept, shared) unit lists: a read where one gap covers both elements' centres is "shared" (Timer)."""
     ca = (A['start'] + A['end'])/2; cb = (B['start'] + B['end'])/2
+    if index is not None and index.gaps is gaps and index.exact and math.isfinite(ca) and math.isfinite(cb):
+        # integer gap ends compare exactly with float centres in numpy as in Python (|values| < 2**53)
+        cover = index.covering(min(ca, cb), max(ca, cb))
+        return [u for u in uids if u not in cover], [u for u in uids if u in cover]
     keep, shared = [], []
     for u in uids:
         if any(g0 <= min(ca, cb) and g1 >= max(ca, cb) for g0, g1 in gaps.get(u, [])):
@@ -153,7 +282,7 @@ def _shared(A, B, gaps, uids):
     return keep, shared
 
 
-def pair_eligibility(A, B, gaps, cov, pad_bp=0, universe=None):
+def pair_eligibility(A, B, gaps, cov, pad_bp=0, universe=None, _index=None):
     """The reads a pair test uses, and why every other read is left out. ``pair_table`` and the read split of the
     analysis views (``analysis.pair_split``) both call this, so a split's four groups are the test's 2x2 table.
 
@@ -182,14 +311,17 @@ def pair_eligibility(A, B, gaps, cov, pad_bp=0, universe=None):
             excluded['channel'] = off
         uids = [u for u in uids if A['channel'][u] == B['channel'][u]]
     if A['kind'] == 'nfr' and B['kind'] == 'nfr':
-        uids, shared = _shared(A, B, gaps, uids)
+        uids, shared = _shared(A, B, gaps, uids, None if _index is None else _index[1])
         if shared:
             excluded['shared'] = shared
     n_spanning = len(uids)
     # per-read openness without the two tested elements; a read with < 10 background bins has none and is left out of
     # this pair (never: the whole pair loses its openness adjustment)
     ex = [(A['start'] - pad_bp, A['end'] + pad_bp), (B['start'] - pad_bp, B['end'] + pad_bp)]
-    op = {u: element_open_excluding(cov[u], ex) for u in uids}
+    if _index is not None and _index[0].cov is cov:
+        op = _index[0].openness(uids, ex)
+    else:
+        op = {u: element_open_excluding(cov[u], ex) for u in uids}
     nb = [u for u in uids if np.isnan(op[u])]
     if nb:
         excluded['no_background'] = nb
@@ -203,6 +335,7 @@ def pair_table(els, gaps, cov, *, scope='all', clusters=None, n_perm=500, seed=7
     ``clusters``: None, or callable(uids, exclude_intervals) -> {uid: label} (the within-cluster check)."""
     rng = np.random.default_rng(seed); rows = []; skipped = []
     combos = list(itertools.combinations(els, 2))
+    index = (_OpennessIndex(cov), _GapIndex(gaps))     # built once: every pair reads the same reads
     for done, (A, B) in enumerate(combos):
         if progress and done % 10 == 0:
             progress(done, len(combos))
@@ -211,7 +344,7 @@ def pair_table(els, gaps, cov, *, scope='all', clusters=None, n_perm=500, seed=7
         if A['kind'] == B['kind'] and overlapping(A, B):
             skipped.append(dict(a=A['id'], b=B['id'], reason='overlap'))
             continue
-        el = pair_eligibility(A, B, gaps, cov, pad_bp)
+        el = pair_eligibility(A, B, gaps, cov, pad_bp, _index=index)
         shared = len(el['excluded'].get('shared', ()))
         if el['n_spanning'] < min_reads:
             skipped.append(dict(a=A['id'], b=B['id'], reason=f"spanning reads {el['n_spanning']} < {min_reads}"))
