@@ -539,6 +539,33 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--include-training-molecules` | off | Score molecules the catalog was trained on (default: exclude them, as for staged families); use for self-application checks |
 | `--output` | required | New or empty output directory |
 
+## fiberhmm-nfr
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--bam` | — | Input BAM (repeat for separate datasets); chemistry from BAM @CO metadata |
+| `--datasets` | — | JSON list of {dataset_id, paths: [BAMs], chemistry?} |
+| `--evidence` | — | Saved evidence.json.gz (e.g. a fiberhmm-consensus run's), instead of loading BAMs |
+| `--region` | — | CHROM:START-END analysis window (0-based, half-open); required with --bam/--datasets |
+| `--nfr` | — | NFR region inside the window (repeat for several). Default: detected where more than --detect-threshold of callable reads are inside a &gt;= 175-bp gap |
+| `--chemistry` | — | Explicit chemistry for --bam when the BAM header does not declare one Choices: `ddda`, `dddb`, `hia5-pacbio`, `hia5-nanopore`. |
+| `--parameters` | — | JSON: loader groups as for fiberhmm-consensus (input, compute, ...) and an "nfr" group with any engine parameter (see --schema) |
+| `--stringency` | — | Prediction strength needed for k (default 0.9; 0.85 admits finer variants) |
+| `--mode` | — | variants (discovered, default) or depth (Timer 175/300/500-bp width states) Choices: `variants`, `depth`. |
+| `--elements` | — | Co-accessibility elements: each variant (default) or whole NFRs Choices: `variants`, `nfrs`. |
+| `--classes` | — | A fiberhmm-consensus (lattice recaller) output directory: its supported footprint classes become elements (variant x class pairs; unit_ids must come from the same datasets in the same order). Repeatable; class ids get the prefix R1:, R2: ... when more than one is given |
+| `--no-internal-footprint-labels` | off | Do not label a split whose internal protection matches a supported class as "full NFR with internal footprint" |
+| `--pairs` | — | Pairs tested: with at least one NFR element (default) or also class x class Choices: `nfr`, `all`. |
+| `--within-clusters` | — | Also report the effect within K masked k-means clusters (default off) |
+| `--combo` | — | Comma-separated element ids (3-8) for combination patterns (default: automatic) |
+| `--robust` | — | Rerun discovery under N hashed read orders (default 0) |
+| `--bootstrap` | — | Bootstrap replicates for prevalence intervals (default 200) |
+| `--detect-threshold` | — | NFR detection: fraction of callable reads inside a &gt;= 175-bp gap (default 0.15) |
+| `--cores` | — | Loader worker processes (compute.cores) |
+| `--schema` | off | Print the engine parameters with defaults as JSON and exit |
+| `--json-progress` | off | Structured progress on stderr (JSON lines) |
+| `--output` | — | New or empty output directory |
+
 ## fiberhmm-footprint-model
 
 | Flag | Default | Description |
