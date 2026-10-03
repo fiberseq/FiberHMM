@@ -47,6 +47,13 @@ def test_stability_is_membership_weighted_mean_over_every_split():
               (np.array([2, 3, 6]), np.array([0, 1, 1]), np.array([.5, 1.])),      # split across clusters 0 and 1
               (np.array([5, 6]), np.array([0, 0]), np.array([.1, .1]))]            # no held-out call: no evidence
     assert np.isclose(D.cluster_stability(members, splits), np.mean([.9, (.5 + 1.)/2]))
+    # unequal shares and unequal held-out counts: 2 of 3 held calls in cluster 0, 1 in cluster 2; then one call
+    splits = [(np.array([0, 1, 2, 9]), np.array([0, 0, 2, 1]), np.array([.6, .1, .9])),
+              (np.array([3, 8]), np.array([1, 0]), np.array([.2, .7]))]
+    assert np.isclose(D.cluster_stability(members, splits), np.mean([(2*.6 + .9)/3, .7]))
+    # an empty or singleton test cluster scores 0 and pulls a class it holds down
+    splits = [(np.array([0, 1]), np.array([0, 1]), np.array([1., 0.]))]
+    assert np.isclose(D.cluster_stability([0, 1], splits), .5)
 
 
 def test_stability_ignores_call_order_cluster_numbering_and_split_order():
@@ -60,7 +67,7 @@ def test_stability_ignores_call_order_cluster_numbering_and_split_order():
     for rows, lab, ps in splits[::-1]:
         perm = rng.permutation(k); order = rng.permutation(len(rows))      # new cluster numbers, shuffled calls
         relabelled.append((rows[order], perm[lab][order], ps[np.argsort(perm)]))
-    assert D.cluster_stability(rng.permutation(members), relabelled) == ref
+    assert np.isclose(D.cluster_stability(rng.permutation(members), relabelled), ref, rtol=0, atol=1e-12)
 
 
 def test_stability_without_held_out_calls_is_zero_not_one():
@@ -97,6 +104,16 @@ def test_every_split_contributes_to_a_class_stability():
     assert varied   # the splits disagree, so a single-split value would differ from the average
 
 
+def test_chosen_k_reuses_its_split_results():
+    units = _units(240, CROWDED, jitter=6); opt = _opt(stringency=.5)
+    cands, k, _choice = D.nominate(units, opt)
+    X, meta = D.features(units, opt.censor_bp); groups = [units[m[0]]['uid'] for m in meta]
+    _, again = D.prediction_strength(X, groups, k, opt.seed, opt.prediction_splits)
+    lab = D._fit(X, k, opt.seed)[1](X)
+    for c in cands:
+        assert c['stability'] == D.cluster_stability(np.flatnonzero(lab == int(c['id'][1:])), again)
+
+
 def test_nominate_is_deterministic():
     units = _units(240, CROWDED, jitter=6); opt = _opt(stringency=.5)
     a, b = D.nominate(units, opt), D.nominate(units, opt)
@@ -104,7 +121,9 @@ def test_nominate_is_deterministic():
 
 
 def test_stability_does_not_depend_on_read_order():
-    """Splits are keyed by molecule ID, so with clusters k-means finds from any start the stabilities are identical."""
+    """Splits are keyed by molecule ID, so when k-means finds the same partitions from any call order the stabilities
+    are identical. (k-means++ starts do depend on call order: on crowded data a different order can choose another k.
+    That is the read-order sensitivity `--robust` measures; the stability rule adds none of its own.)"""
     units = _units(150, SEPARATED, jitter=4); opt = _opt()
     ref = D.nominate(units, opt)
     assert ref[1] == 3 and len(ref[0]) == 3
