@@ -98,25 +98,27 @@ def reference_gap_inside(lo, hi, domains):
 
 
 def called_circular(header):
-    """True when the BAM's calls were made in circular-molecule mode
-    (``fiberhmm-call``/``-apply`` ``-r/--circular`` in an ``@PG`` CL), where
-    production calling keeps calls inside no-call blocks."""
+    """True when the BAM's current calls were made in circular-molecule mode:
+    the latest ``fiberhmm-call``/``-apply`` ``@PG`` record (header order)
+    has ``-r/--circular`` in its CL. Production calling keeps calls inside
+    no-call blocks there."""
     import shlex
     try:
         programs = (header.to_dict() if hasattr(header, 'to_dict') else dict(header or {})).get('PG', [])
     except (TypeError, ValueError, AttributeError):
         return False
+    latest = None
     for program in programs:
         name = str(program.get('PN') or program.get('ID') or '')
-        if not name.startswith(('fiberhmm-call', 'fiberhmm-apply')):
-            continue
-        try:
-            tokens = shlex.split(str(program.get('CL', '')))
-        except ValueError:
-            tokens = str(program.get('CL', '')).split()
-        if '-r' in tokens or '--circular' in tokens:
-            return True
-    return False
+        if name.startswith(('fiberhmm-call', 'fiberhmm-apply')):
+            latest = program
+    if latest is None:
+        return False
+    try:
+        tokens = shlex.split(str(latest.get('CL', '')))
+    except ValueError:
+        tokens = str(latest.get('CL', '')).split()
+    return '-r' in tokens or '--circular' in tokens
 
 
 def replay_alignment(read, unit, model, strand_mode, mode, context_size,

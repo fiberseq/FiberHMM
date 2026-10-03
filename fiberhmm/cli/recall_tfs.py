@@ -408,10 +408,10 @@ def _make_payload(read, mode=None, input_molecular_frame=True) -> dict:
         parts = _insert_evidence_parts(read)
         if parts is not None:
             payload['_daf_insert_mods'] = parts
-        if (
-            not has_iupac_encoding(read.query_sequence)
-            and not (('MM' in tags or 'Mm' in tags) and ('ML' in tags or 'Ml' in tags))
-        ):
+        from fiberhmm.inference.engine import _has_mm_tag
+        # Same test as tf_recaller's MM/ML branch (both tags non-empty), so
+        # the stub takes the MD branch exactly when the live read would.
+        if not has_iupac_encoding(read.query_sequence) and not _has_mm_tag(read):
             from fiberhmm.daf.encoder import get_daf_positions
             md_result = get_daf_positions(read)
             if md_result is None:

@@ -133,3 +133,10 @@ def test_called_circular_reads_the_call_command_line():
     assert adapter.called_circular(header('fiberhmm-call -i a.bam -o b.bam -r --enzyme ddda'))
     assert adapter.called_circular(header('fiberhmm-call -i a.bam -o b.bam --circular'))
     assert not adapter.called_circular(header('fiberhmm-call -i a.bam -o b.bam --enzyme ddda'))
+
+
+def test_called_circular_follows_the_latest_footprint_writer():
+    header=pysam.AlignmentHeader.from_dict({'SQ':[{'SN':'p','LN':1000}],'PG':[
+        {'ID':'fiberhmm-call','PN':'fiberhmm-call','CL':'fiberhmm-call -i a.bam -o b.bam -r'},
+        {'ID':'fiberhmm-call.1','PN':'fiberhmm-call','PP':'fiberhmm-call','CL':'fiberhmm-call -i b.bam -o c.bam'}]})
+    assert not adapter.called_circular(header)

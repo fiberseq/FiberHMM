@@ -390,3 +390,22 @@ def test_prepass_uses_the_reference_when_mm_has_no_ml():
     assert ic._read_strand(read, md_first=True) == ic.STRAND_CT
     _mods, strand, _seq, _unknown = extract_modification_calls(read, "daf")
     assert strand == "+"
+
+
+def test_recall_stub_takes_the_md_branch_when_ml_is_empty():
+    """The recall payload precomputes MD exactly when tf_recaller would read
+    it: MM/ML count only when both are non-empty."""
+    import array
+    from fiberhmm.cli.recall_tfs import _make_payload, _PayloadRead
+    read = _carriers(1, strands=("CT",))[0]
+    read.set_tag("MM", "C+u?;")
+    read.set_tag("ML", array.array("B", []))
+    live = extract_modification_calls(read, "daf")
+    payload = _make_payload(read, "daf")
+    stub = _PayloadRead(payload["seq"], payload["is_reverse"], payload["tags"],
+                        payload.get("_daf_md_result"),
+                        payload.get("_daf_unaligned_query_positions"),
+                        payload.get("_daf_insert_mods"))
+    from_stub = extract_modification_calls(stub, "daf")
+    assert live is not None and from_stub is not None
+    assert from_stub[0] == live[0] and from_stub[1] == live[1] == "+"
