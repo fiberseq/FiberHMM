@@ -72,6 +72,15 @@ A complete example is in [Annotations and scores](../concepts/annotations.md#rea
 | `append_ma_types(header, annotation_names)` | a header with one more `MA-TYPES` line for new names |
 | `resolve_bam_chemistry(paths, requested)` | the consensus chemistry profile of a set of BAMs (errors on conflicts and unsupported enzymes) |
 
+## Basecaller provenance: `fiberhmm.io.provenance`
+
+| Function | Purpose |
+|---|---|
+| `basecaller_provenance(header, reads=None, override=None) -> dict` | basecaller program, version, basecalling model and modification models of a BAM, with the source of each (`@RG DS` > `@PG CL` > per-read read group; an override first). `modbase_models` is `None` when unknown and `[]` when none was used. See [Header declarations](headers.md#basecaller-provenance) |
+| `bam_provenance(path, override=None) -> dict` | the same for a BAM file (header and first reads) |
+| `parse_override(basecaller_info, modbase_model) -> dict` | the override from `--basecaller-info` / `--modbase-model` values |
+| `ds_tokens(prov)` / `parse_ds_tokens(ds)` | the `basecaller=...` tokens FiberHMM writes into `@PG DS`, and back |
+
 ## Consensus
 
 ```python
