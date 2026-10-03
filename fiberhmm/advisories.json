@@ -400,7 +400,7 @@
     "models/dddb_nanopore.json"
    ],
    "first_commit": "497618320a54c559b73b3b0312674d5433b63dc1",
-   "last_commit": "2397fcf8d300ae77b655cdf94bb2e36b7dd7f602",
+   "last_commit": "58ffdc10c32b7f7962236687cfabec2bc2c5cb3b",
    "releases": []
   },
   {
@@ -426,7 +426,7 @@
     "models/legacy/dddb_nanopore_gt_swapped_legacy.json"
    ],
    "first_commit": "d047c4df9ced4c49b2ebe10184f337cb48fff613",
-   "last_commit": "2397fcf8d300ae77b655cdf94bb2e36b7dd7f602",
+   "last_commit": "58ffdc10c32b7f7962236687cfabec2bc2c5cb3b",
    "releases": [
     "2.0.0",
     "2.1.0",
@@ -494,7 +494,7 @@
     "models/hia5_nanopore.json"
    ],
    "first_commit": "2397fcf8d300ae77b655cdf94bb2e36b7dd7f602",
-   "last_commit": "2397fcf8d300ae77b655cdf94bb2e36b7dd7f602",
+   "last_commit": "58ffdc10c32b7f7962236687cfabec2bc2c5cb3b",
    "releases": []
   },
   {
@@ -506,7 +506,7 @@
     "models/hia5_nanopore.json"
    ],
    "first_commit": "dc7abba13d8a295b4fdb1f0485680a6d349f9695",
-   "last_commit": "c24cfec7368bd423d06594d56ee825aedc4a8d27",
+   "last_commit": "18ce6aa42f76e868bece790d07e1a6bcc246d7a6",
    "releases": []
   },
   {
@@ -520,7 +520,7 @@
     "models/legacy/hia5_nanopore_gt_swapped_legacy.json"
    ],
    "first_commit": "0d53ea62bb085dbcb8d498985ed22ed8fdbdba53",
-   "last_commit": "2397fcf8d300ae77b655cdf94bb2e36b7dd7f602",
+   "last_commit": "58ffdc10c32b7f7962236687cfabec2bc2c5cb3b",
    "releases": [
     "2.9.1",
     "2.9.2",
@@ -3737,7 +3737,225 @@
     "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
     "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
    ]
+  },
+  "f65a716313411cd155674cbc2c1d7371019124a4": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "cecdbf146bf8cb79930cbb9131112de1d7dfead0": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "cecdbf146bf8cb79930cbb9131112de1d7dfead0",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "a53afa88f9065f0bda14d828ebcae84088dca10b": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "cecdbf146bf8cb79930cbb9131112de1d7dfead0",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "14f7b072ddc48edf5f31a9723792a0811956567e": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "cecdbf146bf8cb79930cbb9131112de1d7dfead0",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "ece18b60ff5863c2f50c268dc6d4775b4f2e0a37": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "cecdbf146bf8cb79930cbb9131112de1d7dfead0",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "3411b06d8a593ddce96487b14b1a00f24cdc39c7": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "cecdbf146bf8cb79930cbb9131112de1d7dfead0",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "95ff709c195dc54af917ce1ed10d1006cc9447d3": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "cecdbf146bf8cb79930cbb9131112de1d7dfead0",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "dbcf428528fda4018ceb771fa01f2fff6603ef2c": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "cecdbf146bf8cb79930cbb9131112de1d7dfead0",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "c59bdd7ac2e39e5b9ed689a81bfc0fb96f57cc5d": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "ee9442a8bec7043ffea11c0be062984316e44c02": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "b1266ce4136e01045d615d1163cdfdc89f7d103d": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "7095fdda03996628fead21299e534ff3b3778649": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "1e472394163a08fc786f998bfdea67ea74d68fe0": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "18ce6aa42f76e868bece790d07e1a6bcc246d7a6": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "58ffdc10c32b7f7962236687cfabec2bc2c5cb3b": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "cecdbf146bf8cb79930cbb9131112de1d7dfead0",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
   }
  },
- "commits_through": "2397fcf8d300ae77b655cdf94bb2e36b7dd7f602"
+ "commits_through": "58ffdc10c32b7f7962236687cfabec2bc2c5cb3b"
 }
