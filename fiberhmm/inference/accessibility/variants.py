@@ -161,13 +161,14 @@ def discover(reads, region, opt, salt='', progress=None):
     if len(X) < 2*opt.min_reads:
         return [], diag, es
     kmax = min(opt.kmax, max(2, len(X)//(2*int(opt.min_reads))))     # == the prototype's rule for kmax >= 2
-    curve, splits = [], {}
+    curve, splits, strength = [], {}, {}
     for k in range(1, kmax + 1):
-        ps, splits[k] = prediction_strength(X, gid, k, opt.seed, opt.splits)
-        curve.append((k, round(ps, 4)))
+        strength[k], splits[k] = prediction_strength(X, gid, k, opt.seed, opt.splits)
+        curve.append((k, round(strength[k], 4)))     # rounded for the diagnostics only
         if progress:
             progress(k, kmax)
-    ok = [k for k, ps in curve if ps >= opt.stringency]
+    # k is chosen on full precision, as the recaller does (a rounded score could pass a threshold it misses).
+    ok = [k for k in strength if strength[k] >= opt.stringency]
     k = max(ok) if ok else 1
     km = KMeans(k, n_init=10, random_state=opt.seed).fit(X); lab = km.labels_
     cands = []

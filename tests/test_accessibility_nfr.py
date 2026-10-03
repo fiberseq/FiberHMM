@@ -444,3 +444,18 @@ def test_load_recaller_classes_reads_recaller_artifacts(tmp_path):
     c, = load_recaller_classes(tmp_path, prefix='R1:')     # class_002 below the minimum prevalence; GA unsupported
     assert c['id'] == 'R1:class_001' and c['state'] == {'u1': 1, 'u2': 0} and c['channels'] == ['d::CT']
     assert c['start'] == 100.5 and c['kind'] == 'tf'
+
+
+def test_k_is_chosen_on_full_precision_prediction_strength(monkeypatch):
+    """A k whose strength only reaches the stringency after rounding is not chosen (as in the recaller)."""
+    from fiberhmm.inference.accessibility import variants as V
+    real = V.prediction_strength
+
+    def just_below(X, groups, k, seed, splits):
+        ps, detail = real(X, groups, k, seed, splits)
+        return (0.89996 if k == 2 else (1.0 if k == 1 else 0.0)), detail
+    monkeypatch.setattr(V, 'prediction_strength', just_below)
+    units, _ = planted([(.5, [(1400, 1700)]), (.5, [(1470, 1770)])], n=200, seed=8)
+    nfr = run_accessibility(payload(units), dict(FAST, bootstrap=0, stringency=.9, nfr_regions=[(1380, 1790)]))['nfrs'][0]
+    assert dict(map(tuple, nfr['ps_curve']))[2] == .9      # the diagnostics show it rounded
+    assert nfr['k'] == 1

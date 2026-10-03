@@ -18,7 +18,9 @@
   variants.tsv, configurations.tsv, molecules.tsv.gz, coaccess.tsv, combos.tsv,
   result.json and manifest.json; deterministic.
 - **EXPERIMENTAL: analysis views of an NFR run** (schema
-  `fiberhmm.accessibility.preview.v1`; v0 results still load).
+  `fiberhmm.accessibility.preview.v1`; a v0 result still validates, but a v0
+  run folder has no `context.json.gz`, so `load_result` asks for a re-run
+  (`NeedsRerun`) before these views).
   - The result now stores, per molecule, its span, its nucleosome calls within
     the window +- 1 kb, its openness span and its gap edge features. It also
     stores the read states each pair test used, and each NFR's frozen variant
