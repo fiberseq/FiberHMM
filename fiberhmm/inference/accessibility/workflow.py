@@ -143,6 +143,38 @@ def _report(progress, stage, message, **work):
         fn(stage, message)
 
 
+class _NFRProgress:
+    """One 'nfr' progress bar over every NFR region, so it moves through the whole phase instead of restarting per
+    region: per region its per-read gaps, each prediction-strength k, the identity merge, the support test, the EM,
+    the bootstrap in chunks and each robustness rerun. A region that finishes early jumps to its end."""
+
+    def __init__(self, progress, regions, opt):
+        self.progress, self.regions = progress, regions
+        self.kmax, self.robust = int(opt.kmax), int(opt.robust)
+        self.boot = -(-int(opt.bootstrap)//V.BOOT_CHUNK)
+        self.per = 1 + self.kmax + 3 + self.boot + self.robust
+        self.total = max(1, len(regions)*self.per)
+
+    def step(self, ni, step, message):
+        done = min(self.total, max(0, ni*self.per + min(int(step), self.per)))
+        reg = self.regions[ni]
+        _report(self.progress, 'nfr', f'N{ni + 1} ({ni + 1}/{len(self.regions)}, {reg["start"]}-{reg["end"]}): {message}',
+                completed=int(done), total=int(self.total))
+
+    def ps(self, ni):
+        return lambda k, kmax: self.step(ni, k, f'prediction strength k={k}/{kmax}')
+
+    def stage(self, ni):
+        names = {'identity': (1 + self.kmax, 'identity merge (held-out)'), 'support': (2 + self.kmax, 'support test (held-out)')}
+        return lambda name: self.step(ni, *names[name])
+
+    def bootstrap(self, ni):
+        return lambda b, n: self.step(ni, 4 + self.kmax + b//V.BOOT_CHUNK, f'bootstrap {b}/{n}')
+
+    def reruns(self, ni):
+        return lambda s, n: self.step(ni, 4 + self.kmax + self.boot + s, f'robustness rerun {s + 1}/{n}')
+
+
 def _r(x, nd=4):
     if x is None:
         return None
@@ -307,10 +339,11 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
         molecules.setdefault(u['unit_id'], dict(read_name=u.get('read_name'), dataset=u['dataset'], strand=u.get('strand'),
                                                 members=sorted({str(m.get('read_name')) for m in u.get('source_members') or () if m.get('read_name')}),
                                                 nfr={}))
+    bar = _NFRProgress(progress, regions, opt)
     for ni, reg in enumerate(regions):
         nfr_id = f'N{ni + 1}'
         nreg = (reg['start'], reg['end'])
-        _report(progress, 'nfr', f'{nfr_id} {nreg[0]}-{nreg[1]}: per-read gaps', completed=ni, total=len(regions))
+        bar.step(ni, 0, 'per-read gaps')
         reads = G.collect(units, nreg, opt.min_gap_bp, opt.max_gaps)
         n_call = sum(r['callable'] for r in reads)
         for r in reads:
@@ -347,15 +380,13 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
                 molecules[r['uid']]['nfr'][nfr_id].update(widest=int(w), map='closed' if not r['gaps'] else f'widest {int(w)} bp')
             nfrs.append(nfr); continue
 
-        def ps_progress(k, kmax, _id=nfr_id):
-            _report(progress, 'nfr', f'{_id}: prediction strength k={k}/{kmax}', completed=k, total=kmax)
-        vs, diag, es = V.discover(reads, nreg, opt, progress=ps_progress)
+        vs, diag, es = V.discover(reads, nreg, opt, progress=bar.ps(ni), stage=bar.stage(ni))
         nfr.update(k=diag['k'], ps_curve=[[k, ps] for k, ps in diag['ps_curve']], gaps=diag['gaps'],
                    candidates=diag['candidates'], merges=[list(m) for m in diag['merges']], dropped=diag['dropped'])
-        _report(progress, 'nfr', f'{nfr_id}: prevalence (EM, {opt.bootstrap} bootstrap replicates)')
-        q = V.quantify(reads, vs, es, opt)
+        bar.step(ni, 3 + bar.kmax, f'prevalence (EM, {opt.bootstrap} bootstrap replicates)')
+        q = V.quantify(reads, vs, es, opt, progress=bar.bootstrap(ni))
         nfr['catalogue'] = catalogue(vs, es, nreg, opt)
-        rob = V.robust(reads, nreg, vs, opt, n=opt.robust) if (vs and opt.robust) else None
+        rob = V.robust(reads, nreg, vs, opt, n=opt.robust, progress=bar.reruns(ni)) if (vs and opt.robust) else None
         Pv = q['Pv']
         for j, v in enumerate(vs):
             nfr['variants'].append(_variant_row(nfr_id, v, _by_channel(q['reads'], Pv, j), None if rob is None else rob[j]))
@@ -381,6 +412,8 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
         else:
             elements.append(_whole_nfr(nfr_id, nreg, q['reads']))
         nfrs.append(nfr)
+    if regions:
+        bar.step(len(regions) - 1, bar.per, 'NFR variants done')
     # footprint classes (lattice recaller) overlapping the window
     tf_els = []
     class_join = None
