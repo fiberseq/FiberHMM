@@ -1370,6 +1370,10 @@ def _main(args):
                 min_carriers=args.daf_insert_min_carriers,
                 min_mapq=args.min_mapq,
                 reference=getattr(args, 'reference', None),
+                # The caller's strand inputs, so each carrier's evidence is
+                # on the strand it will be called on.
+                snp_mask_path=snp_mask_path,
+                prob_threshold=args.prob_threshold,
             )
             insert_state = (f"on/{insert_summary['clusters_used']}of"
                             f"{insert_summary['clusters']}/min{args.daf_insert_min_carriers}")

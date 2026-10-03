@@ -733,3 +733,22 @@ def test_aligner_step_keeps_unique_supplementary_of_ambiguous_primary():
     group, circular = _split_group()
     group[0].mapping_quality = 0
     assert _process(group, circular, alignments="primary")[0] == []
+
+
+@pytest.mark.parametrize("call_args, mask, insert", [
+    ([], True, "auto"),
+    (["--no-daf-mask-unaligned"], False, None),
+    (["--no-daf-mask-unaligned", "--daf-mask-unaligned"], True, "auto"),
+    (["--daf-insert-consensus", "off"], True, "off"),
+    (["--daf-insert-consensus", "off", "--daf-insert-consensus", "auto"], True, "auto"),
+    (["--daf-insert-consensus=off"], True, "off"),
+])
+def test_calling_settings_follow_call_args_as_fiberhmm_call_resolves_them(
+        tmp_path, call_args, mask, insert):
+    """outputs.json reports the DAF settings fiberhmm-call actually used:
+    --call-args come last on its command line, so their last occurrence wins."""
+    cfg = PipelineConfig(reads=["r.fq"], reference="ref.fa", enzyme="dddb",
+                         outdir=str(tmp_path), call_args=call_args)
+    settings = cfg.calling_settings()
+    assert settings["daf_unaligned_mask"] is mask
+    assert settings["daf_insert_consensus"] == insert

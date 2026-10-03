@@ -436,38 +436,92 @@ def reencode_carrier(carrier: Carrier, consensus: InsertConsensus,
 # Carriers from a BAM
 # ---------------------------------------------------------------------------
 
-def _read_strand(read, ref_fasta=None) -> Optional[int]:
+def _reference_mask_sites(read, snp_mask) -> set:
+    """The SNP-mask reference positions ``read`` sees (wrapped past a
+    circular contig end, as ``engine._daf_reference_mask``)."""
+    if not snp_mask:
+        return set()
+    sites = snp_mask.get(read.reference_name, set())
+    if not sites:
+        return set()
+    from fiberhmm.daf.snps import wrapped_reference_sites
+    return wrapped_reference_sites(read, sites)
+
+
+def _no_evidence_query_positions(read, reference_sites) -> set:
+    """SEQ positions whose marks the caller ignores when it decides the
+    strand: CIGAR I/S bases and SNP-masked matched bases."""
+    from fiberhmm.daf.aligned_arrays import unaligned_query_positions
+    seq = read.query_sequence or ""
+    out = set(unaligned_query_positions(read.cigartuples, len(seq)))
+    if reference_sites:
+        out |= {int(q) for q, r in read.get_aligned_pairs()
+                if q is not None and r is not None and r in reference_sites}
+    return out
+
+
+def _read_strand(read, ref_fasta=None, snp_mask=None,
+                 prob_threshold: Optional[int] = None,
+                 md_first: bool = True) -> Optional[int]:
+    """The strand the caller assigns ``read``. A carrier's evidence is used
+    only on the strand the caller picks, so this mirrors it: the ``st`` tag,
+    else R/Y marks on bases that carry evidence (aligned, not SNP-masked),
+    else the reference comparison (MD or FASTA, SNP-masked sites excluded)
+    and MM/ML-native marks, in the caller's order (``md_first``: fiberhmm-call,
+    ``engine``; otherwise fiberhmm-recall-tfs, ``tf_recaller``). Undecided
+    gives None: the carrier is not used and its insert stays masked."""
     seq = read.query_sequence or ""
     if read.has_tag("st"):
         st = str(read.get_tag("st")).upper()
         if st in ("CT", "GA"):
             return STRAND_CT if st == "CT" else STRAND_GA
-    if "Y" in seq or "R" in seq:
-        return STRAND_CT if seq.count("Y") >= seq.count("R") else STRAND_GA
-    if read.has_tag("MM") or read.has_tag("Mm"):
-        # MM/ML-native deamination calls: T marks are C->T, A marks G->A.
-        from fiberhmm.core.bam_reader import (
-            detect_daf_strand,
-            parse_mm_tag_query_positions,
-        )
+    reference_sites = _reference_mask_sites(read, snp_mask)
+    upper = seq.upper()
+    if "Y" in upper or "R" in upper:
+        excluded = _no_evidence_query_positions(read, reference_sites)
+        y = r = 0
+        for i, base in enumerate(upper):
+            if (base == "Y" or base == "R") and i not in excluded:
+                if base == "Y":
+                    y += 1
+                else:
+                    r += 1
+        if y == r:
+            return None
+        return STRAND_CT if y > r else STRAND_GA
+
+    def from_reference():
+        from fiberhmm.daf.encoder import get_daf_positions
         try:
-            mm = read.get_tag("MM") if read.has_tag("MM") else read.get_tag("Mm")
-            ml = read.get_tag("ML") if read.has_tag("ML") else read.get_tag("Ml")
-            marks = parse_mm_tag_query_positions(mm, ml, seq, read.is_reverse,
-                                                 mode="daf")
+            res = get_daf_positions(read, ref_fasta=ref_fasta,
+                                    excluded_reference_positions=reference_sites or None)
         except Exception:
-            marks = set()
-        strand = detect_daf_strand(seq, marks)
-        if strand in ("+", "-"):
-            return STRAND_CT if strand == "+" else STRAND_GA
-    from fiberhmm.daf.encoder import get_daf_positions
+            return None
+        if res is None:
+            return None
+        return STRAND_CT if res[2] == "CT" else STRAND_GA
+
+    has_mm = read.has_tag("MM") or read.has_tag("Mm")
+    if md_first or not has_mm:
+        strand = from_reference()
+        if strand is not None or not has_mm:
+            return strand
+    # MM/ML-native deamination calls: T marks are C->T, A marks G->A.
+    from fiberhmm.core.bam_reader import detect_daf_strand, parse_mm_tag_query_calls
     try:
-        res = get_daf_positions(read, ref_fasta=ref_fasta)
+        mm = read.get_tag("MM") if read.has_tag("MM") else read.get_tag("Mm")
+        ml = read.get_tag("ML") if read.has_tag("ML") else read.get_tag("Ml")
+        marks, _unknown = parse_mm_tag_query_calls(
+            mm, bytes(ml), seq, read.is_reverse,
+            prob_threshold=125 if prob_threshold is None else int(prob_threshold),
+            mode="daf")
     except Exception:
         return None
-    if res is None:
-        return None
-    return STRAND_CT if res[2] == "CT" else STRAND_GA
+    marks = set(marks) - _no_evidence_query_positions(read, reference_sites)
+    strand = detect_daf_strand(seq, marks)
+    if strand in ("+", "-"):
+        return STRAND_CT if strand == "+" else STRAND_GA
+    return None
 
 
 def record_key(read) -> tuple:
@@ -508,7 +562,8 @@ def insertion_events(read, min_length: int = MIN_INSERT):
 
 
 def collect_carriers(reads: Iterable, min_mapq: int = 0, min_length: int = MIN_INSERT,
-                     ref_fasta=None):
+                     ref_fasta=None, snp_mask=None, prob_threshold: Optional[int] = None,
+                     md_first: bool = True):
     """Insertion events of eligible records: ``[(contig_id, ref_pos, Carrier)]``."""
     events = []
     for read in reads:
@@ -517,7 +572,7 @@ def collect_carriers(reads: Iterable, min_mapq: int = 0, min_length: int = MIN_I
         if not read.cigartuples or not any(op == 1 and n >= min_length
                                            for op, n in read.cigartuples):
             continue
-        strand = _read_strand(read, ref_fasta)
+        strand = _read_strand(read, ref_fasta, snp_mask, prob_threshold, md_first)
         if strand is None:
             continue
         seq = read.query_sequence
@@ -565,7 +620,8 @@ def cluster_events(events, tolerance: int = BREAKPOINT_TOLERANCE,
 def build_insert_evidence(reads: Iterable, *, min_carriers: int = MIN_CARRIERS,
                           min_quality: float = MIN_QUALITY, min_mapq: int = 0,
                           min_length: int = MIN_INSERT, ref_fasta=None,
-                          error: float = SEQ_ERROR):
+                          error: float = SEQ_ERROR, snp_mask=None,
+                          prob_threshold: Optional[int] = None, md_first: bool = True):
     """Per-record insert evidence and a cluster report.
 
     Returns ``(evidence, report)``: ``evidence`` maps :func:`record_key` to a
@@ -573,7 +629,8 @@ def build_insert_evidence(reads: Iterable, *, min_carriers: int = MIN_CARRIERS,
     length, carriers per strand, consensus length and confident fraction,
     and whether it was used).
     """
-    events = collect_carriers(reads, min_mapq, min_length, ref_fasta)
+    events = collect_carriers(reads, min_mapq, min_length, ref_fasta,
+                              snp_mask, prob_threshold, md_first)
     evidence: Dict[tuple, ReadInsertEvidence] = {}
     report = []
     for cl in cluster_events(events):
@@ -610,26 +667,37 @@ def run_insert_consensus_prepass(bam_path: str, evidence_dir: str, *,
                                  min_mapq: int = 0,
                                  min_quality: float = MIN_QUALITY,
                                  reference: Optional[str] = None,
-                                 report_path: Optional[str] = None) -> dict:
+                                 report_path: Optional[str] = None,
+                                 snp_mask_path: Optional[str] = None,
+                                 prob_threshold: Optional[int] = None,
+                                 md_first: bool = True) -> dict:
     """Calling pre-pass: build insert evidence for ``bam_path``.
 
     Writes ``<evidence_dir>/insert_evidence.pkl`` (per-record evidence for
     ``engine.configure_daf_insert_evidence``) when any cluster had enough
     carriers, and the cluster report to ``report_path`` when given (callers
     publish it with their outputs: :func:`write_report`). Returns the summary.
+    ``snp_mask_path``, ``prob_threshold`` and ``md_first`` are the caller's
+    DAF SNP mask, ML threshold and input-form order, so each carrier gets the
+    strand the caller will give it (see :func:`_read_strand`).
     """
     import os
     import pickle
 
     import pysam
 
+    snp_mask = None
+    if snp_mask_path:
+        from fiberhmm.daf.snps import load_snp_mask
+        snp_mask = load_snp_mask(snp_mask_path)
     fasta = pysam.FastaFile(reference) if reference else None
     try:
         with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
             names = list(bam.references)
             evidence, report = build_insert_evidence(
                 bam.fetch(until_eof=True), min_carriers=min_carriers,
-                min_quality=min_quality, min_mapq=min_mapq, ref_fasta=fasta)
+                min_quality=min_quality, min_mapq=min_mapq, ref_fasta=fasta,
+                snp_mask=snp_mask, prob_threshold=prob_threshold, md_first=md_first)
     finally:
         if fasta is not None:
             fasta.close()

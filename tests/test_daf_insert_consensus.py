@@ -283,3 +283,91 @@ def test_insert_evidence_rescues_a_read_without_flank_deaminations():
         assert fr["m6a_query_positions"] == evidence[ic.record_key(read)].mods
     mods, strand, _seq, _unknown = extract_modification_calls(read, "daf")
     assert strand == "+" and mods == evidence[ic.record_key(read)].mods
+
+
+def _masked_ct_ga_carriers(tmp_path, n=40):
+    """GA carriers whose flanks have five genuine G->A conversions and twenty
+    C->T mismatches at SNP-masked sites: unmasked, C->T wins the vote."""
+    reads = _carriers(n, strands=("GA",))
+    flank = REF[0:1000] + REF[1000:2000]
+    c_sites = [i for i in range(50, 950) if REF[i] == "C"][:20]
+    g_sites = [i for i in range(1050, 1950) if REF[i] == "G"][:5]
+    for read in reads:
+        seq = list(read.query_sequence)
+        for i in range(2400):
+            if not 1000 <= i < 1400:
+                seq[i] = flank[i if i < 1000 else i - 400]
+        for r in c_sites:
+            seq[r] = "T"
+        for r in g_sites:
+            seq[r + 400] = "A"
+        read.query_sequence = "".join(seq)
+        read.set_tag("MD", _md(read.cigartuples, read.query_sequence, 0))
+    bed = tmp_path / "snps.bed"
+    bed.write_text("".join(f"chr1\t{REF_START + r}\t{REF_START + r + 1}\n" for r in c_sites))
+    return reads, str(bed)
+
+
+def test_carrier_strand_follows_the_callers_snp_mask(tmp_path):
+    """The pre-pass gives each carrier the strand the caller will call it on
+    (Codex review): with the caller's SNP mask, masked C->T mismatches do not
+    make a G->A carrier C->T, so its consensus evidence is used, not dropped
+    while the inserted bases count as unmodified (protected) targets."""
+    from fiberhmm.daf.snps import load_snp_mask
+    reads, bed = _masked_ct_ga_carriers(tmp_path)
+    unmasked, _ = ic.build_insert_evidence(reads, min_carriers=20)
+    assert {ev.strand for ev in unmasked.values()} == {ic.STRAND_CT}
+    evidence, _ = ic.build_insert_evidence(reads, min_carriers=20,
+                                           snp_mask=load_snp_mask(bed))
+    assert {ev.strand for ev in evidence.values()} == {ic.STRAND_GA}
+    engine.configure_daf_snp_mask(bed)
+    try:
+        configure_daf_insert_evidence(evidence)
+        read = reads[0]
+        ev = evidence[ic.record_key(read)]
+        for fr in (_extract_fiber_read_from_pysam(read, "daf", 128),
+                   extract_fiber_read_from_payload(make_apply_payload(read, mode="daf"),
+                                                   "daf", 128)):
+            assert fr["_daf_strand"] == "-"
+            inside = {p for p in fr["m6a_query_positions"] if 1000 <= p < 1400}
+            assert inside and inside == ev.mods
+    finally:
+        engine.configure_daf_snp_mask(None)
+
+
+def test_prepass_reads_the_snp_mask_path(tmp_path):
+    reads, bed = _masked_ct_ga_carriers(tmp_path)
+    path = tmp_path / "in.bam"
+    with pysam.AlignmentFile(str(path), "wb", header=_header()) as out:
+        for read in reads:
+            out.write(read)
+    summary = ic.run_insert_consensus_prepass(str(path), str(tmp_path / "ev"),
+                                              snp_mask_path=bed)
+    assert summary["clusters_used"] == 1
+    assert summary["insertions"][0]["carriers_ga"] == len(reads)
+
+
+def test_ry_strand_ignores_masked_and_inserted_marks():
+    """Without an st tag, R/Y marks the caller drops (inserted bases here) do
+    not decide the strand; the marks on aligned bases do."""
+    mol = REF[0:1000] + INSERT + REF[1000:2000]
+    seq = list(mol)
+    g_aligned = [i for i in range(1000) if mol[i] == "G"][:10]
+    c_inserted = [i for i in range(1000, 1400) if mol[i] == "C"][:100]
+    for i in g_aligned:
+        seq[i] = "R"
+    for i in c_inserted:
+        seq[i] = "Y"
+    a = pysam.AlignedSegment(_header())
+    a.query_name = "ry"
+    a.query_sequence = "".join(seq)
+    a.flag = 0
+    a.reference_id = 0
+    a.reference_start = REF_START
+    a.mapping_quality = 60
+    a.cigartuples = [(0, 1000), (1, 400), (0, 1000)]
+    fr = _extract_fiber_read_from_pysam(a, "daf", 128)
+    assert fr["_daf_strand"] == "-"
+    _mods, strand, _seq, _unknown = extract_modification_calls(a, "daf")
+    assert strand == "-"
+    assert ic._read_strand(a) == ic.STRAND_GA

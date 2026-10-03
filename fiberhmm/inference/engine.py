@@ -698,6 +698,52 @@ def _daf_insert_mods(read, strand_tag):
     return set(parts[0]) if parts[1] == wanted else set()
 
 
+def _has_mm_tag(read):
+    try:
+        return bool(read.has_tag('MM') or read.has_tag('Mm'))
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def _evidence_marks(read, marks, excluded=()):
+    """``marks`` on bases that carry the read's own evidence: not masked
+    (``excluded``) and not inserted bases an insert consensus re-encodes.
+    The strand is decided on these, by the same rule as the insert
+    pre-pass (``insert_consensus._read_strand``), so the consensus evidence
+    of a carrier is always on the strand it is called on."""
+    out = set(marks)
+    if excluded:
+        out -= set(excluded)
+    parts = _insert_evidence_parts(read)
+    if parts is not None:
+        out -= set(parts[2])
+    return out
+
+
+def daf_iupac_strand(read, sequence, st_tag, strand, excluded=()):
+    """Strand of an R/Y read. With an ``st`` tag, ``strand`` (from it);
+    otherwise the majority of the R/Y marks on bases that carry evidence
+    (masked and re-encoded inserted marks do not vote), and on a tie the
+    insert-consensus strand ('+'/'-'/'.')."""
+    if st_tag is not None:
+        return strand
+    upper = sequence.upper()
+    y = r = 0
+    for position in _evidence_marks(
+            read, (i for i, base in enumerate(upper) if base == 'Y' or base == 'R'),
+            excluded):
+        if upper[position] == 'Y':
+            y += 1
+        else:
+            r += 1
+    if y != r:
+        return '+' if y > r else '-'
+    fallback = _insert_evidence_strand(read)
+    if fallback is None:
+        return '.'
+    return '+' if fallback == 'CT' else '-'
+
+
 def daf_no_call_blocks(read):
     """Long unaligned (I/S) SEQ spans of a live DAF ``read`` from which calls
     are removed (:mod:`fiberhmm.inference.no_evidence`)."""
@@ -860,7 +906,8 @@ def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None,
                 ref_fasta=ref_fasta,
                 excluded_reference_positions=_daf_reference_mask(read),
             )
-            if md_res is None and _insert_evidence_strand(read) is not None:
+            if (md_res is None and not _has_mm_tag(read)
+                    and _insert_evidence_strand(read) is not None):
                 # No deamination on the aligned bases: the insert consensus
                 # decides the strand.
                 md_res = ([], [], _insert_evidence_strand(read))
@@ -1018,6 +1065,8 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
         st_tag = read.get_tag('st') if read.has_tag('st') else None
         mod_positions, strand, conv_seq = extract_daf_iupac_positions(query_sequence, st_tag)
         excluded_query_positions = _stub_or_live_excluded(read)
+        strand = daf_iupac_strand(read, query_sequence, st_tag, strand,
+                                  excluded_query_positions)
         # Strand-swap chimera filter, same policy as the MD path below.
         if _DAF_CHIMERA_CFG['filter'] and _is_iupac_daf_chimera(
                 read, query_sequence, excluded_query_positions, ref_fasta):
@@ -1053,7 +1102,8 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
                 ref_fasta=ref_fasta,
                 excluded_reference_positions=_daf_reference_mask(read),
             )
-            if md_result is None and _insert_evidence_strand(read) is not None:
+            if (md_result is None and not _has_mm_tag(read)
+                    and _insert_evidence_strand(read) is not None):
                 md_result = ([], [], _insert_evidence_strand(read))
         if md_result is not None:
             ct_pos, ga_pos, strand_tag = md_result
@@ -1135,7 +1185,7 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
             mod_pos_set.difference_update(excluded_query_positions)
             unknown_pos_set = set(unknown_pos_set) | set(excluded_query_positions)
         if _insert_evidence_parts(read) is not None:
-            strand = detect_daf_strand(query_sequence, mod_pos_set)
+            strand = detect_daf_strand(query_sequence, _evidence_marks(read, mod_pos_set))
             if strand == '.':
                 strand = _insert_evidence_strand(read) or '.'
             mod_pos_set = _merge_insert_mods(read, mod_pos_set, strand)

@@ -162,9 +162,10 @@ Region-parallel runs emit every event; streaming runs emit only `start` and
 - **DAF insertions carried by many reads** (at least
   `--daf-insert-min-carriers`, default 20, within ±30 bp) are re-encoded
   against a deamination-aware consensus of the carriers' inserts, so they get
-  real calls (`--daf-insert-consensus off` keeps them masked). The
-  consensus, its per-base confidence and the carriers per strand are written
-  to `qc/<output>.insert_consensus.json`.
+  real calls (`--daf-insert-consensus off` keeps them masked). Each
+  cluster's position, length, carriers per strand, consensus sequence and the
+  fraction of confidently called columns are written to
+  `qc/<output>.insert_consensus.json`.
 - **Hard-clipped records whose MM/ML cannot match SEQ** are always skipped
   (`hard_clipped_mm` in the skip report). minimap2 hard-clips supplementary
   alignments unless run with `-Y`, and their `MM`/`ML` still describe the

@@ -62,7 +62,8 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   nucleosome) where the mask leaves it uncalled and the 2.x encoding called
   it all nucleosome; with one strand only, open C columns stay right but
   fewer columns are confident (64-89%). Clusters, consensus sequences and
-  confidence go to `qc/<output>.insert_consensus.json`; `@PG` records
+  the fraction of confident columns go to
+  `qc/<output>.insert_consensus.json`; `@PG` records
   `daf_insert_consensus=on/<used>of<clusters>/min<N>`. Soft-clipped arms are
   not grouped: with supplementary calling a clipped arm that aligns
   elsewhere (a TE copy) is called against that copy.

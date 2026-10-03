@@ -148,6 +148,8 @@ class PipelineConfig:
     def calling_settings(self) -> dict:
         """Effective calling settings (``None`` = the fiberhmm-call default)."""
         daf = self.enzyme in DAF_ENZYMES
+        unaligned_mask = _call_arg_switch(self.call_args, "--daf-mask-unaligned",
+                                          self.daf_mask_unaligned)
         return {
             "enzyme": self.enzyme,
             "seq": self.resolved_seq() or "auto",
@@ -158,12 +160,14 @@ class PipelineConfig:
             "snp_screen": self.snp_screen if daf else "off",
             "snp_mask": os.path.abspath(self.snp_mask) if self.snp_mask else None,
             "chimera_filter": self.chimera_filter if daf else None,
-            "daf_unaligned_mask": self.daf_mask_unaligned if daf else None,
+            # As fiberhmm-call resolves them: --call-args come last on its
+            # command line, so their last occurrence wins.
+            "daf_unaligned_mask": unaligned_mask if daf else None,
             # fiberhmm-call's default; --call-args "--daf-insert-consensus off"
             # turns it off.
             "daf_insert_consensus": (
-                ("off" if "off" in _call_arg_value(self.call_args, "--daf-insert-consensus")
-                 else "auto") if daf and self.daf_mask_unaligned else None),
+                ("off" if _call_arg_value(self.call_args, "--daf-insert-consensus") == "off"
+                 else "auto") if daf and unaligned_mask else None),
             "primary_only": self.alignments == "primary",
             "alignments": self.alignments,
             "prob_threshold": self.prob_threshold if self.prob_threshold is not None
@@ -1759,13 +1763,29 @@ def _empty_locked_dir(path: str) -> None:
 
 
 def _call_arg_value(call_args, flag) -> str:
-    """The value given to ``flag`` in a --call-args list ('' when absent)."""
-    for index, argument in enumerate(call_args or ()):
+    """The value given to ``flag`` in a --call-args list ('' when absent); the
+    last occurrence, as argparse resolves a repeated option."""
+    value = ""
+    call_args = list(call_args or ())
+    for index, argument in enumerate(call_args):
         if argument == flag and index + 1 < len(call_args):
-            return call_args[index + 1]
-        if argument.startswith(flag + "="):
-            return argument.split("=", 1)[1]
-    return ""
+            value = call_args[index + 1]
+        elif argument.startswith(flag + "="):
+            value = argument.split("=", 1)[1]
+    return value
+
+
+def _call_arg_switch(call_args, flag, default: bool) -> bool:
+    """A ``--flag``/``--no-flag`` switch as fiberhmm-call resolves it from a
+    --call-args list (last occurrence wins; ``default`` when absent)."""
+    negative = "--no-" + flag[2:]
+    value = default
+    for argument in call_args or ():
+        if argument == flag:
+            value = True
+        elif argument == negative:
+            value = False
+    return value
 
 
 def _group_by_name(records):

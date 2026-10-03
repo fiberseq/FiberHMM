@@ -120,6 +120,11 @@ def replay_alignment(read, unit, model, strand_mode, mode, context_size,
     # Their union is continuous reference coverage, not an unobserved gap.
     # Merge adjacency only: deletions/skips still separate these domains.
     reference_domains = merged(unit['aligned_blocks'])
+    # Query spans production calling leaves uncalled (long DAF insertions and
+    # clips without consensus evidence; a supplementary record's clips): a
+    # TF footprint overlapping one is dropped there, so it is here too.
+    from ..engine import read_no_call_blocks
+    no_call_blocks = read_no_call_blocks(read, mode)
     calls = []
     for a, b in unit['msp_intervals']:
         if b-a < minimum_nfr_length:
@@ -133,6 +138,8 @@ def replay_alignment(read, unit, model, strand_mode, mode, context_size,
         for call in result:
             qa,qb=call.start,call.start+call.length
             score,opportunities=call.llr,call.n_opps
+            if any(qa < block_end and qb > block_start for block_start, block_end in no_call_blocks):
+                continue
             mapped = refs[qa:qb]
             mapped = mapped[mapped >= 0]
             if not len(mapped):

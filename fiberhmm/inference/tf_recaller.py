@@ -902,7 +902,10 @@ def extract_modification_calls(read, mode: str, context_size: int = 3,
             st_tag = read.get_tag('st')
         except KeyError:
             st_tag = None
+        raw_seq = seq
         mod_pos, strand, seq = extract_daf_iupac_positions(seq, st_tag)
+        from fiberhmm.inference.engine import daf_iupac_strand
+        strand = daf_iupac_strand(read, raw_seq, st_tag, strand, unaligned)
         mod_pos.difference_update(unaligned)
         mod_pos = merge_insert(mod_pos, strand)
         return mod_pos, strand, seq, set(unaligned)
@@ -947,7 +950,7 @@ def extract_modification_calls(read, mode: str, context_size: int = 3,
         )
         parts = _insert_evidence_parts(read)
         if parts is not None:
-            strand = detect_daf_strand(seq, mod_pos)
+            strand = detect_daf_strand(seq, mod_pos - set(parts[2]))
             if strand == '.':
                 strand = _insert_evidence_strand(read) or '.'
             mod_pos = merge_insert(mod_pos, strand)

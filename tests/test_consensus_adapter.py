@@ -94,3 +94,18 @@ def test_replay_contiguous_reference_coverage_not_single_cigar_block(monkeypatch
     # Actual query opportunities, including insertions, remain in the decoder.
     if expected is not None:
         assert calls[0]['opportunities']==sum(n for op,n in cigar if op in (0,1,7,8))
+
+
+def test_replay_drops_tfs_overlapping_a_no_call_block(monkeypatch):
+    """Production calling drops TF footprints overlapping a long unaligned
+    block; native replay must not feed one to the recaller either."""
+    read=pysam.AlignedSegment()
+    cigar=[(0,50),(1,100),(0,50)]
+    read.query_sequence='C'*200
+    read.reference_id=0;read.reference_start=1000;read.cigartuples=cigar;read.flag=0
+    obs=np.full(200,4097,dtype=np.int32)
+    monkeypatch.setattr(strand_rescue,'hard_observations',lambda *_:(obs,'CT'))
+    u=dict(msp_intervals=[[1000,read.reference_end]],raw_nuc_intervals=[],
+           aligned_blocks=[list(v) for v in read.get_blocks()])
+    calls=adapter.replay_alignment(read,u,model(),'CT','daf',3,None,7)
+    assert all(c['query_interval'][1]<=50 or c['query_interval'][0]>=150 for c in calls)

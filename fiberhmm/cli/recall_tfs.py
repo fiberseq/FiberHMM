@@ -1417,7 +1417,9 @@ def _recall(args, bam_in, model_path, using_bundled_model, n_cores):
         tmpdir = _tempfile.mkdtemp(prefix='.fiberhmm_insert_')
         _atexit.register(_shutil.rmtree, tmpdir, True)
         summary = run_insert_consensus_prepass(
-            args.in_bam, tmpdir, min_carriers=args.daf_insert_min_carriers)
+            args.in_bam, tmpdir, min_carriers=args.daf_insert_min_carriers,
+            prob_threshold=getattr(args, 'prob_threshold', None),
+            md_first=False)   # tf_recaller reads MM/ML before MD
         configure_daf_insert_evidence(summary['evidence_path'])
         insert_state = (f"on/{summary['clusters_used']}of{summary['clusters']}"
                         f"/min{args.daf_insert_min_carriers}")
