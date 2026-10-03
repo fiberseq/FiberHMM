@@ -462,7 +462,11 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   3 s older than the start of hashing (git's "racily clean" rule); a file
   hashed while fresh is hashed again on its next lookup. Old files are still
   served from the memo. Memo entries written by earlier versions carry no hash
-  time and are rehashed once.
+  time and are rehashed once. A remembered digest is also not returned after
+  the clock was set back to within the margin of the file's timestamps, and a
+  file that changes while it is hashed is read again instead of yielding a
+  digest of mixed bytes. A reference `.fai` newer than its FASTA is reused
+  only while it lists the FASTA's contig names and lengths.
 - **Smaller fixes.** `--region-parallel` progress and logs go to stderr
   (stdout carries data only), and outputs no longer carry a `samtools cat`
   `@PG` listing the temporary work directory. `fiberhmm-call-m5c` refuses

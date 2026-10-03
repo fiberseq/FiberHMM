@@ -37,8 +37,11 @@ remembered only for a file whose mtime and ctime were at least
 Any later write then carries a newer timestamp, so it changes the stat key. A
 file hashed while it was still fresh is simply hashed again on the next
 lookup, and remembered then. A timestamp in the future (clock skew, a
-future-dated ``utime``) is never safely old, so such a file is always
-rehashed. SHA-256 runs at roughly 2-3 GB/s, so a first run pays about one
+future-dated ``utime``) is never safely old, and a remembered digest is also
+returned only while the file's timestamps are safely older than the current
+time, so a file is rehashed after the clock was set back past it. A file
+that changes while it is being hashed is read again (up to
+:data:`STABLE_READ_ATTEMPTS` times) and never remembered. SHA-256 runs at roughly 2-3 GB/s, so a first run pays about one
 extra read of its inputs and later runs pay nothing for unchanged files.
 (This relies on POSIX ``st_ctime`` semantics -- macOS, Linux, WSL; on native
 Windows it is the creation time, and the rule rests on the mtime alone. On a
@@ -111,6 +114,18 @@ def digest_is_trusted(key, hashed_at_ns) -> bool:
     return max(mtime_ns, ctime_ns) + RACY_MARGIN_NS <= hashed_at_ns
 
 
+def remembered_digest_is_valid(key, hashed_at_ns, now_ns) -> bool:
+    """Whether a remembered digest whose recorded :func:`stat_key` equals the file's current
+    ``key`` may be returned: it was not racily clean when taken, and the file's timestamps are
+    not within the margin of (or after) the current time either -- after the clock was set
+    back, a new write could otherwise reproduce the recorded timestamps."""
+    return digest_is_trusted(key, hashed_at_ns) and digest_is_trusted(key, now_ns)
+
+
+#: Reads of a file that changed while it was being hashed before its digest is returned as is.
+STABLE_READ_ATTEMPTS = 3
+
+
 class DigestMemo:
     """SHA-256 of files, remembered per path under the rule in the module docstring.
 
@@ -136,11 +151,18 @@ class DigestMemo:
         before = stat_key(real)
         entry = self.entries.get(real)
         if (entry is not None and entry['stat'] == before
-                and digest_is_trusted(before, entry.get('hashed_at_ns'))):
+                and remembered_digest_is_valid(before, entry.get('hashed_at_ns'), hashed_at)):
             return entry['sha256']
-        digest = sha256_file(real)
+        for attempt in range(STABLE_READ_ATTEMPTS):
+            if attempt:  # it changed while being read: read it again
+                hashed_at = _now_ns()
+                before = stat_key(real)
+            digest = sha256_file(real)
+            stable = stat_key(real) == before
+            if stable:
+                break
         # Remembered only if the file did not change while it was read and was not racily clean.
-        if stat_key(real) == before and digest_is_trusted(before, hashed_at):
+        if stable and digest_is_trusted(before, hashed_at):
             self.entries[real] = {'stat': before, 'sha256': digest, 'hashed_at_ns': hashed_at}
         else:
             self.entries.pop(real, None)
