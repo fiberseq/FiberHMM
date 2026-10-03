@@ -116,8 +116,8 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--split-min-llr` | `4.0` | Min accessible-run LLR to split a nucleosome; for DddA, the molecule-local linker-residue configuration LLR (default 4.0). |
 | `--split-min-opps` | `3` | Min informative positions in a nucleosome-splitting cut or DddA linker residue (default 3). |
 | `--ddda-derived-tf-max-edge-gap` | `12` | DddA phase-aware radial recall only: TF calls exposed solely by nucleosome refinement must have a deamination hit within BP on both sides (default 12). Original HMM-accessible TF scan space is unchanged. Use -1 to disable the safeguard. |
-| `--nuc-recall-policy` | `auto` | Nucleosome-recaller geometry policy. "auto" (default) uses topology-constrained, ambiguity-preserving recall for Nanopore and the conservative-edge policy otherwise. "topology" only accepts cuts that leave nucleosome-sized pieces and does not turn unresolved edge ambiguity into accessibility. Choices: `auto`, `conservative`, `topology`. |
-| `--phase-nrl` | `auto` | Pass-2 periodicity prior (with --recall-nucs): "auto" (default; estimate the nucleosome repeat length from this sample after Pass 1, clamped to ~150-215 bp anchored at 185), "off", or a fixed bp value (e.g. 185). Long footprints are split at phase-predicted linkers using a lowered threshold gated on &gt;=1 local deamination event (never splits a signal-desert). |
+| `--nuc-recall-policy` | `auto` | Nucleosome-recaller geometry policy. "auto" (default) uses the conservative-edge policy for every chemistry. "topology" (opt-in) only accepts cuts that leave nucleosome-sized pieces and keeps the HMM extent of each piece; it leaves pile-ups at the size floor in call-length distributions. Choices: `auto`, `conservative`, `topology`. |
+| `--phase-nrl` | `off` | Pass-2 periodicity prior (with --recall-nucs): "off" (default), "auto" (estimate the nucleosome repeat length from this sample after Pass 1, clamped to ~150-215 bp anchored at 185), or a fixed bp value (e.g. 185). Long footprints are split at phase-predicted linkers using a lowered threshold gated on &gt;=1 local deamination event (never splits a signal-desert). |
 | `--keep-chimeras` | off | DAF only: keep strand-swap chimeric reads (C-&gt;T in one segment + G-&gt;A in another). Default: filter them out and report the count. |
 | `--chimera-min-seg` | `5` | DAF chimera: min same-strand deamination events per segment to call a swap (default 5). |
 | `--chimera-purity` | `0.8` | DAF chimera: min same-strand purity per segment (default 0.8). |
@@ -238,10 +238,10 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--split-min-llr` | `4.0` | Min accessible-cut LLR to split a footprint; for DddA, the molecule-local linker-residue configuration LLR (default 4.0) |
 | `--split-min-opps` | `3` | Min informative positions for a split cut or DddA linker residue (default 3) |
 | `--ddda-derived-tf-max-edge-gap` | `12` | DddA phase-aware radial recall only: require TF scan space opened solely by nucleosome refinement to have a deamination hit within BP on both sides (default 12; -1 disables). |
-| `--nuc-recall-policy` | `auto` | "auto" uses topology-constrained, ambiguity-preserving recall for Nanopore and conservative edges otherwise. Choices: `auto`, `conservative`, `topology`. |
+| `--nuc-recall-policy` | `auto` | "auto" (default) uses conservative edges for every chemistry; "topology" (opt-in) only accepts cuts that leave nucleosome-sized pieces. Choices: `auto`, `conservative`, `topology`. |
 | `--nuc-min-size` | `85` | Min refined nucleosome size; smaller footprints are demoted to accessible/MSP (default 85) |
 | `--msp-min-size` | `0` | Min re-derived MSP size to keep (default 0) |
-| `--phase-nrl` | `auto` | Pass-2 periodicity prior: off / auto / fixed bp. "auto" (default) estimates the nucleosome repeat length from the input BAM's existing nuc tags (no HMM re-run). Lowers the split bar near phase-predicted linkers in long footprints. |
+| `--phase-nrl` | `off` | Pass-2 periodicity prior: off / auto / fixed bp (default off). "auto" estimates the nucleosome repeat length from the input BAM's existing nuc tags (no HMM re-run). Lowers the split bar near phase-predicted linkers in long footprints. |
 
 ## fiberhmm-recall-nucs
 
@@ -278,10 +278,10 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--split-min-llr` | `4.0` | Min accessible-cut LLR to split a footprint; for DddA, the molecule-local linker-residue configuration LLR (default 4.0) |
 | `--split-min-opps` | `3` | Min informative positions for a split cut or DddA linker residue (default 3) |
 | `--ddda-derived-tf-max-edge-gap` | `12` | DddA phase-aware radial recall only: require TF scan space opened solely by nucleosome refinement to have a deamination hit within BP on both sides (default 12; -1 disables). |
-| `--nuc-recall-policy` | `auto` | "auto" uses topology-constrained, ambiguity-preserving recall for Nanopore and conservative edges otherwise. Choices: `auto`, `conservative`, `topology`. |
+| `--nuc-recall-policy` | `auto` | "auto" (default) uses conservative edges for every chemistry; "topology" (opt-in) only accepts cuts that leave nucleosome-sized pieces. Choices: `auto`, `conservative`, `topology`. |
 | `--nuc-min-size` | `85` | Min refined nucleosome size; smaller footprints are demoted to accessible/MSP (default 85) |
 | `--msp-min-size` | `0` | Min re-derived MSP size to keep (default 0) |
-| `--phase-nrl` | `auto` | Pass-2 periodicity prior: off / auto / fixed bp. "auto" (default) estimates the nucleosome repeat length from the input BAM's existing nuc tags (no HMM re-run). Lowers the split bar near phase-predicted linkers in long footprints. |
+| `--phase-nrl` | `off` | Pass-2 periodicity prior: off / auto / fixed bp (default off). "auto" estimates the nucleosome repeat length from the input BAM's existing nuc tags (no HMM re-run). Lowers the split bar near phase-predicted linkers in long footprints. |
 
 ## fiberhmm-qc
 
@@ -419,7 +419,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--max-component` | `10000` | Safety ceiling for a complete overlap component (default 10000) |
 | `--io-threads` | `4` | htslib compression threads for output (default 4) |
 | `--no-index` | off | Do not index a paired-source output |
-| `--phase-nrl` | `196` | Nucleosome repeat length for consensus recall (default 196) |
+| `--phase-nrl` | `0` | Periodicity prior for consensus recall: nucleosome repeat length in bp, or 0 for off (default 0). DddA radial recall ignores it. |
 | `--nuc-recall-policy` | `conservative` | Nucleosome policy for consensus recall Choices: `conservative`, `topology`. |
 | `--ddda-derived-tf-max-edge-gap` | `12` | Edge-evidence requirement for TF calls exposed only by DddA nucleosome refinement (default 12; -1 disables) |
 | `--use-m5c` / `--no-use-m5c` | auto | Joint recall: DddA CpG-aware recall, as in fiberhmm-call and fiberhmm-recall-tfs -- CpG observations are excluded except inside the source reads' ddda_ucg islands (fiberhmm-tag-m5c). Default: on; --no-use-m5c for an ablation. |
@@ -435,7 +435,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--pairs-only` | off | Emit only consensus reads (default: also pass through unmerged reads) |
 | `--recall` | off | Re-call footprints on each both-strand consensus read (HMM, nucleosome and TF recall over both strands; writes ns/nl/as/al + MA nuc/msp/tf). Reads the deam+/deam- regime and uses C and G targets jointly. |
 | `--enzyme` | `ddda` | Model preset for --recall (default ddda) |
-| `--phase-nrl` | `196` | Nucleosome repeat length for consensus recall (default 196) |
+| `--phase-nrl` | `0` | Periodicity prior for consensus recall: nucleosome repeat length in bp, or 0 for off (default 0). DddA radial recall ignores it. |
 | `--nuc-recall-policy` | `conservative` | Nucleosome geometry policy for consensus recall Choices: `conservative`, `topology`. |
 | `--ddda-derived-tf-max-edge-gap` | `12` | With --recall, require TF calls exposed solely by DddA radial nucleosome refinement to have a deamination hit within BP on both sides (default 12; -1 disables). |
 | `--use-m5c` / `--no-use-m5c` | auto | With --recall: DddA CpG-aware recall, as in fiberhmm-call and fiberhmm-recall-tfs (CpGs excluded except inside the source reads' ddda_ucg islands). Default: on for --enzyme ddda. |

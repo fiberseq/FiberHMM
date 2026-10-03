@@ -46,7 +46,7 @@ The resolved chemistry (`--enzyme`, the given or
 | ML threshold: `recall-tfs`/`-nucs`, `extract`, `qc` | 125 | **248** | 125 | 125 |
 | ML threshold: `dedup`, `pair`, `merge` (MM/ML dU) | — | — | 128 | 128 |
 | TF interval cost `--min-llr` | 5.0 | 5.0 | 5.0 | 5.0 |
-| Nucleosome recall (`--nuc-recall-policy auto`) | conservative | topology | conservative | phase-aware radial |
+| Nucleosome recall (`--nuc-recall-policy auto`) | conservative | conservative | conservative | phase-aware radial |
 | CpG-aware recall (`--use-m5c`) | off | off | off | **on** (call, recall, pair/merge) |
 | Adjacent-target thinning (`--daf-mask-runs`) | — | — | off | 2, keep-one |
 | Strand-swap chimera filter | — | — | on | on |
@@ -86,8 +86,9 @@ through the pore (`A+a`), so `nanopore-fiber` sees only half the targets.
 
 Consequences for Nanopore Hia5:
 
-- sparser evidence per read, so nucleosome recall uses the `topology` policy
-  (an unresolved edge stays protected instead of becoming accessible);
+- sparser evidence per read: nucleosome recall splits fewer long protected
+  blocks, and trimmed edge pieces shorter than `--nuc-min-size` are reported as
+  60–89-bp footprint-scale calls more often than on PacBio;
 - the stricter ML threshold (248);
 - strand rescue can recover footprints missed on one strand by using the
   other orientation ([Strand rescue](../workflows/strand-rescue.md));

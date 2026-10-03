@@ -18,16 +18,18 @@ from fiberhmm.io.ma_tags import parse_ma_tag
 from fiberhmm.models import get_model_path
 
 
-def test_call_nuc_recall_policy_auto_is_nanopore_aware():
+def test_call_nuc_recall_policy_auto_is_conservative_everywhere():
+    """3.0 default: conservative edges for every chemistry; topology is opt-in
+    (it left size-floor pile-ups and kept the HMM's 10-bp edge comb on ONT)."""
     from types import SimpleNamespace
 
     from fiberhmm.cli.call import _resolve_nuc_recall_policy
 
     args = SimpleNamespace(nuc_recall_policy="auto")
-    assert _resolve_nuc_recall_policy(args, "nanopore-fiber") == "topology"
-    assert _resolve_nuc_recall_policy(args, "pacbio-fiber") == "conservative"
-    args.nuc_recall_policy = "conservative"
     assert _resolve_nuc_recall_policy(args, "nanopore-fiber") == "conservative"
+    assert _resolve_nuc_recall_policy(args, "pacbio-fiber") == "conservative"
+    args.nuc_recall_policy = "topology"
+    assert _resolve_nuc_recall_policy(args, "nanopore-fiber") == "topology"
 
 
 def _run_fused_streaming(input_bam, output_bam, model_path, *,
@@ -631,3 +633,14 @@ def test_circular_region_parallel_keeps_coordinates_within_read_length(
     assert total > 0
     assert with_fp > 0
     _assert_circular_output_invariants(input_bam, output)
+
+
+def test_call_phase_prior_is_off_by_default(monkeypatch):
+    """3.0 default: no Pass-2 periodicity prior. Its 1.5 x NRL eligibility cut and
+    one-event cuts left a cliff in nucleosome lengths (Hia5 PacBio and ONT)."""
+    import sys
+    from fiberhmm.cli import call
+    monkeypatch.setattr(sys, "argv", ["fiberhmm-call", "-i", "in.bam", "-o", "out.bam"])
+    args = call.parse_args()
+    assert str(args.phase_nrl).lower() == "off"
+    assert args.nuc_recall_policy == "auto"

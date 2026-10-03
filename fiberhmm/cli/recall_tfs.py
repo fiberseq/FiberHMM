@@ -965,17 +965,17 @@ def parse_args(default_recall_nucs: bool = False):
         '--nuc-recall-policy',
         choices=['auto', 'conservative', 'topology'],
         default='auto',
-        help='"auto" uses topology-constrained, ambiguity-preserving recall '
-             'for Nanopore and conservative edges otherwise.',
+        help='"auto" (default) uses conservative edges for every chemistry; '
+             '"topology" (opt-in) only accepts cuts that leave nucleosome-sized pieces.',
     )
     nuc.add_argument('--nuc-min-size', type=int, default=85,
                      help='Min refined nucleosome size; smaller footprints are '
                           'demoted to accessible/MSP (default 85)')
     nuc.add_argument('--msp-min-size', type=int, default=0,
                      help='Min re-derived MSP size to keep (default 0)')
-    nuc.add_argument('--phase-nrl', default='auto',
-                     help='Pass-2 periodicity prior: off / auto / fixed bp. '
-                          '"auto" (default) estimates the nucleosome repeat '
+    nuc.add_argument('--phase-nrl', default='off',
+                     help='Pass-2 periodicity prior: off / auto / fixed bp '
+                          '(default off). "auto" estimates the nucleosome repeat '
                           'length from the input BAM\'s existing nuc tags (no '
                           'HMM re-run). Lowers the split bar near phase-predicted '
                           'linkers in long footprints.')
@@ -1001,7 +1001,7 @@ def _resolve_model_metadata(model_path):
 def _resolve_nuc_recall_policy(args, mode: str) -> str:
     policy = str(getattr(args, 'nuc_recall_policy', 'auto')).lower()
     if policy == 'auto':
-        return 'topology' if mode == 'nanopore-fiber' else 'conservative'
+        return 'conservative'
     return policy
 
 
@@ -1081,7 +1081,7 @@ def _resolve_recall_nucs_phase_nrl(args) -> int:
     """Resolve --phase-nrl to an int (0 = off). Only meaningful with --recall-nucs."""
     if not getattr(args, 'recall_nucs', False):
         return 0
-    kind, fixed = _parse_phase_nrl_option(getattr(args, 'phase_nrl', 'auto'))
+    kind, fixed = _parse_phase_nrl_option(getattr(args, 'phase_nrl', 'off'))
     if kind == 'off':
         return 0
     if kind == 'fixed':

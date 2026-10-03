@@ -214,17 +214,17 @@ def parse_args():
         '--nuc-recall-policy',
         choices=['auto', 'conservative', 'topology'],
         default='auto',
-        help='Nucleosome-recaller geometry policy. "auto" (default) uses '
-             'topology-constrained, ambiguity-preserving recall for Nanopore '
-             'and the conservative-edge policy otherwise. '
-             '"topology" only accepts cuts that leave nucleosome-sized pieces '
-             'and does not turn unresolved edge ambiguity into accessibility.',
+        help='Nucleosome-recaller geometry policy. "auto" (default) uses the '
+             'conservative-edge policy for every chemistry. "topology" (opt-in) '
+             'only accepts cuts that leave nucleosome-sized pieces and keeps '
+             'the HMM extent of each piece; it leaves pile-ups at the size floor '
+             'in call-length distributions.',
     )
-    p.add_argument('--phase-nrl', default='auto',
+    p.add_argument('--phase-nrl', default='off',
                    help='Pass-2 periodicity prior (with --recall-nucs): '
-                        '"auto" (default; estimate the nucleosome repeat length from '
-                        'this sample after Pass 1, clamped to ~150-215 bp anchored at '
-                        '185), "off", or a fixed bp value (e.g. 185). Long footprints '
+                        '"off" (default), "auto" (estimate the nucleosome repeat length '
+                        'from this sample after Pass 1, clamped to ~150-215 bp anchored '
+                        'at 185), or a fixed bp value (e.g. 185). Long footprints '
                         'are split at phase-predicted linkers using a lowered threshold '
                         'gated on >=1 local deamination event (never splits a '
                         'signal-desert).')
@@ -537,7 +537,7 @@ def _resolve_nuc_recall_policy(args, mode: str) -> str:
     """Resolve the public auto policy to the core recaller policy."""
     policy = str(getattr(args, 'nuc_recall_policy', 'auto')).lower()
     if policy == 'auto':
-        return 'topology' if mode == 'nanopore-fiber' else 'conservative'
+        return 'conservative'
     return policy
 
 

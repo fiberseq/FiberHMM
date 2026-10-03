@@ -371,8 +371,9 @@ Examples:
     p.add_argument('--io-threads', type=int, default=4, help='htslib compression threads for output (default 4)')
     p.add_argument('--no-index', action='store_true',
                    help='Do not index a paired-source output')
-    p.add_argument('--phase-nrl', type=int, default=196,
-                   help='Nucleosome repeat length for consensus recall (default 196)')
+    p.add_argument('--phase-nrl', type=int, default=0,
+                   help='Periodicity prior for consensus recall: nucleosome repeat length '
+                        'in bp, or 0 for off (default 0). DddA radial recall ignores it.')
     p.add_argument('--nuc-recall-policy', choices=['conservative', 'topology'],
                    default='conservative', help='Nucleosome policy for consensus recall')
     p.add_argument('--ddda-derived-tf-max-edge-gap', type=int, default=12,

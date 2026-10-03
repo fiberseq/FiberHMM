@@ -78,7 +78,7 @@ you get a warning, not an error.
 | Model | `hia5_pacbio.json` | `hia5_nanopore.json` | `dddb_nanopore.json` | `ddda_nuc.json` (HMM), `ddda_TF.json` (TF recall) |
 | Observation mode | `pacbio-fiber` | `nanopore-fiber` | `daf` | `daf` |
 | ML threshold in `fiberhmm-call` | 128 | **248** | 128 (MM/ML dU only) | 128 (MM/ML dU only) |
-| Nucleosome recall | conservative | topology | conservative | phase-aware radial |
+| Nucleosome recall | conservative | conservative | conservative | phase-aware radial |
 | CpG-aware recall | off | off | off | on |
 | Adjacent-target thinning | — | — | off | runs ≥ 2, keep-one |
 | Duplicate marking, SNP screen | — | — | on (file input) | on (file input) |

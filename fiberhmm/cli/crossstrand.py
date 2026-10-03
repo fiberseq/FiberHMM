@@ -32,7 +32,7 @@ from fiberhmm.crossstrand.duplex import DuplexParams
 
 def run_pipeline(in_bam, out_bam, params: PairParams, recall=True, enzyme='ddda',
                  pairs_only=False, prob_threshold=0, pairs_tsv=None, io_threads=4,
-                 reference_path=None, phase_nrl=196,
+                 reference_path=None, phase_nrl=0,
                  nuc_recall_policy='conservative',
                  derived_tf_max_edge_ambiguity=12):
     if enzyme.lower() != 'ddda':
@@ -131,8 +131,9 @@ Examples:
                         f'default {DEFAULT_PROB_THRESHOLD}). R/Y- and MD-encoded '
                         'input is binary and ignores it.')
     p.add_argument('--io-threads', type=int, default=4, help='htslib compression threads (default 4)')
-    p.add_argument('--phase-nrl', type=int, default=196,
-                   help='Nucleosome repeat length for consensus recall (default 196)')
+    p.add_argument('--phase-nrl', type=int, default=0,
+                   help='Periodicity prior for consensus recall: nucleosome repeat length '
+                        'in bp, or 0 for off (default 0). DddA radial recall ignores it.')
     p.add_argument('--nuc-recall-policy', choices=['conservative', 'topology'],
                    default='conservative',
                    help='Nucleosome geometry policy for consensus recall')
