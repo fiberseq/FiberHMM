@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased: experimental preview (branch exp/fh-nfr, not part of 3.0.0)
+## Unreleased: experimental preview (not part of 3.0.0)
 
 - **EXPERIMENTAL: `fiberhmm-nfr`, NFR variants and element co-accessibility
   (`fiberhmm.inference.accessibility`).** A preview for testing in
