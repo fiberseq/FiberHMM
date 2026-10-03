@@ -97,10 +97,13 @@ def stratified_perm(x, y, strata, n_perm, rng):
     if (x.shape != y.shape or x.ndim != 1 or x.dtype.kind not in 'iub' or y.dtype.kind not in 'iub'
             or not np.isin(x, (0, 1)).all() or not np.isin(y, (0, 1)).all()):
         return _stratified_perm_reference(x, y, strata, n_perm, rng)
+    groups = [np.where(strata == s)[0] for s in np.unique(strata)]
+    if sum(len(g) for g in groups) != len(x):
+        # a label no stratum selects (NaN): the reference leaves it unpermuted; take its path (before any draw)
+        return _stratified_perm_reference(x, y, strata, n_perm, rng)
     x, y = x.astype(np.int64), y.astype(np.int64)
     a1 = np.zeros(n_perm, np.int64)
-    for s in np.unique(strata):
-        idx = np.where(strata == s)[0]
+    for idx in groups:
         if len(idx) > 1:
             perm = np.argsort(rng.random((n_perm, len(idx))), 1)
             a1 += y[idx][perm][:, x[idx] == 1].sum(1)
@@ -205,10 +208,12 @@ class _OpennessIndex:
         for u, c in cov.items():
             x, closed = np.asarray(c['x']), np.asarray(c['closed'])
             if (x.ndim != 1 or x.dtype.kind not in 'iu' or closed.shape != x.shape or closed.dtype != bool or not len(x)
-                    or abs(int(x[0])) >= 2**53 or abs(int(x[-1])) >= 2**53):
+                    or int(x.max()) >= 2**53 or int(x.min()) <= -2**53):
                 continue
-            step = int(x[1] - x[0]) if len(x) > 1 else 1
-            if step <= 0 or (len(x) > 1 and not np.array_equal(np.diff(x), np.full(len(x) - 1, step))):
+            x = x.astype(np.int64)                  # exact (|x| < 2**53): differences cannot wrap around
+            d = np.diff(x)
+            step = int(d[0]) if len(d) else 1
+            if step <= 0 or (len(d) and not (d == step).all()):
                 continue
             self.row[u] = len(starts)
             starts.append(int(x[0])); steps.append(step); lens.append(len(x)); offs.append(off)

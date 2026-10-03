@@ -114,11 +114,10 @@ def robust_geometry(Xc, seed, cache=None):
     ``cache`` (optional dict): memo of earlier results. MinCovDet is a deterministic function of the members' values,
     their order and the seed, so the key is exactly those (the bytes of ``Xc``); a hit returns copies of the same
     arrays the fit returned. Discovery fits the same members many times (every held-out test re-fits every group)."""
-    if cache is None:
-        return _robust_geometry(Xc, seed)
+    if cache is None or isinstance(seed, bool) or not isinstance(seed, (int, np.integer)):
+        return _robust_geometry(Xc, seed)        # only an integer seed makes the fit a function of its input
     Xc = np.asarray(Xc)
-    key = (Xc.shape, Xc.dtype.str, seed if isinstance(seed, (int, np.integer)) else repr(seed),
-           np.ascontiguousarray(Xc).tobytes())
+    key = (Xc.shape, Xc.dtype.str, int(seed), np.ascontiguousarray(Xc).tobytes())
     hit = cache.get(key)
     if hit is None:
         hit = cache[key] = _robust_geometry(Xc, seed)
@@ -377,7 +376,8 @@ class _EMRows:
     @classmethod
     def of(cls, LL):
         LL = np.asarray(LL)
-        if LL.ndim != 2 or LL.dtype != np.float64 or 0 in LL.shape:
+        # a matrix in another memory order makes the dense EM's reductions add in another order: keep it dense
+        if LL.ndim != 2 or LL.dtype != np.float64 or 0 in LL.shape or not LL.flags.c_contiguous:
             return None
         return cls(LL)
 

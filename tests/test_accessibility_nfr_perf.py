@@ -150,3 +150,28 @@ def test_nfr_progress_is_one_monotonic_bar_within_its_total():
     assert all(isinstance(c, int) and 0 <= c <= bar[0][1] for c in done) and done == sorted(done) and done[-1] == bar[0][1]
     assert any('support test' in m for _, _, m in bar) and any('bootstrap' in m for _, _, m in bar)
     assert any('robustness rerun' in m for _, _, m in bar)
+
+
+def test_edge_inputs_take_the_reference_paths():
+    """Inputs the workflow does not generate still match the references (Codex review of the speedups)."""
+    rng = np.random.default_rng(8)
+    LL = _block_ll(rng, 100, [(0, 1), (1, 4), (4, 12)])
+    for M in (np.asfortranarray(LL), LL[::2]):                         # other memory orders and strides
+        for iters in (0, 1, 50):
+            wf, pf = V._em(M, iters); wd, pd = V._em_dense(M, iters)
+            assert wf.tobytes() == wd.tobytes() and (pf is pd is None or pf.tobytes() == pd.tobytes())
+    plus = LL.copy(); plus[5, 2] = np.inf                                # +inf: the whole row is dense
+    assert all(a.tobytes() == b.tobytes() for a, b in zip(V._em(plus, 30), V._em_dense(plus, 30)))
+    # a small-integer grid that wrapped around is not a constant-step grid
+    x = np.arange(120, 320, 10).astype(np.int8)
+    cov = {'u': dict(x=x, closed=np.arange(20) % 2 == 0)}
+    ex = [(-120, -90), (100, 110)]
+    assert C._OpennessIndex(cov).openness(['u'], ex)['u'] == C.element_open_excluding(cov['u'], ex)
+    # a stratum label that selects nothing (NaN) is left unpermuted, as the reference does
+    x = np.array([1, 0, 1, 1, 0, 0]); y = np.array([1, 0, 0, 1, 1, 0]); strata = np.array([np.nan, 0, 0, 1, 1, 1])
+    assert (C.stratified_perm(x, y, strata, 50, np.random.default_rng(1)).tobytes()
+            == C._stratified_perm_reference(x, y, strata, 50, np.random.default_rng(1)).tobytes())
+    # only an integer seed is cached
+    cache = {}
+    V.robust_geometry(np.random.default_rng(2).normal(0, 1, (30, 2)), None, cache)
+    assert cache == {}
