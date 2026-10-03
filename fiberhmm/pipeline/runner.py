@@ -1149,7 +1149,7 @@ class Pipeline:
             + (f"; {stats['hard_clipped_reads']} hard-clipped"
                if stats["hard_clipped_reads"] else ""))
         self.log(f"align: {stats['message']}")
-        if stats["kept"] == 0:
+        if stats["kept"] == 0 and stats["supplementary_kept"] == 0:
             raise PipelineError(
                 "no reads aligned to the reference",
                 hint="Check that the reference matches the sample (for a plasmid, "
@@ -1203,13 +1203,15 @@ class Pipeline:
         if primary is None or primary.is_unmapped:
             stats["unmapped"] += 1
             return []
-        if primary.mapping_quality < cfg.min_mapq:
+        # Each piece is filtered on its own MAPQ: a uniquely aligned
+        # supplementary arm (an SV partner) is kept even when the primary
+        # piece maps ambiguously.
+        record = primary if primary.mapping_quality >= cfg.min_mapq else None
+        if record is None:
             stats["low_mapq"] += 1
-            return []
-        record = primary
         contig = primary.reference_name
         merged_piece = None
-        if contig in circular and cfg.origin_merge:
+        if record is not None and contig in circular and cfg.origin_merge:
             for sup in supplementary:
                 merged = merge_origin_pieces(primary, sup, sequences[contig],
                                              cfg.origin_tolerance)
@@ -1231,27 +1233,31 @@ class Pipeline:
                      if sup is not merged_piece
                      and sup.reference_name not in circular
                      and sup.mapping_quality >= cfg.min_mapq]
+        if record is None and cfg.alignments == "primary":
+            return []
         kept = []
-        if self._overlaps_regions(record):
-            kept.append(record)
-        else:
-            stats["outside_regions"] += 1
+        if record is not None:
+            if self._overlaps_regions(record):
+                kept.append(record)
+            else:
+                stats["outside_regions"] += 1
         kept += [sup for sup in extra if self._overlaps_regions(sup)]
         if not kept:
             return []
+        all_pieces_kept = (record is not None and merged_piece is None
+                           and len(kept) == 1 + len(supplementary))
         for rec in kept:
             rec.query_name = out_name
-            # SA lists the read's other pieces; it stays valid when they are
-            # all kept, and is dropped where pieces were joined or dropped.
-            if rec.has_tag("SA") and (merged_piece is not None or not extra
-                                      or len(extra) != len(supplementary)):
+            # SA lists the read's other pieces; it stays valid only when all
+            # of them are kept, and is dropped where pieces were joined or dropped.
+            if rec.has_tag("SA") and not all_pieces_kept:
                 rec.set_tag("SA", None)
             if cfg.hard_clips(rec.reference_name in circular):
                 removed = hard_clip(rec)
                 if removed:
                     stats["hard_clipped_reads"] += 1
                     stats["hard_clipped_bases"] += removed
-        stats["kept"] += 1 if kept[0] is record else 0
+        stats["kept"] += 1 if record is not None and kept[0] is record else 0
         stats["supplementary_kept"] += sum(1 for rec in kept if rec is not record)
         return kept
 

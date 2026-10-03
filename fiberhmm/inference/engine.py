@@ -649,19 +649,53 @@ def daf_unaligned_without_evidence(read):
     return unaligned
 
 
-def _daf_insert_mods(read, strand_tag):
-    """Insert-consensus deaminations to add for a read called on ``strand_tag``
-    ('CT'/'GA' or '+'/'-'); empty when the strands disagree."""
-    mods = getattr(read, '_daf_insert_mods', None)
-    if mods is None:
-        evidence = daf_insert_evidence(read)
-        if evidence is None:
-            return set()
-        mods, strand = evidence.mods, evidence.strand
-    else:
-        mods, strand = mods
+def _insert_evidence_parts(read):
+    """``(mods, strand, inserted)`` of a read's insert evidence, or None.
+
+    ``inserted``: every CIGAR-insertion SEQ position, whose own marks the
+    consensus replaces. Slim stubs carry the tuple precomputed."""
+    parts = getattr(read, '_daf_insert_mods', None)
+    if parts is not None:
+        return parts
+    evidence = daf_insert_evidence(read)
+    if evidence is None:
+        return None
+    from fiberhmm.daf.insert_consensus import inserted_query_positions
+    return (set(evidence.mods), evidence.strand,
+            inserted_query_positions(getattr(read, 'cigartuples', None)))
+
+
+def _merge_insert_mods(read, mods, strand_tag):
+    """Replace the marks of a read's inserted bases with the insert-consensus
+    deaminations (when it has evidence on ``strand_tag``, 'CT'/'GA'/'+'/'-').
+    Returns the updated set."""
+    parts = _insert_evidence_parts(read)
+    if parts is None:
+        return mods
+    insert_mods, strand, inserted = parts
+    mods = set(mods) - set(inserted)
     wanted = 0 if strand_tag in ('CT', '+') else 1
-    return set(mods) if strand == wanted else set()
+    if strand == wanted:
+        mods |= set(insert_mods)
+    return mods
+
+
+def _insert_evidence_strand(read):
+    """'CT'/'GA' of a read's insert evidence (when its own aligned bases give
+    no deamination to decide the strand), or None."""
+    parts = _insert_evidence_parts(read)
+    if parts is None or not parts[0]:
+        return None
+    return 'CT' if parts[1] == 0 else 'GA'
+
+
+def _daf_insert_mods(read, strand_tag):
+    """Insert-consensus deaminations for a read called on ``strand_tag``."""
+    parts = _insert_evidence_parts(read)
+    if parts is None:
+        return set()
+    wanted = 0 if strand_tag in ('CT', '+') else 1
+    return set(parts[0]) if parts[1] == wanted else set()
 
 
 def daf_no_call_blocks(read):
@@ -816,10 +850,9 @@ def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None,
         excluded_query_positions = _daf_excluded_query_positions(read)
         if excluded_query_positions:
             payload['_daf_excluded_query_positions'] = excluded_query_positions
-        insert_evidence = daf_insert_evidence(read)
-        if insert_evidence is not None and insert_evidence.mods:
-            payload['_daf_insert_mods'] = (set(insert_evidence.mods),
-                                           insert_evidence.strand)
+        insert_parts = _insert_evidence_parts(read)
+        if insert_parts is not None:
+            payload['_daf_insert_mods'] = insert_parts
         if not has_iupac_encoding(seq):
             from fiberhmm.daf.encoder import get_daf_positions
             md_res = get_daf_positions(
@@ -827,6 +860,10 @@ def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None,
                 ref_fasta=ref_fasta,
                 excluded_reference_positions=_daf_reference_mask(read),
             )
+            if md_res is None and _insert_evidence_strand(read) is not None:
+                # No deamination on the aligned bases: the insert consensus
+                # decides the strand.
+                md_res = ([], [], _insert_evidence_strand(read))
             if md_res is not None:
                 payload['_daf_md_result'] = md_res   # (ct_list, ga_list, strand_tag)
         elif _DAF_CHIMERA_CFG['filter']:
@@ -986,7 +1023,7 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
                 read, query_sequence, excluded_query_positions, ref_fasta):
             return CHIMERA_SKIP
         mod_positions.difference_update(excluded_query_positions)
-        mod_positions |= _daf_insert_mods(read, strand)
+        mod_positions = _merge_insert_mods(read, mod_positions, strand)
         if not mod_positions:
             return None
         return _with_unknown({
@@ -1016,6 +1053,8 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
                 ref_fasta=ref_fasta,
                 excluded_reference_positions=_daf_reference_mask(read),
             )
+            if md_result is None and _insert_evidence_strand(read) is not None:
+                md_result = ([], [], _insert_evidence_strand(read))
         if md_result is not None:
             ct_pos, ga_pos, strand_tag = md_result
             # Strand-swap chimera filter (DAF only): a read deaminated CT in one
@@ -1033,7 +1072,7 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
             # unaligned bases, is encoded as no evidence below.
             excluded_query_positions = _stub_or_live_excluded(read)
             mod_positions.difference_update(excluded_query_positions)
-            mod_positions |= _daf_insert_mods(read, strand_tag)
+            mod_positions = _merge_insert_mods(read, mod_positions, strand_tag)
             if not mod_positions:
                 return None
             # query_sequence is already raw ACGT (no R/Y to decode);
@@ -1095,6 +1134,16 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
         if excluded_query_positions:
             mod_pos_set.difference_update(excluded_query_positions)
             unknown_pos_set = set(unknown_pos_set) | set(excluded_query_positions)
+        if _insert_evidence_parts(read) is not None:
+            strand = detect_daf_strand(query_sequence, mod_pos_set)
+            if strand == '.':
+                strand = _insert_evidence_strand(read) or '.'
+            mod_pos_set = _merge_insert_mods(read, mod_pos_set, strand)
+            # Consensus-covered inserted bases are evidence, not '?' unknowns.
+            parts = _insert_evidence_parts(read)
+            if unknown_pos_set and parts is not None:
+                covered = set(parts[2]) - set(excluded_query_positions or ())
+                unknown_pos_set = set(unknown_pos_set) - covered
 
     fiber_read = {
         'read_id': read.query_name,

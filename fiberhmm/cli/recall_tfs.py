@@ -400,22 +400,24 @@ def _make_payload(read, mode=None, input_molecular_frame=True) -> dict:
         payload['_no_call_blocks'] = blocks
     if mode == 'daf' and read.query_sequence:
         from fiberhmm.core.bam_reader import has_iupac_encoding
-        from fiberhmm.inference.engine import (
-            daf_insert_evidence,
-            daf_unaligned_without_evidence,
-        )
+        from fiberhmm.inference.engine import daf_unaligned_without_evidence
         unaligned = daf_unaligned_without_evidence(read)
         if unaligned:
             payload['_daf_unaligned_query_positions'] = unaligned
-        evidence = daf_insert_evidence(read)
-        if evidence is not None and evidence.mods:
-            payload['_daf_insert_mods'] = (set(evidence.mods), evidence.strand)
+        from fiberhmm.inference.engine import _insert_evidence_parts
+        parts = _insert_evidence_parts(read)
+        if parts is not None:
+            payload['_daf_insert_mods'] = parts
         if (
             not has_iupac_encoding(read.query_sequence)
             and not (('MM' in tags or 'Mm' in tags) and ('ML' in tags or 'Ml' in tags))
         ):
             from fiberhmm.daf.encoder import get_daf_positions
             md_result = get_daf_positions(read)
+            if md_result is None:
+                from fiberhmm.inference.engine import _insert_evidence_strand
+                if _insert_evidence_strand(read) is not None:
+                    md_result = ([], [], _insert_evidence_strand(read))
             if md_result is not None:
                 payload['_daf_md_result'] = md_result
     return payload
@@ -492,6 +494,24 @@ def _process_payload_record(payload) -> tuple:
             nq_for_kept = [old_to_nq.get((s, length), 0) for s, length in kept_nucs]
         except Exception:
             nq_for_kept = None
+
+    blocks = payload.get('_no_call_blocks')
+    if blocks:
+        # No calls in long no-evidence blocks (DAF insertions/clips) or in a
+        # supplementary record's soft clips, as in fiberhmm-call (SEQ frame).
+        from fiberhmm.inference.no_evidence import suppress_calls_in_blocks
+        res = {'ns': [s for s, _ in kept_nucs], 'nl': [n for _, n in kept_nucs],
+               'as': [s for s, _ in msps], 'al': [n for _, n in msps],
+               'tf_calls': tf_calls}
+        if nq_for_kept is not None:
+            res['nq_for_kept_nucs'] = nq_for_kept
+        suppress_calls_in_blocks(res, blocks)
+        kept_nucs = list(zip(res['ns'], res['nl']))
+        msps = list(zip(res['as'], res['al']))
+        tf_calls = res['tf_calls']
+        if nq_for_kept is not None:
+            nq_for_kept = res['nq_for_kept_nucs']
+        stats['tf'] = len(tf_calls)
 
     return (tf_calls, kept_nucs, msps, nq_for_kept), stats
 

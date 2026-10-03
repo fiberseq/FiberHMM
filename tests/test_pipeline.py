@@ -721,3 +721,15 @@ def test_daf_hard_clip_and_supplementary_drop_stay_on_circular_contigs():
                                  outdir="o").resolved_hard_clip() == "off"
     assert runner.PipelineConfig(reads=[], reference="r", enzyme="ddda",
                                  outdir="o").resolved_hard_clip() == "circular"
+
+
+def test_aligner_step_keeps_unique_supplementary_of_ambiguous_primary():
+    group, circular = _split_group()
+    group[0].mapping_quality = 0
+    kept, stats = _process(group, circular)
+    assert [r.is_supplementary for r in kept] == [True]
+    assert stats["low_mapq"] == 1 and stats["supplementary_kept"] == 1
+    assert not kept[0].has_tag("SA")
+    group, circular = _split_group()
+    group[0].mapping_quality = 0
+    assert _process(group, circular, alignments="primary")[0] == []

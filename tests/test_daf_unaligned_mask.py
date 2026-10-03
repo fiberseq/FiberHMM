@@ -351,3 +351,31 @@ def test_qc_fallback_opportunities_exclude_unaligned_bases():
     expected = sum(1 for i in aligned if new_seq[i] in "CGRY")
     assert opportunities == expected
     assert not set(events.tolist()) & unaligned
+
+
+def test_recall_tf_only_path_applies_no_call_blocks():
+    from fiberhmm.cli import recall_tfs
+    from fiberhmm.inference.tf_recaller import TFCall
+
+    payload = {"seq": "A" * 2000, "is_reverse": False, "tags": {},
+               "_no_call_blocks": [(1000, 1300)]}
+
+    def fake_recall_read(*_args, **_kwargs):
+        return ([TFCall(1100, 20, 9.0, 4, 0, 0), TFCall(1500, 20, 9.0, 4, 0, 0)],
+                [(950, 400), (1600, 150)], [(0, 950), (1350, 250)])
+
+    old_worker = dict(recall_tfs._WORKER)
+    old = recall_tfs.recall_read
+    try:
+        recall_tfs._WORKER.update(llr_hit=None, llr_miss=None, mode="daf", k=3,
+                                  min_llr=5.0, min_opps=3, unify_threshold=90)
+        recall_tfs._WORKER.pop("nuc_cfg", None)
+        recall_tfs.recall_read = fake_recall_read
+        (tf, nucs, msps, _nq), stats = recall_tfs._process_payload_record(payload)
+    finally:
+        recall_tfs.recall_read = old
+        recall_tfs._WORKER.clear()
+        recall_tfs._WORKER.update(old_worker)
+    assert [c.start for c in tf] == [1500] and stats["tf"] == 1
+    assert nucs == [(950, 50), (1300, 50), (1600, 150)]
+    assert msps == [(0, 950), (1350, 250)]

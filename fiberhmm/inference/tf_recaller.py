@@ -889,12 +889,13 @@ def extract_modification_calls(read, mode: str, context_size: int = 3,
             from fiberhmm.inference.engine import daf_unaligned_without_evidence
             unaligned = daf_unaligned_without_evidence(read)
 
-    def insert_mods(strand_tag):
-        # Insert-consensus deaminations (fiberhmm.daf.insert_consensus).
+    def merge_insert(mods, strand_tag):
+        # Insert-consensus deaminations replace the inserted bases' own marks
+        # (fiberhmm.daf.insert_consensus).
         if mode != 'daf':
-            return set()
-        from fiberhmm.inference.engine import _daf_insert_mods
-        return _daf_insert_mods(read, strand_tag)
+            return set(mods)
+        from fiberhmm.inference.engine import _merge_insert_mods
+        return _merge_insert_mods(read, set(mods), strand_tag)
 
     if mode == 'daf' and has_iupac_encoding(seq):
         try:
@@ -903,7 +904,7 @@ def extract_modification_calls(read, mode: str, context_size: int = 3,
             st_tag = None
         mod_pos, strand, seq = extract_daf_iupac_positions(seq, st_tag)
         mod_pos.difference_update(unaligned)
-        mod_pos |= insert_mods(strand)
+        mod_pos = merge_insert(mod_pos, strand)
         return mod_pos, strand, seq, set(unaligned)
     try:
         mm_tag = read.get_tag('MM') if read.has_tag('MM') else read.get_tag('Mm')
@@ -919,12 +920,17 @@ def extract_modification_calls(read, mode: str, context_size: int = 3,
             if md_result is None and hasattr(read, 'get_aligned_pairs'):
                 from fiberhmm.daf.encoder import get_daf_positions
                 md_result = get_daf_positions(read)
+            if md_result is None:
+                from fiberhmm.inference.engine import _insert_evidence_strand
+                fallback = _insert_evidence_strand(read)
+                if fallback is not None:
+                    md_result = ([], [], fallback)
             if md_result is not None:
                 ct_pos, ga_pos, strand_tag = md_result
                 if strand_tag == 'CT':
-                    return (set(ct_pos) | insert_mods('CT'), '+', seq.upper(),
+                    return (merge_insert(ct_pos, 'CT'), '+', seq.upper(),
                             set(unaligned))
-                return (set(ga_pos) | insert_mods('GA'), '-', seq.upper(),
+                return (merge_insert(ga_pos, 'GA'), '-', seq.upper(),
                         set(unaligned))
         return None
     mod_pos, unknown_pos = parse_mm_tag_query_calls(
@@ -935,6 +941,17 @@ def extract_modification_calls(read, mode: str, context_size: int = 3,
         if unaligned:
             mod_pos.difference_update(unaligned)
             unknown_pos = set(unknown_pos) | set(unaligned)
+        from fiberhmm.inference.engine import (
+            _insert_evidence_parts,
+            _insert_evidence_strand,
+        )
+        parts = _insert_evidence_parts(read)
+        if parts is not None:
+            strand = detect_daf_strand(seq, mod_pos)
+            if strand == '.':
+                strand = _insert_evidence_strand(read) or '.'
+            mod_pos = merge_insert(mod_pos, strand)
+            unknown_pos = set(unknown_pos) - (set(parts[2]) - set(unaligned))
         strand = detect_daf_strand(seq, mod_pos)
     else:
         strand = '.'

@@ -260,6 +260,7 @@ class Carrier:
     query_start: int      # insert start in SEQ
     seq: str              # inserted bases as stored (R/Y allowed)
     strand: int           # STRAND_CT or STRAND_GA
+    duplicate: bool = False  # PCR duplicate (0x400): re-encoded, not counted
 
 
 @dataclass
@@ -443,6 +444,22 @@ def _read_strand(read, ref_fasta=None) -> Optional[int]:
             return STRAND_CT if st == "CT" else STRAND_GA
     if "Y" in seq or "R" in seq:
         return STRAND_CT if seq.count("Y") >= seq.count("R") else STRAND_GA
+    if read.has_tag("MM") or read.has_tag("Mm"):
+        # MM/ML-native deamination calls: T marks are C->T, A marks G->A.
+        from fiberhmm.core.bam_reader import (
+            detect_daf_strand,
+            parse_mm_tag_query_positions,
+        )
+        try:
+            mm = read.get_tag("MM") if read.has_tag("MM") else read.get_tag("Mm")
+            ml = read.get_tag("ML") if read.has_tag("ML") else read.get_tag("Ml")
+            marks = parse_mm_tag_query_positions(mm, ml, seq, read.is_reverse,
+                                                 mode="daf")
+        except Exception:
+            marks = set()
+        strand = detect_daf_strand(seq, marks)
+        if strand in ("+", "-"):
+            return STRAND_CT if strand == "+" else STRAND_GA
     from fiberhmm.daf.encoder import get_daf_positions
     try:
         res = get_daf_positions(read, ref_fasta=ref_fasta)
@@ -456,6 +473,18 @@ def _read_strand(read, ref_fasta=None) -> Optional[int]:
 def record_key(read) -> tuple:
     return (read.query_name, int(read.flag) & ~0x400, int(read.reference_id),
             int(read.reference_start))
+
+
+def inserted_query_positions(cigartuples) -> set:
+    """SEQ positions of every CIGAR insertion (any length)."""
+    out: set = set()
+    q = 0
+    for op, length in cigartuples or ():
+        if op == 1:
+            out.update(range(q, q + length))
+        if op in (0, 1, 4, 7, 8):
+            q += length
+    return out
 
 
 def insertion_events(read, min_length: int = MIN_INSERT):
@@ -495,7 +524,8 @@ def collect_carriers(reads: Iterable, min_mapq: int = 0, min_length: int = MIN_I
         key = record_key(read)
         for ref_pos, q, length in insertion_events(read, min_length):
             events.append((int(read.reference_id), int(ref_pos),
-                           Carrier(key, q, seq[q:q + length], strand)))
+                           Carrier(key, q, seq[q:q + length], strand,
+                                   bool(read.is_duplicate))))
     return events
 
 
@@ -548,12 +578,16 @@ def build_insert_evidence(reads: Iterable, *, min_carriers: int = MIN_CARRIERS,
     report = []
     for cl in cluster_events(events):
         members = cl["members"]
-        n_ct = sum(1 for c in members if c.strand == STRAND_CT)
+        # PCR duplicates are copies of one molecule: they neither count as
+        # carriers nor vote in the consensus, but are re-encoded against it.
+        independent = [c for c in members if not c.duplicate]
+        n_ct = sum(1 for c in independent if c.strand == STRAND_CT)
         entry = {"contig_id": cl["contig"], "pos": cl["pos"], "length": cl["length"],
-                 "carriers": len(members), "carriers_ct": n_ct,
-                 "carriers_ga": len(members) - n_ct, "used": False}
-        if len(members) >= min_carriers:
-            cons = build_consensus(members, error=error)
+                 "carriers": len(independent), "carriers_ct": n_ct,
+                 "carriers_ga": len(independent) - n_ct,
+                 "duplicate_records": len(members) - len(independent), "used": False}
+        if len(independent) >= min_carriers:
+            cons = build_consensus(independent, error=error)
             if cons is not None and len(cons.sequence):
                 confident = float(np.mean(cons.quality >= min_quality))
                 entry.update(consensus=cons.sequence,

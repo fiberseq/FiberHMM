@@ -230,3 +230,56 @@ def test_fiberhmm_call_calls_inside_the_insert(tmp_path):
     assert "daf_insert_consensus=on/1of1/min20" in ds
     report = json.loads((tmp_path / "qc" / "cons.insert_consensus.json").read_text())
     assert report["insertions"][0]["consensus"] == INSERT
+
+
+def test_pcr_duplicates_do_not_count_as_carriers():
+    reads = _carriers(25)
+    for r in reads[1:]:
+        r.flag |= 0x400
+    evidence, report = ic.build_insert_evidence(reads, min_carriers=20)
+    assert report[0]["carriers"] == 1 and report[0]["duplicate_records"] == 24
+    assert not evidence
+    reads = _carriers(30)
+    for r in reads[25:]:
+        r.flag |= 0x400
+    evidence, report = ic.build_insert_evidence(reads, min_carriers=20)
+    assert report[0]["used"] and len(evidence) == 30   # duplicates re-encoded
+
+
+def test_consensus_replaces_marks_inside_the_insert():
+    """An R/Y mark a producer put on an inserted base the consensus calls T
+    does not survive; the consensus deaminations replace the insert's marks."""
+    from fiberhmm.daf.encoder import encode_read_daf
+    reads = _carriers(30)
+    evidence, _ = ic.build_insert_evidence(reads, min_carriers=20)
+    configure_daf_insert_evidence(evidence)
+    read = reads[0]
+    new_seq, st, _n = encode_read_daf(read)
+    t_col = next(i for i in range(200, 400) if INSERT[i] == "T")
+    seq = list(new_seq)
+    seq[1000 + t_col] = "Y"
+    read.query_sequence = "".join(seq)
+    read.set_tag("st", st)
+    fr = _extract_fiber_read_from_pysam(read, "daf", 128)
+    assert 1000 + t_col not in fr["m6a_query_positions"]
+    assert {p for p in fr["m6a_query_positions"] if 1000 <= p < 1400} == \
+        evidence[ic.record_key(read)].mods
+
+
+def test_insert_evidence_rescues_a_read_without_flank_deaminations():
+    reads = _carriers(30)
+    evidence, _ = ic.build_insert_evidence(reads, min_carriers=20)
+    configure_daf_insert_evidence(evidence)
+    read = reads[0]                                    # CT
+    seq = list(read.query_sequence)
+    for i in list(range(0, 1000)) + list(range(1400, 2400)):
+        seq[i] = (REF[0:1000] + REF[1000:2000])[i if i < 1000 else i - 400]
+    read.query_sequence = "".join(seq)
+    read.set_tag("MD", _md(read.cigartuples, read.query_sequence, 0))
+    for fr in (_extract_fiber_read_from_pysam(read, "daf", 128),
+               extract_fiber_read_from_payload(make_apply_payload(read, mode="daf"),
+                                               "daf", 128)):
+        assert fr is not None and fr["_daf_strand"] == "+"
+        assert fr["m6a_query_positions"] == evidence[ic.record_key(read)].mods
+    mods, strand, _seq, _unknown = extract_modification_calls(read, "daf")
+    assert strand == "+" and mods == evidence[ic.record_key(read)].mods
