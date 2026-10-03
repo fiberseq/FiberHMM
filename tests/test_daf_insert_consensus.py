@@ -371,3 +371,22 @@ def test_ry_strand_ignores_masked_and_inserted_marks():
     _mods, strand, _seq, _unknown = extract_modification_calls(a, "daf")
     assert strand == "-"
     assert ic._read_strand(a) == ic.STRAND_GA
+
+
+def test_prepass_reads_st_on_ry_input_only():
+    """The callers honour st on R/Y input only; a raw read's strand comes from
+    its reference comparison, so the pre-pass does the same."""
+    read = _carriers(1, strands=("CT",))[0]
+    read.set_tag("st", "GA")
+    assert ic._read_strand(read) == ic.STRAND_CT
+    fr = _extract_fiber_read_from_pysam(read, "daf", 128)
+    assert fr["_daf_strand"] == "+"
+
+
+def test_prepass_uses_the_reference_when_mm_has_no_ml():
+    read = _carriers(1, strands=("CT",))[0]
+    read.set_tag("MM", "C+u?;")
+    assert ic._read_strand(read, md_first=False) == ic.STRAND_CT
+    assert ic._read_strand(read, md_first=True) == ic.STRAND_CT
+    _mods, strand, _seq, _unknown = extract_modification_calls(read, "daf")
+    assert strand == "+"

@@ -279,6 +279,8 @@ def _load_payload(state,request,options,progress):
                         if legacy_frame=='disabled':
                             from fiberhmm.io.annotation_frame import resolve_disabled_legacy_frame
                             legacy_frame=(resolve_disabled_legacy_frame(bam.header) or ('disabled',))[0]
+                        from fiberhmm.inference.consensus.adapter import called_circular
+                        circular_calls=called_circular(bam.header)
                         for alignment in bam.fetch(actual,lo,hi):
                             if alignment.is_secondary or alignment.is_supplementary:continue
                             key=hashlib.sha256(alignment.to_string().encode()).hexdigest()
@@ -319,7 +321,8 @@ def _load_payload(state,request,options,progress):
                                     calls=replay_alignment(alignment,replay_unit,model,preset['strand_mode'],mode,context_size,preset.get('prob_threshold'),
                                         minimum_llr,minimum_opportunities=options['input'].native_minimum_opportunities,
                                         minimum_nfr_length=options['input'].minimum_nfr_length,use_m5c=use_m5c,
-                                        maximum_alignment_gap_bp=int(getattr(options['input'],'native_maximum_alignment_gap_bp',0)))
+                                        maximum_alignment_gap_bp=int(getattr(options['input'],'native_maximum_alignment_gap_bp',0)),
+                                        circular=circular_calls)
                                     u['native_multi_interval_calls']=calls;u['native_multi_interval_tf_intervals']=[c['interval'] for c in calls]
                             found.add(key)
                 if len(found)!=len(lookup):raise ValueError(f'{ds.label}: could not identify every representative alignment for native replay')

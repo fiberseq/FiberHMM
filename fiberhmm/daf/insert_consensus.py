@@ -464,20 +464,22 @@ def _read_strand(read, ref_fasta=None, snp_mask=None,
                  prob_threshold: Optional[int] = None,
                  md_first: bool = True) -> Optional[int]:
     """The strand the caller assigns ``read``. A carrier's evidence is used
-    only on the strand the caller picks, so this mirrors it: the ``st`` tag,
-    else R/Y marks on bases that carry evidence (aligned, not SNP-masked),
-    else the reference comparison (MD or FASTA, SNP-masked sites excluded)
+    only on the strand the caller picks, so this mirrors it: for R/Y input
+    the ``st`` tag, else the R/Y marks on bases that carry evidence (aligned,
+    not SNP-masked); for other input the reference comparison (MD or FASTA, SNP-masked sites excluded)
     and MM/ML-native marks, in the caller's order (``md_first``: fiberhmm-call,
     ``engine``; otherwise fiberhmm-recall-tfs, ``tf_recaller``). Undecided
     gives None: the carrier is not used and its insert stays masked."""
     seq = read.query_sequence or ""
-    if read.has_tag("st"):
-        st = str(read.get_tag("st")).upper()
-        if st in ("CT", "GA"):
-            return STRAND_CT if st == "CT" else STRAND_GA
     reference_sites = _reference_mask_sites(read, snp_mask)
     upper = seq.upper()
     if "Y" in upper or "R" in upper:
+        # The callers read st on R/Y input only.
+        if read.has_tag("st"):
+            st = str(read.get_tag("st")).upper()
+            if st in ("CT", "GA"):
+                return STRAND_CT if st == "CT" else STRAND_GA
+            return None
         excluded = _no_evidence_query_positions(read, reference_sites)
         y = r = 0
         for i, base in enumerate(upper):
@@ -501,7 +503,15 @@ def _read_strand(read, ref_fasta=None, snp_mask=None,
             return None
         return STRAND_CT if res[2] == "CT" else STRAND_GA
 
-    has_mm = read.has_tag("MM") or read.has_tag("Mm")
+    # MM/ML marks are read only when both tags are present and non-empty
+    # (engine and tf_recaller alike); otherwise the reference decides.
+    def tag(*names):
+        for name in names:
+            if read.has_tag(name):
+                return read.get_tag(name)
+        return None
+    mm, ml = tag("MM", "Mm"), tag("ML", "Ml")
+    has_mm = bool(mm) and ml is not None and len(ml) > 0
     if md_first or not has_mm:
         strand = from_reference()
         if strand is not None or not has_mm:
@@ -509,8 +519,6 @@ def _read_strand(read, ref_fasta=None, snp_mask=None,
     # MM/ML-native deamination calls: T marks are C->T, A marks G->A.
     from fiberhmm.core.bam_reader import detect_daf_strand, parse_mm_tag_query_calls
     try:
-        mm = read.get_tag("MM") if read.has_tag("MM") else read.get_tag("Mm")
-        ml = read.get_tag("ML") if read.has_tag("ML") else read.get_tag("Ml")
         marks, _unknown = parse_mm_tag_query_calls(
             mm, bytes(ml), seq, read.is_reverse,
             prob_threshold=125 if prob_threshold is None else int(prob_threshold),

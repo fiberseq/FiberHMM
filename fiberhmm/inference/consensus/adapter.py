@@ -97,9 +97,32 @@ def reference_gap_inside(lo, hi, domains):
     return int(hi-lo)-int(covered)
 
 
+def called_circular(header):
+    """True when the BAM's calls were made in circular-molecule mode
+    (``fiberhmm-call``/``-apply`` ``-r/--circular`` in an ``@PG`` CL), where
+    production calling keeps calls inside no-call blocks."""
+    import shlex
+    try:
+        programs = (header.to_dict() if hasattr(header, 'to_dict') else dict(header or {})).get('PG', [])
+    except (TypeError, ValueError, AttributeError):
+        return False
+    for program in programs:
+        name = str(program.get('PN') or program.get('ID') or '')
+        if not name.startswith(('fiberhmm-call', 'fiberhmm-apply')):
+            continue
+        try:
+            tokens = shlex.split(str(program.get('CL', '')))
+        except ValueError:
+            tokens = str(program.get('CL', '')).split()
+        if '-r' in tokens or '--circular' in tokens:
+            return True
+    return False
+
+
 def replay_alignment(read, unit, model, strand_mode, mode, context_size,
                      probability_threshold, minimum_llr, minimum_opportunities=3,
-                     minimum_nfr_length=0, use_m5c=False, maximum_alignment_gap_bp=0):
+                     minimum_nfr_length=0, use_m5c=False, maximum_alignment_gap_bp=0,
+                     circular=False):
     """Replay the installed corrected decoder on the ACTUAL query observations.
 
     No reconstruction of insertions or missing observations from reference bases.
@@ -123,8 +146,9 @@ def replay_alignment(read, unit, model, strand_mode, mode, context_size,
     # Query spans production calling leaves uncalled (long DAF insertions and
     # clips without consensus evidence; a supplementary record's clips): a
     # TF footprint overlapping one is dropped there, so it is here too.
+    # Circular-mode calls keep them (engine: linear reads only).
     from ..engine import read_no_call_blocks
-    no_call_blocks = read_no_call_blocks(read, mode)
+    no_call_blocks = [] if circular else read_no_call_blocks(read, mode)
     calls = []
     for a, b in unit['msp_intervals']:
         if b-a < minimum_nfr_length:

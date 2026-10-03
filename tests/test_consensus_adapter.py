@@ -109,3 +109,27 @@ def test_replay_drops_tfs_overlapping_a_no_call_block(monkeypatch):
            aligned_blocks=[list(v) for v in read.get_blocks()])
     calls=adapter.replay_alignment(read,u,model(),'CT','daf',3,None,7)
     assert all(c['query_interval'][1]<=50 or c['query_interval'][0]>=150 for c in calls)
+
+
+def test_replay_keeps_block_tfs_in_circular_mode(monkeypatch):
+    """Circular-mode production calling keeps calls inside no-call blocks."""
+    read=pysam.AlignedSegment()
+    read.query_sequence='C'*200
+    read.reference_id=0;read.reference_start=1000;read.cigartuples=[(0,50),(1,100),(0,50)];read.flag=0
+    obs=np.full(200,4097,dtype=np.int32)
+    monkeypatch.setattr(strand_rescue,'hard_observations',lambda *_:(obs,'CT'))
+    u=dict(msp_intervals=[[1000,read.reference_end]],raw_nuc_intervals=[],
+           aligned_blocks=[list(v) for v in read.get_blocks()])
+    linear=adapter.replay_alignment(read,deepcopy(u),model(),'CT','daf',3,None,7)
+    circular=adapter.replay_alignment(read,deepcopy(u),model(),'CT','daf',3,None,7,circular=True)
+    assert any(c['query_interval'][0]<150 and c['query_interval'][1]>50 for c in circular)
+    assert len(circular)>=len(linear)
+
+
+def test_called_circular_reads_the_call_command_line():
+    def header(cl):
+        return pysam.AlignmentHeader.from_dict({'SQ':[{'SN':'p','LN':1000}],
+            'PG':[{'ID':'fiberhmm-call','PN':'fiberhmm-call','CL':cl}]})
+    assert adapter.called_circular(header('fiberhmm-call -i a.bam -o b.bam -r --enzyme ddda'))
+    assert adapter.called_circular(header('fiberhmm-call -i a.bam -o b.bam --circular'))
+    assert not adapter.called_circular(header('fiberhmm-call -i a.bam -o b.bam --enzyme ddda'))

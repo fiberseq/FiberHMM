@@ -699,10 +699,16 @@ def _daf_insert_mods(read, strand_tag):
 
 
 def _has_mm_tag(read):
+    """True when the read has usable MM/ML deamination calls (both tags,
+    non-empty), the condition of the MM/ML branch."""
     try:
-        return bool(read.has_tag('MM') or read.has_tag('Mm'))
-    except (AttributeError, TypeError, ValueError):
+        mm = read.get_tag('MM') if read.has_tag('MM') else (
+            read.get_tag('Mm') if read.has_tag('Mm') else '')
+        ml = read.get_tag('ML') if read.has_tag('ML') else (
+            read.get_tag('Ml') if read.has_tag('Ml') else None)
+    except (AttributeError, KeyError, TypeError, ValueError):
         return False
+    return bool(mm) and ml is not None and len(ml) > 0
 
 
 def _evidence_marks(read, marks, excluded=()):
