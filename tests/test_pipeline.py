@@ -656,3 +656,28 @@ def test_read_inputs_fastq_tags_and_bam_to_fastq(tmp_path):
     # restores the original name.
     assert names == ["0~r1", "1~f", "2~r"]
     assert [mm2.original_name(n) for n in names] == ["r1", "f", "r"]
+
+
+def test_call_fingerprint_binds_fiberhmm_defaults_and_bundled_tables():
+    """A completed calling step must not be reused after a FiberHMM default or a
+    bundled table changes under the same version string (3.0 changed both)."""
+    import hashlib
+    from fiberhmm.models import get_model_path
+    from fiberhmm.pipeline.runner import bundled_model_identity, call_parser_defaults
+    defaults = call_parser_defaults()
+    assert str(defaults["phase_nrl"]).lower() == "off"
+    assert defaults["nuc_recall_policy"] == "auto"
+    ident = bundled_model_identity("hia5", "nanopore")
+    path = get_model_path("hia5", tool="apply", seq="nanopore")
+    with open(path, "rb") as handle:
+        assert ident["apply"]["sha256"] == hashlib.sha256(handle.read()).hexdigest()
+    assert bundled_model_identity(None, None) == {}
+
+
+def test_crossstrand_recall_helper_has_no_periodicity_prior_by_default():
+    import inspect
+    from fiberhmm.crossstrand import recall
+    func = next(f for _n, f in inspect.getmembers(recall, inspect.isfunction)
+                if "phase_nrl" in inspect.signature(f).parameters
+                and f.__module__ == recall.__name__)
+    assert inspect.signature(func).parameters["phase_nrl"].default == 0

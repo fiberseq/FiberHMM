@@ -243,7 +243,7 @@ def recall_consensus_full(seg, ctx: RecallContext, *, edge_trim: int = 10,
                           min_llr: float | None = None, min_opps: int = 3,
                           unify_threshold: int = 90, split_min_llr: float = 4.0,
                           split_min_opps: int = 3, nuc_min_size: int = 85,
-                          msp_min_size: int = 0, phase_nrl: int = 196,
+                          msp_min_size: int = 0, phase_nrl: int = 0,
                           nuc_recall_policy: str = 'conservative',
                           derived_tf_max_edge_ambiguity: int | None = 12,
                           cpg_intervals: dict | None = None) -> bool:

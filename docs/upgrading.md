@@ -33,13 +33,13 @@ fixes). See [Checking outputs for re-runs](reference/advisories.md).
     The Nanopore Hia5 emission table shipped in **every 2.x release** was
     indexed in alphabetical (ACGT) context order, while the encoder numbers
     bases A, C, T, G. Every context containing a G or a T therefore read
-    another context's emission probabilities. 3.0 ships the table reindexed
-    (the emission values themselves are unchanged).
+    another context's emission probabilities. 3.0 ships a new table built
+    from matched naked-DNA and untreated controls, and 3.0 nucleosome recall
+    also changed (see the [changelog](changelog.md)).
 
-    **Re-run ONT Hia5 calls made with 2.x.** About 75–83% of calls keep both
-    edges within 5 bp and call totals are about unchanged, but individual
-    calls move. The PacBio Hia5 table was not affected. The DddB table had
-    the same kind of error and is also reindexed.
+    **Re-run ONT Hia5 calls made with 2.x.** Nucleosome, MSP and footprint
+    calls all change. The PacBio Hia5 table was not affected. The DddB table
+    had the same kind of error and is reindexed.
 
 The 2.x tables are kept as
 `fiberhmm/models/legacy/hia5_nanopore_gt_swapped_legacy.json` and
@@ -53,7 +53,7 @@ the 2.x builder**, which had the same ordering error.
 
 `fiberhmm-train --base-model` keeps the base model's transitions and replaces
 its emissions. With a base whose state 0 is the footprint, such as the
-bundled Nanopore Hia5 model, every 2.x release paired the inherited
+Nanopore Hia5 model bundled in 2.x, every 2.x release paired the inherited
 transitions with inverted states, so the resulting model called accessible
 DNA as footprint. 3.0 matches the new emission rows to the base model's
 accessible state. **Re-train models built this way with 2.x**;

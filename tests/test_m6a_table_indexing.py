@@ -122,3 +122,26 @@ def test_hia5_nanopore_table_provenance():
         assert words in model['note'], words
     acc, prot = sorted(meth_rate('hia5_nanopore.json'), key=lambda r: -r.mean())
     assert 0.15 < acc.mean() < 0.35 and prot.mean() < 0.002
+
+
+def test_hia5_nanopore_both_states_equal_their_control_counts_by_encoder_code():
+    """Each state of the bundled Nanopore table is exactly the m6A rate counted per
+    context in its control (tests/fixtures: the fiberhmm-probs counts it was built
+    from). Looked up by the encoder's code for each context, so a G/T swap of either
+    row -- not only the accessible one the cross-table check above can see -- fails."""
+    import gzip
+    import pandas as pd
+    path = Path(__file__).resolve().parent / 'fixtures' / 'hia5_nanopore_control_counts_k3.tsv.gz'
+    with gzip.open(path, 'rt') as handle:
+        counts = pd.read_csv(handle, sep='\t', comment='#')
+    rates = meth_rate('hia5_nanopore.json')
+    acc_row = int(np.argmax(rates.mean(axis=1)))
+    for state, row in (('accessible', acc_row), ('protected', 1 - acc_row)):
+        part = counts[counts.state == state]
+        assert len(part) == NC
+        codes = np.array([encoder_context_code(c, 'A') for c in part.context])
+        assert np.array_equal(codes, part.encode.to_numpy())
+        expected = (part.hit / (part.hit + part.nohit)).to_numpy()
+        assert np.allclose(rates[row][codes], expected, rtol=0, atol=1e-12), state
+        swapped = digit_perm((0, 1, 3, 2))
+        assert not np.allclose(rates[row][swapped][codes], expected, rtol=0, atol=1e-6), state

@@ -355,7 +355,7 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   `KeyError: 'total'`, and a saved `--accessibility-priors` table serves every
   smaller `-k`. `fiberhmm-train --base-model` now matches the new emission
   rows to the base model's accessible state: with a base whose state 0 is
-  the footprint (such as the bundled Nanopore Hia5 model), every 2.x release
+  the footprint (such as the Nanopore Hia5 model bundled in 2.x), every 2.x release
   paired the inherited transitions with inverted states, so the resulting
   model called accessible DNA as footprint. Re-train models built with
   `--base-model` on such a base.
@@ -562,7 +562,7 @@ fiberhmm-check data/*.bam qc/*.qc.json consensus_out/
   get the 2.x behaviour back (the TF decoder and the DddA tables do not); the
   context-swapped 2.x tables are kept under `fiberhmm/models/legacy/`.
 - **Re-train** models built with 2.x `fiberhmm-train --base-model` on a base
-  whose state 0 is the footprint, such as the bundled Nanopore Hia5 model
+  whose state 0 is the footprint, such as the Nanopore Hia5 model bundled in 2.x
   (`fiberhmm-check` does not flag these).
 - Replace `fiberhmm-run` and the `python *.py` scripts with the `fiberhmm-*`
   commands.
