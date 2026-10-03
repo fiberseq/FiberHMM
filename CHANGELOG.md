@@ -470,6 +470,18 @@ These change numbers relative to 2.x.
   `--min-llr` is now the per-interval cost. TF calls change for every
   chemistry. Recorded in `@PG` (`tf_decoder=multi_interval_v1`).
 - **TF `--min-llr` 5.0 for every preset** (DddB was 4.0).
+- **No periodicity prior and conservative nucleosome recall by default.**
+  `--phase-nrl` defaults to `off` in `fiberhmm-call` and
+  `-recall-tfs`/`-recall-nucs` (was `auto`) and to 0 in `fiberhmm-pair`/`-merge`
+  (was 196 bp), and `--nuc-recall-policy auto` now means `conservative` for every
+  chemistry (Nanopore Hia5 used `topology`). The prior split protected blocks at
+  least 1.5 repeat lengths long on a single mark, which left a step at that
+  length in nucleosome call lengths (Hia5 PacBio and Nanopore) and most
+  one-base MSPs; `topology` kept HMM edges and a size floor, which left a
+  pile-up just above 85 bp and the HMM's ~10-bp edge comb on Nanopore.
+  Nucleosome calls change for Hia5 and DddB (DddA radial recall never used the
+  prior). `--phase-nrl auto` and `--nuc-recall-policy topology` remain
+  available.
 - **DddA models and nucleosome recall.** `ddda_TF.json` is recalibrated on
   physical scDAF duplexes (the TF-recall table only; the HMM table
   `ddda_nuc.json` is unchanged). Radial nucleosome recall infers each edge

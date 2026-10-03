@@ -193,8 +193,8 @@ and platform (and their defaults) when the observation mode matches.
 | Option | Default | Effect |
 |---|---|---|
 | `--recall-nucs` / `--no-recall-nucs` | on | nucleosome recall; off gives raw HMM nucleosomes (`nuc.Q`) |
-| `--nuc-recall-policy` | `auto` | `conservative`, `topology`; `auto` = topology for Nanopore Hia5 |
-| `--phase-nrl` | `auto` | periodicity prior: `auto`, `off`, or a repeat length in bp |
+| `--nuc-recall-policy` | `auto` | `conservative`, `topology`; `auto` = conservative for every chemistry |
+| `--phase-nrl` | `off` | periodicity prior: `off`, `auto`, or a repeat length in bp |
 | `--split-min-llr` | 4.0 | accessible evidence needed to split a footprint |
 | `--split-min-opps` | 3 | informative positions needed in a split |
 | `--nuc-min-size` | 85 | minimum nucleosome size; also what bounds an MSP |

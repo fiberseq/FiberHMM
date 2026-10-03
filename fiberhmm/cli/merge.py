@@ -157,7 +157,7 @@ def _merge_output_header(header, *, recall, enzyme, prob_threshold, pairs_only,
 
 
 def run_merge(in_bam, out_bam, prob_threshold=0, pairs_only=False, io_threads=4,
-              recall=False, enzyme='ddda', phase_nrl=196,
+              recall=False, enzyme='ddda', phase_nrl=0,
               nuc_recall_policy='conservative',
               derived_tf_max_edge_ambiguity=12, use_m5c=None):
     t0 = time.time()
@@ -372,8 +372,9 @@ Examples:
                         'ns/nl/as/al + MA nuc/msp/tf). '
                         'Reads the deam+/deam- regime and uses C and G targets jointly.')
     p.add_argument('--enzyme', default='ddda', help='Model preset for --recall (default ddda)')
-    p.add_argument('--phase-nrl', type=int, default=196,
-                   help='Nucleosome repeat length for consensus recall (default 196)')
+    p.add_argument('--phase-nrl', type=int, default=0,
+                   help='Periodicity prior for consensus recall: nucleosome repeat length '
+                        'in bp, or 0 for off (default 0). DddA radial recall ignores it.')
     p.add_argument('--nuc-recall-policy', choices=['conservative', 'topology'],
                    default='conservative',
                    help='Nucleosome geometry policy for consensus recall')
