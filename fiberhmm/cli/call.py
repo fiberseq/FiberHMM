@@ -188,8 +188,8 @@ def parse_args():
     # --- Nucleosome recall params ---
     p.add_argument('--recall-nucs', action=argparse.BooleanOptionalAction, default=None,
                    help='Split over-merged nucleosomes + resolve platform-aware edges '
-                        '(emits nuc.QQQ), promote nucleosome-sized TF leaks to nuc, '
-                        'and run the Pass-2 phase prior. ON by default for all '
+                        '(emits nuc.QQQ) and promote nucleosome-sized TF leaks to nuc. '
+                        'ON by default for all '
                         'enzymes (DddA uses phase-aware radial inference, others the '
                         'accessible-cut Kadane split). Use --no-recall-nucs for '
                         'baseline HMM nucleosomes (nuc.Q).')
@@ -214,20 +214,9 @@ def parse_args():
         '--nuc-recall-policy',
         choices=['auto', 'conservative', 'topology'],
         default='auto',
-        help='Nucleosome-recaller geometry policy. "auto" (default) uses the '
-             'conservative-edge policy for every chemistry. "topology" (opt-in) '
-             'only accepts cuts that leave nucleosome-sized pieces and keeps '
-             'the HMM extent of each piece; it leaves pile-ups at the size floor '
-             'in call-length distributions.',
-    )
+        help=argparse.SUPPRESS)  # retired experimental mode (3.0); kept only to reproduce earlier calls
     p.add_argument('--phase-nrl', default='off',
-                   help='Pass-2 periodicity prior (with --recall-nucs): '
-                        '"off" (default), "auto" (estimate the nucleosome repeat length '
-                        'from this sample after Pass 1, clamped to ~150-215 bp anchored '
-                        'at 185), or a fixed bp value (e.g. 185). Long footprints '
-                        'are split at phase-predicted linkers using a lowered threshold '
-                        'gated on >=1 local deamination event (never splits a '
-                        'signal-desert).')
+                   help=argparse.SUPPRESS)  # retired experimental mode (3.0); kept only to reproduce earlier calls
 
     # --- DAF chimera filter (mode=daf only) ---
     p.add_argument('--keep-chimeras', action='store_true',
@@ -1489,7 +1478,8 @@ def _main(args):
             f"  min_llr={min_llr} min_opps={args.min_opps} "
             f"unify_threshold={args.unify_threshold} uplift={uplift}\n"
             f"  tf-decoder={TF_DECODER_VERSION} interval-penalty={min_llr}\n"
-            f"  nuc-recall-policy={nuc_recall_policy} phase-nrl={phase_nrl}\n"
+            + (f"  nuc-recall-policy={nuc_recall_policy} phase-nrl={phase_nrl}\n"
+               if (nuc_recall_policy != 'conservative' or phase_nrl) else '') +
             f"  ddda-derived-tf-edge-gap="
             f"{derived_tf_max_edge_ambiguity if derived_tf_max_edge_ambiguity is not None else 'off'}\n"
             f"  cores={args.cores} io-threads={args.io_threads} "

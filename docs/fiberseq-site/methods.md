@@ -22,7 +22,7 @@ a mark in the protected and in the accessible state.
    are MSPs.
 2. **Nucleosome recall.** Nucleosome-sized footprints are re-examined for
    buried linkers (accessible evidence inside the footprint) and split there,
-   with a periodicity prior from the sample's nucleosome repeat length. For
+   and each piece gets conservative edges from its protected evidence. For
    DddA, which also deaminates inside nucleosomes, a phase-aware radial caller
    places nucleosomes from the helically phased deamination profile instead.
 3. **TF recall.** Inside accessible regions, a log-likelihood-ratio recaller

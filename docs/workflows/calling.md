@@ -211,15 +211,11 @@ and platform (and their defaults) when the observation mode matches.
 | Option | Default | Effect |
 |---|---|---|
 | `--recall-nucs` / `--no-recall-nucs` | on | nucleosome recall; off gives raw HMM nucleosomes (`nuc.Q`) |
-| `--nuc-recall-policy` | `auto` | `conservative`, `topology`; `auto` = conservative for every chemistry |
-| `--phase-nrl` | `off` | periodicity prior: `off`, `auto`, or a repeat length in bp |
 | `--split-min-llr` | 4.0 | accessible evidence needed to split a footprint |
 | `--split-min-opps` | 3 | informative positions needed in a split |
 | `--nuc-min-size` | 85 | minimum nucleosome size; also what bounds an MSP |
 | `--msp-min-size` | 0 | minimum MSP size |
 | `--ddda-derived-tf-max-edge-gap` | 12 | DddA: evidence needed on both sides of TFs exposed by radial recall (`-1` off) |
-
-`--phase-nrl auto` needs a file input; on stdin it falls back to 185 bp.
 
 ## DAF options
 

@@ -24,12 +24,10 @@ downstream processing unless a tool rewrites the header.
 `fiberhmm-call`'s `DS` field states the frame and every resolved setting:
 
 ```text
-FiberHMM fused apply+recall; coord=molecular (ns/nl/as/al/MA in molecular original-fiber coordinates); mode=daf enzyme=ddda prob_threshold=128 primary_only=on tf_decoder=multi_interval_v1 tf_interval_penalty=5.0 recall_nucs=True nuc_recall_policy=conservative nuc_profile=ddda_phase_posterior_v1 nuc_sha256=c86b05dc... phase_nrl=189 ddda_derived_tf_edge_gap=12 chimera_filter=on dedup=j0.95/mark/ends50 daf_snp_mask=on/0sites daf_run_mask=>=2/keep-one cpg_mask=unmethylated-only
+FiberHMM fused apply+recall; coord=molecular (ns/nl/as/al/MA in molecular original-fiber coordinates); mode=daf enzyme=ddda prob_threshold=128 primary_only=off alignments=primary-supplementary tf_decoder=multi_interval_v1 tf_interval_penalty=5.0 recall_nucs=True nuc_recall_policy=conservative nuc_profile=ddda_phase_posterior_v1 nuc_sha256=c86b05dc... phase_nrl=0 ddda_derived_tf_edge_gap=12 chimera_filter=on dedup=j0.95/mark/ends50 daf_snp_mask=on/3sites daf_unaligned_mask=on daf_insert_consensus=on/0of0/min20 daf_run_mask=>=2/keep-one cpg_mask=unmethylated-only
 ```
 
-Calls made with the 3.0 defaults read `primary_only=off
-alignments=primary-supplementary` (`primary_only=on` only with
-`--alignments primary`), and DAF runs also record
+`primary_only=on` only with `--alignments primary`. DAF runs record
 `daf_unaligned_mask=on|off` and
 `daf_insert_consensus=off|on/<used>of<clusters>/min<N>` (`n/a` outside DAF).
 

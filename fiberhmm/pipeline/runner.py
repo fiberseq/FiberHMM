@@ -31,6 +31,7 @@ from typing import Callable, Optional
 import pysam
 
 from fiberhmm import __version__
+from fiberhmm.identity import fiberhmm_commit
 from fiberhmm.io.run_state import DirectoryBusy, DirectoryLock, load_memo_file, save_memo_file
 from fiberhmm.pipeline import aligner as mm2
 from fiberhmm.pipeline.circular import hard_clip, merge_origin_pieces
@@ -475,6 +476,42 @@ def call_supported_options() -> set[str]:
     if parser is None:
         return set()
     return {flag for action in parser._actions for flag in action.option_strings}
+
+
+def call_parser_defaults() -> dict:
+    """``fiberhmm-call``'s option defaults (dest -> default, JSON-safe), so a
+    completed calling step is not reused after a FiberHMM default changes
+    (e.g. the 3.0 nucleosome-recall defaults) under the same version string."""
+    parser = _call_parser()
+    if parser is None:
+        return {}
+    out = {}
+    for action in parser._actions:
+        if not action.option_strings or action.dest in ("help", "version"):
+            continue
+        default = action.default
+        if default is None or isinstance(default, (bool, int, float, str)):
+            out[action.dest] = default
+        else:
+            out[action.dest] = repr(default)
+    return dict(sorted(out.items()))
+
+
+def bundled_model_identity(enzyme, seq) -> dict:
+    """SHA-256 of the bundled tables a preset call reads (apply/recall), so a
+    replaced bundled table invalidates a completed calling step."""
+    if not enzyme:
+        return {}
+    from fiberhmm.identity import file_sha256
+    from fiberhmm.models import get_model_path
+    out = {}
+    for tool in ("apply", "recall"):
+        try:
+            path = get_model_path(enzyme, tool=tool, seq=seq)
+        except Exception:  # unknown/custom enzyme: covered by call_arg_files
+            continue
+        out[tool] = {"file": os.path.basename(path), "sha256": file_sha256(path)}
+    return out
 
 
 class _CallArgsError(Exception):
@@ -1270,8 +1307,9 @@ class Pipeline:
         """Content identity of every file named in --call-args (a model given with
         -m, a recall model, an NRL profile, a mask...): a changed file is a
         changed calling setup. The options are resolved by fiberhmm-call's own
-        parser (:func:`call_arg_file_paths`); FiberHMM's bundled defaults are
-        covered by the version."""
+        parser (:func:`call_arg_file_paths`); FiberHMM's own defaults, code and
+        bundled tables are covered by ``call_defaults``, ``fiberhmm_commit`` and
+        ``bundled_models`` in :meth:`_call_fingerprint`."""
         found: dict[str, dict] = {}
         for candidate in call_arg_file_paths(self.config.call_args):
             identity = file_fingerprint(candidate, self.memo)
@@ -1300,6 +1338,9 @@ class Pipeline:
             "call_args": list(cfg.call_args),
             "call_arg_files": self._call_arg_files(),
             "fiberhmm": __version__,
+            "fiberhmm_commit": fiberhmm_commit(),
+            "call_defaults": call_parser_defaults(),
+            "bundled_models": bundled_model_identity(cfg.enzyme, cfg.resolved_seq()),
             **({"replace_chemistry": True} if self._replace_chemistry else {}),
         }
 

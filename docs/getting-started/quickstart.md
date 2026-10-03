@@ -61,7 +61,6 @@ The banner states the resolved settings (abridged):
   apply model:  .../fiberhmm/models/hia5_pacbio.json
   mode=pacbio-fiber k=3 enzyme=hia5 prob-threshold=128 alignments=primary-supplementary
   min_llr=5.0 min_opps=3 unify_threshold=90 uplift=1.0
-  nuc-recall-policy=conservative phase-nrl=0
 ...
   Total: 300 reads, 300 with footprints
 ```
@@ -112,7 +111,6 @@ input and says so.
 ```text
 NOTE: --seq not given; using --seq nanopore (detected from MM specs of 200 read(s) (A+a only, no T-a)).
   mode=nanopore-fiber k=3 enzyme=hia5 prob-threshold=248 alignments=primary-supplementary
-  nuc-recall-policy=conservative phase-nrl=0
 ```
 
 The main difference from PacBio: m6A calls need ML ≥ 248 (the demo's

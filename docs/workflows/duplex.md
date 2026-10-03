@@ -143,8 +143,7 @@ Each pair becomes one record named `<ct_read>.cs`:
 ## Joint recall
 
 The joint recall runs the same stack as `fiberhmm-call --enzyme ddda`: HMM,
-DddA radial nucleosome recall (`--phase-nrl 196`,
-`--nuc-recall-policy conservative`) and TF recall
+DddA radial nucleosome recall and TF recall
 (`--ddda-derived-tf-max-edge-gap 12`). The observation merges a C-target pass
 masked to `deam+` with a G-target pass masked to `deam-`; before each
 channel's contexts are encoded, the other channel's deaminations are reverted

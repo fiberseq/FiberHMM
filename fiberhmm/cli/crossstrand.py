@@ -132,11 +132,9 @@ Examples:
                         'input is binary and ignores it.')
     p.add_argument('--io-threads', type=int, default=4, help='htslib compression threads (default 4)')
     p.add_argument('--phase-nrl', type=int, default=0,
-                   help='Periodicity prior for consensus recall: nucleosome repeat length '
-                        'in bp, or 0 for off (default 0). DddA radial recall ignores it.')
+                   help=argparse.SUPPRESS)  # retired experimental mode (3.0); kept only to reproduce earlier calls
     p.add_argument('--nuc-recall-policy', choices=['conservative', 'topology'],
-                   default='conservative',
-                   help='Nucleosome geometry policy for consensus recall')
+                   default='conservative', help=argparse.SUPPRESS)  # retired experimental mode (3.0); kept only to reproduce earlier calls
     p.add_argument(
         '--ddda-derived-tf-max-edge-gap', type=int, default=12, metavar='BP',
         help='Require TF calls exposed solely by DddA radial nucleosome '

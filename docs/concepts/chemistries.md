@@ -46,7 +46,7 @@ The resolved chemistry (`--enzyme`, the given or
 | ML threshold: `recall-tfs`/`-nucs`, `extract`, `qc` | 125 | **248** | 125 | 125 |
 | ML threshold: `dedup`, `pair`, `merge` (MM/ML dU) | — | — | 128 | 128 |
 | TF interval cost `--min-llr` | 5.0 | 5.0 | 5.0 | 5.0 |
-| Nucleosome recall (`--nuc-recall-policy auto`) | conservative | conservative | conservative | phase-aware radial |
+| Nucleosome recall | conservative | conservative | conservative | phase-aware radial |
 | CpG-aware recall (`--use-m5c`) | off | off | off | **on** (call, recall, pair/merge) |
 | Adjacent-target thinning (`--daf-mask-runs`) | — | — | off | 2, keep-one |
 | Strand-swap chimera filter | — | — | on | on |

@@ -752,3 +752,28 @@ def test_calling_settings_follow_call_args_as_fiberhmm_call_resolves_them(
     settings = cfg.calling_settings()
     assert settings["daf_unaligned_mask"] is mask
     assert settings["daf_insert_consensus"] == insert
+
+
+def test_call_fingerprint_binds_fiberhmm_defaults_and_bundled_tables():
+    """A completed calling step must not be reused after a FiberHMM default or a
+    bundled table changes under the same version string (3.0 changed both)."""
+    import hashlib
+    from fiberhmm.models import get_model_path
+    from fiberhmm.pipeline.runner import bundled_model_identity, call_parser_defaults
+    defaults = call_parser_defaults()
+    assert str(defaults["phase_nrl"]).lower() == "off"
+    assert defaults["nuc_recall_policy"] == "auto"
+    ident = bundled_model_identity("hia5", "nanopore")
+    path = get_model_path("hia5", tool="apply", seq="nanopore")
+    with open(path, "rb") as handle:
+        assert ident["apply"]["sha256"] == hashlib.sha256(handle.read()).hexdigest()
+    assert bundled_model_identity(None, None) == {}
+
+
+def test_crossstrand_recall_helper_has_no_periodicity_prior_by_default():
+    import inspect
+    from fiberhmm.crossstrand import recall
+    func = next(f for _n, f in inspect.getmembers(recall, inspect.isfunction)
+                if "phase_nrl" in inspect.signature(f).parameters
+                and f.__module__ == recall.__name__)
+    assert inspect.signature(func).parameters["phase_nrl"].default == 0
