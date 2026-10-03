@@ -526,24 +526,39 @@ def quantify_frozen(reads, cat, bootstrap=200, seed=None):
 def group_prevalence(result, variant_id, groups, bootstrap=None):
     """groups: {label: [unit_id, ...]}. Per group, the variant's prevalence among the group's callable reads, by the
     configuration EM with the run's catalogue frozen (geometry fixed, weights refitted on the group), with a read
-    bootstrap; plus 'all' (every callable read: the run's own numbers)."""
+    bootstrap; plus 'all': every callable read, the run's own numbers.
+
+    The read x configuration likelihoods are computed once for the NFR; each group's EM and its bootstrap
+    replicates (warm-started from the group's fit) use its rows. Bootstrap seed: the run's."""
     check(result)
     nfr, v = _variant(result, variant_id)
     cat = nfr.get('catalogue')
     if not cat:
         raise NeedsRerun('Prevalence per group needs a run made with this version (it stores the variant catalogue); run Find variants again.')
-    if bootstrap is None:      # the run's replicate count (with its seed, 'all' reproduces the run's interval)
+    if bootstrap is None:      # the run's replicate count
         bootstrap = int((result.get('parameters') or {}).get('bootstrap', 200))
+    reads = _catalogue_reads(result, nfr['id'])
+    vs = [dict(cand=x['name'], mu=np.asarray(x['mu'], float), cov=np.asarray(x['cov'], float)) for x in cat['variants']]
+    callable_reads, configs, LL = V.config_loglik(reads, vs, SimpleNamespace(log_other=float(cat['log_other'])))
+    j = [x['name'] for x in cat['variants']].index(v['name'])
+    contains = np.array([j in c for c in configs], float)
+    row_of = {r['uid']: i for i, r in enumerate(callable_reads)}
     out = []
-    for label, uids in list(groups.items()) + [('all', None)]:
-        reads = _catalogue_reads(result, nfr['id'], uids)
-        q = quantify_frozen(reads, cat, bootstrap)
-        row = q['variants'].get(v['name']) or {}
-        out.append(dict(group=label, callable=q['n'], prevalence=row.get('prevalence'), strict=row.get('strict'), ci=row.get('ci'),
-                        reads=None if uids is None else len(uids)))
+    for label, uids in groups.items():
+        idx = np.array(sorted({row_of[u] for u in uids if u in row_of}), int)
+        row = dict(group=label, callable=int(len(idx)), prevalence=None, strict=None, ci=None, reads=len(uids))
+        if len(idx):
+            w, P = V._em(LL[idx])
+            Pv = P @ contains
+            rng = np.random.default_rng(int(cat.get('seed', 1)))
+            boots = [contains @ V._em(LL[idx[rng.integers(0, len(idx), len(idx))]], 500, w0=w)[0] for _ in range(int(bootstrap))]
+            row.update(prevalence=round(float(contains @ w), 4), strict=round(float(np.mean(Pv >= 0.9)), 4),
+                       ci=[round(float(np.percentile(boots, 2.5)), 4), round(float(np.percentile(boots, 97.5)), 4)] if boots else None)
+        out.append(row)
+    out.append(dict(group='all', callable=int(nfr['callable']), prevalence=v['prevalence'], strict=v['strict'], ci=v['ci'], reads=None))
     return dict(variant=variant_id, nfr=nfr['id'], groups=out,
                 note='Prevalence among each group\'s callable reads; the variant set and geometry are the run\'s (frozen); '
-                     'intervals: read bootstrap, conditional on that catalogue.')
+                     'intervals: read bootstrap, conditional on that catalogue. "all" is the run itself.')
 
 
 def transfer(payload, result, nfr_id, bootstrap=None):

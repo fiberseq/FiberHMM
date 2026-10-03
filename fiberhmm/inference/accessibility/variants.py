@@ -278,8 +278,8 @@ def relation(v, ref, shift_bp=25):
 
 
 # ------------------------------------------------------------------ read-level EM over configurations
-def _em(LL, iters=2000):
-    w = np.full(LL.shape[1], 1/LL.shape[1])
+def _em(LL, iters=2000, w0=None):
+    w = np.full(LL.shape[1], 1/LL.shape[1]) if w0 is None else np.asarray(w0, float).copy()
     p = None
     for _ in range(iters):
         a = LL + np.log(np.maximum(w, 1e-300)); m = a.max(1, keepdims=True)
@@ -291,9 +291,10 @@ def _em(LL, iters=2000):
     return w, p
 
 
-def quantify(reads, variants, es, opt):
-    """Configuration EM, prevalence (strict to EM), conditional bootstrap intervals, per-read membership, labels."""
-    k = len(variants); OTHER = k
+def config_loglik(reads, variants, es):
+    """(callable reads ordered by unit_id, configurations, read x configuration log-likelihood): the input of the
+    configuration EM (``quantify``; ``analysis.group_prevalence`` reuses it for every read group)."""
+    k = len(variants)
     callable_reads = sorted([r for r in reads if r['callable']], key=lambda r: r['uid'])
     rows = []
     for r in callable_reads:
@@ -317,6 +318,15 @@ def quantify(reads, variants, es, opt):
             if not allowed(c):
                 continue
             LL[i, cidx[c]] = sum(lp[g, c[g]] for g in range(len(c))) if c else 0.
+    return callable_reads, configs, LL
+
+
+def quantify(reads, variants, es, opt):
+    """Configuration EM, prevalence (strict to EM), conditional bootstrap intervals, per-read membership, labels."""
+    k = len(variants); OTHER = k
+    callable_reads, configs, LL = config_loglik(reads, variants, es)
+    cidx = {c: i for i, c in enumerate(configs)}
+    rows = LL
     if len(rows):
         w, P = _em(LL)
     else:
