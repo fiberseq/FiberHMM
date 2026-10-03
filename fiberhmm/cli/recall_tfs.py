@@ -185,7 +185,8 @@ def _build_recall_pg_record(args, mode, model_path, nuc_cfg, nuc_model_path=None
             f'nuc_profile={profile_identity or "off"} '
             f'nuc_sha256={profile_sha256 or "off"} phase_nrl={phase_nrl} '
             f'daf_run_mask={(">=" + str(args.daf_mask_runs) + "/" + args.daf_run_policy) if getattr(args, "daf_mask_runs", 0) else "off"} '
-            f'daf_unaligned_mask={("on" if getattr(args, "daf_mask_unaligned", True) else "off") if mode == "daf" else "n/a"}'
+            f'daf_unaligned_mask={("on" if getattr(args, "daf_mask_unaligned", True) else "off") if mode == "daf" else "n/a"} '
+            f'daf_insert_consensus={getattr(args, "daf_insert_state", "off" if mode == "daf" else "n/a")}'
         ),
     }
 
@@ -249,10 +250,10 @@ class _PayloadRead:
     the worker) and the associated MM/ML base64 encoding overhead.
     """
     __slots__ = ('query_sequence', 'is_reverse', '_tags', '_daf_md_result',
-                 '_daf_unaligned_query_positions')
+                 '_daf_unaligned_query_positions', '_daf_insert_mods')
 
     def __init__(self, seq, is_reverse, tags, daf_md_result=None,
-                 daf_unaligned_query_positions=None):
+                 daf_unaligned_query_positions=None, daf_insert_mods=None):
         self.query_sequence = seq
         self.is_reverse = is_reverse
         self._tags = tags
@@ -260,6 +261,7 @@ class _PayloadRead:
         # CIGAR I/S bases, computed by the producer (the stub has no CIGAR).
         self._daf_unaligned_query_positions = set(
             daf_unaligned_query_positions or ())
+        self._daf_insert_mods = daf_insert_mods
 
     def has_tag(self, t):
         return t in self._tags
@@ -398,10 +400,16 @@ def _make_payload(read, mode=None, input_molecular_frame=True) -> dict:
         payload['_no_call_blocks'] = blocks
     if mode == 'daf' and read.query_sequence:
         from fiberhmm.core.bam_reader import has_iupac_encoding
-        from fiberhmm.inference.engine import daf_unaligned_query_positions
-        unaligned = daf_unaligned_query_positions(read)
+        from fiberhmm.inference.engine import (
+            daf_insert_evidence,
+            daf_unaligned_without_evidence,
+        )
+        unaligned = daf_unaligned_without_evidence(read)
         if unaligned:
             payload['_daf_unaligned_query_positions'] = unaligned
+        evidence = daf_insert_evidence(read)
+        if evidence is not None and evidence.mods:
+            payload['_daf_insert_mods'] = (set(evidence.mods), evidence.strand)
         if (
             not has_iupac_encoding(read.query_sequence)
             and not (('MM' in tags or 'Mm' in tags) and ('ML' in tags or 'Ml' in tags))
@@ -427,6 +435,7 @@ def _process_payload_record(payload) -> tuple:
         payload['tags'],
         payload.get('_daf_md_result'),
         payload.get('_daf_unaligned_query_positions'),
+        payload.get('_daf_insert_mods'),
     )
     nuc_cfg = _WORKER.get('nuc_cfg')
     if nuc_cfg is not None and nuc_cfg.recall_nucs:
@@ -836,6 +845,13 @@ def parse_args(default_recall_nucs: bool = False):
                    help='DAF only: treat CIGAR insertion and soft-clip bases as no '
                         'evidence and leave unaligned stretches of >= 50 bp uncalled '
                         '(default on, as in fiberhmm-call).')
+    p.add_argument('--daf-insert-consensus', choices=['auto', 'off'], default='auto',
+                   help='DAF only: re-encode insertions carried by enough reads '
+                        'against their deamination-aware consensus, as in '
+                        'fiberhmm-call (default auto: file input).')
+    p.add_argument('--daf-insert-min-carriers', type=int, default=20,
+                   help='Carriers an insertion needs for --daf-insert-consensus '
+                        '(default 20).')
     p.add_argument('--min-llr', type=float, default=None,
                    help='Override native LLR cost per TF interval in joint decoding '
                         '(nats; default: enzyme preset; not an FDR threshold).')
@@ -1366,6 +1382,29 @@ def _recall(args, bam_in, model_path, using_bundled_model, n_cores):
     from fiberhmm.inference.engine import configure_daf_unaligned_mask
     configure_daf_unaligned_mask(
         bool(getattr(args, 'daf_mask_unaligned', True)) and mode == 'daf')
+    insert_state = 'n/a' if mode != 'daf' else 'off'
+    from fiberhmm.inference.engine import configure_daf_insert_evidence
+    configure_daf_insert_evidence(None)
+    if (mode == 'daf' and getattr(args, 'daf_insert_consensus', 'off') == 'auto'
+            and getattr(args, 'daf_mask_unaligned', True)
+            and args.in_bam != '-' and args.out_bam != '-'):
+        import atexit as _atexit
+        import shutil as _shutil
+        import tempfile as _tempfile
+        from fiberhmm.daf.insert_consensus import run_insert_consensus_prepass
+        # Evidence lives in a private temp dir for the run; the cluster
+        # report is not written (fiberhmm-call publishes it).
+        tmpdir = _tempfile.mkdtemp(prefix='.fiberhmm_insert_')
+        _atexit.register(_shutil.rmtree, tmpdir, True)
+        summary = run_insert_consensus_prepass(
+            args.in_bam, tmpdir, min_carriers=args.daf_insert_min_carriers)
+        configure_daf_insert_evidence(summary['evidence_path'])
+        insert_state = (f"on/{summary['clusters_used']}of{summary['clusters']}"
+                        f"/min{args.daf_insert_min_carriers}")
+        print(f"  DAF insert consensus: {summary['clusters_used']:,} of "
+              f"{summary['clusters']:,} insertion clusters re-encoded",
+              file=sys.stderr)
+    args.daf_insert_state = insert_state
 
     llr_hit, llr_miss = build_llr_tables(model)
     m5c_llr_hit = m5c_llr_miss = None

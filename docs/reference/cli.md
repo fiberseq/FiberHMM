@@ -124,6 +124,8 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--daf-mask-runs` | — | DAF only: thin targets lying in same-strand runs of &gt;= N original C (CT) or G (GA) bases (CC/GG and longer at N=2; see --daf-run-policy). Adjacent conversions are coupled and do not follow the per-site emission model. Default: 2 with keep-one for --enzyme ddda (duplex-validated), off otherwise; 0 disables. |
 | `--daf-run-policy` | `keep-one` | With --daf-mask-runs: keep the 5'-most target of each run (keep-one, default) or remove the whole run (drop). Choices: `keep-one`, `drop`. |
 | `--daf-mask-unaligned` / `--no-daf-mask-unaligned` | on | DAF only: treat query bases with no reference counterpart (CIGAR insertions and soft clips) as no evidence, like SNP-masked sites, and leave unaligned stretches of &gt;= 50 bp uncalled (default on). Deaminations are read-versus-reference mismatches, so these bases can never carry one; --no-daf-mask-unaligned restores the pre-3.0 encoding, which counts them as protected. |
+| `--daf-insert-consensus` | `auto` | DAF only: give insertions carried by many reads real evidence. A pre-pass clusters CIGAR insertions &gt;= 50 bp by breakpoint, builds a deamination-aware consensus of each cluster with enough carriers (a column that is sometimes C and sometimes T on C-&gt;T reads is a C; G/A likewise) and re-encodes each carrier's inserted bases against it; other insertions stay masked. auto (default): on for file input with --daf-mask-unaligned; off: mask only. Choices: `auto`, `off`. |
+| `--daf-insert-min-carriers` | `20` | Carriers an insertion needs for --daf-insert-consensus (default 20). |
 | `--daf-snp-mask` | — | DAF only: 0-based BED of recurrent C&gt;T/G&gt;A SNP sites to exclude from deamination observations. MD is preserved. |
 | `--daf-call-snps` | auto | DAF only: force two-pass recurrent opposite-conversion SNP masking. By default file-based DddA/DddB runs screen automatically after a bounded depth preflight. |
 | `--no-daf-call-snps` | auto | Disable automatic recurrent SNP screening. |
@@ -215,6 +217,8 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--daf-mask-runs` | — | DAF only: thin targets lying in same-strand runs of &gt;= N original C (CT) or G (GA) bases (CC/GG and longer at N=2; see --daf-run-policy). Adjacent conversions are coupled and do not follow the per-site emission model. Default: 2 with keep-one for --enzyme ddda (duplex-validated), off otherwise; 0 disables. |
 | `--daf-run-policy` | `keep-one` | With --daf-mask-runs: keep each run's 5'-most target (default) or drop the run. Choices: `keep-one`, `drop`. |
 | `--daf-mask-unaligned` / `--no-daf-mask-unaligned` | on | DAF only: treat CIGAR insertion and soft-clip bases as no evidence and leave unaligned stretches of &gt;= 50 bp uncalled (default on, as in fiberhmm-call). |
+| `--daf-insert-consensus` | `auto` | DAF only: re-encode insertions carried by enough reads against their deamination-aware consensus, as in fiberhmm-call (default auto: file input). Choices: `auto`, `off`. |
+| `--daf-insert-min-carriers` | `20` | Carriers an insertion needs for --daf-insert-consensus (default 20). |
 | `--min-llr` | — | Override native LLR cost per TF interval in joint decoding (nats; default: enzyme preset; not an FDR threshold). |
 | `--prob-threshold` | — | Min MM/ML probability 0-255 for re-reading modification calls. Default: chemistry preset -- 248 for Hia5 Nanopore (--seq nanopore, or the input's declared chemistry), 125 otherwise. R/Y- and MD-encoded DAF input is binary and ignores it. |
 | `--min-opps` | `3` | Min informative target positions per call (default 3) |
@@ -253,6 +257,8 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--daf-mask-runs` | — | DAF only: thin targets lying in same-strand runs of &gt;= N original C (CT) or G (GA) bases (CC/GG and longer at N=2; see --daf-run-policy). Adjacent conversions are coupled and do not follow the per-site emission model. Default: 2 with keep-one for --enzyme ddda (duplex-validated), off otherwise; 0 disables. |
 | `--daf-run-policy` | `keep-one` | With --daf-mask-runs: keep each run's 5'-most target (default) or drop the run. Choices: `keep-one`, `drop`. |
 | `--daf-mask-unaligned` / `--no-daf-mask-unaligned` | on | DAF only: treat CIGAR insertion and soft-clip bases as no evidence and leave unaligned stretches of &gt;= 50 bp uncalled (default on, as in fiberhmm-call). |
+| `--daf-insert-consensus` | `auto` | DAF only: re-encode insertions carried by enough reads against their deamination-aware consensus, as in fiberhmm-call (default auto: file input). Choices: `auto`, `off`. |
+| `--daf-insert-min-carriers` | `20` | Carriers an insertion needs for --daf-insert-consensus (default 20). |
 | `--min-llr` | — | Override native LLR cost per TF interval in joint decoding (nats; default: enzyme preset; not an FDR threshold). |
 | `--prob-threshold` | — | Min MM/ML probability 0-255 for re-reading modification calls. Default: chemistry preset -- 248 for Hia5 Nanopore (--seq nanopore, or the input's declared chemistry), 125 otherwise. R/Y- and MD-encoded DAF input is binary and ignores it. |
 | `--min-opps` | `3` | Min informative target positions per call (default 3) |

@@ -159,6 +159,11 @@ class PipelineConfig:
             "snp_mask": os.path.abspath(self.snp_mask) if self.snp_mask else None,
             "chimera_filter": self.chimera_filter if daf else None,
             "daf_unaligned_mask": self.daf_mask_unaligned if daf else None,
+            # fiberhmm-call's default; --call-args "--daf-insert-consensus off"
+            # turns it off.
+            "daf_insert_consensus": (
+                ("off" if "off" in _call_arg_value(self.call_args, "--daf-insert-consensus")
+                 else "auto") if daf and self.daf_mask_unaligned else None),
             "primary_only": self.alignments == "primary",
             "alignments": self.alignments,
             "prob_threshold": self.prob_threshold if self.prob_threshold is not None
@@ -1745,6 +1750,16 @@ def _empty_locked_dir(path: str) -> None:
         else:
             with contextlib.suppress(FileNotFoundError):
                 os.remove(entry.path)
+
+
+def _call_arg_value(call_args, flag) -> str:
+    """The value given to ``flag`` in a --call-args list ('' when absent)."""
+    for index, argument in enumerate(call_args or ()):
+        if argument == flag and index + 1 < len(call_args):
+            return call_args[index + 1]
+        if argument.startswith(flag + "="):
+            return argument.split("=", 1)[1]
+    return ""
 
 
 def _group_by_name(records):

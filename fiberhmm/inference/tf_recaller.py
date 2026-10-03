@@ -886,8 +886,16 @@ def extract_modification_calls(read, mode: str, context_size: int = 3,
     if mode == 'daf':
         unaligned = getattr(read, '_daf_unaligned_query_positions', None)
         if unaligned is None:
-            from fiberhmm.inference.engine import daf_unaligned_query_positions
-            unaligned = daf_unaligned_query_positions(read)
+            from fiberhmm.inference.engine import daf_unaligned_without_evidence
+            unaligned = daf_unaligned_without_evidence(read)
+
+    def insert_mods(strand_tag):
+        # Insert-consensus deaminations (fiberhmm.daf.insert_consensus).
+        if mode != 'daf':
+            return set()
+        from fiberhmm.inference.engine import _daf_insert_mods
+        return _daf_insert_mods(read, strand_tag)
+
     if mode == 'daf' and has_iupac_encoding(seq):
         try:
             st_tag = read.get_tag('st')
@@ -895,6 +903,7 @@ def extract_modification_calls(read, mode: str, context_size: int = 3,
             st_tag = None
         mod_pos, strand, seq = extract_daf_iupac_positions(seq, st_tag)
         mod_pos.difference_update(unaligned)
+        mod_pos |= insert_mods(strand)
         return mod_pos, strand, seq, set(unaligned)
     try:
         mm_tag = read.get_tag('MM') if read.has_tag('MM') else read.get_tag('Mm')
@@ -913,8 +922,10 @@ def extract_modification_calls(read, mode: str, context_size: int = 3,
             if md_result is not None:
                 ct_pos, ga_pos, strand_tag = md_result
                 if strand_tag == 'CT':
-                    return set(ct_pos), '+', seq.upper(), set(unaligned)
-                return set(ga_pos), '-', seq.upper(), set(unaligned)
+                    return (set(ct_pos) | insert_mods('CT'), '+', seq.upper(),
+                            set(unaligned))
+                return (set(ga_pos) | insert_mods('GA'), '-', seq.upper(),
+                        set(unaligned))
         return None
     mod_pos, unknown_pos = parse_mm_tag_query_calls(
         mm_tag, ml_tag, seq, read.is_reverse,

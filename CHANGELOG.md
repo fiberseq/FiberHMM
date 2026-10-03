@@ -39,6 +39,33 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   Plasmidsaurus-sized run takes one to two minutes. See
   [From a Plasmidsaurus run to footprints in minutes](https://fiberseq.github.io/FiberHMM/getting-started/quick-daf-seq/)
   and [Plasmids](https://fiberseq.github.io/FiberHMM/workflows/plasmids/).
+- **DAF calls inside recurrent insertions.** An insertion carried by many
+  reads (an amplicon: tens to thousands) gets real evidence instead of the
+  no-evidence mask. A pre-pass of `fiberhmm-call` and
+  `fiberhmm-recall-tfs`/`-nucs` (`--daf-insert-consensus auto`, the default
+  for file input) groups CIGAR insertions of at least 50 bp by breakpoint
+  (±30 bp) and length (±25%), builds a deamination-aware consensus of each
+  group with at least `--daf-insert-min-carriers` (20) carriers, and
+  re-encodes every carrier's inserted bases against it. A column that is
+  sometimes C and sometimes T on C->T reads is a C (deaminated in some
+  molecules), one that is always T is a T; G/A likewise on G->A reads, and
+  each strand reads the other's bases unconverted (the logic of the SNP
+  screen), so an open C deaminated in most molecules is still called a C,
+  where a majority vote calls it T. Columns are called by a profile
+  likelihood with a Phred quality; only confident target columns give
+  evidence, a column two alleles share is never confident, and a carrier
+  aligning below 85% identity gets none. On synthetic DddB amplicons with a
+  1.5 kb insert (open half deaminated at 65-85%, packed half not), the
+  consensus matched the insert at 99.3-100% identity from 5 to 500 carriers
+  with both strands (every confident column right), and the insert was
+  called as the truth (open half >= 99% MSP/TF, packed half 96-98%
+  nucleosome) where the mask leaves it uncalled and the 2.x encoding called
+  it all nucleosome; with one strand only, open C columns stay right but
+  fewer columns are confident (64-89%). Clusters, consensus sequences and
+  confidence go to `qc/<output>.insert_consensus.json`; `@PG` records
+  `daf_insert_consensus=on/<used>of<clusters>/min<N>`. Soft-clipped arms are
+  not grouped: with supplementary calling a clipped arm that aligns
+  elsewhere (a TE copy) is called against that copy.
 - `fiberhmm-qc` also writes `<prefix>.qc.curves.json`
   (`fiberhmm.qc.curves.v1`): the per-read signal rates and ECDF with the
   bundled reference, the phasogram, footprint-size histograms and duplicate
