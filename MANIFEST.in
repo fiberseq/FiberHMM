@@ -12,3 +12,6 @@ include scripts/summarize_targeted_strand_rescue.py
 include models/ddda_TF.json models/ddda_nuc.json models/ddda_nuc_profile.json
 include models/dddb_nanopore.json models/hia5_nanopore.json models/hia5_pacbio.json
 global-exclude __pycache__ *.py[cod] .DS_Store
+
+# Snakemake template (tests/test_snakemake_template.py reads it).
+graft workflows

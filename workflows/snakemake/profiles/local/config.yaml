@@ -1,0 +1,6 @@
+# Snakemake profile for one machine: snakemake --profile profiles/local
+cores: 16                 # total threads; each sample takes config.yaml's threads
+resources:
+  gpu: 1                  # basecall one POD5 sample at a time
+rerun-incomplete: true
+printshellcmds: true
