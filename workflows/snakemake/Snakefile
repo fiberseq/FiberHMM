@@ -1,0 +1,142 @@
+# FiberHMM: one fiberhmm-pipeline run per sample.
+#
+# The pipeline does the work (optional dorado basecalling of POD5, minimap2
+# alignment with the basecaller's @RG/@PG carried over, fiberhmm-call,
+# fiberhmm-qc); this workflow only fans it out over a sample sheet and gives
+# each run its resources. A rerun of an interrupted sample continues where it
+# stopped (the pipeline's own resume).
+#
+#   snakemake --cores 16                         # this machine
+#   snakemake --profile profiles/slurm           # a SLURM cluster
+#   snakemake -n                                 # dry run
+#
+# See README.md.
+
+import csv
+import os
+import shlex
+
+configfile: "config.yaml"
+
+OUT = config.get("outdir", "results")
+RAW_SUFFIXES = (".pod5", ".fast5")
+READ_SUFFIXES = (".fastq", ".fq", ".fastq.gz", ".fq.gz", ".bam") + RAW_SUFFIXES
+SHEET_COLUMNS = ("sample", "reads", "enzyme")
+
+
+def _load_samples(path):
+    with open(path, newline="") as handle:
+        rows = [row for row in csv.DictReader(
+            (line for line in handle if line.strip() and not line.startswith("#")),
+            delimiter="\t")]
+    samples = {}
+    for row in rows:
+        missing = [c for c in SHEET_COLUMNS if not (row.get(c) or "").strip()]
+        if missing:
+            raise ValueError(f"{path}: row {row} lacks {', '.join(missing)}")
+        name = row["sample"].strip()
+        if name in samples:
+            raise ValueError(f"{path}: sample {name!r} is listed twice")
+        samples[name] = {k: (v or "").strip() for k, v in row.items() if k}
+    return samples
+
+
+SAMPLES = _load_samples(config["samples"])
+
+
+def reads_of(wildcards):
+    # Several inputs of one sample: separated by commas (or spaces).
+    return [p for p in SAMPLES[wildcards.sample]["reads"].replace(",", " ").split() if p]
+
+
+def input_files(wildcards):
+    """The files behind the sample's inputs: a folder's read and POD5 files
+    are listed, so a changed or added file inside it reruns the sample."""
+    files = []
+    for path in reads_of(wildcards):
+        if os.path.isdir(path):
+            for root, dirs, names in os.walk(path):
+                dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+                files += [os.path.join(root, n) for n in sorted(names)
+                          if n.lower().endswith(READ_SUFFIXES) and not n.startswith(".")]
+        else:
+            files.append(path)
+    return files
+
+
+def is_raw(path):
+    if os.path.isdir(path):
+        for _root, _dirs, files in os.walk(path):
+            if any(f.lower().endswith(RAW_SUFFIXES) for f in files):
+                return True
+        return False
+    return path.lower().endswith(RAW_SUFFIXES)
+
+
+def needs_basecalling(wildcards):
+    return any(is_raw(p) for p in reads_of(wildcards))
+
+
+def reference_of(wildcards):
+    return SAMPLES[wildcards.sample].get("reference") or config["reference"]
+
+
+def pipeline_args(wildcards):
+    row = SAMPLES[wildcards.sample]
+    args = list(shlex.split(config.get("pipeline_args") or ""))
+    if row.get("seq"):
+        args += ["--seq", row["seq"]]
+    if needs_basecalling(wildcards):
+        dorado = config.get("dorado") or {}
+        for key, flag in (("path", "--dorado"), ("model", "--dorado-model"),
+                          ("modified_bases", "--dorado-modified-bases"),
+                          ("device", "--dorado-device"),
+                          ("batchsize", "--dorado-batchsize"),
+                          ("models_dir", "--dorado-models-dir")):
+            if dorado.get(key) not in (None, ""):
+                args += [flag, str(dorado[key])]
+    args += shlex.split(row.get("extra") or "")
+    return " ".join(shlex.quote(a) for a in args)
+
+
+def resource(name, default):
+    def pick(wildcards):
+        res = config.get("resources") or {}
+        key = "basecall" if needs_basecalling(wildcards) else "default"
+        return (res.get(key) or {}).get(name, (res.get("default") or {}).get(name, default))
+    return pick
+
+
+rule all:
+    input:
+        expand(os.path.join(OUT, "{sample}", "outputs.json"), sample=list(SAMPLES)),
+
+
+rule fiberhmm_pipeline:
+    input:
+        reads=input_files,
+        reference=reference_of,
+    output:
+        outputs=os.path.join(OUT, "{sample}", "outputs.json"),
+        called=os.path.join(OUT, "{sample}", "{sample}.fiberhmm.bam"),
+        index=os.path.join(OUT, "{sample}", "{sample}.fiberhmm.bam.bai"),
+    log:
+        os.path.join(OUT, "logs", "{sample}.log"),
+    params:
+        outdir=lambda wc: os.path.join(OUT, wc.sample),
+        reads=lambda wc: " ".join(shlex.quote(p) for p in reads_of(wc)),
+        enzyme=lambda wc: SAMPLES[wc.sample]["enzyme"],
+        progress=lambda wc: os.path.join(OUT, "logs", f"{wc.sample}.progress.jsonl"),
+        args=pipeline_args,
+    threads: config.get("threads", 8)
+    resources:
+        mem_mb=resource("mem_mb", 16000),
+        runtime=resource("runtime", 720),
+        gpu=lambda wc: 1 if needs_basecalling(wc) else 0,
+        slurm_partition=resource("slurm_partition", ""),
+        slurm_extra=resource("slurm_extra", ""),
+    shell:
+        "fiberhmm-pipeline {params.reads} --reference {input.reference:q} "
+        "--enzyme {params.enzyme} --sample {wildcards.sample} -o {params.outdir:q} "
+        "-c {threads} --progress-json {params.progress:q} {params.args} "
+        "> {log:q} 2>&1"

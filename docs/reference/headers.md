@@ -15,6 +15,7 @@ header lines. `@CO` lines are written as `@CO<TAB><text>`; pysam's
 | `@CO FIBERHMM-STRAND-RESCUE:v6:` | `strand-rescue-annotate` | shadow-layer contract |
 | `@CO FIBERHMM-TF-FAMILY:v1:` | `tag-consensus` | family-slot contract |
 | `@SQ M5`, `@SQ TP:circular`, `@CO FIBERHMM-REFERENCE:v1:` | `pipeline` | identity and topology of the reference (plasmid maps) |
+| input `@RG`/`@PG`/`@CO`; `basecaller=...` tokens in `@PG DS` | `pipeline`, `call` | [basecaller provenance](#basecaller-provenance) |
 
 Header lines are copied by `samtools` and most other tools, so they survive
 downstream processing unless a tool rewrites the header.
@@ -175,6 +176,44 @@ are still validated by `fiberhmm-strand-rescue-audit`.
 `layer=tf_sr;quality_spec=QQQQQ`, the five byte meanings, the slot reuse
 distance (`fi_reuse_separation_bp=24`) and the SHA-256 of the assignment
 table.
+
+## Basecaller provenance
+
+`fiberhmm-pipeline` carries every unaligned input BAM's `@RG` lines, `@PG`
+chain and `@CO` lines into its aligned BAM (dorado's
+`@PG ID:basecaller PN:dorado` and `@RG ... DS:runid=... basecall_model=...
+modbase_models=...`; PacBio `ccs`, `jasmine`, fibertools), chains minimap2
+and `fiberhmm-pipeline` after them (`PP`), and keeps every read's `RG` tag
+pointing at a declared group: an ID two inputs use for different lines gets
+`-2`, `-3`... (identical lines are merged); reads from FASTQ get the
+pipeline's own group (the sample name). FiberHMM `@PG` records and
+`FIBERHMM-*`/`MA-TYPES` `@CO` lines of a BAM that is realigned are dropped
+(the calls are not carried).
+
+The `fiberhmm-pipeline` and `fiberhmm-call` `@PG DS` end with what is known
+about the basecaller:
+
+```text
+basecaller=dorado basecaller_version=2.0.1 basecall_model=dna_r10.4.1_e8.2_400bps_sup@v5.2.0 modbase_models=dna_r10.4.1_e8.2_400bps_sup@v5.2.0_6mA@v1 basecaller_sources=program:pg,version:pg,basecall_model:rg_ds,modbase_models:rg_ds
+```
+
+| Token | Value |
+|---|---|
+| `basecaller` | program (`dorado`, `guppy`, `ccs`...), or `unknown` |
+| `basecaller_version` | its version, or `unknown` |
+| `basecall_model` | basecalling model, or `unknown` |
+| `modbase_models` | comma-separated modification models; `none` = basecalled without one; `unknown` = not recorded |
+| `basecaller_sources` | `field:source` for each known field |
+
+Sources, highest precedence first: `override` (`--basecaller-info` /
+`--modbase-model`), `recorded-override` (an override recorded by an earlier
+FiberHMM run), `rg_ds` (`@RG DS`), `pg` / `pg_cl` (the basecaller's `@PG`
+and its command line), `read_rg` (dorado's per-read read group,
+`<runid>_<model>`), `recorded` (other values an earlier FiberHMM run
+recorded). Several values in one source (inputs basecalled differently) are
+joined with commas. Python:
+`fiberhmm.io.provenance.basecaller_provenance(header, reads=...)` returns
+them as a dict; `parse_ds_tokens(ds)` reads the tokens back.
 
 ## FIBERHMM-REFERENCE
 

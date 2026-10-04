@@ -76,6 +76,33 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   Plasmidsaurus-sized run takes one to two minutes. See
   [From a Plasmidsaurus run to footprints in minutes](https://fiberseq.github.io/FiberHMM/getting-started/quick-daf-seq/)
   and [Plasmids](https://fiberseq.github.io/FiberHMM/workflows/plasmids/).
+- **`fiberhmm-pipeline` keeps basecaller provenance.** Unaligned BAM inputs
+  (dorado; PacBio `ccs`/`jasmine`/fibertools) keep their `@RG` lines, `@PG`
+  chain and `@CO` lines in the aligned and called BAMs, with minimap2 and
+  `fiberhmm-pipeline` chained after them; read-group IDs are made unique
+  across inputs and every read's `RG` tag follows its group. RG and
+  minimap2's own tags in FASTQ comments are no longer copied by `-y` (they
+  gave records a duplicate `RG`). The basecaller, its version, basecalling
+  model and modification model(s) (from `@RG DS`, then the basecaller's
+  `@PG CL`, then per-read read-group names) are recorded in the
+  `fiberhmm-pipeline` and `fiberhmm-call` `@PG DS` (`basecaller=`,
+  `basecaller_version=`, `basecall_model=`, `modbase_models=`,
+  `basecaller_sources=`) and in `outputs.json` (`settings.basecaller`).
+  FASTQ carries none: `--basecaller-info` and `--modbase-model` (also on
+  `fiberhmm-call`) record it. Platform detection reads it, so a BAM aligned
+  by the pipeline is still known to be Nanopore. Python:
+  `fiberhmm.io.provenance.basecaller_provenance(header, reads=...)`.
+- **`fiberhmm-pipeline` basecalls raw Nanopore data.** POD5 files or folders
+  are basecalled with an installed dorado (not bundled; found on `PATH`, in
+  the usual install folders, or with `--dorado`) before alignment: `sup` with
+  the 6mA model for Hia5, plain basecalling for DAF-seq (`--dorado-model`,
+  `--dorado-modified-bases`, `--dorado-device`, ... change it). The step
+  resumes an interrupted dorado run and never repeats a finished one; dorado's
+  version, models and command are recorded. See
+  [Run everything](https://fiberseq.github.io/FiberHMM/getting-started/run-everything/).
+- **Snakemake template.** `workflows/snakemake` runs one `fiberhmm-pipeline`
+  per sample of a sample sheet (FASTQ, unaligned BAM or POD5), with local and
+  SLURM profiles.
 - **DAF calls inside recurrent insertions.** An insertion carried by many
   reads (an amplicon: tens to thousands) gets real evidence instead of the
   no-evidence mask. A pre-pass of `fiberhmm-call` and

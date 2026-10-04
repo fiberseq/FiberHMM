@@ -1,0 +1,9 @@
+# One row per sample. reads: one or more paths (comma-separated) -- FASTQ,
+# unaligned or aligned BAM, or a POD5 file/folder (basecalled with dorado).
+# Optional columns: reference (else config.yaml's), seq (pacbio/nanopore; else
+# detected), extra (more fiberhmm-pipeline options, quoted as one string).
+sample	reads	enzyme	reference	seq	extra
+ont_fiberseq	/data/run1/pod5	hia5
+ont_ubam	/data/run2/calls.bam	hia5
+pacbio_fiberseq	/data/movie1.hifi_reads.bam,/data/movie2.hifi_reads.bam	hia5		pacbio
+daf_plasmid	/data/plasmidsaurus/reads.fastq.gz	dddb	/data/maps/construct.dna		--tracks

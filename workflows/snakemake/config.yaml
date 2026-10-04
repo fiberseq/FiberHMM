@@ -1,0 +1,45 @@
+# FiberHMM Snakemake template: settings shared by every sample.
+
+# Sample sheet (tab-separated): sample, reads, enzyme, and optionally
+# reference, seq and extra (more fiberhmm-pipeline options for that sample).
+samples: samples.tsv
+
+# Reference FASTA (or plasmid map) for samples whose row gives none.
+reference: /path/to/hg38.fa
+
+# One output directory per sample: <outdir>/<sample>/ (outputs.json, the
+# called BAM, QC). Logs: <outdir>/logs/<sample>.log and .progress.jsonl.
+outdir: results
+
+# Threads per sample (fiberhmm-pipeline -c).
+threads: 8
+
+# fiberhmm-pipeline options for every sample, e.g. "--tracks --min-mapq 30".
+pipeline_args: ""
+
+# Raw Nanopore samples (POD5): dorado basecalling inside the pipeline. Dorado
+# is not bundled; leave path empty to use the one on PATH (or
+# $FIBERHMM_DORADO). Empty values keep the pipeline defaults: model sup,
+# 6mA for hia5, no modification model for ddda/dddb, device auto.
+dorado:
+  path: ""
+  model: ""
+  modified_bases: ""
+  device: ""          # auto | metal | cuda:all | cuda:0 | cpu
+  batchsize: ""
+  models_dir: ""      # default ~/.fiberhmm/dorado_models
+
+# Per-job resources. "basecall" applies to samples with POD5 input (which also
+# get gpu=1); "default" to the others. slurm_* keys are read by the SLURM
+# executor only (see profiles/slurm/config.yaml).
+resources:
+  default:
+    mem_mb: 16000
+    runtime: 720          # minutes
+    slurm_partition: ""
+    slurm_extra: ""
+  basecall:
+    mem_mb: 32000
+    runtime: 2880
+    slurm_partition: ""   # e.g. gpu
+    slurm_extra: "--gres=gpu:1"

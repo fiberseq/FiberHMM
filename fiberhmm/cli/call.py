@@ -25,6 +25,7 @@ import argparse
 import sys
 
 from fiberhmm.cli.common import (
+    add_basecaller_provenance_args,
     add_force_seq_arg,
     add_legacy_mode_override,
     ml_threshold,
@@ -33,6 +34,7 @@ from fiberhmm.cli.common import (
     refuse_non_bam_output,
     refuse_region_options_without_region_parallel,
     require_model_files,
+    resolve_basecaller_provenance,
     resolve_observation_mode,
     resolve_platform_argument,
 )
@@ -46,6 +48,7 @@ from fiberhmm.cli.provenance import (
 from fiberhmm.cli.provenance import (
     chemistry_declaration as _chemistry_declaration,
 )
+from fiberhmm.io.provenance import ds_tokens as basecaller_ds_tokens
 from fiberhmm.cli.provenance import (
     nuc_profile_identity as _nuc_profile_identity,
 )
@@ -107,6 +110,7 @@ def parse_args():
                         '--force-seq). For dddb/ddda it only sets the '
                         'declared platform.')
     add_force_seq_arg(p)
+    add_basecaller_provenance_args(p)
     p.add_argument('--replace-chemistry', action='store_true',
                    help='Replace, instead of reconcile with, the input BAM\'s '
                         'FIBERHMM-CHEMISTRY declaration (re-calling a BAM with '
@@ -1005,6 +1009,8 @@ def _main(args):
     # A missing --seq is inferred from the input's own evidence (and refused
     # on conflicting evidence) before any model is chosen.
     resolve_platform_argument(args, args.input, tool='fiberhmm-call')
+    # Recorded in the output @PG DS (basecaller=... tokens).
+    basecaller = resolve_basecaller_provenance(args, args.input, tool='fiberhmm-call')
     require_model_files('fiberhmm-call', ('-m/--model', args.model),
                         ('--recall-model', args.recall_model))
     refuse_region_options_without_region_parallel(args, 'fiberhmm-call')
@@ -1462,7 +1468,9 @@ def _main(args):
                    f"daf_unaligned_mask={unaligned_state} "
                    f"daf_insert_consensus={insert_state} "
                    f"daf_run_mask={('>=' + str(args.daf_mask_runs) + '/' + args.daf_run_policy) if args.daf_mask_runs else 'off'} "
-                   f"cpg_mask={cpg_mask_policy or 'off'}"),
+                   f"cpg_mask={cpg_mask_policy or 'off'}"
+                   # Basecaller provenance (fiberhmm.io.provenance.ds_tokens).
+                   + " " + basecaller_ds_tokens(basecaller)),
         }
 
         mode_label = 'region-parallel' if args.region_parallel else 'streaming'

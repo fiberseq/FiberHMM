@@ -1,0 +1,15 @@
+# Snakemake >= 8 profile for SLURM:
+#   pip install snakemake-executor-plugin-slurm
+#   snakemake --profile profiles/slurm
+# Partitions and GPU requests per job come from config.yaml's resources
+# (slurm_partition, slurm_extra); POD5 samples use the "basecall" set.
+executor: slurm
+jobs: 20                  # samples running at once
+latency-wait: 60
+retries: 1                # a rerun resumes the pipeline where it stopped
+rerun-incomplete: true
+printshellcmds: true
+default-resources:
+  slurm_account: ""       # your account, if the cluster requires one
+  mem_mb: 16000
+  runtime: 720

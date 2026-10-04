@@ -422,6 +422,16 @@ def _mm_has_m6a(mm_tag: str) -> bool:
 
 def _header_platform(header_dict):
     votes = set()
+    # Basecaller provenance (fiberhmm.io.provenance): dorado/ccs @PG lines,
+    # dorado @RG DS models, and what fiberhmm-pipeline recorded in its @PG DS
+    # (FiberHMM's own records are otherwise skipped below).
+    from fiberhmm.io.provenance import basecaller_provenance
+    try:
+        platform = basecaller_provenance(header_dict).get("platform")
+    except Exception:  # never let provenance parsing break detection
+        platform = None
+    if platform:
+        votes.add(platform)
     for group in header_dict.get("RG", []):
         platform = str(group.get("PL", "")).upper()
         if platform in {"PACBIO", "PACBIO_SMRT"}:
@@ -562,6 +572,58 @@ def sniff_sequencing_platform(bam_path, n_reads: int = PLATFORM_SNIFF_READS,
         source="; ".join(src for _, src in sources),
         **read_evidence,
     )
+
+
+def add_basecaller_provenance_args(parser: argparse.ArgumentParser) -> None:
+    """``--basecaller-info`` / ``--modbase-model``: state or correct the
+    basecaller provenance the input records (see fiberhmm.io.provenance)."""
+    parser.add_argument(
+        '--basecaller-info', default=None, metavar='KEY=VALUE ...',
+        help='Basecaller provenance to record when the input does not say (or '
+             'says wrongly): key=value pairs, e.g. "program=dorado '
+             'version=0.9.6 basecall_model=dna_r10.4.1_e8.2_400bps_sup@v5.0.0" '
+             '(keys: program, version, basecall_model, modbase_models). Default: '
+             'read from the input header (@RG DS > @PG CL > per-read RG).')
+    parser.add_argument(
+        '--modbase-model', action='append', default=[], metavar='MODEL',
+        help="Modification model that called the input's MM/ML tags (repeatable "
+             "or comma-separated; 'none' for none). Overrides the header.")
+
+
+def resolve_basecaller_provenance(args, input_path, *, tool: str,
+                                  quiet: bool = False) -> dict:
+    """The input's basecaller provenance with the command-line override.
+
+    Exits 2 on a malformed override. Prints a NOTE when nothing (or, for
+    Nanopore, no modification model) is recorded. stdin is not inspected.
+    """
+    from fiberhmm.io.provenance import (
+        OverrideError,
+        bam_provenance,
+        basecaller_provenance,
+        describe,
+        missing_note,
+        parse_override,
+    )
+    try:
+        override = parse_override(getattr(args, 'basecaller_info', None),
+                                  getattr(args, 'modbase_model', None) or None)
+    except OverrideError as exc:
+        print(f"error: {tool}: {exc}", file=sys.stderr)
+        sys.exit(2)
+    if not input_path or input_path == '-':
+        return basecaller_provenance(None, override=override)
+    try:
+        prov = bam_provenance(input_path, override=override)
+    except (OSError, ValueError):
+        prov = basecaller_provenance(None, override=override)
+    if not quiet:
+        note = missing_note(prov)
+        if note:
+            print(f"  NOTE: {note}.", file=sys.stderr)
+        elif prov.get("available"):
+            print(f"  Basecaller: {describe(prov)}", file=sys.stderr)
+    return prov
 
 
 def add_force_seq_arg(parser: argparse.ArgumentParser) -> None:
