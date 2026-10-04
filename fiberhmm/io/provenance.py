@@ -347,15 +347,31 @@ def _read_group_ids(reads) -> list[str]:
     return ids
 
 
+def recorded_provenance(header) -> Optional[dict]:
+    """The newest FiberHMM ``@PG DS`` provenance record of one BAM header
+    (:func:`parse_ds_tokens` of the last FiberHMM ``@PG`` with tokens), or None."""
+    recorded = None
+    for pg in _header_dict(header).get("PG", []) or []:
+        if isinstance(pg, dict) and _is_fiberhmm(pg):
+            parsed = parse_ds_tokens(pg.get("DS", ""))
+            if parsed:
+                recorded = parsed
+    return recorded
+
+
 def basecaller_provenance(header, reads: Optional[Iterable] = None,
                           override: Optional[dict] = None,
-                          max_reads: int = 200) -> dict:
+                          max_reads: int = 200,
+                          recorded: Optional[list] = None) -> dict:
     """Basecaller provenance of a BAM (see the module docstring).
 
     ``header``: a pysam header or header dict (``None``/``{}`` for FASTQ).
     ``reads``: optional reads (pysam records, or ``RG`` strings) whose
     per-read read groups are the last header-independent source; at most
     ``max_reads`` are read. ``override``: a dict from :func:`parse_override`.
+    ``recorded``: for a header merged from several files, each file's own
+    :func:`recorded_provenance` (None entries skipped); differing values then
+    show as mixed. By default the newest FiberHMM record in ``header`` counts.
     """
     data = _header_dict(header)
     fields = {name: _Field() for name in FIELDS}
@@ -369,18 +385,16 @@ def basecaller_provenance(header, reads: Optional[Iterable] = None,
             fields[name].offer(_freeze(value), "override")
 
     programs = [pg for pg in data.get("PG", []) or [] if isinstance(pg, dict)]
-    # FiberHMM's own records, newest last: the newest one with tokens counts.
-    recorded = None
-    for pg in programs:
-        if _is_fiberhmm(pg):
-            parsed = parse_ds_tokens(pg.get("DS", ""))
-            if parsed:
-                recorded = parsed
-    if recorded:
-        for name, value in recorded["values"].items():
+    # FiberHMM's own records, newest last: the newest one with tokens counts
+    # (per input file when the caller resolved them separately).
+    records = [recorded_provenance(data)] if recorded is None else list(recorded)
+    for record in records:
+        if not record:
+            continue
+        for name, value in record["values"].items():
             # An override stays one through any number of later FiberHMM runs.
             source = ("recorded-override"
-                      if recorded["sources"].get(name) in ("override", "recorded-override")
+                      if record["sources"].get(name) in ("override", "recorded-override")
                       else "recorded")
             fields[name].offer(_freeze(value), source)
 
