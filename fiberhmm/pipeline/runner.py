@@ -436,6 +436,7 @@ def inputs_provenance(paths: list[str], override: Optional[dict] = None) -> dict
     headers = []
     groups: list[str] = []
     per_input = []
+    recorded = []
     for path in paths:
         lower = path.lower()
         if lower.endswith((".bam", ".cram", ".sam")):
@@ -451,15 +452,17 @@ def inputs_provenance(paths: list[str], override: Optional[dict] = None) -> dict
         else:
             header, found, kind = None, bcprov.fastq_read_groups(path), "fastq"
         headers.append(header)
+        recorded.append(bcprov.recorded_provenance(header) if header else None)
         groups += [g for g in found if g not in groups]
         single = bcprov.basecaller_provenance(header, found)
         per_input.append({"path": os.path.abspath(path), "kind": kind,
                           "available": single["available"]})
     # Detection reads the original lines, FiberHMM's own @PG records included
     # (they hold earlier overrides); only the realigned header drops them.
+    # Each file's newest FiberHMM record counts (not only the last file's).
     merged = {"RG": [g for h in headers if h for g in h.get("RG", []) or []],
               "PG": [p for h in headers if h for p in h.get("PG", []) or []]}
-    result = bcprov.basecaller_provenance(merged, groups, override)
+    result = bcprov.basecaller_provenance(merged, groups, override, recorded=recorded)
     result["inputs"] = per_input
     missing = [item for item in per_input if not item["available"]]
     if missing and len(missing) < len(per_input):

@@ -249,6 +249,28 @@ def test_inputs_provenance_for_fastq_and_mixed(tmp_path):
     assert any("1 of 3 input files" in note for note in mixed["notes"])
 
 
+def test_inputs_provenance_keeps_each_files_recorded_override(tmp_path):
+    """Two BAMs from earlier FiberHMM runs, each with its own recorded override:
+    both count (mixed), whatever the input order, not only the last file's."""
+    def fiberhmm_bam(path, model):
+        prov = bp.basecaller_provenance({}, override=bp.parse_override(f"model={model}", None))
+        header = {"HD": {"VN": "1.6", "SO": "unknown"},
+                  "PG": [{"ID": "fiberhmm-pipeline", "PN": "fiberhmm-pipeline", "VN": "3.0.0",
+                          "DS": bp.ds_tokens(prov)}]}
+        _ubam(path, header, [("r1", "ACGT", [])])
+        return str(path)
+
+    a = fiberhmm_bam(tmp_path / "a.bam", "model_A")
+    b = fiberhmm_bam(tmp_path / "b.bam", "model_B")
+    for order in ([a, b], [b, a]):
+        prov = inputs_provenance(order)
+        assert set(prov["basecall_model"].split(",")) == {"model_A", "model_B"}
+        assert "basecall_model" in prov["mixed"]
+        assert prov["sources"]["basecall_model"] == "recorded-override"
+    single = inputs_provenance([a])
+    assert single["basecall_model"] == "model_A" and single["mixed"] == []
+
+
 # ---------------------------------------------------------------------------
 # End to end
 # ---------------------------------------------------------------------------
