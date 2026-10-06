@@ -29,6 +29,9 @@ SCHEMA = 'fiberhmm.accessibility.preview.v1'
 # span and gap edge features; the per-element read states the pair tests used; each NFR's frozen variant catalogue.
 # v0 results still load: the views that need the additions say so.
 COMPATIBLE_SCHEMAS = ('fiberhmm.accessibility.preview.v0', SCHEMA)
+# per detected NFR region: its profile peak (share of callable reads inside a >= 175-bp gap), where, the reads open and
+# callable there, and (enrichment rule) the window's background, the fold over it and the BH q at the peak
+DETECTION_FIELDS = ('peak', 'peak_at', 'open_reads', 'peak_callable', 'background', 'fold', 'q')
 NUC_FLANK_BP = 1000               # nucleosome calls kept per molecule: the window +- this (phasing, boundaries)
 EXPERIMENTAL_NOTE = ('EXPERIMENTAL preview: NFR variants and element co-accessibility. Outputs, parameters and formats '
                      'may change without notice.')
@@ -53,7 +56,12 @@ class NFROptions:
     mode: str = 'variants'           # 'variants' (discovered) | 'depth' (Timer 175/300/500-bp width states)
     # NFR regions
     nfr_regions: tuple = ()          # ((start, end), ...); empty: detected from the gap >= 175-bp profile
-    detect_threshold: float = 0.15
+    detect_method: str = 'enrichment'    # 'enrichment' (depth-aware, over the window's background) | 'fixed'
+    min_fraction: float = 0.05       # enrichment: share of callable reads inside a >= 175-bp gap an NFR needs at least
+    detect_q: float = 0.01           # enrichment: BH q of the one-sided binomial test against the background
+    min_fold: float = 2.0            # enrichment: share / background at least this
+    min_open_reads: int = 10         # enrichment: reads inside a >= 175-bp gap at least this
+    detect_threshold: float = 0.15   # fixed: share of callable reads inside a >= 175-bp gap above this
     # elements and co-accessibility
     elements: str = 'variants'       # 'variants' (each variant an element) | 'nfrs' (any opening in the NFR)
     open_threshold: float = 0.5      # a read is open for a variant when P(variant in configuration) >= this
@@ -79,6 +87,9 @@ class NFROptions:
         unknown = sorted(set(params) - names)
         if unknown:
             raise ValueError(f'Unknown NFR parameter(s): {", ".join(unknown)}')
+        # a detect_threshold given without a method is a request (or a saved one) for the fixed rule it belongs to
+        if 'detect_threshold' in params and 'detect_method' not in params:
+            params['detect_method'] = 'fixed'
         opt = cls(**params)
         opt.validate()
         return opt
@@ -92,7 +103,9 @@ class NFROptions:
             raise ValueError("elements must be 'variants' or 'nfrs'")
         if self.pairs not in ('nfr', 'all'):
             raise ValueError("pairs must be 'nfr' or 'all'")
-        ints = ('kmax', 'splits', 'seed', 'min_gap_bp', 'folds', 'max_gaps', 'bootstrap', 'shift_bp', 'robust', 'per_bin',
+        if self.detect_method not in ('enrichment', 'fixed'):
+            raise ValueError("detect_method must be 'enrichment' or 'fixed'")
+        ints = ('min_open_reads', 'kmax', 'splits', 'seed', 'min_gap_bp', 'folds', 'max_gaps', 'bootstrap', 'shift_bp', 'robust', 'per_bin',
                 'openness_pad_bp', 'min_spanning', 'min_marginal', 'n_perm', 'within_clusters', 'combo_max', 'combo_samples',
                 'internal_footprint_tolerance_bp')
         for name in ints:
@@ -102,8 +115,9 @@ class NFROptions:
                     setattr(self, name, int(v)); continue
                 raise ValueError(f'{name} must be an integer')
         for name in ('stringency', 'min_reads', 'identity_nats', 'support_nats', 'detect_threshold', 'open_threshold', 'q_max',
-                     'class_min_prevalence'):
-            if not math.isfinite(float(getattr(self, name))):
+                     'class_min_prevalence', 'min_fraction', 'detect_q', 'min_fold'):
+            v = getattr(self, name)
+            if isinstance(v, bool) or not isinstance(v, (int, float, np.integer, np.floating)) or not math.isfinite(float(v)):
                 raise ValueError(f'{name} must be a finite number')
         if self.min_gap_bp < 1 or self.max_gaps < 1 or self.kmax < 1 or self.folds < 2 or self.splits < 1:
             raise ValueError('min_gap_bp, max_gaps, kmax and splits must be >= 1 and folds >= 2')
@@ -115,6 +129,8 @@ class NFROptions:
             raise ValueError('within_clusters: use 0 (off) or k >= 2')
         if not 0 < self.open_threshold <= 1 or not 0 < self.q_max <= 1 or not 0 <= self.detect_threshold < 1:
             raise ValueError('open_threshold and q_max must be in (0, 1], detect_threshold in [0, 1)')
+        if not 0 < self.min_fraction < 1 or not 0 < self.detect_q <= 1 or self.min_fold < 1 or self.min_open_reads < 1:
+            raise ValueError('min_fraction must be in (0, 1), detect_q in (0, 1], min_fold >= 1 and min_open_reads >= 1')
         regions = []
         for r in self.nfr_regions or ():
             a, b = (int(r[0]), int(r[1])) if not isinstance(r, dict) else (int(r['start']), int(r['end']))
@@ -225,9 +241,28 @@ def classes_from_rows(sup, state, prefix=''):
 
 # ------------------------------------------------------------------ the run
 def _nfr_regions(units, region, opt):
+    """(regions, detection): the NFR regions to analyse and how they were found (``result['detection']``)."""
     if opt.nfr_regions:
-        return [dict(start=a, end=b, source='given') for a, b in opt.nfr_regions]
-    return [dict(r, source='detected') for r in G.detect_nfrs(units, region['start'], region['end'], opt.detect_threshold)]
+        return [dict(start=a, end=b, source='given') for a, b in opt.nfr_regions], dict(method='given', note='')
+    if opt.detect_method == 'fixed':
+        runs = G.detect_nfrs(units, region['start'], region['end'], opt.detect_threshold)
+        detection = dict(method='fixed', threshold=opt.detect_threshold, min_callable=G.MIN_CALLABLE, min_width=G.MIN_WIDTH,
+                         background=None, enrichment_test=False, note='')
+    else:
+        runs, detection = G.detect_nfrs_enriched(units, region['start'], region['end'], min_fraction=opt.min_fraction,
+                                                 q=opt.detect_q, min_fold=opt.min_fold, min_open_reads=opt.min_open_reads)
+    return [dict(r, source='detected') for r in runs], detection
+
+
+def _no_region_warning(detection, opt):
+    if detection['method'] == 'fixed':
+        return ('No NFR region found: no stretch where more than '
+                f'{opt.detect_threshold:.0%} of callable reads are inside a >= 175-bp gap. Give the NFR region explicitly.')
+    level = f'at least {opt.min_fraction:.0%} of callable reads (and {opt.min_open_reads} reads) inside a >= 175-bp gap'
+    if detection.get('enrichment_test'):
+        level += (f', {opt.min_fold:g}x the background of {detection["background"]:.1%} and significant at '
+                  f'q <= {opt.detect_q:g}')
+    return f'No NFR region found: no stretch of 60 bp or more with {level}. Give the NFR region explicitly.'
 
 
 def _whole_nfr(nfr_id, nreg, reads):
@@ -329,10 +364,11 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
     units = G.units_of(payload)
     warnings = []
     _report(progress, 'nfr', f'{len(units)} molecules in {region["chrom"]}:{region["start"]}-{region["end"]}')
-    regions = _nfr_regions(units, region, opt)
+    regions, detection = _nfr_regions(units, region, opt)
+    if detection.get('note'):
+        warnings.append(detection['note'])
     if not regions:
-        warnings.append('No NFR region found: no stretch where more than '
-                        f'{opt.detect_threshold:.0%} of callable reads are inside a >= 175-bp gap. Give the NFR region explicitly.')
+        warnings.append(_no_region_warning(detection, opt))
     nfrs, elements, gaps_by_uid, molecules = [], [], {}, {}
     # every evidence unit has a molecule record (a run with footprint classes but no NFR still splits class pairs)
     for u in units:
@@ -350,6 +386,7 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
             if r['callable']:
                 gaps_by_uid.setdefault(r['uid'], []).extend((g['g0'], g['g1']) for g in r['gaps'])
         nfr = dict(id=nfr_id, start=nreg[0], end=nreg[1], source=reg['source'], profile_peak=reg.get('peak'),
+                   detection={k: reg[k] for k in DETECTION_FIELDS if k in reg} or None,
                    reads=len(reads), callable=n_call, censored=len(reads) - n_call,
                    overflow_reads=sum(1 for r in reads if r['overflow']), mode=opt.mode, variants=[], configurations=[],
                    depth_states=[], status='ok', message='')
@@ -460,7 +497,7 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
             warnings.append(str(error))
     result = dict(schema=SCHEMA, experimental=True, note=EXPERIMENTAL_NOTE, region=region,
                   datasets=[dict(dataset_id=s['dataset_id'], chemistry=s.get('chemistry'), molecules=len(s['units'])) for s in payload['strata']],
-                  parameters=opt.as_dict(), nfrs=nfrs,
+                  parameters=opt.as_dict(), detection=detection, nfrs=nfrs,
                   elements=[{k: (_r(v, 1) if k in ('start', 'end') else _r(v) if k == 'prevalence' else v)
                              for k, v in e.items() if k not in ('state', 'channel')} | dict(n=len(e['state'])) for e in all_els],
                   pairs=[_pair_out(p) for p in pairs], family=dict(tested=len(pairs), scope=opt.pairs, skipped=skipped,
@@ -646,7 +683,8 @@ def write_outputs(result, out, payload=None, inputs=None):
     for name, data in files.items():
         (out/name).write_bytes(data)
     manifest = dict(schema=SCHEMA, experimental=True, note=EXPERIMENTAL_NOTE, tool='fiberhmm-nfr', fiberhmm=_version(),
-                    region=result['region'], parameters=result['parameters'], datasets=result['datasets'],
+                    region=result['region'], parameters=result['parameters'], detection=result.get('detection'),
+                    datasets=result['datasets'],
                     inputs=_inputs(payload, inputs), nfr_regions=[dict(id=n['id'], start=n['start'], end=n['end'], source=n['source'])
                                                                for n in result['nfrs']],
                     outputs={name: hashlib.sha256(data).hexdigest() for name, data in sorted(files.items())},

@@ -459,3 +459,124 @@ def test_k_is_chosen_on_full_precision_prediction_strength(monkeypatch):
     nfr = run_accessibility(payload(units), dict(FAST, bootstrap=0, stringency=.9, nfr_regions=[(1380, 1790)]))['nfrs'][0]
     assert dict(map(tuple, nfr['ps_curve']))[2] == .9      # the diagnostics show it rounded
     assert nfr['k'] == 1
+
+
+# ---------------------------------------------------------------- NFR region detection (enrichment rule)
+def background_locus(n, states, seed, *, missed=.5, span=(200, 2900)):
+    """``n`` molecules of planted ``states`` plus, on a share ``missed`` of them, one missed nucleosome somewhere
+    on the molecule (a 200-260-bp gap at a random place): the low, flat background of long gaps real data have."""
+    rng = np.random.default_rng(seed)
+    w = np.array([s[0] for s in states], float); w /= w.sum()
+    units = []
+    for i in range(n):
+        opens = list(states[rng.choice(len(states), p=w)][1])
+        if rng.random() < missed:
+            a = int(rng.integers(span[0], span[1] - 260)); b = a + int(rng.integers(200, 261))
+            if all(b + 60 < c or a > d + 60 for c, d in opens):
+                opens.append((a, b))
+        units.append(fiber(i, opens, rng, strand='CT' if i % 2 == 0 else 'GA', jitter=3.))
+    return units
+
+
+def test_a_rare_nfr_is_found_at_depth_and_the_fixed_rule_misses_it():
+    units = background_locus(1500, [(.5, [(800, 1050)]), (.06, [(1900, 2150)]), (.44, [])], seed=11)
+    lo, hi = 400, 2800
+    fixed = G.detect_nfrs(units, lo, hi)
+    assert [abs(r['start'] - 800) <= 30 for r in fixed] == [True]       # 6% open (+ background) < 15%: missed
+    regs, det = G.detect_nfrs_enriched(units, lo, hi)
+    assert det['enrichment_test'] and det['note'] == '' and 0.005 <= det['background'] < .05
+    assert len(regs) == 2, regs
+    common, rare = regs
+    assert abs(common['start'] - 800) <= 30 and abs(common['end'] - 1050) <= 30
+    assert abs(rare['start'] - 1900) <= 40 and abs(rare['end'] - 2150) <= 40
+    assert .06 < rare['peak'] < .15 and rare['fold'] >= 2 and rare['q'] <= .01 and rare['open_reads'] >= 10
+    assert rare['background'] == det['background'] and rare['peak_callable'] >= 20 and lo <= rare['peak_at'] < hi
+    # the run reports it, with the detection
+    res = run_accessibility(payload(units), dict(FAST, bootstrap=0, kmax=2))
+    assert [n['source'] for n in res['nfrs']] == ['detected', 'detected']
+    assert res['detection']['method'] == 'enrichment' and res['nfrs'][1]['detection']['fold'] == rare['fold']
+    assert res['nfrs'][1]['profile_peak'] == rare['peak']
+    # the fixed rule stays reachable, and a saved detect_threshold alone still means it
+    old = run_accessibility(payload(units), dict(FAST, bootstrap=0, kmax=2, detect_threshold=.15))
+    assert old['parameters']['detect_method'] == 'fixed' and len(old['nfrs']) == 1 and old['detection']['method'] == 'fixed'
+
+
+def test_the_rarest_share_and_the_depth_gate_detection():
+    units = background_locus(1500, [(.5, [(800, 1050)]), (.06, [(1900, 2150)]), (.44, [])], seed=11)
+    regs, _ = G.detect_nfrs_enriched(units, 400, 2800, min_fraction=.2)
+    assert len(regs) == 1                                                      # the rare NFR is below the slider
+    # the same rare NFR in 80 reads: a handful of open reads is not enough (min_open_reads, the test)
+    shallow = background_locus(80, [(.5, [(800, 1050)]), (.06, [(1900, 2150)]), (.44, [])], seed=4)
+    regs, _ = G.detect_nfrs_enriched(shallow, 400, 2800)
+    assert all(not (r['start'] < 2150 and r['end'] > 1900) for r in regs)
+
+
+def test_uniformly_closed_chromatin_calls_nothing():
+    units = background_locus(1500, [(1., [])], seed=12, missed=.6)
+    regs, det = G.detect_nfrs_enriched(units, 400, 2800)
+    assert det['enrichment_test'] and regs == [], regs
+    no_gaps = [fiber(i, [], np.random.default_rng(i)) for i in range(200)]
+    regs, det = G.detect_nfrs_enriched(no_gaps, 400, 2800)
+    assert regs == [] and det['background'] == G.BACKGROUND_FLOOR
+    res = run_accessibility(payload(units), dict(FAST))
+    assert res['nfrs'] == [] and res['warnings'][0].startswith('No NFR region found') and 'background' in res['warnings'][0]
+
+
+def test_a_mostly_open_window_says_so_and_falls_back_to_the_share():
+    units = background_locus(800, [(.8, [(1300, 1900)]), (.2, [])], seed=13, missed=0)
+    regs, det = G.detect_nfrs_enriched(units, 1350, 1850)                # the window sits inside the NFR
+    assert det['background'] is None and not det['enrichment_test'] and det['background_raw'] > G.BACKGROUND_MAX
+    assert 'most of this window is open' in det['note']
+    assert len(regs) == 1 and regs[0]['fold'] is None and regs[0]['peak'] > .7          # found, not hidden
+    res = run_accessibility(payload(units, window=(1350, 1850)), dict(FAST, bootstrap=0, kmax=2))
+    assert len(res['nfrs']) == 1 and any('Background not estimated' in w for w in res['warnings'])
+    # a window too short to estimate a background says that instead
+    _regs, det = G.detect_nfrs_enriched(units, 1500, 1600)
+    assert det['background'] is None and 'positions' in det['note']
+
+
+def test_a_rare_nfr_beside_a_common_one_is_its_own_region_and_wider_openings_are_not():
+    # rare openings right next to the common NFR (another population of gaps): two regions
+    units = background_locus(1500, [(.6, [(800, 1050)]), (.12, [(1130, 1380)]), (.28, [])], seed=14, missed=.3)
+    regs, _ = G.detect_nfrs_enriched(units, 400, 2800)
+    assert len(regs) == 2 and abs(regs[0]['end'] - 1090) <= 60 and abs(regs[1]['start'] - 1090) <= 60, regs
+    # the common NFR's own wider variant (the same openings, extended) stays part of it
+    units = background_locus(1500, [(.5, [(800, 1050)]), (.15, [(800, 1300)]), (.35, [])], seed=15, missed=.3)
+    regs, _ = G.detect_nfrs_enriched(units, 400, 2800)
+    assert len(regs) == 1 and abs(regs[0]['start'] - 800) <= 30 and abs(regs[0]['end'] - 1300) <= 40, regs
+
+
+def test_detection_parameters_are_validated():
+    for bad in (dict(detect_method='peaks'), dict(min_fraction=0), dict(min_fraction=1), dict(min_fraction='0.1'),
+                dict(min_fraction=True), dict(detect_q=0), dict(detect_q=1.5), dict(min_fold=.5), dict(min_open_reads=0),
+                dict(min_open_reads=2.5), dict(min_fold=float('inf'))):
+        with pytest.raises(ValueError):
+            NFROptions.from_params(bad)
+    opt = NFROptions.from_params(dict(min_open_reads=5.0, min_fraction=.02))
+    assert opt.detect_method == 'enrichment' and opt.min_open_reads == 5 and opt.min_fraction == .02
+    assert NFROptions.from_params(dict(detect_threshold=.2)).detect_method == 'fixed'
+    assert NFROptions.from_params(dict(detect_threshold=.2, detect_method='enrichment')).detect_method == 'enrichment'
+    d = NFROptions().as_dict()
+    assert (d['detect_method'], d['min_fraction'], d['detect_q'], d['min_fold'], d['min_open_reads']) == ('enrichment', .05, .01, 2., 10)
+
+
+def test_cli_detection_flags(tmp_path, capsys):
+    from fiberhmm.inference.accessibility.cli import main
+    bam = nfr_bam(tmp_path/'nfr.bam')
+    base = ['--bam', str(bam), '--region', 'chr1:700-2400', '--bootstrap', '0', '--cores', '1']
+    main(base + ['--min-fraction', '0.04', '--min-fold', '3', '--detect-q', '0.05', '--min-open-reads', '5', '--output', str(tmp_path/'a')])
+    summary = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert summary['detection']['method'] == 'enrichment' and summary['nfrs'] and summary['nfrs'][0]['peak'] > .5
+    p = json.loads((tmp_path/'a'/'result.json').read_text())['parameters']
+    assert (p['detect_method'], p['min_fraction'], p['min_fold'], p['detect_q'], p['min_open_reads']) == ('enrichment', .04, 3., .05, 5)
+    assert json.loads((tmp_path/'a'/'manifest.json').read_text())['detection']['method'] == 'enrichment'
+    main(base + ['--detect-threshold', '0.3', '--output', str(tmp_path/'b')])
+    capsys.readouterr()
+    assert json.loads((tmp_path/'b'/'result.json').read_text())['parameters']['detect_method'] == 'fixed'
+    for bad, said in ((['--min-fraction', '0'], 'min_fraction must be in (0, 1)'), (['--min-fold', '0.5'], 'min_fold >= 1'),
+                      (['--detect-method', 'peaks'], 'invalid choice')):
+        with pytest.raises(SystemExit):
+            main(base + bad + ['--output', str(tmp_path/'c')])
+        assert said in capsys.readouterr().err
+    main(['--schema'])
+    assert json.loads(capsys.readouterr().out)['min_fraction'] == .05
