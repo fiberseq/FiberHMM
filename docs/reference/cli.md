@@ -572,11 +572,12 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--combo` | — | Comma-separated element ids (3-8) for combination patterns (default: automatic) |
 | `--robust` | — | Rerun discovery under N hashed read orders (default 0) |
 | `--bootstrap` | — | Bootstrap replicates for prevalence intervals (default 200) |
-| `--detect-method` | — | NFR detection: enrichment (default; a share of at least --min-fraction, --min-fold times the window's background and significant against it) or fixed (a share above --detect-threshold) Choices: `enrichment`, `fixed`. |
-| `--min-fraction` | — | Enrichment detection: the rarest NFR found, as the share of callable reads inside a &gt;= 175-bp gap (default 0.05) |
+| `--detect-method` | — | NFR detection: raw (default; share &gt;= --min-fraction), enrichment (also gates on fold and q), or fixed (share above --detect-threshold) Choices: `raw`, `enrichment`, `fixed`. |
+| `--min-fraction` | — | Raw/enrichment: minimum share of callable reads inside a &gt;= 175-bp gap (default raw 0.10; enrichment 0.05) |
+| `--clip-gaps-to-region` / `--no-clip-gaps-to-region` | auto | Assign each gap to the NFR region with largest overlap (ties: leftmost; default off) |
 | `--min-fold` | — | Enrichment detection: share over the window's background at least this (default 2) |
 | `--detect-q` | — | Enrichment detection: Benjamini-Hochberg q of the binomial test (default 0.01) |
-| `--min-open-reads` | — | Enrichment detection: reads inside a &gt;= 175-bp gap at least this (default 10) |
+| `--min-open-reads` | — | Raw/enrichment detection: reads inside a &gt;= 175-bp gap at least this (default 10) |
 | `--detect-threshold` | — | Fixed detection: share of callable reads inside a &gt;= 175-bp gap above this (default 0.15; given alone, it selects the fixed rule) |
 | `--cores` | — | Loader worker processes (compute.cores) |
 | `--schema` | off | Print the engine parameters with defaults as JSON and exit |
@@ -826,3 +827,25 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `-o` / `--output` | — | Output path (single input only). Default: write &lt;name&gt;.fixed.bb alongside each input. |
 
 <!-- END GENERATED CLI REFERENCE -->
+
+## NFR detection and diagnostics
+
+NFR raw detection uses `min_fraction` directly (default 0.10), with at least
+10 open reads, 20 callable reads and 60 bp of region width. Background, fold
+and q remain descriptive. Explicit enrichment requests keep the prior 0.05
+share default and fold/q gates; `detect_threshold` alone selects fixed.
+
+`clip_gaps_to_region` defaults to false. When true, a gap belongs only to its
+largest-overlap region (ties: leftmost), with its original edges and width.
+The same assignment applies to discovery, quantification and frozen-catalogue
+transfer (`catalogue.assignment_regions`).
+
+The run's `detection.opportunity_diagnostic` summarizes complete long gaps
+outside NFRs versus overlapping NFRs, using native `unit.positions` (marked
+and unmarked opportunities). It reports counts, median opportunities per
+100 bp and the share with fewer than 10 opportunities per gap. Partial gaps
+and missing opportunity arrays are excluded and counted separately; empty
+groups have null statistics. Native masks may exclude otherwise markable
+bases. This diagnostic does not show that gaps occurred by chance and never
+gates detection. `enrichment_test` means the test was computed;
+`enrichment_gates` means its fold/q criteria controlled detection.
