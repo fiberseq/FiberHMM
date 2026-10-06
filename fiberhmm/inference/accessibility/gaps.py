@@ -133,12 +133,11 @@ def split_by_openings(x, f, long_gaps, i, j, share=OPENING_SHARE, min_len=1):
     """Split the run [i, j) into NFR regions by the openings that make them. Walking the run's local maxima of ``f``
     left to right, a maximum joins the current region when at least ``share`` of the >= 175-bp gaps at the lower of
     it and the region's top also reach the higher one (the same openings); otherwise it starts a new region, and
-    the cut is at the lowest point between them. At the run's two ends, the stretch beyond the outermost maximum
-    whose gaps mostly (``share``) do not reach its region's top is a shoulder with no peak of its own (a rare opening
-    beside a common NFR, raised by the common one's wider openings) and is split off too. A rare NFR next to a
-    common one is made of other openings, so it becomes its own region; a common NFR's wider openings and noise
-    bumps stay part of it. Pieces shorter than ``min_len`` positions are dropped (a shoulder that short stays
-    attached). Returns [(i, j), ...] in order."""
+    the cut is at the lowest point between them. A rare NFR next to a common one is made of other openings, so it
+    becomes its own region; a common NFR's wider openings and noise bumps stay part of it. A shoulder with no
+    maximum of its own stays in its neighbour's region (variant discovery then lists it as that NFR's alternative or
+    satellite variant: a region's reads are all gaps that overlap it, so a split there would list it twice). Pieces
+    shorter than ``min_len`` positions are dropped. Returns [(i, j), ...] in order."""
     if j - i < min_len:
         return []
     if share <= 0 or not len(long_gaps) or j - i < 2:
@@ -174,19 +173,6 @@ def split_by_openings(x, f, long_gaps, i, j, share=OPENING_SHARE, min_len=1):
         lo_, hi_ = g[1], h[0]
         cuts.append(lo_ + int(np.argmin(seg[lo_:hi_ + 1])))
     cuts.append(n)
-    # shoulders at the run's ends: walk out from the outermost maximum while the gaps still reach the region's top
-    first, last = groups[0], groups[-1]
-    a = first[0]
-    while a > 0 and reaches(a - 1, first[2]):
-        a -= 1
-    if a >= min_len and first[0] - a + 1 >= 1:
-        cuts.insert(1, a)
-    b = last[1]
-    while b + 1 < n and reaches(b + 1, last[2]):
-        b += 1
-    if n - (b + 1) >= min_len:
-        cuts.insert(len(cuts) - 1, b + 1)
-    cuts = sorted(set(cuts))
     return [(i + a, i + b) for a, b in zip(cuts, cuts[1:]) if b - a >= min_len]
 
 
