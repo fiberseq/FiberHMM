@@ -508,6 +508,7 @@ def test_the_rarest_share_and_the_depth_gate_detection():
     # the same rare NFR in 80 reads: a handful of open reads is not enough (min_open_reads, the test)
     shallow = background_locus(80, [(.5, [(800, 1050)]), (.06, [(1900, 2150)]), (.44, [])], seed=4)
     regs, _ = G.detect_nfrs_enriched(shallow, 400, 2800)
+    assert any(abs(r['start'] - 800) <= 40 for r in regs)                     # the common NFR is still found
     assert all(not (r['start'] < 2150 and r['end'] > 1900) for r in regs)
 
 
@@ -535,15 +536,57 @@ def test_a_mostly_open_window_says_so_and_falls_back_to_the_share():
     assert det['background'] is None and 'positions' in det['note']
 
 
-def test_a_rare_nfr_beside_a_common_one_is_its_own_region_and_wider_openings_are_not():
-    # rare openings right next to the common NFR (another population of gaps): two regions
-    units = background_locus(1500, [(.6, [(800, 1050)]), (.12, [(1130, 1380)]), (.28, [])], seed=14, missed=.3)
-    regs, _ = G.detect_nfrs_enriched(units, 400, 2800)
-    assert len(regs) == 2 and abs(regs[0]['end'] - 1090) <= 60 and abs(regs[1]['start'] - 1090) <= 60, regs
-    # the common NFR's own wider variant (the same openings, extended) stays part of it
+def nuc_units(groups, n, lo=0, hi=1400):
+    """``n`` molecules tiled with 147-bp nucleosomes and 30-bp linkers over [lo, hi); ``groups`` = [(count, (a, b))]:
+    that many molecules (different ones per group) have one nucleosome-free gap [a, b)."""
+    units, uid = [], 0
+    for count, gap in list(groups) + [(n - sum(c for c, _ in groups), None)]:
+        for _ in range(count):
+            nucs = _fill(lo, gap[0], 30) + _fill(gap[1], hi, 30) if gap else _fill(lo, hi, 30)
+            units.append(dict(unit_id=f'u{uid:04d}', strand='CT', dataset='d', raw_nuc_intervals=[list(v) for v in nucs]))
+            uid += 1
+    return units
+
+
+@pytest.mark.parametrize('rare, common', [(20, 40), (40, 20)])
+def test_one_continuous_run_of_two_neighbouring_openings_is_split_where_the_openings_change(rare, common):
+    # one qualifying run 400-800 made of two populations of openings on different reads (a flat step, no dip)
+    units = nuc_units([(rare, (400, 600)), (common, (600, 800))], 200)
+    regs, det = G.detect_nfrs_enriched(units, 0, 1400)
+    assert det['enrichment_test'] and det['background'] == G.BACKGROUND_FLOOR
+    assert [(r['start'], r['end']) for r in regs] == [(400, 600), (600, 800)], regs
+    unsplit, _ = G.detect_nfrs_enriched(units, 0, 1400, opening_share=0)
+    assert [(r['start'], r['end']) for r in unsplit] == [(400, 800)]          # what the split undoes
+
+
+def test_a_flat_run_of_three_opening_populations_is_split_into_three():
+    units = nuc_units([(20, (200, 400)), (20, (400, 600)), (20, (600, 800))], 200)
+    regs, _ = G.detect_nfrs_enriched(units, 0, 1400)
+    assert [(r['start'], r['end']) for r in regs] == [(200, 400), (400, 600), (600, 800)], regs
+
+
+def test_a_shoulder_too_narrow_where_the_window_clips_it_stays_attached():
+    units = nuc_units([(40, (200, 400)), (20, (400, 600))], 200)
+    regs, _ = G.detect_nfrs_enriched(units, 0, 455)                 # the rare opening is cut to 55 bp by the window
+    assert [(r['start'], r['end']) for r in regs] == [(200, 455)], regs
+    regs, _ = G.detect_nfrs_enriched(units, 0, 470)                 # 70 bp: its own region
+    assert [(r['start'], r['end']) for r in regs] == [(200, 400), (400, 470)], regs
+
+
+def test_a_common_nfrs_wider_openings_stay_part_of_it():
+    units = nuc_units([(60, (400, 600)), (20, (400, 800))], 200)
+    regs, _ = G.detect_nfrs_enriched(units, 0, 1400)
+    assert [(r['start'], r['end']) for r in regs] == [(400, 800)], regs
+    # and with a background of missed nucleosomes
     units = background_locus(1500, [(.5, [(800, 1050)]), (.15, [(800, 1300)]), (.35, [])], seed=15, missed=.3)
     regs, _ = G.detect_nfrs_enriched(units, 400, 2800)
     assert len(regs) == 1 and abs(regs[0]['start'] - 800) <= 30 and abs(regs[0]['end'] - 1300) <= 40, regs
+
+
+def test_the_fixed_rule_keeps_its_rounding():
+    units = nuc_units([(7, (400, 600))], 30)
+    r, = G.detect_nfrs(units, 0, 1400)
+    assert r['peak'] == 0.233 and r['background'] is None and r['fold'] is None
 
 
 def test_detection_parameters_are_validated():

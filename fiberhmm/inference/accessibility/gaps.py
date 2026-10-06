@@ -129,19 +129,23 @@ def _runs(on):
     return out
 
 
-def split_by_openings(x, f, long_gaps, i, j, share=OPENING_SHARE, min_len=1):
-    """Split the run [i, j) into NFR regions by the openings that make them. Walking the run's local maxima of ``f``
-    left to right, a maximum joins the current region when at least ``share`` of the >= 175-bp gaps at the lower of
-    it and the region's top also reach the higher one (the same openings); otherwise it starts a new region, and
-    the cut is at the lowest point between them. A rare NFR next to a common one is made of other openings, so it
-    becomes its own region; a common NFR's wider openings and noise bumps stay part of it. A shoulder with no
-    maximum of its own stays in its neighbour's region (variant discovery then lists it as that NFR's alternative or
-    satellite variant: a region's reads are all gaps that overlap it, so a split there would list it twice). Pieces
-    shorter than ``min_len`` positions are dropped. Returns [(i, j), ...] in order."""
+def split_by_openings(x, f, long_gaps, i, j, share=OPENING_SHARE, min_len=1, step=PROFILE_STEP, hi=None, min_width=0):
+    """Split the run [i, j) of grid ``x`` into NFR regions by the openings that make them. Returns [(i, j), ...].
+
+    Walking the run's local maxima of ``f`` left to right, a maximum joins the current region when at least
+    ``share`` of the >= 175-bp gaps at the lower of it and the region's top also reach the higher one (the same
+    openings); otherwise it starts a new region, cut at the first position past the left region's last maximum whose
+    gaps reach the right region's top more often than the left one's (where the openings change; the lowest point
+    between them if that is never so). At the run's two ends, the stretch beyond the outermost region's maxima whose
+    gaps mostly do not reach that region's top is a shoulder of other openings with no maximum of its own (a rare
+    NFR beside a common one) and is split off, and split again the same way, when at least ``min_width`` bp
+    (clipped at ``hi``); a shorter one stays attached. A common NFR's wider openings and noise bumps stay part of
+    it. Pieces shorter than ``min_len`` positions are dropped."""
     if j - i < min_len:
         return []
     if share <= 0 or not len(long_gaps) or j - i < 2:
         return [(i, j)]
+    hi = int(x[-1]) + step if hi is None else int(hi)
     seg = np.asarray(f[i:j], float)
     n = len(seg)
     peaks = [m for m in range(n) if (m == 0 or seg[m] > seg[m - 1]) and (m == n - 1 or seg[m] >= seg[m + 1])]
@@ -149,36 +153,62 @@ def split_by_openings(x, f, long_gaps, i, j, share=OPENING_SHARE, min_len=1):
     keep = (g1 > x[i]) & (g0 <= x[j - 1])            # the gaps that touch this run
     g0, g1 = g0[keep], g1[keep]
 
-    def reaches(m, top):
-        """Whether at least ``share`` of the long gaps at position m also cover position top."""
+    def reaching(m, top):
+        """(gaps at position m that also cover position top, gaps at m)."""
         at = (g0 <= x[i + m]) & (g1 > x[i + m])
-        if not at.any():
-            return True
-        return (at & (g0 <= x[i + top]) & (g1 > x[i + top])).sum() >= share*at.sum()
+        return int((at & (g0 <= x[i + top]) & (g1 > x[i + top])).sum()), int(at.sum())
 
-    def same_openings(m1, m2):
-        return reaches(m1, m2) if seg[m1] <= seg[m2] else reaches(m2, m1)
+    def reaches(m, top):
+        """Whether at least ``share`` of the long gaps at position m also cover position top (no gaps: yes)."""
+        both, at = reaching(m, top)
+        return at == 0 or both >= share*at
+
+    def width(a, b):
+        return min(int(x[i + b - 1]) + step, hi) - int(x[i + a])
 
     groups = []                                       # [first peak, last peak, top peak]
     for m in peaks:
-        if groups and same_openings(m, groups[-1][2]):
+        top = groups[-1][2] if groups else None
+        if top is not None and (reaches(m, top) if seg[m] <= seg[top] else reaches(top, m)):
             g = groups[-1]
             g[1] = m
-            if seg[m] > seg[g[2]]:
+            if seg[m] > seg[top]:
                 g[2] = m
         else:
             groups.append([m, m, m])
     cuts = [0]
     for g, h in zip(groups, groups[1:]):
         lo_, hi_ = g[1], h[0]
-        cuts.append(lo_ + int(np.argmin(seg[lo_:hi_ + 1])))
+        cut = next((m for m in range(lo_ + 1, hi_ + 1) if reaching(m, h[2])[0] > reaching(m, g[2])[0]), None)
+        cuts.append(cut if cut is not None else lo_ + 1 + int(np.argmin(seg[lo_ + 1:hi_ + 1])))
     cuts.append(n)
-    return [(i + a, i + b) for a, b in zip(cuts, cuts[1:]) if b - a >= min_len]
+    # shoulders at the run's two ends (each strictly inside [0, n), so the recursion always shrinks)
+    left = right = None
+    a = groups[0][0]
+    while a > 0 and reaches(a - 1, groups[0][2]):
+        a -= 1
+    if a > 0 and width(0, a) >= max(min_width, 1):
+        left = a
+    b = groups[-1][1] + 1
+    while b < n and reaches(b, groups[-1][2]):
+        b += 1
+    if b < n and width(b, n) >= max(min_width, 1) and (left is None or b > left):
+        right = b
+    pieces = [(i + c0, i + c1) for c0, c1 in zip(cuts, cuts[1:])]
+    if left is not None:
+        pieces = [(max(p0, i + left), p1) for p0, p1 in pieces if p1 > i + left]
+    if right is not None:
+        pieces = [(p0, min(p1, i + right)) for p0, p1 in pieces if p0 < i + right]
+    out = split_by_openings(x, f, long_gaps, i, i + left, share, min_len, step, hi, min_width) if left is not None else []
+    out += [(p0, p1) for p0, p1 in pieces if p1 - p0 >= min_len]
+    if right is not None:
+        out += split_by_openings(x, f, long_gaps, i + right, j, share, min_len, step, hi, min_width)
+    return out
 
 
-def _region(x, f, cov, k, i, j, hi, step, background=None, qv=None):
+def _region(x, f, cov, k, i, j, hi, step, background=None, qv=None, digits=4):
     p = i + int(np.argmax(f[i:j]))
-    return dict(start=int(x[i]), end=min(int(x[j - 1]) + step, int(hi)), peak=round(float(f[p]), 4), peak_at=int(x[p]),
+    return dict(start=int(x[i]), end=min(int(x[j - 1]) + step, int(hi)), peak=round(float(f[p]), digits), peak_at=int(x[p]),
                 open_reads=int(k[p]), peak_callable=int(cov[p]),
                 background=None if background is None else round(float(background), 4),
                 fold=None if background is None else round(float(f[p]/background), 2),
@@ -191,7 +221,9 @@ def detect_nfrs(units, lo, hi, threshold=.15, min_callable=MIN_CALLABLE, min_wid
     x, cov, _g100, k = profile_counts(units, lo, hi, step)
     f175 = k/np.maximum(cov, 1)
     on = (f175 > threshold) & (cov >= min_callable)
-    return [_region(x, f175, cov, k, i, j, hi, step) for i, j in _runs(on) if min(int(x[j - 1]) + step, int(hi)) - int(x[i]) >= min_width]
+    # the peak keeps the fixed rule's rounding (3 decimals), so a replayed request reports the same profile_peak
+    return [_region(x, f175, cov, k, i, j, hi, step, digits=3) for i, j in _runs(on)
+            if min(int(x[j - 1]) + step, int(hi)) - int(x[i]) >= min_width]
 
 
 def _bh(p):
@@ -255,7 +287,7 @@ def detect_nfrs_enriched(units, lo, hi, *, min_fraction=.05, q=.01, min_fold=2.,
     min_len = max(1, -(-min_width//step))
     regions = []
     for i, j in _runs(on):
-        for a, c in split_by_openings(x, f175, long_gaps, i, j, opening_share, min_len):
+        for a, c in split_by_openings(x, f175, long_gaps, i, j, opening_share, min_len, step, hi, min_width):
             if min(int(x[c - 1]) + step, int(hi)) - int(x[a]) >= min_width:
                 regions.append(_region(x, f175, cov, k, a, c, hi, step, b, qv if b is not None else None))
     detection = dict(method='enrichment', background=None if b is None else round(float(b), 4),
