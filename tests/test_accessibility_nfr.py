@@ -623,3 +623,11 @@ def test_cli_detection_flags(tmp_path, capsys):
         assert said in capsys.readouterr().err
     main(['--schema'])
     assert json.loads(capsys.readouterr().out)['min_fraction'] == .05
+
+
+def test_a_long_run_of_many_shoulders_does_not_exhaust_the_recursion_limit():
+    # two groups of reads with 180-bp gaps out of phase: one continuous run of ~1000 alternating opening populations
+    units = [dict(unit_id=f'u{r}', strand='CT', dataset='d',
+                  raw_nuc_intervals=[[x, x + 180] for x in range(0 if r < 20 else 180, 180_000, 360)]) for r in range(40)]
+    regs, _ = G.detect_nfrs_enriched(units, 0, 180_000)
+    assert len(regs) > 900 and all(a['end'] <= b['start'] for a, b in zip(regs, regs[1:]))

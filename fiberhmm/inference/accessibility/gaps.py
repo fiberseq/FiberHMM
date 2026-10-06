@@ -140,12 +140,27 @@ def split_by_openings(x, f, long_gaps, i, j, share=OPENING_SHARE, min_len=1, ste
     gaps mostly do not reach that region's top is a shoulder of other openings with no maximum of its own (a rare
     NFR beside a common one) and is split off, and split again the same way, when at least ``min_width`` bp
     (clipped at ``hi``); a shorter one stays attached. A common NFR's wider openings and noise bumps stay part of
-    it. Pieces shorter than ``min_len`` positions are dropped."""
+    it. Pieces shorter than ``min_len`` positions are dropped. Iterative (a work stack), so a long run of many
+    shoulders cannot exhaust the recursion limit."""
+    hi = int(x[-1]) + step if hi is None else int(hi)
+    out, stack = [], [('run', i, j)]
+    while stack:
+        kind, a, b = stack.pop()
+        if kind == 'piece':
+            out.append((a, b))
+            continue
+        items = _split_run(x, f, long_gaps, a, b, share, min_len, step, hi, min_width)
+        stack.extend(reversed(items))
+    return out
+
+
+def _split_run(x, f, long_gaps, i, j, share, min_len, step, hi, min_width):
+    """One step of ``split_by_openings`` on [i, j): [('piece' | 'run', start, end), ...] in order, where a 'run' (a
+    shoulder, strictly inside [i, j)) is split again."""
     if j - i < min_len:
         return []
     if share <= 0 or not len(long_gaps) or j - i < 2:
-        return [(i, j)]
-    hi = int(x[-1]) + step if hi is None else int(hi)
+        return [('piece', i, j)]
     seg = np.asarray(f[i:j], float)
     n = len(seg)
     peaks = [m for m in range(n) if (m == 0 or seg[m] > seg[m - 1]) and (m == n - 1 or seg[m] >= seg[m + 1])]
@@ -199,10 +214,10 @@ def split_by_openings(x, f, long_gaps, i, j, share=OPENING_SHARE, min_len=1, ste
         pieces = [(max(p0, i + left), p1) for p0, p1 in pieces if p1 > i + left]
     if right is not None:
         pieces = [(p0, min(p1, i + right)) for p0, p1 in pieces if p0 < i + right]
-    out = split_by_openings(x, f, long_gaps, i, i + left, share, min_len, step, hi, min_width) if left is not None else []
-    out += [(p0, p1) for p0, p1 in pieces if p1 - p0 >= min_len]
+    out = [('run', i, i + left)] if left is not None else []
+    out += [('piece', p0, p1) for p0, p1 in pieces if p1 - p0 >= min_len]
     if right is not None:
-        out += split_by_openings(x, f, long_gaps, i + right, j, share, min_len, step, hi, min_width)
+        out.append(('run', i + right, j))
     return out
 
 
