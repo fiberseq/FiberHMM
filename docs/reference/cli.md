@@ -559,7 +559,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--datasets` | — | JSON list of {dataset_id, paths: [BAMs], chemistry?} |
 | `--evidence` | — | Saved evidence.json.gz (e.g. a fiberhmm-consensus run's), instead of loading BAMs |
 | `--region` | — | CHROM:START-END analysis window (0-based, half-open); required with --bam/--datasets |
-| `--nfr` | — | NFR region inside the window (repeat for several). Default: detected where more than --detect-threshold of callable reads are inside a &gt;= 175-bp gap |
+| `--nfr` | — | NFR region inside the window (repeat for several). Default: detected from the share of callable reads inside a &gt;= 175-bp gap (see --detect-method) |
 | `--chemistry` | — | Explicit chemistry for --bam when the BAM header does not declare one Choices: `ddda`, `dddb`, `hia5-pacbio`, `hia5-nanopore`. |
 | `--parameters` | — | JSON: loader groups as for fiberhmm-consensus (input, compute, ...) and an "nfr" group with any engine parameter (see --schema) |
 | `--stringency` | — | Prediction strength needed for k (default 0.9; 0.85 admits finer variants) |
@@ -572,7 +572,12 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--combo` | — | Comma-separated element ids (3-8) for combination patterns (default: automatic) |
 | `--robust` | — | Rerun discovery under N hashed read orders (default 0) |
 | `--bootstrap` | — | Bootstrap replicates for prevalence intervals (default 200) |
-| `--detect-threshold` | — | NFR detection: fraction of callable reads inside a &gt;= 175-bp gap (default 0.15) |
+| `--detect-method` | — | NFR detection: enrichment (default; a share of at least --min-fraction, --min-fold times the window's background and significant against it) or fixed (a share above --detect-threshold) Choices: `enrichment`, `fixed`. |
+| `--min-fraction` | — | Enrichment detection: the rarest NFR found, as the share of callable reads inside a &gt;= 175-bp gap (default 0.05) |
+| `--min-fold` | — | Enrichment detection: share over the window's background at least this (default 2) |
+| `--detect-q` | — | Enrichment detection: Benjamini-Hochberg q of the binomial test (default 0.01) |
+| `--min-open-reads` | — | Enrichment detection: reads inside a &gt;= 175-bp gap at least this (default 10) |
+| `--detect-threshold` | — | Fixed detection: share of callable reads inside a &gt;= 175-bp gap above this (default 0.15; given alone, it selects the fixed rule) |
 | `--cores` | — | Loader worker processes (compute.cores) |
 | `--schema` | off | Print the engine parameters with defaults as JSON and exit |
 | `--json-progress` | off | Structured progress on stderr (JSON lines) |

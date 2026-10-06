@@ -43,8 +43,8 @@ def _parser():
     src.add_argument('--evidence', help="Saved evidence.json.gz (e.g. a fiberhmm-consensus run's), instead of loading BAMs")
     p.add_argument('--region', help='CHROM:START-END analysis window (0-based, half-open); required with --bam/--datasets')
     p.add_argument('--nfr', action='append', metavar='START-END',
-                   help='NFR region inside the window (repeat for several). Default: detected where more than '
-                        '--detect-threshold of callable reads are inside a >= 175-bp gap')
+                   help='NFR region inside the window (repeat for several). Default: detected from the share of callable '
+                        'reads inside a >= 175-bp gap (see --detect-method)')
     p.add_argument('--chemistry', choices=['ddda', 'dddb', 'hia5-pacbio', 'hia5-nanopore'],
                    help='Explicit chemistry for --bam when the BAM header does not declare one')
     p.add_argument('--parameters', help='JSON: loader groups as for fiberhmm-consensus (input, compute, ...) and an "nfr" group '
@@ -63,7 +63,16 @@ def _parser():
     p.add_argument('--combo', help='Comma-separated element ids (3-8) for combination patterns (default: automatic)')
     p.add_argument('--robust', type=int, metavar='N', help='Rerun discovery under N hashed read orders (default 0)')
     p.add_argument('--bootstrap', type=int, metavar='N', help='Bootstrap replicates for prevalence intervals (default 200)')
-    p.add_argument('--detect-threshold', type=float, help='NFR detection: fraction of callable reads inside a >= 175-bp gap (default 0.15)')
+    p.add_argument('--detect-method', choices=['enrichment', 'fixed'],
+                   help='NFR detection: enrichment (default; a share of at least --min-fraction, --min-fold times the window\'s '
+                        'background and significant against it) or fixed (a share above --detect-threshold)')
+    p.add_argument('--min-fraction', type=float, help='Enrichment detection: the rarest NFR found, as the share of callable reads '
+                                                      'inside a >= 175-bp gap (default 0.05)')
+    p.add_argument('--min-fold', type=float, help='Enrichment detection: share over the window\'s background at least this (default 2)')
+    p.add_argument('--detect-q', type=float, help='Enrichment detection: Benjamini-Hochberg q of the binomial test (default 0.01)')
+    p.add_argument('--min-open-reads', type=int, help='Enrichment detection: reads inside a >= 175-bp gap at least this (default 10)')
+    p.add_argument('--detect-threshold', type=float, help='Fixed detection: share of callable reads inside a >= 175-bp gap above this '
+                                                          '(default 0.15; given alone, it selects the fixed rule)')
     p.add_argument('--cores', type=int, help='Loader worker processes (compute.cores)')
     p.add_argument('--schema', action='store_true', help='Print the engine parameters with defaults as JSON and exit')
     p.add_argument('--json-progress', action='store_true', help='Structured progress on stderr (JSON lines)')
@@ -100,7 +109,9 @@ def _main(argv=None):
     nfr = dict(values.pop('nfr', {}) or {})
     for name, value in (('stringency', args.stringency), ('mode', args.mode), ('elements', args.elements), ('pairs', args.pairs),
                         ('within_clusters', args.within_clusters), ('robust', args.robust), ('bootstrap', args.bootstrap),
-                        ('detect_threshold', args.detect_threshold)):
+                        ('detect_threshold', args.detect_threshold), ('detect_method', args.detect_method),
+                        ('min_fraction', args.min_fraction), ('min_fold', args.min_fold), ('detect_q', args.detect_q),
+                        ('min_open_reads', args.min_open_reads)):
         if value is not None:
             nfr[name] = value
     if args.no_internal_footprint_labels:
@@ -157,8 +168,10 @@ def _main(argv=None):
     with single_threaded_blas():      # threshold-sensitive clustering: one numerical thread configuration
         result = run_accessibility(payload, opt, out, progress, classes=classes or None, inputs=inputs)
     summary = [dict(id=n['id'], start=n['start'], end=n['end'], status=n['status'], callable=n['callable'], reads=n['reads'],
-                    variants=[v['name'] for v in n['variants']]) for n in result['nfrs']]
+                    peak=n.get('profile_peak'), variants=[v['name'] for v in n['variants']]) for n in result['nfrs']]
+    det = result.get('detection') or {}
     print(json.dumps(dict(status='complete', experimental=True, output=str(out), nfrs=summary, pairs=len(result['pairs']),
+                          detection={k: det.get(k) for k in ('method', 'background', 'enrichment_test', 'note') if k in det},
                           warnings=result['warnings'])))
 
 

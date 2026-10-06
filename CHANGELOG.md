@@ -36,6 +36,21 @@
     and nucleosome phasing on member vs other reads.
   - It also computes the frozen-catalogue prevalence on any read group or
     another payload (`quantify_frozen`, `group_prevalence`, `transfer`).
+- **EXPERIMENTAL: depth-aware NFR region detection** (`fiberhmm-nfr`, the
+  default when no `--nfr` is given). A position is in an NFR when at least
+  `--min-fraction` (default 0.05) of its callable reads are inside a >= 175-bp
+  gap, the share is `--min-fold` (default 2) times the window's background (the
+  20th percentile of the share over callable positions, at least 0.005), at
+  least `--min-open-reads` (default 10) reads are open there, and a one-sided
+  binomial test against the background passes Benjamini-Hochberg at
+  `--detect-q` (default 0.01). A window whose quietest 20% of positions are
+  already above 0.15 has no usable background: the enrichment tests are off and
+  the result says so. Runs are split by the openings that make them, so a rare
+  NFR beside a common one is its own region. Each detected region reports its
+  peak share, the background, the fold and q (`detection`), and the result
+  carries the run's `detection`. The old rule stays as
+  `--detect-method fixed` (`--detect-threshold`, default 0.15; a
+  `detect_threshold` given alone selects it).
 
 ## 3.0.0
 
