@@ -36,21 +36,31 @@
     and nucleosome phasing on member vs other reads.
   - It also computes the frozen-catalogue prevalence on any read group or
     another payload (`quantify_frozen`, `group_prevalence`, `transfer`).
-- **EXPERIMENTAL: depth-aware NFR region detection** (`fiberhmm-nfr`, the
-  default when no `--nfr` is given). A position is in an NFR when at least
-  `--min-fraction` (default 0.05) of its callable reads are inside a >= 175-bp
-  gap, the share is `--min-fold` (default 2) times the window's background (the
-  20th percentile of the share over callable positions, at least 0.005), at
-  least `--min-open-reads` (default 10) reads are open there, and a one-sided
-  binomial test against the background passes Benjamini-Hochberg at
-  `--detect-q` (default 0.01). A window whose quietest 20% of positions are
-  already above 0.15 has no usable background: the enrichment tests are off and
-  the result says so. Runs are split by the openings that make them, so a rare
-  NFR beside a common one is its own region. Each detected region reports its
-  peak share, the background, the fold and q (`detection`), and the result
-  carries the run's `detection`. The old rule stays as
-  `--detect-method fixed` (`--detect-threshold`, default 0.15; a
-  `detect_threshold` given alone selects it).
+- **EXPERIMENTAL: raw-rate NFR detection** (`fiberhmm-nfr`, default without
+  `--nfr`). `--detect-method raw` calls positions with a >= 175-bp gap in at
+  least `--min-fraction` (default 0.10) of callable reads, at least
+  `--min-open-reads` (10) open reads and 20 callable reads; regions need 60 bp.
+  Runs still split by opening membership. Background (window q20, floored at
+  0.005), fold and binomial BH q are informative only. Unusable backgrounds
+  remain null with an explanation. `--detect-method enrichment` retains the
+  prior fold/q gates and 0.05 default share. `fixed` retains its strict >0.15
+  rule; a saved `detect_threshold` alone still selects fixed.
+- **Optional gap assignment**: `--clip-gaps-to-region` (default off) assigns
+  each gap to the region with largest overlap, ties to the leftmost region,
+  before discovery, quantification and overflow truncation. Observed edges
+  and gap widths are preserved. Frozen catalogues store `assignment_regions`
+  so transfer quantification follows the same rule.
+- **Descriptive opportunity diagnostic**: `detection.opportunity_diagnostic`
+  compares complete >=175-bp gaps outside NFRs (`background`) with those
+  overlapping NFRs (`nfr`). Each group reports `gaps`,
+  `median_opportunities_per_100bp` and `sparse_share` (fewer than
+  `sparse_below=10` opportunities per gap). Uses native, assay/strand-specific
+  `unit.positions`, including unmarked sites and respecting native context
+  masks. Reports missing and partial gaps separately; absent summaries are
+  null. This does not establish that background gaps arise by chance.
+  `detection.enrichment_test` continues to indicate whether the test was
+  computed; new `enrichment_gates` indicates whether it gates detection.
+  No existing result fields were renamed.
 
 ## 3.0.0
 

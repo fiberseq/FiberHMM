@@ -59,11 +59,15 @@ def read_gaps(u, region, min_gap_bp, nuc_min=NUC_MIN):
     return True, out
 
 
-def collect(units, region, min_gap_bp, max_gaps):
-    """Per-read gaps in ``region``. Reads with more than ``max_gaps`` gaps keep the first ones and are flagged."""
+def collect(units, region, min_gap_bp, max_gaps, assignment_regions=None):
+    """Per-read gaps; optionally assign to largest-overlap region (ties: leftmost), before truncating/flagging."""
     reads = []
+    regions = sorted(set(tuple(r) for r in assignment_regions)) if assignment_regions else []
     for u in units:
         ok, gaps = read_gaps(u, region, min_gap_bp)
+        if regions:
+            gaps = [g for g in gaps if tuple(region) == max(
+                regions, key=lambda r: max(0, min(g['g1'], r[1]) - max(g['g0'], r[0])))]
         overflow = max(0, len(gaps) - max_gaps)
         widest = max((g['g1'] - g['g0'] for g in gaps), default=0)    # before truncation (depth mode)
         if overflow:
@@ -270,8 +274,10 @@ def background_share(f175, callable_mask):
 
 
 def detect_nfrs_enriched(units, lo, hi, *, min_fraction=.05, q=.01, min_fold=2., min_open_reads=10,
-                         min_callable=MIN_CALLABLE, min_width=MIN_WIDTH, opening_share=OPENING_SHARE, step=PROFILE_STEP):
+                         min_callable=MIN_CALLABLE, min_width=MIN_WIDTH, opening_share=OPENING_SHARE, step=PROFILE_STEP, method='enrichment'):
     """NFR regions in [lo, hi), the depth-aware enrichment rule. Returns (regions, detection).
+
+    With method raw, fold and q are computed but never gate detection.
 
     Per position: k reads inside a >= 175-bp gap of n callable reads, share f = k/n. The background b is a low
     quantile of f over the window's callable positions (BACKGROUND_QUANTILE, floored at BACKGROUND_FLOOR), so a
@@ -282,6 +288,8 @@ def detect_nfrs_enriched(units, lo, hi, *, min_fraction=.05, q=.01, min_fold=2.,
     callable positions, or a window that is mostly open) the fold and enrichment tests are off, only min_fraction,
     min_open_reads and min_callable apply, and ``detection['note']`` says so."""
     from scipy.stats import binom
+    if method not in ('raw', 'enrichment'):
+        raise ValueError("method must be 'raw' or 'enrichment'")
     long_gaps = []
     x, cov, _g100, k = profile_counts(units, lo, hi, step, long_gaps)
     long_gaps = np.asarray(long_gaps, dtype=np.int64).reshape(-1, 2)
@@ -294,7 +302,8 @@ def detect_nfrs_enriched(units, lo, hi, *, min_fraction=.05, q=.01, min_fold=2.,
     if b is not None:
         p = binom.sf(k[callable_] - 1, cov[callable_].astype(int), b)
         qv[callable_] = _bh(p)
-        on &= (f175 >= min_fold*b) & (qv <= q)
+        if method == 'enrichment':
+            on &= (f175 >= min_fold*b) & (qv <= q)
     else:
         note = (f'Background not estimated: {reason}. NFRs here use only the share threshold '
                 f'(>= {min_fraction:.0%} of callable reads, >= {min_open_reads} reads), without the enrichment test; '
@@ -305,13 +314,60 @@ def detect_nfrs_enriched(units, lo, hi, *, min_fraction=.05, q=.01, min_fold=2.,
         for a, c in split_by_openings(x, f175, long_gaps, i, j, opening_share, min_len, step, hi, min_width):
             if min(int(x[c - 1]) + step, int(hi)) - int(x[a]) >= min_width:
                 regions.append(_region(x, f175, cov, k, a, c, hi, step, b, qv if b is not None else None))
-    detection = dict(method='enrichment', background=None if b is None else round(float(b), 4),
+    detection = dict(method=method, background=None if b is None else round(float(b), 4),
                      background_raw=None if raw is None else round(raw, 4), background_quantile=BACKGROUND_QUANTILE,
                      background_floor=BACKGROUND_FLOOR, background_max=BACKGROUND_MAX, enrichment_test=b is not None,
+                     enrichment_gates=method == 'enrichment' and b is not None,
                      callable_positions=int(callable_.sum()), positions=len(x), step=step,
                      min_fraction=min_fraction, q=q, min_fold=min_fold, min_open_reads=int(min_open_reads),
                      min_callable=min_callable, min_width=min_width, opening_share=opening_share, note=note)
+    detection['opportunity_diagnostic'] = opportunity_diagnostic(units, lo, hi, regions)
     return regions, detection
+
+
+def detect_nfrs_raw(units, lo, hi, *, min_fraction=.10, **kwargs):
+    """Raw share detection with the same floors and splitting; background, fold and q are descriptive only."""
+    return detect_nfrs_enriched(units, lo, hi, min_fraction=min_fraction, method='raw', **kwargs)
+
+
+def opportunity_diagnostic(units, lo, hi, regions, sparse_below=10):
+    """Native marking opportunities in complete >=175-bp gaps, counted once per unit/gap, never just hits.
+
+    Background means no overlap with any NFR, not a claim that those gaps arose by chance. Positions are already
+    assay/strand specific and may exclude unusable contexts. Partial gaps are excluded: payload opportunities
+    are window-limited, so counting them over a full flanking gap would falsely suggest sparse marking.
+    """
+    groups = {'background': [], 'nfr': []}
+    missing = partial = 0
+    for u in units:
+        nuc = nucleosomes(u)
+        available = u.get('positions') is not None
+        pos = np.asarray(u.get('positions') if available else [], dtype=np.int64)
+        a, b = u.get('_region', (lo, hi))
+        for (_, g0), (g1, _) in zip(nuc, nuc[1:]):
+            if g1 - g0 < 175 or g1 <= lo or g0 >= hi:
+                continue
+            if not available:
+                missing += 1
+                continue
+            if g0 < max(lo, a) or g1 > min(hi, b):
+                partial += 1
+                continue
+            count = int(np.searchsorted(pos, g1) - np.searchsorted(pos, g0))
+            group = 'nfr' if any(r['start'] < g1 and r['end'] > g0 for r in regions) else 'background'
+            groups[group].append((count, 100*count/(g1 - g0)))
+    out = dict(source='unit.positions', background_definition='long gaps with no NFR overlap',
+               sparse_below=sparse_below, missing_opportunity_gaps=missing, partial_gaps=partial,
+               note='Descriptive only; gaps outside NFRs are not known to be chance openings. '
+                    'Counts use native usable opportunities, not all reference bases; partial gaps are excluded.')
+    for key, values in groups.items():
+        out[key] = dict(gaps=len(values),
+                        median_opportunities_per_100bp=round(float(np.median([v[1] for v in values])), 4) if values else None,
+                        sparse_share=round(sum(v[0] < sparse_below for v in values)/len(values), 4) if values else None)
+    out['available'] = any(groups.values())
+    if missing:
+        out['note'] += ' Some gaps lack opportunity positions; reload consensus evidence with unit.positions to include them.'
+    return out
 
 
 def read_covariates(units, lo, hi, step=PROFILE_STEP, min_bp=200):

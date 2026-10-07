@@ -30,7 +30,7 @@ SCHEMA = 'fiberhmm.accessibility.preview.v1'
 # v0 results still load: the views that need the additions say so.
 COMPATIBLE_SCHEMAS = ('fiberhmm.accessibility.preview.v0', SCHEMA)
 # per detected NFR region: its profile peak (share of callable reads inside a >= 175-bp gap), where, the reads open and
-# callable there, and (enrichment rule) the window's background, the fold over it and the BH q at the peak
+# callable there, and (raw/enrichment rules) the window's background, the fold over it and the BH q at the peak
 DETECTION_FIELDS = ('peak', 'peak_at', 'open_reads', 'peak_callable', 'background', 'fold', 'q')
 NUC_FLANK_BP = 1000               # nucleosome calls kept per molecule: the window +- this (phasing, boundaries)
 EXPERIMENTAL_NOTE = ('EXPERIMENTAL preview: NFR variants and element co-accessibility. Outputs, parameters and formats '
@@ -56,12 +56,13 @@ class NFROptions:
     mode: str = 'variants'           # 'variants' (discovered) | 'depth' (Timer 175/300/500-bp width states)
     # NFR regions
     nfr_regions: tuple = ()          # ((start, end), ...); empty: detected from the gap >= 175-bp profile
-    detect_method: str = 'enrichment'    # 'enrichment' (depth-aware, over the window's background) | 'fixed'
-    min_fraction: float = 0.05       # enrichment: share of callable reads inside a >= 175-bp gap an NFR needs at least
+    detect_method: str = 'raw'        # 'raw' | 'enrichment' (background gates) | 'fixed'
+    min_fraction: float | None = None  # minimum raw share; default raw 0.10, enrichment 0.05
     detect_q: float = 0.01           # enrichment: BH q of the one-sided binomial test against the background
     min_fold: float = 2.0            # enrichment: share / background at least this
-    min_open_reads: int = 10         # enrichment: reads inside a >= 175-bp gap at least this
+    min_open_reads: int = 10         # raw/enrichment: reads inside a >= 175-bp gap at least this
     detect_threshold: float = 0.15   # fixed: share of callable reads inside a >= 175-bp gap above this
+    clip_gaps_to_region: bool = False  # assign each gap to its largest-overlap region before discovery/quantification
     # elements and co-accessibility
     elements: str = 'variants'       # 'variants' (each variant an element) | 'nfrs' (any opening in the NFR)
     open_threshold: float = 0.5      # a read is open for a variant when P(variant in configuration) >= this
@@ -79,6 +80,10 @@ class NFROptions:
     combo_elements: tuple = ()       # element ids (3-8); empty: automatic (non-overlapping NFR elements)
     combo_max: int = 6
     combo_samples: int = 300
+
+    def __post_init__(self):
+        if self.min_fraction is None:
+            self.min_fraction = .05 if self.detect_method == 'enrichment' else .10
 
     @classmethod
     def from_params(cls, params=None):
@@ -103,8 +108,10 @@ class NFROptions:
             raise ValueError("elements must be 'variants' or 'nfrs'")
         if self.pairs not in ('nfr', 'all'):
             raise ValueError("pairs must be 'nfr' or 'all'")
-        if self.detect_method not in ('enrichment', 'fixed'):
-            raise ValueError("detect_method must be 'enrichment' or 'fixed'")
+        if self.detect_method not in ('raw', 'enrichment', 'fixed'):
+            raise ValueError("detect_method must be 'raw', 'enrichment' or 'fixed'")
+        if not isinstance(self.clip_gaps_to_region, bool):
+            raise ValueError('clip_gaps_to_region must be a boolean')
         ints = ('min_open_reads', 'kmax', 'splits', 'seed', 'min_gap_bp', 'folds', 'max_gaps', 'bootstrap', 'shift_bp', 'robust', 'per_bin',
                 'openness_pad_bp', 'min_spanning', 'min_marginal', 'n_perm', 'within_clusters', 'combo_max', 'combo_samples',
                 'internal_footprint_tolerance_bp')
@@ -243,14 +250,15 @@ def classes_from_rows(sup, state, prefix=''):
 def _nfr_regions(units, region, opt):
     """(regions, detection): the NFR regions to analyse and how they were found (``result['detection']``)."""
     if opt.nfr_regions:
-        return [dict(start=a, end=b, source='given') for a, b in opt.nfr_regions], dict(method='given', note='')
+        return [dict(start=a, end=b, source='given') for a, b in opt.nfr_regions], dict(method='given', enrichment_gates=False, note='')
     if opt.detect_method == 'fixed':
         runs = G.detect_nfrs(units, region['start'], region['end'], opt.detect_threshold)
         detection = dict(method='fixed', threshold=opt.detect_threshold, min_callable=G.MIN_CALLABLE, min_width=G.MIN_WIDTH,
-                         background=None, enrichment_test=False, note='')
+                         background=None, enrichment_test=False, enrichment_gates=False, note='')
     else:
         runs, detection = G.detect_nfrs_enriched(units, region['start'], region['end'], min_fraction=opt.min_fraction,
-                                                 q=opt.detect_q, min_fold=opt.min_fold, min_open_reads=opt.min_open_reads)
+                                                 q=opt.detect_q, min_fold=opt.min_fold, min_open_reads=opt.min_open_reads,
+                                                 method=opt.detect_method)
     return [dict(r, source='detected') for r in runs], detection
 
 
@@ -259,7 +267,7 @@ def _no_region_warning(detection, opt):
         return ('No NFR region found: no stretch where more than '
                 f'{opt.detect_threshold:.0%} of callable reads are inside a >= 175-bp gap. Give the NFR region explicitly.')
     level = f'at least {opt.min_fraction:.0%} of callable reads (and {opt.min_open_reads} reads) inside a >= 175-bp gap'
-    if detection.get('enrichment_test'):
+    if detection.get('enrichment_gates'):
         level += (f', {opt.min_fold:g}x the background of {detection["background"]:.1%} and significant at '
                   f'q <= {opt.detect_q:g}')
     return f'No NFR region found: no stretch of 60 bp or more with {level}. Give the NFR region explicitly.'
@@ -365,6 +373,9 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
     warnings = []
     _report(progress, 'nfr', f'{len(units)} molecules in {region["chrom"]}:{region["start"]}-{region["end"]}')
     regions, detection = _nfr_regions(units, region, opt)
+    if 'opportunity_diagnostic' not in detection:
+        detection['opportunity_diagnostic'] = G.opportunity_diagnostic(units, region['start'], region['end'], regions)
+    assignment_regions = [(r['start'], r['end']) for r in regions] if opt.clip_gaps_to_region else None
     if detection.get('note'):
         warnings.append(detection['note'])
     if not regions:
@@ -380,7 +391,7 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
         nfr_id = f'N{ni + 1}'
         nreg = (reg['start'], reg['end'])
         bar.step(ni, 0, 'per-read gaps')
-        reads = G.collect(units, nreg, opt.min_gap_bp, opt.max_gaps)
+        reads = G.collect(units, nreg, opt.min_gap_bp, opt.max_gaps, assignment_regions)
         n_call = sum(r['callable'] for r in reads)
         for r in reads:
             if r['callable']:
@@ -423,6 +434,7 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
         bar.step(ni, 3 + bar.kmax, f'prevalence (EM, {opt.bootstrap} bootstrap replicates)')
         q = V.quantify(reads, vs, es, opt, progress=bar.bootstrap(ni))
         nfr['catalogue'] = catalogue(vs, es, nreg, opt)
+        nfr['catalogue']['assignment_regions'] = assignment_regions
         rob = V.robust(reads, nreg, vs, opt, n=opt.robust, progress=bar.reruns(ni)) if (vs and opt.robust) else None
         Pv = q['Pv']
         for j, v in enumerate(vs):

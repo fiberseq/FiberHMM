@@ -572,7 +572,7 @@ def transfer(payload, result, nfr_id, bootstrap=None):
     if bootstrap is None:
         bootstrap = int((result.get('parameters') or {}).get('bootstrap', 200))
     units = G.units_of(payload)
-    reads = G.collect(units, tuple(cat['region']), cat['min_gap_bp'], cat['max_gaps'])
+    reads = G.collect(units, tuple(cat['region']), cat['min_gap_bp'], cat['max_gaps'], cat.get('assignment_regions'))
     out = {}
     for ds in sorted({r['dataset'] for r in reads}):
         sub = [r for r in reads if r['dataset'] == ds]

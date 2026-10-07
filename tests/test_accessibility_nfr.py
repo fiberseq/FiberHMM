@@ -492,7 +492,7 @@ def test_a_rare_nfr_is_found_at_depth_and_the_fixed_rule_misses_it():
     assert .06 < rare['peak'] < .15 and rare['fold'] >= 2 and rare['q'] <= .01 and rare['open_reads'] >= 10
     assert rare['background'] == det['background'] and rare['peak_callable'] >= 20 and lo <= rare['peak_at'] < hi
     # the run reports it, with the detection
-    res = run_accessibility(payload(units), dict(FAST, bootstrap=0, kmax=2))
+    res = run_accessibility(payload(units), dict(FAST, bootstrap=0, kmax=2, detect_method='enrichment'))
     assert [n['source'] for n in res['nfrs']] == ['detected', 'detected']
     assert res['detection']['method'] == 'enrichment' and res['nfrs'][1]['detection']['fold'] == rare['fold']
     assert res['nfrs'][1]['profile_peak'] == rare['peak']
@@ -519,7 +519,7 @@ def test_uniformly_closed_chromatin_calls_nothing():
     no_gaps = [fiber(i, [], np.random.default_rng(i)) for i in range(200)]
     regs, det = G.detect_nfrs_enriched(no_gaps, 400, 2800)
     assert regs == [] and det['background'] == G.BACKGROUND_FLOOR
-    res = run_accessibility(payload(units), dict(FAST))
+    res = run_accessibility(payload(units), dict(FAST, detect_method='enrichment'))
     assert res['nfrs'] == [] and res['warnings'][0].startswith('No NFR region found') and 'background' in res['warnings'][0]
 
 
@@ -596,18 +596,18 @@ def test_detection_parameters_are_validated():
         with pytest.raises(ValueError):
             NFROptions.from_params(bad)
     opt = NFROptions.from_params(dict(min_open_reads=5.0, min_fraction=.02))
-    assert opt.detect_method == 'enrichment' and opt.min_open_reads == 5 and opt.min_fraction == .02
+    assert opt.detect_method == 'raw' and opt.min_open_reads == 5 and opt.min_fraction == .02
     assert NFROptions.from_params(dict(detect_threshold=.2)).detect_method == 'fixed'
     assert NFROptions.from_params(dict(detect_threshold=.2, detect_method='enrichment')).detect_method == 'enrichment'
     d = NFROptions().as_dict()
-    assert (d['detect_method'], d['min_fraction'], d['detect_q'], d['min_fold'], d['min_open_reads']) == ('enrichment', .05, .01, 2., 10)
+    assert (d['detect_method'], d['min_fraction'], d['detect_q'], d['min_fold'], d['min_open_reads']) == ('raw', .10, .01, 2., 10)
 
 
 def test_cli_detection_flags(tmp_path, capsys):
     from fiberhmm.inference.accessibility.cli import main
     bam = nfr_bam(tmp_path/'nfr.bam')
     base = ['--bam', str(bam), '--region', 'chr1:700-2400', '--bootstrap', '0', '--cores', '1']
-    main(base + ['--min-fraction', '0.04', '--min-fold', '3', '--detect-q', '0.05', '--min-open-reads', '5', '--output', str(tmp_path/'a')])
+    main(base + ['--detect-method', 'enrichment', '--min-fraction', '0.04', '--min-fold', '3', '--detect-q', '0.05', '--min-open-reads', '5', '--output', str(tmp_path/'a')])
     summary = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert summary['detection']['method'] == 'enrichment' and summary['nfrs'] and summary['nfrs'][0]['peak'] > .5
     p = json.loads((tmp_path/'a'/'result.json').read_text())['parameters']
@@ -622,7 +622,7 @@ def test_cli_detection_flags(tmp_path, capsys):
             main(base + bad + ['--output', str(tmp_path/'c')])
         assert said in capsys.readouterr().err
     main(['--schema'])
-    assert json.loads(capsys.readouterr().out)['min_fraction'] == .05
+    assert json.loads(capsys.readouterr().out)['min_fraction'] == .10
 
 
 def test_a_long_run_of_many_shoulders_does_not_exhaust_the_recursion_limit():
@@ -631,3 +631,92 @@ def test_a_long_run_of_many_shoulders_does_not_exhaust_the_recursion_limit():
                   raw_nuc_intervals=[[x, x + 180] for x in range(0 if r < 20 else 180, 180_000, 360)]) for r in range(40)]
     regs, _ = G.detect_nfrs_enriched(units, 0, 180_000)
     assert len(regs) > 900 and all(a['end'] <= b['start'] for a, b in zip(regs, regs[1:]))
+
+
+@pytest.mark.parametrize('count,n,expected', [(20, 200, True), (19, 200, False), (9, 80, False), (10, 19, False)])
+def test_raw_rate_and_count_floors(count, n, expected):
+    units = nuc_units([(count, (400, 600))], n)
+    regs, det = G.detect_nfrs_raw(units, 0, 1400, min_fold=1000, q=1e-100)
+    assert bool(regs) == expected
+    assert det['method'] == 'raw' and not det['enrichment_gates']
+    if regs:
+        assert regs[0]['fold'] < 1000 and regs[0]['q'] > 1e-100
+        assert regs[0]['background'] == det['background']
+    assert G.detect_nfrs_enriched(units, 0, 1400, min_fold=1000, q=1e-100)[0] == []
+
+
+def test_raw_splits_and_width_floor():
+    units = nuc_units([(20, (400, 600)), (40, (600, 800))], 200)
+    regs, _ = G.detect_nfrs_raw(units, 0, 1400)
+    assert [(r['start'], r['end']) for r in regs] == [(400, 600), (600, 800)]
+    assert G.detect_nfrs_raw(units, 400, 450)[0] == []
+
+
+@pytest.mark.parametrize('enabled', [False, True])
+def test_gap_assignment_before_quantification_and_overflow(enabled):
+    units = nuc_units([(20, (400, 800))], 40)
+    regions = [(400, 550), (550, 800)]
+    res = run_accessibility(payload(units, window=(0, 1400)), dict(
+        nfr_regions=regions, clip_gaps_to_region=enabled, mode='depth', bootstrap=0))
+    assert res['parameters']['clip_gaps_to_region'] is enabled
+    gap_counts = [sum(bool(m['nfr'][n['id']]['gaps']) for m in res['molecules'].values()) for n in res['nfrs']]
+    assert gap_counts == ([0, 20] if enabled else [20, 20])
+    assigned = G.collect(units, regions[0], 60, 1, regions if enabled else None)
+    assert assigned[0]['widest'] == (0 if enabled else 400)
+    assert assigned[0]['overflow'] == 0
+    # equal overlaps always go to the leftmost region, independent of input order
+    tied = [(600, 800), (400, 600)]
+    assert G.collect(units, tied[0], 60, 3, tied)[0]['gaps'] == []
+    assert len(G.collect(units, tied[1], 60, 3, tied)[0]['gaps']) == 1
+
+
+@pytest.mark.parametrize('chemistry,strand', [('ddda', 'CT'), ('dddb', 'GA'), ('hia5-pacbio', '+')])
+def test_opportunity_diagnostic_counts_unmarked_sites_and_skips_missing(chemistry, strand):
+    units = nuc_units([(1, (400, 600)), (1, (800, 1000)), (1, (200, 400)), (1, (1000, 1200))], 4)
+    for u in units:
+        u.update(chemistry=chemistry, strand=strand)
+    units[0].update(positions=[400, 450, 599, 600], hits=[0, 0, 0, 1])
+    units[1].update(positions=list(range(800, 1000, 5)), hits=[0]*40)
+    units[2].update(positions=[], hits=[])
+    det = G.opportunity_diagnostic(units, 300, 1400, [dict(start=800, end=1000)])
+    assert det['background'] == dict(gaps=1, median_opportunities_per_100bp=1.5, sparse_share=1.)
+    assert det['nfr'] == dict(gaps=1, median_opportunities_per_100bp=20., sparse_share=0.)
+    assert det['partial_gaps'] == 1 and det['missing_opportunity_gaps'] == 1
+    units[0]['positions'] = []
+    assert G.opportunity_diagnostic(units[:1], 0, 1400, [])['background']['median_opportunities_per_100bp'] == 0
+    del units[0]['positions']
+    assert not G.opportunity_diagnostic(units[:1], 0, 1400, [])['available']
+
+
+def test_raw_cli_and_saved_enrichment_default(tmp_path, capsys):
+    from fiberhmm.inference.accessibility.cli import main
+    assert NFROptions.from_params(dict(detect_method='enrichment')).min_fraction == .05
+    assert NFROptions(detect_method='enrichment').min_fraction == .05
+    with pytest.raises(ValueError, match='boolean'):
+        NFROptions.from_params(dict(clip_gaps_to_region='false'))
+    units = nuc_units([(20, (400, 800))], 40)
+    evidence = tmp_path/'evidence.json'
+    evidence.write_text(json.dumps(payload(units, window=(0, 1400))))
+    main(['--evidence', str(evidence), '--output', str(tmp_path/'out'), '--mode', 'depth',
+          '--clip-gaps-to-region', '--bootstrap', '0'])
+    result = json.loads((tmp_path/'out'/'result.json').read_text())
+    assert result['parameters']['detect_method'] == 'raw'
+    assert result['parameters']['min_fraction'] == .10
+    assert result['parameters']['clip_gaps_to_region'] is True
+    assert 'opportunity_diagnostic' in result['detection']
+
+
+def test_gap_assignment_is_saved_for_frozen_transfer():
+    from fiberhmm.inference.accessibility import analysis as A
+    units, _ = planted([(0.5, [(400, 800)]), (0.5, [])], n=100, lo=0, hi=1400, window=(0, 1400))
+    data = payload(units, window=(0, 1400))
+    result = run_accessibility(data, dict(nfr_regions=[(400, 550), (550, 800)], clip_gaps_to_region=True,
+                                          bootstrap=0, kmax=2))
+    left, right = result['nfrs']
+    assert not left['variants'] and len(right['variants']) == 1
+    assert right['catalogue']['assignment_regions'] == [(400, 550), (550, 800)]
+    # JSON roundtrip reproduces assignment when the catalogue is used on another payload.
+    result = json.loads(json.dumps(result))
+    transferred = A.transfer(data, result, 'N2', bootstrap=0)
+    assert transferred['datasets']['d']['variants']['V1']['prevalence'] == right['variants'][0]['prevalence']
+    assert A.transfer(data, result, 'N1', bootstrap=0)['datasets']['d']['closed'] == 1.
