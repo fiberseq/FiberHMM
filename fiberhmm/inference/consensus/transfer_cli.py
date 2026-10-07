@@ -220,7 +220,9 @@ def _apply_recaller(args,parser,out,progress,model_path):
         load_options=F.transfer_options(catalog,[],overrides,1)
         for i,w in enumerate(windows):
             progress('load',f"Window {i+1}/{len(windows)} {w['name']}")
-            pooled=pool_payloads([load_bam_payload(datasets,dict(chrom=w['chrom'],start=w['start'],end=w['end']),load_options,progress)],[w])
+            pooled=pool_payloads([load_bam_payload(datasets,dict(chrom=w['chrom'],start=w['start'],end=w['end']),load_options,progress,
+                loader_sampling=dict(cap=0 if load_options['recaller'].efficiency_calibration else load_options['recaller'].max_quantification_molecules,
+                                     seed=load_options['recaller'].sample_seed, mode='recaller'))],[w])
             same=not catalog['frame']['pooled'] and w['strand']=='+' and [w['start'],w['end']]==[frame['start'],frame['end']]
             region=dict(chrom=w['chrom'] if same else 'oriented_BED',start=frame['start'],end=frame['end'])
             jobs.append((w,F.shift_payload(pooled,frame['start'],region)))

@@ -1265,6 +1265,8 @@ def load_region_evidence(
     evidence_scope: str = "region",
     legacy_annotation_frame: Optional[str] = None,
     ma_annotation_frame: str = 'molecular',
+    sampling_counts: Optional[Dict[str, int]] = None,
+    alignment_cache: Optional[Dict[str, object]] = None,
 ) -> List[ReadEvidence]:
     """Load hard-call evidence and selected TF/nucleosome MA layers.
 
@@ -1380,12 +1382,17 @@ def load_region_evidence(
             )
             alignment_occurrence = alignment_occurrences.get(occurrence_key, 0)
             alignment_occurrences[occurrence_key] = alignment_occurrence + 1
+            if sampling_counts is not None:
+                sampling_counts['unknown'] = sampling_counts.get('unknown', 0) + 1
             extracted = hard_observations(
                 read, strand_mode, mode, context_size, prob_threshold
             )
             if extracted is None:
                 continue
             observations, strand = extracted
+            if sampling_counts is not None:
+                sampling_counts['unknown'] -= 1
+                sampling_counts[strand] = sampling_counts.get(strand, 0) + 1
             reference_positions = cigar_to_query_ref(read)
             query_length = int(
                 read.query_length
@@ -1537,6 +1544,8 @@ def load_region_evidence(
                     ),
                 )
             )
+            if alignment_cache is not None:
+                alignment_cache.setdefault(record_sha256, read)
             # ``max_reads`` is a deterministic BAM-order cap.  Once the same
             # first N eligible records returned by the original loader have
             # been collected, continuing to decompress the rest of a deep

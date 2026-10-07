@@ -165,19 +165,12 @@ def _unscored_row(g, gi, ch, reason, molecules):
                 molecules=molecules, status='unscored', unscored_reason=reason)
 
 
-def quantify(sources, classes, tiles, opt, progress, cores=1, frozen=None, sampling=None):
-    """Per class x channel estimates. frozen: a frozen.FrozenClasses (transfer); each channel is then scored with its
-    fixed boxes and spots, no fitting. Returns (rows, molecules, broader, unscored): unscored lists the class x channel
-    pairs no estimate exists for, with the reason (too few molecules in the window, or none spanning the scoring
-    window), so a class near a data end is reported as unscored rather than as unsupported."""
-    rows, mols, broad, unscored = [], [], [], []
-    efficiency = Un.efficiency_factors(sources) if opt.efficiency_calibration else None
+def scoring_windows(sources, classes, tiles, opt, frozen=None, sampling=None):
+    """The shared loader/quantification definition of each scoring window."""
     chem = {s['dataset_id']: s['chemistry'] for s in sources}
     channels = sorted({Un.channel_of(s, u) for s in sources for u in s['units']})
-    groups = D.overlap_groups(classes)
-    tasks, meta = [], []; count_rows = {}
     jmax = max(opt.jitter_ddda_bp, opt.jitter_dddb_bp, opt.jitter_hia5_bp)
-    for gi, grp in enumerate(groups):
+    for gi, grp in enumerate(D.overlap_groups(classes)):
         centre = np.mean([sum(classes[x]['span'])/2 for x in grp])
         t = next((i for i, (a, b) in enumerate(tiles) if a <= centre < b), min(range(len(tiles)), key=lambda i: abs(sum(tiles[i])/2 - centre)))
         # The tile's sites must cover the group's whole scoring window (edge boxes, jitter and flank), or no molecule
@@ -189,7 +182,6 @@ def quantify(sources, classes, tiles, opt, progress, cores=1, frozen=None, sampl
             ok = [i for i, w in enumerate(tiles) if covers(w)]
             t = min(ok, key=lambda i: abs(sum(tiles[i])/2 - centre)) if ok else None
         window = tiles[t] if t is not None else (int(lo) - 20, int(hi) + 20)
-        counts = []
         bounds = {}
         for ch in channels:
             boxes = [_jitter(classes[x], chem[ch.split('::', 1)[0]], opt) for x in grp]
@@ -197,6 +189,22 @@ def quantify(sources, classes, tiles, opt, progress, cores=1, frozen=None, sampl
                 fixed = frozen.fixed(classes, grp, ch, chem[ch.split('::', 1)[0]])
                 boxes = [b or g for g, b in zip(boxes, fixed['boxes'])]
             bounds[ch] = (min(g['L'][0] for g in boxes) - opt.flank_bp, max(g['R'][1] for g in boxes) + opt.flank_bp)
+        yield gi, grp, window, bounds
+
+
+def quantify(sources, classes, tiles, opt, progress, cores=1, frozen=None, sampling=None):
+    """Per class x channel estimates. frozen: a frozen.FrozenClasses (transfer); each channel is then scored with its
+    fixed boxes and spots, no fitting. Returns (rows, molecules, broader, unscored): unscored lists the class x channel
+    pairs no estimate exists for, with the reason (too few molecules in the window, or none spanning the scoring
+    window), so a class near a data end is reported as unscored rather than as unsupported."""
+    rows, mols, broad, unscored = [], [], [], []
+    efficiency = Un.efficiency_factors(sources) if opt.efficiency_calibration else None
+    chem = {s['dataset_id']: s['chemistry'] for s in sources}
+    channels = sorted({Un.channel_of(s, u) for s in sources for u in s['units']})
+    groups = D.overlap_groups(classes)
+    tasks, meta = [], []; count_rows = {}
+    for gi, grp, window, bounds in scoring_windows(sources, classes, tiles, opt, frozen, sampling):
+        counts = []
         units = Un.tile_units(sources, *window, opt.call_min_llr, opt.call_max_bp, efficiency,
                               cap=opt.max_quantification_molecules, seed=opt.sample_seed, counts=counts,
                               scoring_bounds=bounds if opt.max_quantification_molecules else None)
@@ -467,6 +475,21 @@ def run_lattice_recaller(payload, options, output_dir=None, progress=None, froze
     cores = options['compute'].cores
     with shared_worker_pool(cores):
         classes, dropped, tiles, diagnostics = discover(sources, region, opt, progress, cores, sampling=sampling) if frozen is None else frozen.discovery()
+        if classes and hasattr(payload, 'refine'):
+            requirements = []
+            for _, _, window, bounds in scoring_windows(sources, classes, tiles, opt, frozen, sampling):
+                def accepts(source, unit, window=window, bounds=bounds):
+                    ch = Un.channel_of(source, unit)
+                    return ch in bounds and Un.eligible_unit(unit, *window, bounds[ch])
+                # Positions are clipped to the loaded region. No later tranche
+                # can span a scoring box that extends outside that region.
+                accepts.loader_channels = {ch for ch, (lo, hi) in bounds.items()
+                                           if region['start'] < lo and hi < region['end']}
+                requirements.append((window, accepts))
+            payload.refine(requirements)
+            sources = prepare_sources(payload, options)
+            before = digest(payload)
+            write_json(out/'evidence.json.gz', payload)
         rows, mols, broad, unscored = quantify(sources, classes, tiles, opt, progress, cores, frozen=frozen, sampling=sampling) if classes else ([], [], [], [])
         # Optional (recaller.order_replicates > 0, discovery runs only): which classes survive other read orders.
         robustness = order_robustness(sources, region, opt, progress, cores, classes, rows) if frozen is None and opt.order_replicates and classes else None
@@ -509,7 +532,14 @@ def run_lattice_recaller(payload, options, output_dir=None, progress=None, froze
                    display_mode=mode, presentation_revision='lattice_recaller_v1')
     if sampling is not None:
         receipt['molecule_sampling'] = sampling
-        receipt['all_units'] = not any(s[r['phase']] < s['available'] for r in sampling for s in r['strata'])
+        loader_records = [s['load']['loader_sampling'] for s in sources if (s.get('load') or {}).get('loader_sampling')]
+        if not loader_records:
+            loader_records = [r['load']['loader_sampling'] for r in (payload.get('pooling') or {}).get('window_preparation', [])
+                              if (r.get('load') or {}).get('loader_sampling')]
+        if loader_records:
+            receipt['loader_sampling'] = loader_records
+        receipt['all_units'] = not (any(s[r['phase']] < s['available'] for r in sampling for s in r['strata'])
+                                    or any(r['reads_decoded'] < r['eligible_reads'] for r in loader_records))
         receipt['read_sample_cap'] = {n: getattr(opt, n) for n in Cap.NAMES}
         warnings.extend(Cap.notes(sampling))
     if frozen is not None:

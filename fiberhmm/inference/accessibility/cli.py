@@ -1,6 +1,6 @@
 """fiberhmm-nfr (EXPERIMENTAL preview): NFR variants, per-read membership and element co-accessibility for a region.
 
-Loads every molecule in --region with FiberHMM's consensus loader (the same evidence units, unit_ids, duplicate
+Loads regional evidence with FiberHMM's consensus loader (the same evidence units, unit_ids, duplicate
 collapse and DAF channels as fiberhmm-consensus, so results join footprint classes by unit_id), discovers NFR
 variants in each NFR region (given with --nfr, or detected from the gap >= 175-bp profile), and tests element
 co-accessibility. Writes variants.tsv, configurations.tsv, molecules.tsv.gz, coaccess.tsv, combos.tsv, result.json
@@ -160,7 +160,14 @@ def _main(argv=None):
                     f"{options['compute'].maximum_region_bp:,} bp analysis limit (compute.maximum_region_bp)")
         from fiberhmm.inference.consensus.execution import single_threaded_blas
         with single_threaded_blas():
-            payload = load_bam_payload(datasets, {k: window[k] for k in ('chrom', 'start', 'end')}, options, progress)
+            caps = [opt.max_quantification_molecules]
+            if opt.mode != 'depth' or not opt.nfr_regions:
+                caps.append(opt.max_discovery_molecules)
+            sampling = dict(cap=max(caps) if all(caps) else 0, discovery_cap=opt.max_discovery_molecules,
+                            seed=opt.sample_seed, mode='nfr',
+                            windows=opt.nfr_regions or None, nfr_options=opt)
+            payload = load_bam_payload(datasets, {k: window[k] for k in ('chrom', 'start', 'end')}, options, progress,
+                                       loader_sampling=sampling)
     region = payload['region']
     for a, b in opt.nfr_regions:
         if a < region['start'] or b > region['end']:

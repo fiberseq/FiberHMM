@@ -39,7 +39,10 @@ def record(available, discovery, quantification, opt, channel, **scope):
     return dict(**scope, **{n: getattr(opt, n) for n in NAMES},
                 denominator='molecules actually used for quantification after eligibility filters',
                 strata=[dict(stratum=ch, available=counts[0][ch], discovery=None if counts[1] is None else counts[1][ch],
-                             quantification=None if counts[2] is None else counts[2][ch])
+                             quantification=None if counts[2] is None else counts[2][ch],
+                             short={phase: bool(getattr(opt, f'max_{phase}_molecules') and count is not None
+                                                and count[ch] < getattr(opt, f'max_{phase}_molecules'))
+                                    for phase, count in zip(('discovery', 'quantification'), counts[1:])})
                         for ch in sorted(counts[0])])
 
 

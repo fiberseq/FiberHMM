@@ -27,6 +27,21 @@ def full_lattice(source, unit):
     return pos, hit, pa, pp
 
 
+def eligible_unit(u, w0, w1, bounds=None):
+    """The tile and scoring-span filters, before spending a molecule budget."""
+    if u['reference_start'] >= w1 - MIN_OVERLAP or u['reference_end'] <= w0 + MIN_OVERLAP:
+        return False
+    pos = np.asarray(u['positions'], dtype=np.int64)
+    pos = pos[(pos >= w0 - SITE_PAD) & (pos < w1 + SITE_PAD)]
+    if len(pos) < 3:
+        return False
+    if bounds is not None:
+        lo, hi = bounds
+        if not (pos.min() < lo and pos.max() >= hi) or ((pos >= lo) & (pos < hi)).sum() < 2:
+            return False
+    return True
+
+
 def tile_units(sources, w0, w1, call_min_llr=5.0, call_max_bp=100, efficiency=None,
                cap=0, seed=1, counts=None, scoring_bounds=None):
     """Units overlapping [w0, w1) with their sites within SITE_PAD bp, as the prototype's kclass.load + relattice.
@@ -36,17 +51,9 @@ def tile_units(sources, w0, w1, call_min_llr=5.0, call_max_bp=100, efficiency=No
     candidates = []
     for source in sources:
         for u in source['units']:
-            if u['reference_start'] >= w1 - MIN_OVERLAP or u['reference_end'] <= w0 + MIN_OVERLAP:
+            bounds = scoring_bounds[channel_of(source, u)] if scoring_bounds is not None else None
+            if not eligible_unit(u, w0, w1, bounds):
                 continue
-            pos = np.asarray(u['positions'], dtype=np.int64)
-            keep = (pos >= w0 - SITE_PAD) & (pos < w1 + SITE_PAD)
-            if keep.sum() < 3:
-                continue
-            if scoring_bounds is not None:
-                lo, hi = scoring_bounds[channel_of(source, u)]
-                p = pos[keep]
-                if not (p.min() < lo and p.max() >= hi) or ((p >= lo) & (p < hi)).sum() < 2:
-                    continue
             candidates.append((source, u))
     chosen = select(candidates, cap, seed, lambda pair: channel_of(*pair),
                     lambda pair: identity(pair[1]))

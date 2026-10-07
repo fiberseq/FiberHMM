@@ -112,12 +112,29 @@ def pool_payloads(payloads, windows):
             physical_duplex_independence_established=bool(source['units']) and all(u.get('physical_source_names') for u in source['units']),
             joint_duplex_units=sum(bool(u.get('physical_source_names')) for u in source['units']))
     width=windows[0]['end']-windows[0]['start']
-    return dict(region=dict(chrom='oriented_BED',start=0,end=width),strata=list(groups.values()),
+    result = dict(region=dict(chrom='oriented_BED',start=0,end=width),strata=list(groups.values()),
         pooling=dict(schema='fiberhmm.clcr.bed.v1',windows=windows,coordinate_system='0-based oriented BED window',
             ownership='one deterministic locus view per physical molecule, union of recorded amplification aliases',
             strand_frame='oriented_window',provenance_frame='original_genomic',
             excluded_repeated_views=sorted(excluded,key=lambda x:x['unit_id']),retained_molecules=len(chosen),window_preparation=manifests),
         input_files=payloads[0].get('input_files',[]))
+    if any(hasattr(p, 'refine') for p in payloads):
+        from .loader_sampling import SampledPayload
+        def refine(requirements):
+            for payload, window in zip(payloads, windows):
+                if not hasattr(payload, 'refine'):
+                    continue
+                mapped = []
+                for (a, b), predicate in requirements:
+                    span = ((window['end'] - b, window['end'] - a) if window['strand'] == '-'
+                            else (window['start'] + a, window['start'] + b))
+                    def accepts(source, unit, predicate=predicate, window=window):
+                        return predicate(source, orient_unit(unit, window))
+                    mapped.append((span, accepts))
+                payload.refine(mapped)
+            return pool_payloads(payloads, windows)
+        return SampledPayload(result, refine)
+    return result
 
 
 def machine_compute_defaults():

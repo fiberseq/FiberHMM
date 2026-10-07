@@ -168,21 +168,75 @@ when no name exists), with unit ID breaking equal-name ties. Priorities do not
 include tile coordinates or input order. Overlapping tiles with the same eligible
 molecules therefore select the same set; when their candidate sets differ, the
 priorities remain the same, but their lowest-N sets can differ. Shallow strata keep
-all eligible molecules. Sampling is after input filters and duplicate collapse.
+all eligible molecules. The final cap follows input filters and duplicate collapse.
 Tile overlap/site-count checks, and quantification spanning checks, precede the
-cut; likelihood arrays are constructed only for the selected molecules. BAM
-parsing, duplicate collapse, native replay, and evidence export still see all
-molecules. Saving that loading/replay cost would require loader-level sampling.
+cut; likelihood arrays are constructed only for the selected molecules.
+
+When all active phases have finite budgets, BAM preparation first scans only
+names, flags, MAPQ and alignment spans. Each dataset/tile retains a prefix of the
+same read-name hashes, initially 1.5 times its discovery budget. The internal
+`loader_sampling.margin` argument can change this margin. All alignments with a
+selected name are retained together, so full-record identities and equal-name
+tie breaks remain unchanged. Unselected names bypass tag/sequence decoding and
+native replay. BAM blocks still need decompression; the BAM index cannot index
+read-name hashes.
+
+Hia5 has one pooled chemical channel. DAF CT/GA cannot reliably be inferred from
+alignment flags without inspecting assay tags. DAF therefore advances a common
+hash frontier (initially provisioning both channels) until each chemical channel
+has enough usable molecules, or that
+window's candidates are exhausted. It never guesses CT/GA from orientation. Rare or absent channels, heavy PCR
+collapse, or stringent spanning filters can require the full candidate population.
+After collapse and filtering, short windows take the next deterministic tranche.
+Decoded reads and native replay results are cached across tranches. Selected raw
+BAM records are reused for native replay, avoiding another regional BAM scan. When the
+projected sample already covers at least 90% of candidates, preparation loads
+them all without those caches; this avoids sampling overhead near the budget. Once classes
+are known, their actual scoring windows can request further tranches before
+quantification, including frozen transfer's fixed windows. NFR preparation does
+the equivalent for detected or explicitly supplied NFRs. The final phase cap
+still selects exactly the lowest N eligible molecules. Changing the margin does
+not change that selection in the absence of sample-dependent duplicate families or repeated locus views.
+
+Duplicate collapse is restricted to the sampled reads: aliases outside the
+sample are not collapsed against it. Each distinct read name receives an
+independent, evidence-independent hash, so duplicate aliases have independent
+inclusion priorities and the retained aliases can still be collapsed normally.
+This is a sampling approximation, not full-population PCR family reconstruction:
+an omitted alias can change a family's representative or membership. Such
+families are an exception to exact agreement with full-load post-collapse capping.
+
+An uncapped active phase requires all observations. Thus `2000/0`, `0/2000` and
+`0/0` keep the original loader path; frozen transfer needs only its quantification
+budget. Full-population efficiency calibration also disables loader sampling.
+Sampled evidence exports contain only decoded molecules; increasing a budget or
+requesting unlimited analysis requires reloading the BAM, not replaying that
+saved evidence as if it represented the whole population.
 
 `manifest.molecule_sampling` is a list of window records. Each records `phase`,
 `window`, the two caps and seed, and `strata`: `stratum` (`dataset::channel`),
-`available`, `discovery`, and `quantification`. A count is null for the other phase
+`available`, `discovery`, `quantification`, and per-phase `short` flags. A count is null for the other phase
 because discovery tiles and class-group scoring windows need not coincide.
 Quantification records also identify `group`. The `denominator` explains that
 prevalence uses the eligible molecules actually quantified, also recorded in
 `classes.tsv:molecules`, not the full dataset depth. Capping does not rediscover
 the catalogue. Warnings state how many molecules were used out of those available.
 `read_sample_cap` records the controls and `all_units` reflects selection.
+
+`manifest.loader_sampling` (NFR: `detection.loader_sampling`) contains the loader
+receipts, also saved under each source's `load.loader_sampling` in evidence.
+`reads_seen` counts fetched regional BAM records, `eligible_reads` counts records
+after the cheap flag/MAPQ gate, and `reads_decoded` counts records sent to the
+expensive decoder. `decode_attempts` counts decoding across all tranches (cached
+reads are not decoded again). `usable_after_collapse` counts retained evidence
+units; `windows[].strata` gives eligible counts, filled budgets (`used`), and
+`short`/`exhausted` flags for each loader scope. Actual discovery/quantification
+use is in `molecule_sampling`, whose available denominator is now the loaded
+eligible sample, not an estimate of full BAM depth. DAF's pre-decode per-channel
+`reads_seen` is null because its channel is unknown; shared dataset counts and
+exact decoded CT/GA counts are reported instead. No full-depth chemical counts
+are invented from alignment orientation. Pooled BED receipts preserve the
+original genomic loading windows in `pooling.window_preparation`.
 
 When both caps are 0, sampling metadata and controls are omitted to preserve
 legacy output bytes (apart from the existing wall-clock timing fields). Absent

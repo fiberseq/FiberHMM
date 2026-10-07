@@ -1,5 +1,6 @@
-"""Shared, unsampled BAM preparation for CLI and FiberBrowser consensus."""
-from collections import defaultdict
+"""Shared BAM preparation for CLI and FiberBrowser consensus."""
+from collections import Counter, defaultdict
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 import hashlib
@@ -49,17 +50,37 @@ def _chemistry_runtime(runtime, chemistry, **unused):
 
 
 def _load_dataset_evidence(state, dsid, chemistry, *, chrom, evidence_start, evidence_end,
-                           runtime, minimum_mapq, legacy_annotation_frame=None, **unused):
+                           runtime, minimum_mapq, legacy_annotation_frame=None, read_names=None, decode_cache=None, alignment_cache=None, **unused):
     ds=state.get_dataset(dsid)
     preset,model,context,mode,hit,miss=_chemistry_runtime(runtime,chemistry)
     reads=[]; files=[]
     for i,path in enumerate(ds.paths):
+        cached = decode_cache.get(i) if decode_cache is not None else None
+        pending = read_names - cached['names'] if cached else read_names
+        if cached and not pending:
+            reads.extend(deepcopy(cached['reads'])); files.append(deepcopy(cached['diagnostics']))
+            continue
         actual,lo,hi,length=_resolve_bam_fetch_region(path,chrom,evidence_start,evidence_end)
         diagnostics=dict(requested_chrom=chrom,bam_chrom=actual,fetch_start=lo,fetch_end=hi)
-        reads.extend(runtime['load_bam'](path,actual,lo,hi,strand_mode=preset['strand_mode'],mode=mode,
+        if read_names is not None:diagnostics['decoded_channels']={}
+        loaded=runtime['load_bam'](path,actual,lo,hi,strand_mode=preset['strand_mode'],mode=mode,
             context_size=context,prob_threshold=preset.get('prob_threshold'),llr_hit=hit,llr_miss=miss,
             min_mapq=minimum_mapq,tf_layer='tf',nuc_layer='nuc',max_reads=0,input_index=i,ma_annotation_frame='auto',
-            load_diagnostics=diagnostics,**({'legacy_annotation_frame':legacy_annotation_frame} if legacy_annotation_frame is not None else {})))
+            load_diagnostics=diagnostics,**({'alignment_cache':alignment_cache.setdefault(i,{})} if alignment_cache is not None else {}),
+            **({'required_read_names':pending,'sampling_counts':diagnostics['decoded_channels']} if read_names is not None else {}),**({'legacy_annotation_frame':legacy_annotation_frame} if legacy_annotation_frame is not None else {}))
+        if cached:
+            diagnostics = dict(cached['diagnostics'], **diagnostics)
+            loaded = sorted(cached['reads'] + loaded, key=lambda r: r.input_record_ordinal)
+            counts = Counter(cached['diagnostics']['decoded_channels'])
+            counts.update(diagnostics['decoded_channels']); diagnostics['decoded_channels'] = dict(counts)
+            diagnostics['eligible_read_count'] = len(loaded)
+            diagnostics['required_read_name_count'] = len(read_names)
+            diagnostics['read_name_excluded_count'] = max(0, diagnostics['read_name_excluded_count'] -
+                                                        sum(cached['diagnostics']['decoded_channels'].values()))
+        if decode_cache is not None:
+            decode_cache[i] = dict(names=set(read_names), reads=loaded, diagnostics=diagnostics)
+            loaded = deepcopy(loaded)
+        reads.extend(loaded)
         files.append(diagnostics)
     return reads,model,preset,dict(source_type='bam',evidence_reads=len(reads),files=files)
 
@@ -87,8 +108,12 @@ def check_dataset_chemistries(datasets):
             _dataset_chemistry(item,paths)
 
 
-def load_bam_payload(datasets, region, options=None, progress=None):
-    """datasets: [{dataset_id, paths, chemistry?}]; metadata conflicts are errors."""
+def load_bam_payload(datasets, region, options=None, progress=None, *, loader_sampling=None):
+    """datasets: [{dataset_id, paths, chemistry?}]; metadata conflicts are errors.
+
+    loader_sampling is an internal phase-policy override (cap, seed, mode,
+    optional margin), used by NFR and quantification-only frozen transfer.
+    """
     from .parameters import parse_options
     options=options or parse_options({'cr':{'engine':STAGED_MODE}})
     if options['cr'].engine not in STAGED_LIKE:
@@ -104,7 +129,8 @@ def load_bam_payload(datasets, region, options=None, progress=None):
         rows[dsid]=SimpleNamespace(paths=paths,path=paths[0],label=dsid,data_type='bam',
             family_scan_chemistry=chemistry,available_layers={})
     state=SimpleNamespace(get_dataset=rows.get)
-    result=_load_payload(state,dict(region,dataset_ids=list(rows)),options,progress or (lambda *a:None))
+    result=_load_payload(state,dict(region,dataset_ids=list(rows)),options,progress or (lambda *a:None),
+                         loader_sampling=loader_sampling)
     result['input_files']=[dict(dataset_id=k,path=str(Path(p).resolve()),size=Path(p).stat().st_size,
         mtime_ns=Path(p).stat().st_mtime_ns) for k,ds in rows.items() for p in ds.paths]
     for source in result['strata']: source['model_manifest']['chemistry_resolution']=chemistry_records[source['dataset_id']]
@@ -221,8 +247,17 @@ def _dataset_daf_run_mask(chemistry, options, label, ds=None):
     return calls
 
 
-def _load_payload(state,request,options,progress):
-    """Every regional read before collapse; no viewport read sample enters inference."""
+def _load_payload(state,request,options,progress, *, loader_sampling=None):
+    from .loader_sampling import load_sampled, policy
+    sampling = loader_sampling if loader_sampling is not None else policy(options)
+    if sampling and sampling['cap'] and all(getattr(state.get_dataset(ds), 'data_type', 'bam') == 'bam'
+                                            for ds in request['dataset_ids']):
+        return load_sampled(state, request, options, progress, sampling, _load_payload_once)
+    return _load_payload_once(state, request, options, progress)
+
+
+def _load_payload_once(state,request,options,progress):
+    """Decode only the requested names, then collapse and replay retained alignments."""
     from fiberhmm.inference.consensus.adapter import evidence_unit,replay_alignment,condition_unit_on_m5c
     from fiberhmm.inference.tf_recaller import ENZYME_PRESETS
     runtime=loader_runtime();strata=[];start,end=request['start'],request['end'];chrom=request['chrom']
@@ -238,9 +273,13 @@ def _load_payload(state,request,options,progress):
         from fiberhmm.core.bam_reader import daf_run_mask_scope
         with daf_run_mask_scope(*mask):
             from fiberhmm.inference.consensus.progress import report
-            report(progress,'loading',f'{ds.label}: loading all regional observations ({chemistry})',dataset_id=dsid)
+            report(progress,'loading',f'{ds.label}: loading '+('sampled' if '_read_names' in request else 'all')+f' regional observations ({chemistry})',dataset_id=dsid)
             reads,model,preset,diagnostics=_load_dataset_evidence(state,dsid,chemistry,chrom=chrom,
                 evidence_start=start,evidence_end=end,maximum_reads=0,runtime=runtime,
+                read_names=request.get('_read_names',{}).get(dsid),
+                decode_cache=request.get('_decode_cache',{}).get(dsid),
+                alignment_cache=(request.get('_alignment_cache',{}).get(dsid) if options['input'].correct_native
+                                 or (chemistry=='ddda' and options['input'].ddda_m5c_correction) else None),
                 allow_population=True,require_nucleosomes=False,tf_layer='tf',minimum_mapq=options['input'].minimum_mapq,
                 **({'legacy_annotation_frame':options['input'].legacy_hia5_annotation_frame} if chemistry.startswith('hia5') and options['cr'].engine in (HARMONIZATION_MODE,*STAGED_LIKE) else {}))
             if any(read.pair_partner for read in reads):
@@ -264,13 +303,22 @@ def _load_payload(state,request,options,progress):
                 if ds.data_type!='bam':raise ValueError(f'{ds.label}: actual-query decoder replay requires BAM; disable native replay to use existing BigBed TF calls')
                 import pysam
                 lookup=defaultdict(list);recall_excluded={}
-                for read,unit in zip(representatives,units):lookup[str(read.record_sha256)].append((read,unit))
+                replayed=request.get('_replay_cache',{}).get(dsid)
+                for read,unit in zip(representatives,units):
+                    if replayed is not None and unit['unit_id'] in replayed:
+                        members=unit['source_members']
+                        unit.update(deepcopy(replayed[unit['unit_id']]))
+                        unit['source_members']=members
+                    else:
+                        lookup[str(read.record_sha256)].append((read,unit))
+                replay_names={r.name for matches in lookup.values() for r, _ in matches} if replayed is not None else None
                 found=set()
                 _,_,context_size,mode,_,_=_chemistry_runtime(runtime,chemistry,allow_population=True)
                 enzyme='hia5' if chemistry.startswith('hia5') else chemistry
                 minimum_llr=getattr(options['input'],chemistry.replace('-','_')+'_minimum_llr')
                 if minimum_llr<0:minimum_llr=ENZYME_PRESETS[enzyme]['min_llr']
-                for path in _flatten_paths(getattr(ds,'paths',None) or ds.path):
+                alignment_cache=request.get('_alignment_cache',{}).get(dsid)
+                for input_index,path in enumerate(_flatten_paths(getattr(ds,'paths',None) or ds.path)):
                     actual,lo,hi,_=_resolve_bam_fetch_region(path,chrom,start,end)
                     with pysam.AlignmentFile(path,'rb') as bam:
                         # 'disabled' legacy tags that fibertools wrote are molecular
@@ -281,9 +329,13 @@ def _load_payload(state,request,options,progress):
                             legacy_frame=(resolve_disabled_legacy_frame(bam.header) or ('disabled',))[0]
                         from fiberhmm.inference.consensus.adapter import called_circular
                         circular_calls=called_circular(bam.header)
-                        for alignment in bam.fetch(actual,lo,hi):
+                        cached_file=alignment_cache.get(input_index,{}) if alignment_cache is not None else None
+                        cached_keys={id(a):k for k,a in cached_file.items()} if cached_file is not None else None
+                        alignments=(a for k,a in cached_file.items() if k in lookup) if cached_file is not None else bam.fetch(actual,lo,hi)
+                        for alignment in alignments:
                             if alignment.is_secondary or alignment.is_supplementary:continue
-                            key=hashlib.sha256(alignment.to_string().encode()).hexdigest()
+                            if replay_names is not None and alignment.query_name not in replay_names:continue
+                            key=cached_keys[id(alignment)] if cached_keys is not None else hashlib.sha256(alignment.to_string().encode()).hexdigest()
                             if key not in lookup or key in found:continue
                             if len(found)%32==0:
                                 report(progress,'native',f'{ds.label}: replaying the native caller {len(found)}/{len(lookup)} alignments',
@@ -327,6 +379,9 @@ def _load_payload(state,request,options,progress):
                             found.add(key)
                 if len(found)!=len(lookup):raise ValueError(f'{ds.label}: could not identify every representative alignment for native replay')
                 units,diagnostics=_exclude_recall_failures(units,recall_excluded,ds.label,diagnostics)
+                if replayed is not None:
+                    for unit in units:
+                        replayed[unit['unit_id']]=deepcopy(unit)
             # Keep chemical CT/GA order, but never split Hia5 by mapping orientation.
             units.sort(key=lambda u:((0 if u['strand']=='CT' else 1),u['unit_id']) if chemistry in ('ddda','dddb') else (0,u['unit_id']))
             model_hash=hashlib.sha256(model.emissionprob_.astype('<f8').tobytes()).hexdigest()

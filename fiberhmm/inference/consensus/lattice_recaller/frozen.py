@@ -199,7 +199,7 @@ class FrozenClasses:
 
     def __init__(self, catalog, chemistry, dataset_map=None, exclusions=None, window=None):
         self.catalog = catalog; self.chemistry = dict(chemistry); self.dataset_map = dict(dataset_map or {})
-        self.exclusions = exclusions or []; self.window = window; self.channel_map = {}
+        self.exclusions = exclusions if exclusions is not None else []; self.window = window; self.channel_map = {}
         for target, source in self.dataset_map.items():
             if not any(ch['dataset'] == source for ch in catalog['channels'].values()):
                 raise ValueError(f'--dataset-map {target}={source}: no frozen channel of source dataset {source}')
@@ -286,7 +286,21 @@ def exclude_training(payload, catalog):
             else:
                 keep.append(u)
         strata.append(dict(s, units=keep))
-    return dict(payload, strata=strata), excluded
+    result = dict(payload, strata=strata)
+    if hasattr(payload, 'refine'):
+        from ..loader_sampling import SampledPayload
+        def refine(requirements):
+            mapped = []
+            for span, predicate in requirements:
+                def accepts(source, unit, predicate=predicate):
+                    return not (molecule_keys(unit) & training) and predicate(source, unit)
+                mapped.append((span, accepts))
+            payload.refine(mapped)
+            body, ledger = exclude_training(payload, catalog)
+            excluded[:] = ledger
+            return body
+        result = SampledPayload(result, refine)
+    return result, excluded
 
 
 def apply_catalog(catalog, payload, output_dir, *, parameters=None, cores=None, dataset_map=None, include_training=False,
@@ -322,7 +336,7 @@ def shift_payload(payload, origin, region):
     from ..regions import orient_unit
     width = payload['region']['end'] - payload['region']['start']
     out = dict(payload, region=region, strata=[])
-    if origin == 0:
+    if origin == 0 and not hasattr(payload, 'refine'):
         out['strata'] = payload['strata']; return out
     ident = dict(chrom='oriented', start=0, end=width, strand='+', name='frame')
     for s in payload['strata']:
@@ -332,4 +346,17 @@ def shift_payload(payload, origin, region):
             v['unit_id'] = u['unit_id']; v['genomic_provenance'] = dict(u['genomic_provenance'], coordinate_origin=origin)
             units.append(v)
         out['strata'].append(dict(s, units=units))
+    if hasattr(payload, 'refine'):
+        from ..loader_sampling import SampledPayload
+        def refine(requirements):
+            mapped = []
+            for (a, b), predicate in requirements:
+                def accepts(source, unit, predicate=predicate):
+                    shifted = orient_unit(unit, ident, origin=origin)
+                    shifted['unit_id'] = unit['unit_id']
+                    return predicate(source, shifted)
+                mapped.append(((a - origin, b - origin), accepts))
+            payload.refine(mapped)
+            return shift_payload(payload, origin, region)
+        return SampledPayload(out, refine)
     return out

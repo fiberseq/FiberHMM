@@ -2,6 +2,12 @@
 
 ## Unreleased: experimental preview (not part of 3.0.0)
 
+- Consensus, frozen transfer and NFR can now sample BAM read names before tag
+  decoding and native replay when all active molecule budgets are finite.
+  Stable per-window hash frontiers oversample, top up after eligibility filters,
+  and cache decoded evidence across tranches. Loader receipts report
+  seen/decoded/retained counts and shortages; zero budgets preserve the full
+  loader path.
 - Add configurable molecule depth budgets to lattice-recaller footprint classes
   and NFR accessibility: `--max-discovery-molecules` (2000 per dataset/chemical
   channel), `--max-quantification-molecules` (0, all), and `--sample-seed` (1).

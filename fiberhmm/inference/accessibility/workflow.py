@@ -392,6 +392,9 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
         sampling.append(Cap.record(detection_units, discovery_units, None, opt, G.sampling_channel,
                                    phase='discovery', window=[region['start'], region['end']], purpose='opportunity_diagnostic' if opt.nfr_regions else 'region_detection'))
         detection['molecule_sampling'] = sampling
+        loader_records = [s['load']['loader_sampling'] for s in payload['strata'] if (s.get('load') or {}).get('loader_sampling')]
+        if loader_records:
+            detection['loader_sampling'] = loader_records
     if 'opportunity_diagnostic' not in detection:
         detection['opportunity_diagnostic'] = G.opportunity_diagnostic(discovery_units, region['start'], region['end'], regions)
     assignment_regions = [(r['start'], r['end']) for r in regions] if opt.clip_gaps_to_region else None
