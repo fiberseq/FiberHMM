@@ -124,7 +124,7 @@ def freeze_run(run_dir, output):
 
 def load_catalog(path_or_body):
     """Read and validate a catalog (path or already-parsed JSON); spots come back keyed by int position."""
-    from ..parameters import parse_options
+    from ..parameters import parse_options, saved_parameters
     body = copy.deepcopy(path_or_body) if isinstance(path_or_body, dict) else read_json(path_or_body)
     schema = body.get('schema')
     if schema != SCHEMA:
@@ -134,7 +134,7 @@ def load_catalog(path_or_body):
         raise ValueError('Frozen-class catalog content digest does not match (edited or truncated file)')
     if body.get('engine') != MODE:
         raise ValueError('Frozen-class catalog engine must be lattice_recaller')
-    options = parse_options(body['parameters'])
+    options = parse_options(saved_parameters(body['parameters']))
     if options['cr'].engine != MODE:
         raise ValueError('Frozen-class catalog parameters are not lattice-recaller parameters')
     region = body['frame']['region']
@@ -250,13 +250,15 @@ class FrozenClasses:
 
 # ------------------------------------------------------------------------------------------------ apply
 def transfer_options(catalog, strata, overrides=None, cores=None):
-    """The source run's parameters; only preparation/execution groups may be overridden."""
-    from ..parameters import parse_options
-    values = copy.deepcopy(catalog['parameters'])
+    """The source run's parameters; only preparation/execution groups and molecule budgets may be overridden."""
+    from ..parameters import parse_options, saved_parameters
+    from ...depth_cap import NAMES
+    values = saved_parameters(catalog['parameters'])
     for group, settings in (overrides or {}).items():
-        if group not in OVERRIDABLE_GROUPS:
+        sampling_only = group == 'recaller' and not (set(settings) - set(NAMES))
+        if group not in OVERRIDABLE_GROUPS and not sampling_only:
             raise ValueError(f"Parameter group '{group}' is fixed by the frozen catalog; a transfer may change only "
-                             + ', '.join(OVERRIDABLE_GROUPS))
+                             + ', '.join(OVERRIDABLE_GROUPS) + ' and recaller molecule budgets')
         values.setdefault(group, {}).update(settings)
     values['families']['stop_after'] = 'resolved'
     # The read-order check tests discovery; a transfer discovers nothing, so a source run's setting does not apply.

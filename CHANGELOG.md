@@ -2,6 +2,17 @@
 
 ## Unreleased: experimental preview (not part of 3.0.0)
 
+- Add configurable molecule depth budgets to lattice-recaller footprint classes
+  and NFR accessibility: `--max-discovery-molecules` (2000 per dataset/chemical
+  channel), `--max-quantification-molecules` (0, all), and `--sample-seed` (1).
+  Either cap at 0 disables that sampling phase. Stable hash priorities balance
+  datasets and DAF CT/GA channels across overlapping tiles. Quantification uses
+  the fixed discovered catalogue and selected eligible denominators; manifests
+  record counts, budgets and capping notes. Both caps at 0 retain legacy output
+  bytes. The browser schema exposes the consensus controls in `recaller`; NFR
+  uses the same field names in its parameter group. Historical fitted consensus
+  engines retain their existing behavior.
+
 - **EXPERIMENTAL: `fiberhmm-nfr`, NFR variants and element co-accessibility
   (`fiberhmm.inference.accessibility`).** A preview for testing in
   FiberBrowser; outputs, parameters and formats (schema

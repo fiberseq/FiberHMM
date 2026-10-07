@@ -170,7 +170,8 @@ def test_outputs_do_not_depend_on_read_order_and_are_byte_identical(tmp_path):
     states = [(.3, [(800, 1000), (1400, 1700), (2100, 2300)]), (.2, [(1480, 1620), (2100, 2300)]), (.2, [(800, 1000)]), (.3, [])]
     units, _ = planted(states, n=250, seed=6)
     shuffled = list(units); random.Random(0).shuffle(shuffled)
-    params = dict(FAST, nfr_regions=[(780, 1020), (1380, 1720), (2080, 2320)], elements='nfrs')
+    params = dict(FAST, nfr_regions=[(780, 1020), (1380, 1720), (2080, 2320)], elements='nfrs',
+                  max_discovery_molecules=0, max_quantification_molecules=0)
     a = run_accessibility(payload(units), params, tmp_path/'a')
     b = run_accessibility(payload(shuffled), params, tmp_path/'b')
     assert len(a['pairs']) == 3 and a['combos']['status'] == 'ok'          # the pair and combination files are not empty

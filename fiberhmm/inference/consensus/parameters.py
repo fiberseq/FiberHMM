@@ -1,7 +1,8 @@
 """One parameter contract shared by the CLI and Browser Footprint panel.
 
-Inference parameters deliberately exclude display thresholds. Nothing here caps
-the number of reads, families, or hits; compute limits fail explicitly instead.
+Inference parameters deliberately exclude display thresholds. Molecule budgets
+are explicit discovery and quantification sampling controls; other compute limits
+fail explicitly.
 """
 from __future__ import annotations
 
@@ -180,6 +181,9 @@ class FamilyStageOptions:
 
 @dataclass
 class RecallerOptions:
+    max_discovery_molecules: int = control(2000, 'Discovery molecules per channel (0 = all)', 'Stable hash sample per dataset and chemical channel, independently in each discovery tile, after evidence filters and duplicate collapse.', 0, None, 1)
+    max_quantification_molecules: int = control(0, 'Quantification molecules per channel (0 = all)', 'Score the same discovered catalogue on a stable sample per dataset and chemical channel in each scoring window. Prevalence uses the selected eligible molecules.', 0, None, 1)
+    sample_seed: int = control(1, 'Molecule sampling seed', 'Stable molecule hash seed shared across overlapping tiles; independent of the discovery initialization seed.', 0, None, 1)
     stringency: float = control(0.9, 'k-means stringency (prediction strength)', 'Discovery chooses the largest k whose split-half prediction strength reaches this value and keeps classes at least this stable. Higher = fewer, coarser classes; lower (e.g. 0.6-0.7) finds more and finer classes, such as composite footprints or dense Hia5 data, at the cost of near-duplicates.', 0.05, 1.0, 0.05)
     kmax: int = control(40, 'Maximum k per tile', 'Upper limit on clusters per discovery tile.', 1, 200, 1)
     prediction_splits: int = control(6, 'Prediction-strength split-halves', 'Molecule split-halves used to score each k.', 2, 50, 1)
@@ -388,4 +392,19 @@ def options_dict(options):
         if group in out and not out[group].get(switch):
             for name in names:
                 out[group].pop(name, None)
+    if 'recaller' in out and (out.get('cr', {}).get('engine') != 'lattice_recaller' or
+                              not any(out['recaller'].get(n) for n in ('max_discovery_molecules', 'max_quantification_molecules'))):
+        for name in ('max_discovery_molecules', 'max_quantification_molecules', 'sample_seed'):
+            out['recaller'].pop(name, None)
     return out
+
+
+def saved_parameters(values):
+    """Old and explicitly uncapped receipts omit sampling fields; replay them without the new default cap."""
+    from copy import deepcopy
+    values = deepcopy(values)
+    if values.get('cr', {}).get('engine', 'lattice_recaller') == 'lattice_recaller':
+        recaller = values.setdefault('recaller', {})
+        recaller.setdefault('max_discovery_molecules', 0)
+        recaller.setdefault('max_quantification_molecules', 0)
+    return values

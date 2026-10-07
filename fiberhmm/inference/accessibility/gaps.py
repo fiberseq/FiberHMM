@@ -26,6 +26,11 @@ def channel(u):
     return f"{u['dataset']}::{u['strand']}"
 
 
+def sampling_channel(u):
+    strand = 'pooled' if (u.get('chemistry') or '').startswith('hia5') else u['strand']
+    return f"{u['dataset']}::{strand}"
+
+
 def nucleosomes(u, nuc_min=NUC_MIN):
     return sorted((int(a), int(b)) for a, b in u.get('raw_nuc_intervals') or () if b - a >= nuc_min)
 

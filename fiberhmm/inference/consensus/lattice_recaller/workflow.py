@@ -19,6 +19,7 @@ import numpy as np
 
 from ..artifacts import digest, write_json
 from ..parameters import options_dict
+from ... import depth_cap as Cap
 from . import discovery as D, model as Mo, units as Un
 
 MODE = 'lattice_recaller'
@@ -71,11 +72,18 @@ def _jitter(g, chemistry, opt):
     return dict(L=[g['L'][0] - J, g['L'][1]], R=[g['R'][0], g['R'][1] + J], span=g['span'])
 
 
-def discover(sources, region, opt, progress, cores=1):
+def discover(sources, region, opt, progress, cores=1, sampling=None):
     tiles = _tiles(region['start'], region['end'], opt.tile_bp, opt.tile_step_bp)
     found, diagnostics, tasks, which = [], [], [], []
     for t, (w0, w1) in enumerate(tiles):
-        units = Un.tile_units(sources, w0, w1, opt.call_min_llr, opt.call_max_bp)
+        counts = []
+        units = Un.tile_units(sources, w0, w1, opt.call_min_llr, opt.call_max_bp,
+                              cap=opt.max_discovery_molecules, seed=opt.sample_seed, counts=counts)
+        if sampling is not None:
+            available, chosen = counts
+            used = chosen if len(units) >= opt.minimum_channel_units else []
+            sampling.append(Cap.record(available, used, None, opt, lambda pair: Un.channel_of(*pair),
+                                       phase='discovery', window=[w0, w1]))
         if len(units) >= opt.minimum_channel_units:
             tasks.append((units, opt)); which.append((t, w0, w1, len(units)))
     done = lambda i: progress('recaller_discovery', f'tile {which[i][0] + 1}/{len(tiles)} {which[i][1]}-{which[i][2]}: {which[i][3]} molecules')
@@ -157,7 +165,7 @@ def _unscored_row(g, gi, ch, reason, molecules):
                 molecules=molecules, status='unscored', unscored_reason=reason)
 
 
-def quantify(sources, classes, tiles, opt, progress, cores=1, frozen=None):
+def quantify(sources, classes, tiles, opt, progress, cores=1, frozen=None, sampling=None):
     """Per class x channel estimates. frozen: a frozen.FrozenClasses (transfer); each channel is then scored with its
     fixed boxes and spots, no fitting. Returns (rows, molecules, broader, unscored): unscored lists the class x channel
     pairs no estimate exists for, with the reason (too few molecules in the window, or none spanning the scoring
@@ -167,7 +175,7 @@ def quantify(sources, classes, tiles, opt, progress, cores=1, frozen=None):
     chem = {s['dataset_id']: s['chemistry'] for s in sources}
     channels = sorted({Un.channel_of(s, u) for s in sources for u in s['units']})
     groups = D.overlap_groups(classes)
-    tasks, meta = [], []
+    tasks, meta = [], []; count_rows = {}
     jmax = max(opt.jitter_ddda_bp, opt.jitter_dddb_bp, opt.jitter_hia5_bp)
     for gi, grp in enumerate(groups):
         centre = np.mean([sum(classes[x]['span'])/2 for x in grp])
@@ -181,7 +189,32 @@ def quantify(sources, classes, tiles, opt, progress, cores=1, frozen=None):
             ok = [i for i, w in enumerate(tiles) if covers(w)]
             t = min(ok, key=lambda i: abs(sum(tiles[i])/2 - centre)) if ok else None
         window = tiles[t] if t is not None else (int(lo) - 20, int(hi) + 20)
-        units = Un.tile_units(sources, *window, opt.call_min_llr, opt.call_max_bp, efficiency)
+        counts = []
+        bounds = {}
+        for ch in channels:
+            boxes = [_jitter(classes[x], chem[ch.split('::', 1)[0]], opt) for x in grp]
+            if frozen is not None and (sampling is not None or opt.max_quantification_molecules):
+                fixed = frozen.fixed(classes, grp, ch, chem[ch.split('::', 1)[0]])
+                boxes = [b or g for g, b in zip(boxes, fixed['boxes'])]
+            bounds[ch] = (min(g['L'][0] for g in boxes) - opt.flank_bp, max(g['R'][1] for g in boxes) + opt.flank_bp)
+        units = Un.tile_units(sources, *window, opt.call_min_llr, opt.call_max_bp, efficiency,
+                              cap=opt.max_quantification_molecules, seed=opt.sample_seed, counts=counts,
+                              scoring_bounds=bounds if opt.max_quantification_molecules else None)
+        if sampling is not None:
+            available, chosen = counts
+            def eligible(pair):
+                source, u = pair
+                pos = np.asarray(u['positions']); lo, hi = bounds[Un.channel_of(source, u)]
+                pos = pos[(pos >= window[0] - Un.SITE_PAD) & (pos < window[1] + Un.SITE_PAD)]
+                return pos.min() < lo and pos.max() >= hi and ((pos >= lo) & (pos < hi)).sum() >= 2
+            available = [p for p in available if eligible(p)]
+            chosen = [p for p in chosen if eligible(p)]
+            rec = Cap.record(available, None, chosen, opt, lambda pair: Un.channel_of(*pair),
+                             phase='quantification', window=list(window), group=gi + 1)
+            sampling.append(rec)
+            for row in rec['strata']:
+                count_rows[gi, row['stratum']] = row
+                row['quantification'] = 0
         for ch in channels:
             us = [u for u in units if u['ch'] == ch]
             if len(us) < opt.minimum_channel_units:
@@ -200,6 +233,8 @@ def quantify(sources, classes, tiles, opt, progress, cores=1, frozen=None):
             unscored += [_unscored_row(classes[x], gi, ch, f'no_spanning_molecules (none of {n_units} molecules has sites beyond '
                                        f'both ends of the scoring window, edge boxes +/- recaller.flank_bp {opt.flank_bp})', 0) for x in grp]
             continue
+        if (gi, ch) in count_rows:
+            count_rows[gi, ch]['quantification'] = int(res['n'])
         k = len(grp); w = res['w']
         for c, x in enumerate(grp):
             g = classes[x]; lb = Mo.wilson_lo(w[c]*res['n'], res['n'])
@@ -427,12 +462,12 @@ def run_lattice_recaller(payload, options, output_dir=None, progress=None, froze
         raise ValueError('families.stop_after applies to staged_native_families only; the lattice recaller runs in one pass')
     before = digest(payload); sources = prepare_sources(payload, options)
     write_json(out/'evidence.json.gz', payload)
-    warnings = []
+    warnings = []; sampling = [] if Cap.enabled(opt) else None
     from ..execution import shared_worker_pool
     cores = options['compute'].cores
     with shared_worker_pool(cores):
-        classes, dropped, tiles, diagnostics = discover(sources, region, opt, progress, cores) if frozen is None else frozen.discovery()
-        rows, mols, broad, unscored = quantify(sources, classes, tiles, opt, progress, cores, frozen=frozen) if classes else ([], [], [], [])
+        classes, dropped, tiles, diagnostics = discover(sources, region, opt, progress, cores, sampling=sampling) if frozen is None else frozen.discovery()
+        rows, mols, broad, unscored = quantify(sources, classes, tiles, opt, progress, cores, frozen=frozen, sampling=sampling) if classes else ([], [], [], [])
         # Optional (recaller.order_replicates > 0, discovery runs only): which classes survive other read orders.
         robustness = order_robustness(sources, region, opt, progress, cores, classes, rows) if frozen is None and opt.order_replicates and classes else None
     if robustness is not None:
@@ -472,6 +507,11 @@ def run_lattice_recaller(payload, options, output_dir=None, progress=None, froze
                                  **({} if robustness is None else dict(order_robustness=robustness))),
                    browser_sources=payload.get('browser_sources'), pooling=payload.get('pooling'), input_files=payload.get('input_files'),
                    display_mode=mode, presentation_revision='lattice_recaller_v1')
+    if sampling is not None:
+        receipt['molecule_sampling'] = sampling
+        receipt['all_units'] = not any(s[r['phase']] < s['available'] for r in sampling for s in r['strata'])
+        receipt['read_sample_cap'] = {n: getattr(opt, n) for n in Cap.NAMES}
+        warnings.extend(Cap.notes(sampling))
     if frozen is not None:
         receipt['transfer'] = frozen.provenance()
     result = dict(schema=SCHEMA, cr_mode=MODE, manifest=receipt, stages=stages, stage_results={'resolved': snap}, final_stage='resolved',

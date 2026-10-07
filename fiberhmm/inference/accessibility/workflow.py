@@ -23,6 +23,7 @@ import numpy as np
 from . import coaccess as C
 from . import gaps as G
 from . import variants as V
+from .. import depth_cap as Cap
 
 SCHEMA = 'fiberhmm.accessibility.preview.v1'
 # v1 adds, for the analysis views (``analysis.py``): per molecule its span, nucleosome calls near the window, openness
@@ -39,6 +40,9 @@ EXPERIMENTAL_NOTE = ('EXPERIMENTAL preview: NFR variants and element co-accessib
 
 @dataclass
 class NFROptions:
+    max_discovery_molecules: int = 2000
+    max_quantification_molecules: int = 0
+    sample_seed: int = 1
     # discovery (the lattice recaller's recipe on gap edges)
     stringency: float = 0.9          # prediction strength needed for k: lower admits finer variants (0.85 = finer)
     kmax: int = 8
@@ -112,7 +116,7 @@ class NFROptions:
             raise ValueError("detect_method must be 'raw', 'enrichment' or 'fixed'")
         if not isinstance(self.clip_gaps_to_region, bool):
             raise ValueError('clip_gaps_to_region must be a boolean')
-        ints = ('min_open_reads', 'kmax', 'splits', 'seed', 'min_gap_bp', 'folds', 'max_gaps', 'bootstrap', 'shift_bp', 'robust', 'per_bin',
+        ints = (*Cap.NAMES, 'min_open_reads', 'kmax', 'splits', 'seed', 'min_gap_bp', 'folds', 'max_gaps', 'bootstrap', 'shift_bp', 'robust', 'per_bin',
                 'openness_pad_bp', 'min_spanning', 'min_marginal', 'n_perm', 'within_clusters', 'combo_max', 'combo_samples',
                 'internal_footprint_tolerance_bp')
         for name in ints:
@@ -132,6 +136,8 @@ class NFROptions:
             raise ValueError('min_reads, per_bin, n_perm, combo_samples and min_spanning must be >= 1')
         if self.bootstrap < 0 or self.robust < 0 or self.within_clusters < 0 or self.openness_pad_bp < 0 or self.min_marginal < 0:
             raise ValueError('bootstrap, robust, within_clusters, openness_pad_bp and min_marginal must be >= 0')
+        if any(getattr(self, n) < 0 for n in Cap.NAMES):
+            raise ValueError('Molecule caps and sample_seed must be >= 0')
         if self.within_clusters == 1:
             raise ValueError('within_clusters: use 0 (off) or k >= 2')
         if not 0 < self.open_threshold <= 1 or not 0 < self.q_max <= 1 or not 0 <= self.detect_threshold < 1:
@@ -149,8 +155,11 @@ class NFROptions:
         if self.combo_elements and not 3 <= len(self.combo_elements) <= 8:
             raise ValueError('combo_elements: choose 3-8 elements')
 
-    def as_dict(self):
+    def as_dict(self, *, receipt=False):
         d = dataclasses.asdict(self)
+        if receipt and not Cap.enabled(self):
+            for name in Cap.NAMES:
+                d.pop(name)
         d['nfr_regions'] = [list(r) for r in self.nfr_regions]
         d['combo_elements'] = list(self.combo_elements)
         return d
@@ -370,11 +379,21 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
     opt = params if isinstance(params, NFROptions) else NFROptions.from_params(params)
     region = dict(payload['region'])
     units = G.units_of(payload)
-    warnings = []
+    warnings = []; sampling = [] if Cap.enabled(opt) else None
+    detection_units = units
+    if opt.max_discovery_molecules:
+        detection_units = [u for u in units if (nucs := G.nucleosomes(u))
+                           and nucs[0][0] < region['end'] and nucs[-1][1] > region['start']]
+    discovery_units = Cap.select(detection_units, opt.max_discovery_molecules, opt.sample_seed, G.sampling_channel,
+                                 Cap.identity)
     _report(progress, 'nfr', f'{len(units)} molecules in {region["chrom"]}:{region["start"]}-{region["end"]}')
-    regions, detection = _nfr_regions(units, region, opt)
+    regions, detection = _nfr_regions(discovery_units, region, opt)
+    if sampling is not None:
+        sampling.append(Cap.record(detection_units, discovery_units, None, opt, G.sampling_channel,
+                                   phase='discovery', window=[region['start'], region['end']], purpose='opportunity_diagnostic' if opt.nfr_regions else 'region_detection'))
+        detection['molecule_sampling'] = sampling
     if 'opportunity_diagnostic' not in detection:
-        detection['opportunity_diagnostic'] = G.opportunity_diagnostic(units, region['start'], region['end'], regions)
+        detection['opportunity_diagnostic'] = G.opportunity_diagnostic(discovery_units, region['start'], region['end'], regions)
     assignment_regions = [(r['start'], r['end']) for r in regions] if opt.clip_gaps_to_region else None
     if detection.get('note'):
         warnings.append(detection['note'])
@@ -391,7 +410,22 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
         nfr_id = f'N{ni + 1}'
         nreg = (reg['start'], reg['end'])
         bar.step(ni, 0, 'per-read gaps')
-        reads = G.collect(units, nreg, opt.min_gap_bp, opt.max_gaps, assignment_regions)
+        usable = [u for u in units if (nucs := G.nucleosomes(u)) and nucs[0][0] < nreg[0] and nucs[-1][1] > nreg[1]]
+        discovered = (Cap.select(usable, opt.max_discovery_molecules, opt.sample_seed, G.sampling_channel, Cap.identity)
+                      if opt.mode == 'variants' else [])
+        quantified = Cap.select(usable, opt.max_quantification_molecules, opt.sample_seed, G.sampling_channel, Cap.identity)
+        if sampling is not None:
+            sampling.append(Cap.record(usable, discovered, quantified, opt, G.sampling_channel,
+                                       window=list(nreg), purpose=opt.mode, nfr=nfr_id,
+                                       **({'phase': 'quantification'} if opt.mode == 'depth' else {})))
+        # Inspect boundaries before building per-read gap features; censored reads stay in the diagnostics.
+        used = {id(u) for u in discovered + quantified}
+        omitted = {id(u) for u in usable if id(u) not in used}
+        collected = G.collect([u for u in units if id(u) not in omitted], nreg, opt.min_gap_bp, opt.max_gaps, assignment_regions)
+        key = lambda u: (u['dataset'], u['unit_id'])
+        discovery_ids, quantification_ids = ({key(u) for u in selected} for selected in (discovered, quantified))
+        discovery_reads = [r for r in collected if not r['callable'] or (r['dataset'], r['uid']) in discovery_ids]
+        reads = [r for r in collected if not r['callable'] or (r['dataset'], r['uid']) in quantification_ids]
         n_call = sum(r['callable'] for r in reads)
         for r in reads:
             if r['callable']:
@@ -428,14 +462,14 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
                 molecules[r['uid']]['nfr'][nfr_id].update(widest=int(w), map='closed' if not r['gaps'] else f'widest {int(w)} bp')
             nfrs.append(nfr); continue
 
-        vs, diag, es = V.discover(reads, nreg, opt, progress=bar.ps(ni), stage=bar.stage(ni))
+        vs, diag, es = V.discover(discovery_reads, nreg, opt, progress=bar.ps(ni), stage=bar.stage(ni))
         nfr.update(k=diag['k'], ps_curve=[[k, ps] for k, ps in diag['ps_curve']], gaps=diag['gaps'],
                    candidates=diag['candidates'], merges=[list(m) for m in diag['merges']], dropped=diag['dropped'])
         bar.step(ni, 3 + bar.kmax, f'prevalence (EM, {opt.bootstrap} bootstrap replicates)')
         q = V.quantify(reads, vs, es, opt, progress=bar.bootstrap(ni))
         nfr['catalogue'] = catalogue(vs, es, nreg, opt)
         nfr['catalogue']['assignment_regions'] = assignment_regions
-        rob = V.robust(reads, nreg, vs, opt, n=opt.robust, progress=bar.reruns(ni)) if (vs and opt.robust) else None
+        rob = V.robust(discovery_reads, nreg, vs, opt, n=opt.robust, progress=bar.reruns(ni)) if (vs and opt.robust) else None
         Pv = q['Pv']
         for j, v in enumerate(vs):
             nfr['variants'].append(_variant_row(nfr_id, v, _by_channel(q['reads'], Pv, j), None if rob is None else rob[j]))
@@ -507,9 +541,11 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
             combo = C.combinations(chosen, gaps_by_uid, n_samples=opt.combo_samples, q_max=opt.q_max)
         except ValueError as error:
             warnings.append(str(error))
+    if sampling is not None:
+        warnings.extend(Cap.notes(sampling))
     result = dict(schema=SCHEMA, experimental=True, note=EXPERIMENTAL_NOTE, region=region,
                   datasets=[dict(dataset_id=s['dataset_id'], chemistry=s.get('chemistry'), molecules=len(s['units'])) for s in payload['strata']],
-                  parameters=opt.as_dict(), detection=detection, nfrs=nfrs,
+                  parameters=opt.as_dict(receipt=True), detection=detection, nfrs=nfrs,
                   elements=[{k: (_r(v, 1) if k in ('start', 'end') else _r(v) if k == 'prevalence' else v)
                              for k, v in e.items() if k not in ('state', 'channel')} | dict(n=len(e['state'])) for e in all_els],
                   pairs=[_pair_out(p) for p in pairs], family=dict(tested=len(pairs), scope=opt.pairs, skipped=skipped,

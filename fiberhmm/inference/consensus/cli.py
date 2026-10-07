@@ -7,7 +7,7 @@ import sys
 import time
 from pathlib import Path
 from .artifacts import read_json, write_json
-from .parameters import CROptions, parameter_schema, parse_options
+from .parameters import CROptions, parameter_schema, parse_options, saved_parameters
 from .workflow import run_analysis
 from .regions import load_bed, pool_payloads, automatic_parameters
 
@@ -97,6 +97,8 @@ def _check_region_contigs(parser, windows, datasets):
 
 def _main(argv=None):
     p=argparse.ArgumentParser(prog='fiberhmm-consensus',description=__doc__)
+    from ..depth_cap import add_arguments
+    add_arguments(p)
     p.add_argument('--schema',action='store_true',help='Print every parameter group with defaults and help as JSON (cr.engine selects the engine; the default is lattice_recaller)')
     source=p.add_mutually_exclusive_group()
     source.add_argument('--bam',action='append',help='Repeat for separate datasets; chemistry comes from BAM @CO metadata')
@@ -172,11 +174,17 @@ def _main(argv=None):
     if resume and not (resume/'manifest.json').is_file():
         p.error('Resume an individual window_XXXXXX directory or a pooled run, not the batch parent directory '
                 '(to finish an interrupted multi-window run in place, use --continue with its original inputs and --output)')
-    if resume: values=read_json(resume/'manifest.json')['parameters']
+    if resume: values=saved_parameters(read_json(resume/'manifest.json')['parameters'])
     if args.parameters:
         for k,v in read_json(args.parameters).items(): values.setdefault(k,{}).update(v)
+    from ..depth_cap import NAMES
+    for name in NAMES:
+        if getattr(args, name) is not None:
+            values.setdefault('recaller', {})[name] = getattr(args, name)
     engine=args.engine or values.get('cr',{}).get('engine') or CROptions().engine
     if engine not in ('lattice_recaller','staged_native_families'): p.error('This command runs lattice_recaller or staged_native_families; historical engines require the replay API')
+    if engine != 'lattice_recaller' and any(getattr(args, n) is not None for n in NAMES):
+        p.error('Molecule sampling flags apply to --engine lattice_recaller; historical fitted engines do not separate discovery from quantification')
     if engine=='lattice_recaller':
         # Reject staged-only stage controls before any evidence is loaded.
         for flag,value in (('--start-at consolidation',args.start_at=='consolidation'),('--stop-after',args.stop_after not in (None,'resolved')),

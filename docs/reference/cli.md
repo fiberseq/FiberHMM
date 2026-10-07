@@ -501,6 +501,9 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `--max-discovery-molecules` | — | Molecules per dataset and chemical channel for discovery; 0 = all (default 2000) |
+| `--max-quantification-molecules` | — | Molecules per dataset and chemical channel for quantification; 0 = all (default 0) |
+| `--sample-seed` | — | Stable molecule hash seed (default 1) |
 | `--schema` | off | Print every parameter group with defaults and help as JSON (cr.engine selects the engine; the default is lattice_recaller) |
 | `--bam` | — | Repeat for separate datasets; chemistry comes from BAM @CO metadata |
 | `--datasets` | — | JSON list of {dataset_id, paths: [BAMs], chemistry?: profile} |
@@ -580,6 +583,9 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--min-open-reads` | — | Raw/enrichment detection: reads inside a &gt;= 175-bp gap at least this (default 10) |
 | `--detect-threshold` | — | Fixed detection: share of callable reads inside a &gt;= 175-bp gap above this (default 0.15; given alone, it selects the fixed rule) |
 | `--cores` | — | Loader worker processes (compute.cores) |
+| `--max-discovery-molecules` | — | Molecules per dataset and chemical channel for discovery; 0 = all (default 2000) |
+| `--max-quantification-molecules` | — | Molecules per dataset and chemical channel for quantification; 0 = all (default 0) |
+| `--sample-seed` | — | Stable molecule hash seed (default 1) |
 | `--schema` | off | Print the engine parameters with defaults as JSON and exit |
 | `--json-progress` | off | Structured progress on stderr (JSON lines) |
 | `--output` | — | New or empty output directory |

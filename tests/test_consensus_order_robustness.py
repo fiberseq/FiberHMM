@@ -16,7 +16,7 @@ from fiberhmm.inference.consensus.workflow import run_workflow
 
 from test_consensus_lattice_recaller import planted_payload
 
-BASE = {'cr': {'engine': 'lattice_recaller'}, 'recaller': {'learned_spots': False}}
+BASE = {'cr': {'engine': 'lattice_recaller'}, 'recaller': {'learned_spots': False, 'max_discovery_molecules': 0, 'max_quantification_molecules': 0}}
 
 
 def _params(**recaller):

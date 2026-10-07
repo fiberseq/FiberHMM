@@ -76,6 +76,8 @@ def _parser():
     p.add_argument('--detect-threshold', type=float, help='Fixed detection: share of callable reads inside a >= 175-bp gap above this '
                                                           '(default 0.15; given alone, it selects the fixed rule)')
     p.add_argument('--cores', type=int, help='Loader worker processes (compute.cores)')
+    from ..depth_cap import add_arguments
+    add_arguments(p)
     p.add_argument('--schema', action='store_true', help='Print the engine parameters with defaults as JSON and exit')
     p.add_argument('--json-progress', action='store_true', help='Structured progress on stderr (JSON lines)')
     p.add_argument('--output', help='New or empty output directory')
@@ -116,6 +118,10 @@ def _main(argv=None):
                         ('min_open_reads', args.min_open_reads), ('clip_gaps_to_region', args.clip_gaps_to_region)):
         if value is not None:
             nfr[name] = value
+    from ..depth_cap import NAMES
+    for name in NAMES:
+        if getattr(args, name) is not None:
+            nfr[name] = getattr(args, name)
     if args.no_internal_footprint_labels:
         nfr['internal_footprint_labels'] = False
     if args.combo:

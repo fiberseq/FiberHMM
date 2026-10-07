@@ -150,3 +150,52 @@ wider-protection stretch. A transfer adds a `transfer` block.
 The schema string `fiberhmm.consensus.v1` is shared by the lattice recaller
 and the staged engine; FiberBrowser checks it, and `cr_mode` tells the two
 engines apart.
+
+### Molecule depth budgets
+
+The lattice recaller samples independently within each dataset and chemical channel
+(CT/GA for DAF; pooled orientations for Hia5). `recaller.max_discovery_molecules`
+defaults to 2000 per discovery tile, `recaller.max_quantification_molecules` defaults
+to 0 (all eligible molecules) per class-group scoring window, and
+`recaller.sample_seed` defaults to 1. Either cap can be set to 0 to disable it.
+The corresponding CLI flags use hyphens. These controls apply to every independent
+BED/region job and to tiles within pooled analyses. Historical fitted engines do
+not implement these sampling controls; explicit CLI sampling flags require
+`--engine lattice_recaller`.
+
+Sampling keeps the lowest SHA-256 priorities of the seed and read name (unit ID
+when no name exists), with unit ID breaking equal-name ties. Priorities do not
+include tile coordinates or input order. Overlapping tiles with the same eligible
+molecules therefore select the same set; when their candidate sets differ, the
+priorities remain the same, but their lowest-N sets can differ. Shallow strata keep
+all eligible molecules. Sampling is after input filters and duplicate collapse.
+Tile overlap/site-count checks, and quantification spanning checks, precede the
+cut; likelihood arrays are constructed only for the selected molecules. BAM
+parsing, duplicate collapse, native replay, and evidence export still see all
+molecules. Saving that loading/replay cost would require loader-level sampling.
+
+`manifest.molecule_sampling` is a list of window records. Each records `phase`,
+`window`, the two caps and seed, and `strata`: `stratum` (`dataset::channel`),
+`available`, `discovery`, and `quantification`. A count is null for the other phase
+because discovery tiles and class-group scoring windows need not coincide.
+Quantification records also identify `group`. The `denominator` explains that
+prevalence uses the eligible molecules actually quantified, also recorded in
+`classes.tsv:molecules`, not the full dataset depth. Capping does not rediscover
+the catalogue. Warnings state how many molecules were used out of those available.
+`read_sample_cap` records the controls and `all_units` reflects selection.
+
+When both caps are 0, sampling metadata and controls are omitted to preserve
+legacy output bytes (apart from the existing wall-clock timing fields). Absent
+sampling controls in a saved receipt mean uncapped on resume/frozen-catalog replay;
+new runs use the 2000 discovery default. Frozen-class transfer may override only
+these three `recaller` controls; class geometry and spots remain fixed.
+
+The NFR engine exposes the same controls in `NFROptions` / the `nfr` JSON group.
+It samples the run's detection profile and each NFR's variant discovery, then
+independently samples callable molecules for quantification of the fixed variant
+catalogue. Non-callable reads do not consume a variant budget. Its result and
+manifest store equivalent window/stratum records in
+`detection.molecule_sampling`, with `purpose` and (for variants) `nfr` identifying
+the scope. `nfrs[].callable` and variant `by_channel[].n` are the actual sampled
+prevalence denominators. The detection profile's denominator is the sampled
+callable coverage at each position. Both caps at zero preserve legacy NFR bytes.
