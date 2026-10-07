@@ -166,6 +166,17 @@ class Scorer:
         self.k = len(gs)
         self.base = np.array([[_class_score(it, c) for c in range(self.k)] + it['fixed'] for it in self.items], float).reshape(-1, self.k + 3)
 
+    def subset(self, units):
+        """Reuse immutable configurations in a fold, retaining its original molecule order."""
+        indices = {id(u): i for i, u in enumerate(self.keep)}
+        rows = [indices[id(u)] for u in units if id(u) in indices]
+        view = object.__new__(Scorer)
+        view.k = self.k
+        view.items = [self.items[i] for i in rows]
+        view.keep = [self.keep[i] for i in rows]
+        view.base = self.base[rows]
+        return view
+
     def rows(self, prof=None):
         M = self.base.copy()
         for c in range(self.k):
@@ -284,7 +295,8 @@ def contract_edges(units, gs, f, opt):
     final boxes are the proposal from all molecules. Returns (gs, records)."""
     records = [''] * len(gs)
     none = [set() for _ in gs]
-    _, P, keep, _ = learn(units, gs, f, opt, none)
+    sc = Scorer(units, gs, f, opt)
+    _, P, keep, _ = learn(units, gs, f, opt, none, scorer=sc)
     if P is None:
         return gs, records
     full = propose_edges(keep, P, gs, opt)
@@ -294,7 +306,7 @@ def contract_edges(units, gs, f, opt):
     fold = np.array([_hash2(u['uid']) for u in units]); gain = {c: 0. for c in cands}; both = {c: True for c in cands}
     for k in (0, 1):
         tr = [u for u, z in zip(units, fold) if z != k]; te = [u for u, z in zip(units, fold) if z == k]
-        sc_tr, sc_te = Scorer(tr, gs, f, opt), Scorer(te, gs, f, opt)
+        sc_tr, sc_te = sc.subset(tr), sc.subset(te)
         _, Ptr, ktr, _ = learn(tr, gs, f, opt, none, scorer=sc_tr)
         if Ptr is None or len(ktr) < 10:
             return gs, records
@@ -320,14 +332,15 @@ def contract_edges(units, gs, f, opt):
     return out, records
 
 
-def select_spots(units, gs, f, opt):
+def select_spots(units, gs, f, opt, scorer=None):
     """Interior positions whose learned rate raises held-out likelihood (both folds, summed) by >= spot_gain_nats."""
     fold = np.array([_hash2(u['uid']) for u in units])
     allowed = [interior_positions(units, g, opt.spot_edge_bp) for g in gs]
     gain = [dict() for _ in gs]; seen = [dict() for _ in gs]
+    sc = scorer or Scorer(units, gs, f, opt)
     for k in (0, 1):
         tr = [u for u, z in zip(units, fold) if z != k]; te = [u for u, z in zip(units, fold) if z == k]
-        sc_tr, sc_te = Scorer(tr, gs, f, opt), Scorer(te, gs, f, opt)
+        sc_tr, sc_te = sc.subset(tr), sc.subset(te)
         _, _, _, prof = learn(tr, gs, f, opt, allowed, scorer=sc_tr)
         M0, _ = sc_tr.rows(); T0, _ = sc_te.rows()
         if len(M0) < 10 or not len(T0):
@@ -445,12 +458,12 @@ def fit_channel(units, gs, f, opt):
     edges = [''] * len(gs)
     if opt.edge_contraction:
         gs, edges = contract_edges(units, gs, f, opt)
+    sc = Scorer(units, gs, f, opt)
     if opt.learned_spots and any(v >= opt.spot_minimum_evidence_nats for v in info):
-        acc = select_spots(units, gs, f, opt)
+        acc = select_spots(units, gs, f, opt, scorer=sc)
         acc = [a if info[c] >= opt.spot_minimum_evidence_nats else set() for c, a in enumerate(acc)]
     else:
         acc = [set() for _ in gs]
-    sc = Scorer(units, gs, f, opt)
     w, P, keep, prof = learn(units, gs, f, opt, acc, scorer=sc)
     capped = [{x for x in acc[c] if prof[c].get(x, 0) >= opt.spot_cap - 1e-9} for c in range(len(gs))]
     if any(capped):

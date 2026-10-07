@@ -323,3 +323,52 @@ def test_unnamed_record_falls_back_to_full_loading(monkeypatch):
         return sentinel
     assert S.load_sampled(state, dict(dataset_ids=['D'], chrom='chr1', start=100, end=350), options(),
                           lambda *a: None, dict(cap=10, seed=1), load) is sentinel
+
+
+def test_replay_cache_copies_only_changes_and_keeps_them_isolated():
+    from copy import deepcopy
+    unit = dict(unit_id='u', positions=[1, 2, 3], hits=[0, 1, 0], provenance={'old': True},
+                source_members=[{'read_name': 'a'}], m5c_observations=[True])
+    before = dict(unit)
+    unit['positions'] = [1, 3]
+    unit['native_multi_interval_calls'] = [{'interval': [1, 3]}]
+    unit['provenance']['conditioned'] = True
+    unit.pop('m5c_observations')
+    changes, removed = bam._replay_changes(before, unit)
+    assert 'hits' not in changes and 'source_members' not in changes
+    assert changes['positions'] == [1, 3] and changes['provenance']['conditioned']
+    assert removed == ('m5c_observations',)
+    expected = deepcopy(changes)
+    unit['positions'].append(4)
+    unit['native_multi_interval_calls'][0]['interval'][0] = 99
+    unit['provenance']['conditioned'] = False
+    assert changes == expected
+
+
+@pytest.mark.parametrize('replace_units', [False, True])
+def test_refinement_reprepares_only_when_evidence_changes(tmp_path, monkeypatch, replace_units):
+    from copy import deepcopy
+    from test_consensus_lattice_recaller import planted_payload
+    from fiberhmm.inference.consensus.harmonized_families import workflow as H
+    from fiberhmm.inference.consensus.workflow import run_workflow
+    body = planted_payload(80)
+    def refine(requirements):
+        assert requirements
+        result = deepcopy(body) if replace_units else body
+        result['strata'][0]['load'] = {'checked_scoring_windows': True}
+        return result
+    p = S.SampledPayload(body, refine)
+    prepared = []
+    original = H.prepare_sources
+    def prepare(*args):
+        result = original(*args)
+        prepared.append(result)
+        return result
+    monkeypatch.setattr(H, 'prepare_sources', prepare)
+    params = dict(compute=dict(cores=1), recaller=dict(max_discovery_molecules=20,
+                  max_quantification_molecules=20, learned_spots=False))
+    actual = run_workflow(p, params, tmp_path/'sampled')
+    assert len(prepared) == (2 if replace_units else 1)
+    assert prepared[-1][0]['load']['checked_scoring_windows']
+    expected = run_workflow(dict(p), params, tmp_path/'full')
+    assert actual['recaller'] == expected['recaller']

@@ -177,7 +177,7 @@ def test_cli_freeze_and_apply_end_to_end(source, tmp_path):
     assert bad.returncode != 0 and 'omit --bed' in bad.stderr
 
 
-def test_bam_windows_map_into_a_genomic_frame_and_export(source, tmp_path):
+def test_bam_windows_map_into_a_genomic_frame_and_export(source, tmp_path, monkeypatch):
     """BAM + oriented BED6 into a catalog whose frame starts at 1050 (a non-pooled run): both orientations load,
     are scored in the frozen frame, and the family BAM export maps them back to the reads."""
     import pysam
@@ -187,8 +187,20 @@ def test_bam_windows_map_into_a_genomic_frame_and_export(source, tmp_path):
     bed = tmp_path/'windows.bed'; bed.write_text('chr1\t0\t300\tplus\t0\t+\nchr1\t0\t300\tminus\t0\t-\n')
     chip = tmp_path/'chip.bed'; chip.write_text('chr1\t150\t170\tpeak\n')
     from fiberhmm.inference.consensus.transfer_cli import main
+    from fiberhmm.inference.consensus import bam as loader
+    order = []
+    load, apply = loader.load_bam_payload, F.apply_catalog
+    def loaded(*args, **kwargs):
+        order.append('load')
+        return load(*args, **kwargs)
+    def scored(*args, **kwargs):
+        order.append('score')
+        return apply(*args, **kwargs)
+    monkeypatch.setattr(loader, 'load_bam_payload', loaded)
+    monkeypatch.setattr(F, 'apply_catalog', scored)
     main(['--models', str(tmp/'frozen_classes.json.gz'), '--bam', str(bam), '--bed', str(bed), '--chip-bed', str(chip), '--cores', '1',
           '--output', str(tmp_path/'out')])
+    assert order == ['load', 'score', 'load', 'score']
     out = tmp_path/'out'
     for w in ('window_000001', 'window_000002'):
         evidence = read_json(out/w/'evidence.json.gz')

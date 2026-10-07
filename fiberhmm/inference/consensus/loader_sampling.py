@@ -83,13 +83,18 @@ class SampledPayload(dict):
         self._refine = refine
 
     def refine(self, requirements):
-        body = self._refine(requirements)
         original = {s['dataset_id']: s for s in self['strata']}
+        previous = {ds: (s['units'], len(s['units'])) for ds, s in original.items()}
+        body = self._refine(requirements)
+        changed = (len(original) != len(body['strata']) or
+                   any(s['units'] is not previous[s['dataset_id']][0] or
+                       len(s['units']) != previous[s['dataset_id']][1] for s in body['strata']))
         for source in body['strata']:
             resolution = (original[source['dataset_id']].get('model_manifest') or {}).get('chemistry_resolution')
             if resolution is not None:
                 source['model_manifest']['chemistry_resolution'] = resolution
         self.update(body)
+        return changed
 
 
 def frontier_units(source, frontier):

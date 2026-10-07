@@ -181,8 +181,8 @@ class FamilyStageOptions:
 
 @dataclass
 class RecallerOptions:
-    max_discovery_molecules: int = control(2000, 'Discovery molecules per channel (0 = all)', 'Stable hash sample per dataset and chemical channel, independently in each discovery tile, after evidence filters and duplicate collapse.', 0, None, 1)
-    max_quantification_molecules: int = control(0, 'Quantification molecules per channel (0 = all)', 'Score the same discovered catalogue on a stable sample per dataset and chemical channel in each scoring window. Prevalence uses the selected eligible molecules.', 0, None, 1)
+    max_discovery_molecules: int = control(0, 'Discovery molecules per channel (0 = all)', '0 = all molecules; 2000 is a good cap for deep data (thousands of reads per site). Stable hash sample per dataset and chemical channel, independently in each discovery tile, after evidence filters and duplicate collapse.', 0, None, 1)
+    max_quantification_molecules: int = control(0, 'Quantification molecules per channel (0 = all)', '0 = all molecules; 2000 is a good cap for deep data (thousands of reads per site). Score the same discovered catalogue on a stable sample per dataset and chemical channel in each scoring window. Prevalence uses the selected eligible molecules.', 0, None, 1)
     sample_seed: int = control(1, 'Molecule sampling seed', 'Stable molecule hash seed shared across overlapping tiles; independent of the discovery initialization seed.', 0, None, 1)
     stringency: float = control(0.9, 'k-means stringency (prediction strength)', 'Discovery chooses the largest k whose split-half prediction strength reaches this value and keeps classes at least this stable. Higher = fewer, coarser classes; lower (e.g. 0.6-0.7) finds more and finer classes, such as composite footprints or dense Hia5 data, at the cost of near-duplicates.', 0.05, 1.0, 0.05)
     kmax: int = control(40, 'Maximum k per tile', 'Upper limit on clusters per discovery tile.', 1, 200, 1)

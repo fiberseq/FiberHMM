@@ -9,6 +9,7 @@ calls.tsv, report.html). Columns are documented in docs/reference/consensus-outp
 from __future__ import annotations
 
 import csv
+from copy import deepcopy
 import gzip
 import hashlib
 import tempfile
@@ -473,7 +474,7 @@ def run_lattice_recaller(payload, options, output_dir=None, progress=None, froze
     warnings = []; sampling = [] if Cap.enabled(opt) else None
     from ..execution import shared_worker_pool
     cores = options['compute'].cores
-    with shared_worker_pool(cores):
+    with shared_worker_pool(cores, reuse=True):
         classes, dropped, tiles, diagnostics = discover(sources, region, opt, progress, cores, sampling=sampling) if frozen is None else frozen.discovery()
         if classes and hasattr(payload, 'refine'):
             requirements = []
@@ -486,8 +487,14 @@ def run_lattice_recaller(payload, options, output_dir=None, progress=None, froze
                 accepts.loader_channels = {ch for ch, (lo, hi) in bounds.items()
                                            if region['start'] < lo and hi < region['end']}
                 requirements.append((window, accepts))
-            payload.refine(requirements)
-            sources = prepare_sources(payload, options)
+            changed = payload.refine(requirements)
+            if changed is not False:
+                sources = prepare_sources(payload, options)
+            else:
+                # A near-budget full load already has every molecule. Only the receipt changed.
+                loads = {s['dataset_id']: s.get('load', {}) for s in payload['strata']}
+                for source in sources:
+                    source['load'] = deepcopy(loads[source['dataset_id']])
             before = digest(payload)
             write_json(out/'evidence.json.gz', payload)
         rows, mols, broad, unscored = quantify(sources, classes, tiles, opt, progress, cores, frozen=frozen, sampling=sampling) if classes else ([], [], [], [])

@@ -2,6 +2,23 @@
 
 ## Unreleased: experimental preview (not part of 3.0.0)
 
+- Frozen lattice transfer streams BED evidence one window at a time and keeps
+  only compact BAM export plans, avoiding all-window evidence accumulation.
+  Scoring workers persist across windows, sharing imports and JIT warm-up.
+- NFR accepts independent `--bed` windows with persistent workers (`--cores`,
+  `--window-jobs`), preserving single-region outputs and BED ordering.
+- Sampled-loader top-ups cache only native replay changes, once per molecule;
+  decoded arrays and immutable interval calls are shared while collapse metadata
+  remains isolated. This avoids copying whole evidence units every tranche.
+  Refinements that load no new units reuse prepared sources while refreshing
+  loader receipts, avoiding a second full evidence copy.
+- Reuse lattice scoring configurations across validation folds and the final
+  fit; count prediction-strength pairs from label frequencies and reuse
+  molecule split assignments without changing scientific results.
+- Molecule caps are off by default (discovery and quantification both 0 = all).
+  For deep data with thousands of reads per site, 2000 is a suggested opt-in
+  cap for each phase.
+
 - Consensus, frozen transfer and NFR can now sample BAM read names before tag
   decoding and native replay when all active molecule budgets are finite.
   Stable per-window hash frontiers oversample, top up after eligibility filters,
@@ -9,7 +26,7 @@
   seen/decoded/retained counts and shortages; zero budgets preserve the full
   loader path.
 - Add configurable molecule depth budgets to lattice-recaller footprint classes
-  and NFR accessibility: `--max-discovery-molecules` (2000 per dataset/chemical
+  and NFR accessibility: `--max-discovery-molecules` (0 = all, per dataset/chemical
   channel), `--max-quantification-molecules` (0, all), and `--sample-seed` (1).
   Either cap at 0 disables that sampling phase. Stable hash priorities balance
   datasets and DAF CT/GA channels across overlapping tiles. Quantification uses

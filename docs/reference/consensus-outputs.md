@@ -151,13 +151,30 @@ The schema string `fiberhmm.consensus.v1` is shared by the lattice recaller
 and the staged engine; FiberBrowser checks it, and `cr_mode` tells the two
 engines apart.
 
+Frozen lattice transfer loads and scores one BED window at a time, retaining
+only compact annotation plans for aggregate BAM export. Raw evidence memory no
+longer grows with the number of target windows. Its scoring worker pool is
+reused across windows, so imports and JIT warm-up are paid per worker.
+
+### Independent NFR windows
+
+`fiberhmm-nfr --bam reads.bam --bed sites.bed --cores 8 --output nfr-sites`
+runs independent BED windows with a persistent worker pool. Each window writes
+its normal single-region files to `window_XXXXXX`; `regions.json` lists them in
+BED order. `--window-jobs 1` runs sequentially. NFR detection is independent in
+each window; explicit `--nfr` and `--classes` inputs require a single `--region`.
+The output directory must be new or empty; this command does not implement
+consensus's `--continue` protocol.
+
 ### Molecule depth budgets
 
 The lattice recaller samples independently within each dataset and chemical channel
 (CT/GA for DAF; pooled orientations for Hia5). `recaller.max_discovery_molecules`
-defaults to 2000 per discovery tile, `recaller.max_quantification_molecules` defaults
+defaults to 0 (all molecules) per discovery tile, `recaller.max_quantification_molecules` defaults
 to 0 (all eligible molecules) per class-group scoring window, and
-`recaller.sample_seed` defaults to 1. Either cap can be set to 0 to disable it.
+`recaller.sample_seed` defaults to 1. Both caps are off by default.
+For deep data (thousands of reads per site), 2000 is a good opt-in cap for each
+phase; set either cap to 0 to use all eligible molecules for that phase.
 The corresponding CLI flags use hyphens. These controls apply to every independent
 BED/region job and to tiles within pooled analyses. Historical fitted engines do
 not implement these sampling controls; explicit CLI sampling flags require
@@ -241,7 +258,7 @@ original genomic loading windows in `pooling.window_preparation`.
 When both caps are 0, sampling metadata and controls are omitted to preserve
 legacy output bytes (apart from the existing wall-clock timing fields). Absent
 sampling controls in a saved receipt mean uncapped on resume/frozen-catalog replay;
-new runs use the 2000 discovery default. Frozen-class transfer may override only
+new runs also default to no sampling. For deep data (thousands of reads per site), 2000 is a good cap for each phase. Frozen-class transfer may override only
 these three `recaller` controls; class geometry and spots remain fixed.
 
 The NFR engine exposes the same controls in `NFROptions` / the `nfr` JSON group.

@@ -47,7 +47,20 @@ def _fit(X, k, seed):
     return km, km.predict
 
 
-def prediction_strength(X, groups, k, seed, splits):
+def _split_rows(groups, seed, splits):
+    return [np.array([split_half(g, f's{seed}b{b}') for g in groups]) for b in range(splits)]
+
+
+def _pair_strength(labels, k):
+    n = len(labels)
+    if n < 2:
+        return 0.0
+    counts = np.bincount(labels, minlength=k)
+    # Count ordered equal-label pairs without allocating an n-by-n matrix.
+    return (np.sum(counts * counts) - n)/(n*(n - 1))
+
+
+def prediction_strength(X, groups, k, seed, splits, *, split_rows=None):
     """Worst-cluster prediction strength averaged over molecule split-halves, and each split's per-cluster values.
 
     In split b the molecules are hashed into halves A and T (molecule-level, so a molecule's calls stay together);
@@ -56,18 +69,15 @@ def prediction_strength(X, groups, k, seed, splits):
     strengths) triple per split: the indices into X of T's calls, their T-cluster labels and the k strengths. The
     triples let cluster_stability average a final cluster's strength over every split."""
     worst, detail = [], []
-    for b in range(splits):
-        h = np.array([split_half(g, f's{seed}b{b}') for g in groups]); A, T = X[h == 0], X[h == 1]
+    for h in _split_rows(groups, seed, splits) if split_rows is None else split_rows:
+        A, T = X[h == 0], X[h == 1]
         if len(A) < k or len(T) < k:
             return 0.0, []
         _, pa = _fit(A, k, seed); _, pt = _fit(T, k, seed)
         lt = pt(T); la = pa(T); ps = []
         for j in range(k):
             idx = np.where(lt == j)[0]
-            if len(idx) < 2:
-                ps.append(0.0); continue
-            same = la[idx][:, None] == la[idx][None, :]; n = len(idx)
-            ps.append((same.sum() - n)/(n*(n - 1)))
+            ps.append(_pair_strength(la[idx], k))
         worst.append(min(ps))
         detail.append((np.flatnonzero(h == 1), lt, np.asarray(ps, float)))
     return float(np.mean(worst)), detail
@@ -105,7 +115,9 @@ def _nominate(X, meta, groups, opt, prefix='c'):
     if len(X) < 2:
         return [], 0, []
     kmax = max(2, min(opt.kmax, len(X)//(2*MIN_MOLECULES)))
-    scored = {k: prediction_strength(X, groups, k, opt.seed, opt.prediction_splits) for k in range(1, kmax + 1)}
+    halves = _split_rows(groups, opt.seed, opt.prediction_splits)
+    scored = {k: prediction_strength(X, groups, k, opt.seed, opt.prediction_splits, split_rows=halves)
+              for k in range(1, kmax + 1)}
     choice = [(k, scored[k][0]) for k in range(1, kmax + 1)]
     ok = [k for k, ps in choice if ps >= opt.stringency]; k = max(ok) if ok else 1
     _, pred = _fit(X, k, opt.seed); lab = pred(X)

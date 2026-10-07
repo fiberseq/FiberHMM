@@ -205,10 +205,9 @@ def _apply_recaller(args,parser,out,progress,model_path):
         target,sep,source=item.partition('=')
         if not sep or not target or not source or target in dataset_map:parser.error('--dataset-map takes unique TARGET=SOURCE pairs')
         dataset_map[target]=source
-    from .execution import single_threaded_blas
-    jobs=[]
+    from .execution import single_threaded_blas, shared_worker_pool
     if args.evidence:
-        jobs.append((None,read_json(args.evidence)))
+        count=1; jobs=iter([(None,read_json(args.evidence))])
     else:
         from .regions import load_bed,pool_payloads
         from .bam import load_bam_payload
@@ -218,22 +217,29 @@ def _apply_recaller(args,parser,out,progress,model_path):
         windows=load_bed(args.bed,pooled=True)
         if any(w['end']-w['start']!=width for w in windows):parser.error(f'BED widths must match the frozen frame ({width} bp)')
         load_options=F.transfer_options(catalog,[],overrides,1)
-        for i,w in enumerate(windows):
-            progress('load',f"Window {i+1}/{len(windows)} {w['name']}")
-            pooled=pool_payloads([load_bam_payload(datasets,dict(chrom=w['chrom'],start=w['start'],end=w['end']),load_options,progress,
-                loader_sampling=dict(cap=0 if load_options['recaller'].efficiency_calibration else load_options['recaller'].max_quantification_molecules,
-                                     seed=load_options['recaller'].sample_seed, mode='recaller'))],[w])
-            same=not catalog['frame']['pooled'] and w['strand']=='+' and [w['start'],w['end']]==[frame['start'],frame['end']]
-            region=dict(chrom=w['chrom'] if same else 'oriented_BED',start=frame['start'],end=frame['end'])
-            jobs.append((w,F.shift_payload(pooled,frame['start'],region)))
-    analyses=[];summary=[];runs=[]
-    with single_threaded_blas():
+        count=len(windows)
+        def load_jobs():
+            for i,w in enumerate(windows):
+                progress('load',f"Window {i+1}/{len(windows)} {w['name']}")
+                pooled=pool_payloads([load_bam_payload(datasets,dict(chrom=w['chrom'],start=w['start'],end=w['end']),load_options,progress,
+                    loader_sampling=dict(cap=0 if load_options['recaller'].efficiency_calibration else load_options['recaller'].max_quantification_molecules,
+                                         seed=load_options['recaller'].sample_seed, mode='recaller'))],[w])
+                same=not catalog['frame']['pooled'] and w['strand']=='+' and [w['start'],w['end']]==[frame['start'],frame['end']]
+                region=dict(chrom=w['chrom'] if same else 'oriented_BED',start=frame['start'],end=frame['end'])
+                yield w,F.shift_payload(pooled,frame['start'],region)
+                del pooled
+        jobs=load_jobs()
+    from .bam_export import ExportPlan
+    plan=ExportPlan() if not args.no_bam else None
+    summary=[];runs=[]
+    score_cores=F.transfer_options(catalog,[],overrides,args.cores)['compute'].cores
+    with single_threaded_blas(), shared_worker_pool(score_cores):
         for i,(w,payload) in enumerate(jobs):
-            folder=out if len(jobs)==1 else out/f'window_{i+1:06d}'
+            folder=out if count==1 else out/f'window_{i+1:06d}'
             progress('transfer',f"{w['name'] if w else 'evidence'}: scoring against {len(catalog['classes'])} frozen classes")
             result,target=F.apply_catalog(catalog,payload,folder,parameters=overrides,cores=args.cores,dataset_map=dataset_map,
                                           include_training=args.include_training_molecules,progress=progress,window=w)
-            if target.get('input_files'):analyses.append((result,target))
+            if plan is not None and target.get('input_files'):plan.add(result,target)
             runs.append(dict(window=w,output=str(folder),input_digest=result['manifest']['input_digest'],
                              channel_map=result['transfer']['channel_map'],excluded_training_molecules=result['transfer']['excluded_training_molecules'],
                              classes=len(result['recaller']['rows'])))
@@ -241,6 +247,7 @@ def _apply_recaller(args,parser,out,progress,model_path):
                 summary.append(dict(window=w['name'] if w else 'evidence',chrom=w['chrom'] if w else frame.get('chrom',''),
                     window_start=w['start'] if w else frame['start'],window_end=w['end'] if w else frame['end'],window_strand=w['strand'] if w else '',
                     source_channel=result['transfer']['channel_map'].get(r['channel']),**{k:r.get(k) for k in CLASS_FIELDS}))
+            del result,target,payload
     fields=['window','chrom','window_start','window_end','window_strand','source_channel']+CLASS_FIELDS
     with (out/'transfer_summary.tsv').open('w',newline='') as handle:
         writer=csv.DictWriter(handle,fieldnames=fields,delimiter='\t');writer.writeheader();writer.writerows(summary)
@@ -259,20 +266,20 @@ def _apply_recaller(args,parser,out,progress,model_path):
                 fitting='none; frozen-class EM prevalence per window',uncertainty='not estimated; loci may be correlated'))
         write_json(out/'chip_evaluation.json',evaluation)
     bams=[]
-    if analyses and not args.no_bam:
+    if plan is not None and plan.analyses:
         from .bam_export import export_bams
-        bams=export_bams(analyses,out/'bams',grouping=args.bam_grouping,scope=args.bam_scope,progress=progress)
+        bams=export_bams(plan,out/'bams',grouping=args.bam_grouping,scope=args.bam_scope,progress=progress)
     write_json(out/'transfer_manifest.json',dict(schema='fiberhmm.transfer_run.lattice_recaller.v1',catalog=str(Path(model_path).resolve()),
         catalog_sha256=catalog['content_sha256'],catalog_schema=catalog['schema'],source_provenance=catalog['provenance'],frame=catalog['frame'],
         refitted=False,rediscovered=False,preparation_parameters=overrides,dataset_map=dataset_map,
         include_training_molecules=args.include_training_molecules,windows=runs,bams=bams,apply_code=F.code_identity(),
         chip_label='peak overlaps supplied window' if args.chip_bed else None))
-    if len(jobs)>1:
+    if count>1:
         (out/'report.html').write_text('<!doctype html><meta charset="utf-8"><title>Frozen class transfer</title><h1>Frozen class transfer</h1>'
             '<p>Classes, edge boxes and learned spots were fixed by the catalog; prevalences were estimated per window. '
             '<a href="transfer_summary.tsv">All windows</a></p>'+''.join('<p><a href="'+html.escape(str(Path(r['output']).relative_to(out)))+'/report.html">'
             +html.escape(r['window']['name'])+'</a></p>' for r in runs))
-    progress('complete',f'{len(jobs)} window(s) scored against {len(catalog["classes"])} frozen classes')
+    progress('complete',f'{count} window(s) scored against {len(catalog["classes"])} frozen classes')
 
 
 if __name__=='__main__':main()

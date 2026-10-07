@@ -40,7 +40,7 @@ EXPERIMENTAL_NOTE = ('EXPERIMENTAL preview: NFR variants and element co-accessib
 
 @dataclass
 class NFROptions:
-    max_discovery_molecules: int = 2000
+    max_discovery_molecules: int = 0
     max_quantification_molecules: int = 0
     sample_seed: int = 1
     # discovery (the lattice recaller's recipe on gap edges)

@@ -181,10 +181,14 @@ class SharedWorkerPool:
 
 
 @contextmanager
-def shared_worker_pool(cores):
-    """Own the run's worker pool; spawned lazily on first use, closed on exit."""
+def shared_worker_pool(cores, *, reuse=False):
+    """Own a lazy worker pool, or explicitly borrow an enclosing pool with the same budget."""
     if int(cores) <= 1:
         yield None
+        return
+    current = _shared_pool.get()
+    if reuse and current is not None and current.cores == int(cores):
+        yield current
         return
     pool = SharedWorkerPool(cores)
     token = _shared_pool.set(pool)

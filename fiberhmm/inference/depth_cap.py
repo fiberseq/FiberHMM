@@ -60,7 +60,7 @@ def notes(records):
 
 
 def add_arguments(parser):
-    for name, default in zip(NAMES, (2000, 0, 1)):
+    for name, default in zip(NAMES, (0, 0, 1)):
         help = ('Stable molecule hash seed' if name == 'sample_seed' else
-                'Molecules per dataset and chemical channel for ' + ('discovery' if 'discovery' in name else 'quantification') + '; 0 = all')
+                'Molecules per dataset and chemical channel for ' + ('discovery' if 'discovery' in name else 'quantification') + '; 0 = all molecules; 2000 is a good cap for deep data (thousands of reads per site)')
         parser.add_argument('--' + name.replace('_', '-'), type=int, help=f'{help} (default {default})')

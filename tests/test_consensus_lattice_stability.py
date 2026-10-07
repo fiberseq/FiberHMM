@@ -250,3 +250,49 @@ def test_core_rule_applies_before_tiles_are_deduplicated(monkeypatch):
     tiles = iter([[kept_g], [covered, uncovered]])
     kept, dropped, _tiles, _diag = W.discover([], dict(start=0, end=600), opt, lambda *a, **k: None)
     assert [g['span'] for g in kept] == [(298., 328.)] and [d['span'] for d in dropped] == [[302., 332.]]
+
+
+def test_pair_strength_matches_pair_matrix_exactly():
+    rng = np.random.default_rng(107)
+    for k in (1, 2, 7, 40):
+        for n in (0, 1, 2, 17, 2500):
+            labels = rng.integers(k, size=n)
+            expected = 0.0 if n < 2 else ((labels[:, None] == labels[None, :]).sum() - n)/(n*(n - 1))
+            assert D._pair_strength(labels, k) == expected
+
+
+def test_cached_split_rows_preserve_prediction_strength():
+    rng = np.random.default_rng(108)
+    X = rng.normal(size=(120, 2))
+    groups = [f'molecule{i // 3}' for i in range(len(X))]
+    halves = D._split_rows(groups, 3, 2)
+    for k in (1, 2, 4):
+        expected = D.prediction_strength(X, groups, k, 3, 2)
+        actual = D.prediction_strength(X, groups, k, 3, 2, split_rows=halves)
+        assert actual[0] == expected[0]
+        for a, b in zip(actual[1], expected[1]):
+            for x, y in zip(a, b):
+                np.testing.assert_array_equal(x, y)
+
+
+def test_scorer_fold_views_match_fresh_configurations_and_are_independent():
+    from fiberhmm.inference.consensus.lattice_recaller import model as M
+    units = _units(30, [(100, 130)], 1)
+    for u in units:
+        u['pa'] = np.full(len(u['pos']), PA)
+        u['pp'] = np.full(len(u['pos']), PP)
+    # Include one non-spanning molecule: views must exclude exactly the same rows.
+    units.append(dict(units[0], uid='short', pos=np.arange(100, 120, 4)))
+    gs = [dict(L=[97, 103], R=[127, 133], span=[100, 130])]
+    opt = _opt()
+    sc = M.Scorer(units, gs, .5, opt)
+    for selected in (units[::2], units[1::2], [], units[::-1]):
+        view = sc.subset(selected)
+        fresh = M.Scorer(selected, gs, .5, opt)
+        assert [u['uid'] for u in view.keep] == [u['uid'] for u in fresh.keep]
+        for profile in (None, [{110: .1}]):
+            np.testing.assert_array_equal(view.rows(profile)[0], fresh.rows(profile)[0])
+        if len(view.base):
+            before = sc.base.copy()
+            view.base[:] = 0
+            np.testing.assert_array_equal(sc.base, before)

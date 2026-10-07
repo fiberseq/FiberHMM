@@ -501,8 +501,8 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--max-discovery-molecules` | — | Molecules per dataset and chemical channel for discovery; 0 = all (default 2000) |
-| `--max-quantification-molecules` | — | Molecules per dataset and chemical channel for quantification; 0 = all (default 0) |
+| `--max-discovery-molecules` | — | Molecules per dataset and chemical channel for discovery; 0 = all molecules; 2000 is a good cap for deep data (thousands of reads per site) (default 0) |
+| `--max-quantification-molecules` | — | Molecules per dataset and chemical channel for quantification; 0 = all molecules; 2000 is a good cap for deep data (thousands of reads per site) (default 0) |
 | `--sample-seed` | — | Stable molecule hash seed (default 1) |
 | `--schema` | off | Print every parameter group with defaults and help as JSON (cr.engine selects the engine; the default is lattice_recaller) |
 | `--bam` | — | Repeat for separate datasets; chemistry comes from BAM @CO metadata |
@@ -561,7 +561,9 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--bam` | — | Input BAM (repeat for separate datasets); chemistry from BAM @CO metadata |
 | `--datasets` | — | JSON list of {dataset_id, paths: [BAMs], chemistry?} |
 | `--evidence` | — | Saved evidence.json.gz (e.g. a fiberhmm-consensus run's), instead of loading BAMs |
-| `--region` | — | CHROM:START-END analysis window (0-based, half-open); required with --bam/--datasets |
+| `--region` | — | CHROM:START-END analysis window (0-based, half-open); use this or --bed with BAMs |
+| `--bed` | — | BED3 windows for independent NFR runs, written in BED order to window_XXXXXX directories |
+| `--window-jobs` | `0` | Concurrent BED windows (0 = up to --cores; 1 = sequential). Workers are reused across windows |
 | `--nfr` | — | NFR region inside the window (repeat for several). Default: detected from the share of callable reads inside a &gt;= 175-bp gap (see --detect-method) |
 | `--chemistry` | — | Explicit chemistry for --bam when the BAM header does not declare one Choices: `ddda`, `dddb`, `hia5-pacbio`, `hia5-nanopore`. |
 | `--parameters` | — | JSON: loader groups as for fiberhmm-consensus (input, compute, ...) and an "nfr" group with any engine parameter (see --schema) |
@@ -582,9 +584,9 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--detect-q` | — | Enrichment detection: Benjamini-Hochberg q of the binomial test (default 0.01) |
 | `--min-open-reads` | — | Raw/enrichment detection: reads inside a &gt;= 175-bp gap at least this (default 10) |
 | `--detect-threshold` | — | Fixed detection: share of callable reads inside a &gt;= 175-bp gap above this (default 0.15; given alone, it selects the fixed rule) |
-| `--cores` | — | Loader worker processes (compute.cores) |
-| `--max-discovery-molecules` | — | Molecules per dataset and chemical channel for discovery; 0 = all (default 2000) |
-| `--max-quantification-molecules` | — | Molecules per dataset and chemical channel for quantification; 0 = all (default 0) |
+| `--cores` | — | Worker budget (compute.cores; default 4); BED runs reuse workers across independent windows |
+| `--max-discovery-molecules` | — | Molecules per dataset and chemical channel for discovery; 0 = all molecules; 2000 is a good cap for deep data (thousands of reads per site) (default 0) |
+| `--max-quantification-molecules` | — | Molecules per dataset and chemical channel for quantification; 0 = all molecules; 2000 is a good cap for deep data (thousands of reads per site) (default 0) |
 | `--sample-seed` | — | Stable molecule hash seed (default 1) |
 | `--schema` | off | Print the engine parameters with defaults as JSON and exit |
 | `--json-progress` | off | Structured progress on stderr (JSON lines) |

@@ -111,7 +111,7 @@ def test_cli_flags_and_schema():
         args = p.parse_args(flags)
         assert [getattr(args, n) for n in C.NAMES] == [17, 9, 3]
     fields = {f['name']: f for f in parameter_schema()['recaller']}
-    assert [fields[n]['default'] for n in C.NAMES] == [2000, 0, 1]
+    assert [fields[n]['default'] for n in C.NAMES] == [0, 0, 1]
 
 
 def test_caps_filter_eligibility_before_selecting():
@@ -176,3 +176,15 @@ def test_nfr_depth_cap_counts_only_quantified_callable_molecules():
     assert all(row['n'] == 20 for row in result['nfrs'][0]['depth_states'])
     assert all(s['discovery'] == 0 and s['quantification'] == 10
                for s in result['detection']['molecule_sampling'][-1]['strata'])
+
+
+def test_caps_default_off_and_loader_does_not_scan(monkeypatch):
+    from fiberhmm.inference.consensus import bam, loader_sampling
+    assert RecallerOptions().max_discovery_molecules == NFROptions().max_discovery_molecules == 0
+    assert RecallerOptions().max_quantification_molecules == NFROptions().max_quantification_molecules == 0
+    sentinel = object()
+    monkeypatch.setattr(bam, '_load_payload_once', lambda *args: sentinel)
+    def forbidden(*args, **kwargs):
+        raise AssertionError('Uncapped loading entered the hash sampler')
+    monkeypatch.setattr(loader_sampling, 'load_sampled', forbidden)
+    assert bam._load_payload(None, {}, parse_options({}), None) is sentinel

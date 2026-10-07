@@ -1,6 +1,6 @@
 """Shared BAM preparation for CLI and FiberBrowser consensus."""
 from collections import Counter, defaultdict
-from copy import deepcopy
+from copy import copy, deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 import hashlib
@@ -58,7 +58,7 @@ def _load_dataset_evidence(state, dsid, chemistry, *, chrom, evidence_start, evi
         cached = decode_cache.get(i) if decode_cache is not None else None
         pending = read_names - cached['names'] if cached else read_names
         if cached and not pending:
-            reads.extend(deepcopy(cached['reads'])); files.append(deepcopy(cached['diagnostics']))
+            reads.extend(copy(read) for read in cached['reads']); files.append(deepcopy(cached['diagnostics']))
             continue
         actual,lo,hi,length=_resolve_bam_fetch_region(path,chrom,evidence_start,evidence_end)
         diagnostics=dict(requested_chrom=chrom,bam_chrom=actual,fetch_start=lo,fetch_end=hi)
@@ -79,10 +79,23 @@ def _load_dataset_evidence(state, dsid, chemistry, *, chrom, evidence_start, evi
                                                         sum(cached['diagnostics']['decoded_channels'].values()))
         if decode_cache is not None:
             decode_cache[i] = dict(names=set(read_names), reads=loaded, diagnostics=diagnostics)
-            loaded = deepcopy(loaded)
+            # Collapse and library names change attributes, not decoded arrays or interval calls.
+            loaded = [copy(read) for read in loaded]
         reads.extend(loaded)
         files.append(diagnostics)
     return reads,model,preset,dict(source_type='bam',evidence_reads=len(reads),files=files)
+
+
+def _replay_changes(before, unit):
+    """Cache only replay's replacements; the next tranche rebuilds the original evidence.
+
+    Replay replaces top-level fields, except provenance, which m5C conditioning
+    edits in place. Copy that small ledger too. Source members belong to each
+    tranche's collapse and must never come from the replay cache.
+    """
+    changes = {k: v for k, v in unit.items()
+               if k != 'source_members' and (k == 'provenance' or k not in before or v is not before[k])}
+    return deepcopy(changes), tuple(k for k in before if k not in unit)
 
 
 def _dataset_chemistry(item, paths):
@@ -304,12 +317,14 @@ def _load_payload_once(state,request,options,progress):
                 import pysam
                 lookup=defaultdict(list);recall_excluded={}
                 replayed=request.get('_replay_cache',{}).get(dsid)
+                before_replay={}
                 for read,unit in zip(representatives,units):
                     if replayed is not None and unit['unit_id'] in replayed:
-                        members=unit['source_members']
-                        unit.update(deepcopy(replayed[unit['unit_id']]))
-                        unit['source_members']=members
+                        changes,removed=replayed[unit['unit_id']]
+                        unit.update(deepcopy(changes))
+                        for key in removed:unit.pop(key,None)
                     else:
+                        if replayed is not None:before_replay[unit['unit_id']]=dict(unit)
                         lookup[str(read.record_sha256)].append((read,unit))
                 replay_names={r.name for matches in lookup.values() for r, _ in matches} if replayed is not None else None
                 found=set()
@@ -381,7 +396,9 @@ def _load_payload_once(state,request,options,progress):
                 units,diagnostics=_exclude_recall_failures(units,recall_excluded,ds.label,diagnostics)
                 if replayed is not None:
                     for unit in units:
-                        replayed[unit['unit_id']]=deepcopy(unit)
+                        uid=unit['unit_id']
+                        if uid in before_replay:
+                            replayed[uid]=_replay_changes(before_replay[uid],unit)
             # Keep chemical CT/GA order, but never split Hia5 by mapping orientation.
             units.sort(key=lambda u:((0 if u['strand']=='CT' else 1),u['unit_id']) if chemistry in ('ddda','dddb') else (0,u['unit_id']))
             model_hash=hashlib.sha256(model.emissionprob_.astype('<f8').tobytes()).hexdigest()
