@@ -1,5 +1,7 @@
 """Tests for endpoint-constrained deamination-fingerprint deduplication."""
 
+from itertools import permutations
+
 import numpy as np
 import pysam
 import pytest
@@ -75,6 +77,95 @@ def test_cluster_separates_molecules_and_tolerates_near_copies():
     assert len(set(labels[:5])) == 1
     assert len(set(labels[5:])) == 1
     assert labels[0] != labels[5]
+
+
+@pytest.mark.parametrize('order', list(permutations(range(3))))
+@pytest.mark.parametrize('threshold,swaps', [(0.95, 2), (0.90, 4)])
+def test_bucket_bridges_use_nonrepresentatives_and_merge_all_families(
+    monkeypatch, order, threshold, swaps
+):
+    # A--B and B--C qualify; A--C does not. Both A,B,C and A,C,B used to
+    # lose the B--C edge: B was skipped, or matching stopped at one family.
+    base = set(range(100))
+    middle = (base - set(range(swaps))) | set(range(100, 100 + swaps))
+    last = (base - set(range(2 * swaps))) | set(range(100, 100 + 2 * swaps))
+    fingerprints = [frozenset(base), frozenset(middle), frozenset(last)]
+    # Isolate candidate verification from the approximate hash retrieval.
+    monkeypatch.setattr('fiberhmm.cli.dedup._minhash',
+                        lambda pos_sets, k, seed: np.zeros((len(pos_sets), k), dtype=np.int64))
+    labels = cluster_reads([fingerprints[i] for i in order], [('c', 'CT')] * 3,
+                          threshold, 32, 8, 7, endpoints=[(0, 200)] * 3)
+    assert len(set(labels)) == 1
+
+
+def test_real_hash_bridge_regression():
+    # Minimal deterministic reproduction of the Tohn 1x-brain failure:
+    # B/C have Jaccard .9608 and share seven of eight candidate bands.
+    p = np.random.default_rng(8).choice(12000, size=104, replace=False)
+    fingerprints = [frozenset(p[:100]), frozenset(np.r_[p[:98], p[100:102]]),
+                    frozenset(np.r_[p[:96], p[100:104]])]
+    labels = cluster_reads(fingerprints, [('c', 'CT')] * 3, .95, 32, 8, 7,
+                          endpoints=[(0, 12000)] * 3)
+    assert len(set(labels)) == 1
+
+
+def test_candidate_components_match_exact_graph_with_group_and_end_gates(monkeypatch):
+    rng = np.random.default_rng(19)
+    fingerprints = []
+    for index in range(40):
+        base = set(range(100 * (index % 2), 100 * (index % 2) + 100))
+        remove = rng.choice(sorted(base), size=int(rng.integers(1, 6)), replace=False)
+        fingerprints.append(frozenset((base - set(remove)) | {1000 + index}))
+    keys = [('c', 'CT' if i % 3 else 'GA') for i in range(40)]
+    endpoints = [(int(rng.integers(0, 4)) * 40, 300) for _ in fingerprints]
+    monkeypatch.setattr('fiberhmm.cli.dedup._minhash',
+                        lambda pos_sets, k, seed: np.zeros((len(pos_sets), k), dtype=np.int64))
+    connected = np.eye(len(fingerprints), dtype=bool)
+    for i, a in enumerate(fingerprints):
+        for j, b in enumerate(fingerprints):
+            if (keys[i] == keys[j] and abs(endpoints[i][0] - endpoints[j][0]) <= 50
+                    and len(a & b) / len(a | b) >= .90):
+                connected[i, j] = True
+    # Independent transitive closure of the exact qualifying-pair graph.
+    for k in range(len(fingerprints)):
+        connected |= connected[:, k:k + 1] & connected[k:k + 1, :]
+    labels = cluster_reads(fingerprints, keys, .90, 32, 8, 7, endpoints=endpoints)
+    assert np.array_equal(labels[:, None] == labels[None, :], connected)
+
+
+def test_identical_family_avoids_quadratic_fingerprint_comparisons(monkeypatch):
+    from fiberhmm.cli import dedup
+
+    comparisons = []
+    original = dedup._jaccard
+
+    def count_jaccard(a, b):
+        comparisons.append(1)
+        return original(a, b)
+
+    monkeypatch.setattr(dedup, '_jaccard', count_jaccard)
+    n = 1000
+    labels = cluster_reads([frozenset(A_SITES)] * n, [('c', 'CT')] * n,
+                          .95, 32, 8, 7, endpoints=[(0, 200)] * n)
+    assert len(set(labels)) == 1
+    assert len(comparisons) <= n
+
+
+def test_optional_lower_threshold_marks_near_copies(tmp_path):
+    source = tmp_path / 'near.bam'
+    # 46/54 = .852 would be below both cutoffs; 48/52 = .923 distinguishes them.
+    _make_bam(source, [('first', A_SITES, False, 60),
+                       ('near', _near(A_SITES, 2), False, 50)])
+    counts = []
+    for threshold in [.95, .90]:
+        output = tmp_path / f'j{threshold}.bam'
+        stats = run_dedup(str(source), str(output), min_jaccard=threshold, collapse=False)
+        with pysam.AlignmentFile(output) as bam:
+            records = list(bam)
+            assert len(records) == 2
+            counts.append(sum(r.is_duplicate for r in records))
+        assert stats['n_duplicates'] == counts[-1]
+    assert counts == [0, 1]
 
 
 def test_strand_grouping_is_enforced_by_group_key():

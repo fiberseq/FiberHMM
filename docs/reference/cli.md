@@ -149,7 +149,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--ddda-mcg` | off | Deprecated integrated per-CpG mode; retained only to emit a clear migration error. Run fiberhmm-call, then fiberhmm-tag-m5c (whole CpG islands), then fiberhmm-call again on the tagged BAM. |
 | `--dedup` | auto | DAF (ddda/dddb) only: force PCR duplicate detection (already automatic for file-based DddA/DddB calls). Detect by deamination-pattern fingerprint (see fiberhmm-dedup) and similar alignment ends BEFORE footprinting. The integrated default is nondestructive: retain every read and set 0x400 plus di/ds cluster tags. Amplicon/UMI-less DAF libraries can be heavily PCR-duplicated and coordinate dedup does not apply. Requires a file input (not stdin). Ignored for fiber-seq (hia5). |
 | `--no-dedup` | auto | Disable automatic DddA/DddB duplicate marking. |
-| `--dedup-min-jaccard` | `0.95` | Deamination-set Jaccard threshold for --dedup (default 0.95). |
+| `--dedup-min-jaccard` | `0.95` | Deamination-set Jaccard threshold for --dedup (default 0.95). Use 0.90 for optional more aggressive matching; lower thresholds can merge distinct molecules. |
 | `--dedup-flag-only` | off | Deprecated compatibility spelling for the nondestructive integrated default (0x400 + di/ds; retain every read). |
 | `--dedup-collapse` | off | With --dedup: destructively collapse each duplicate cluster to one representative. Default: mark and retain all reads. |
 | `--dedup-min-deam` | `10` | With --dedup: reads with fewer deamination calls are not fingerprinted and pass through (default 10). |
@@ -359,7 +359,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 |------|---------|-------------|
 | `-i` / `--input` | required | Input DAF-seq BAM (indexed not required) |
 | `-o` / `--output` | required | Output BAM |
-| `--min-jaccard` | `0.95` | Min deamination-set Jaccard to call two reads the same molecule (default 0.95; the bimodal gap sits ~0.90-0.95). Lower = more aggressive collapsing. |
+| `--min-jaccard` | `0.95` | Min deamination-set Jaccard to call two reads the same molecule (default 0.95). Use 0.90 for optional more aggressive matching; lower thresholds can merge distinct molecules. |
 | `--flag-only` | off | Keep all reads and only mark duplicates: set the 0x400 duplicate flag on non-representatives and di/ds cluster tags on every member of a duplicate cluster. Default: collapse each cluster to one representative read. |
 | `--min-deam` | `10` | Reads with fewer than this many deamination calls are not fingerprintable; passed through untouched (default 10). |
 | `--max-end-diff` | `50` | Maximum difference at both aligned reference ends for two reads to be duplicates (default 50 bp). |

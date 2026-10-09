@@ -91,10 +91,12 @@ def cluster_reads(
     group_key by deamination-set Jaccard >= min_jaccard. Returns a labels
     array (cluster id per read; -1 for un-fingerprintable reads).
 
-    LSH banding surfaces candidate pairs; each candidate is verified by exact
-    Jaccard and, when endpoints are supplied, similar alignment starts/ends.
-    Thus even highly similar overlapping whole-genome fibers cannot collapse
-    unless they are consistent with copies of the same physical molecule.
+    LSH banding surfaces candidate pairs; qualifying edges are verified by
+    exact Jaccard and, when supplied, similar alignment starts/ends. Clusters
+    are connected components of those edges, so a qualifying bridge can join
+    two families even when their representatives do not match each other.
+    Hash retrieval remains approximate; pairs with no shared band are not
+    compared. End tolerances constrain edges, not a component's total span.
     """
     n = len(pos_sets)
     rows = k // bands
@@ -112,26 +114,49 @@ def cluster_reads(
         for ids in buckets.values():
             if len(ids) < 2:
                 continue
-            representatives = []
+            # Keep all candidate members available, not just a representative.
+            # A~B and B~C need not imply A~C. Discarding B after matching A, or
+            # stopping at the first matched family, loses qualifying bridges.
+            # Within each bucket, already-connected members can be searched as
+            # one component: one verified edge is enough to join that component.
+            components = []
             for j in ids:
-                matched = False
-                for rep in representatives:
-                    if endpoints is not None:
-                        rep_ends = endpoints[rep]
-                        query_ends = endpoints[j]
-                        if (
-                            rep_ends is None
-                            or query_ends is None
-                            or abs(rep_ends[0] - query_ends[0]) > max_end_diff
-                            or abs(rep_ends[1] - query_ends[1]) > max_end_diff
-                        ):
-                            continue
-                    if _jaccard(pos_sets[rep], pos_sets[j]) >= min_jaccard:
-                        uf.union(rep, j)
-                        matched = True
-                        break
-                if not matched:
-                    representatives.append(j)
+                matched_components = []
+                remaining = []
+                for members in components:
+                    matched = uf.find(j) == uf.find(members[0])
+                    if not matched:
+                        for candidate in members:
+                            if endpoints is not None:
+                                candidate_ends = endpoints[candidate]
+                                query_ends = endpoints[j]
+                                if (
+                                    candidate_ends is None
+                                    or query_ends is None
+                                    or abs(candidate_ends[0] - query_ends[0]) > max_end_diff
+                                    or abs(candidate_ends[1] - query_ends[1]) > max_end_diff
+                                ):
+                                    continue
+                            if _jaccard(pos_sets[candidate], pos_sets[j]) >= min_jaccard:
+                                uf.union(candidate, j)
+                                matched = True
+                                break
+                    if matched:
+                        matched_components.append(members)
+                    else:
+                        remaining.append(members)
+                if matched_components:
+                    # Grow the largest list in place; repeatedly copying a
+                    # large identical family would itself be quadratic.
+                    merged = max(matched_components, key=len)
+                    merged.append(j)
+                    for members in matched_components:
+                        if members is not merged:
+                            merged.extend(members)
+                    remaining.append(merged)
+                else:
+                    remaining.append([j])
+                components = remaining
 
     labels = np.full(n, -1, dtype=np.int64)
     remap = {}
@@ -389,8 +414,9 @@ Examples:
     parser.add_argument('-o', '--output', required=True, help='Output BAM')
     parser.add_argument('--min-jaccard', type=float, default=0.95,
                         help='Min deamination-set Jaccard to call two reads the same '
-                             'molecule (default 0.95; the bimodal gap sits ~0.90-0.95). '
-                             'Lower = more aggressive collapsing.')
+                             'molecule (default 0.95). Use 0.90 for optional more '
+                             'aggressive matching; lower thresholds can merge '
+                             'distinct molecules.')
     parser.add_argument('--flag-only', action='store_true',
                         help='Keep all reads and only mark duplicates: set the 0x400 '
                              'duplicate flag on non-representatives and di/ds cluster '

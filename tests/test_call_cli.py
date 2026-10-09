@@ -286,6 +286,7 @@ def test_daf_snp_and_nondestructive_dedup_defaults(monkeypatch):
     assert args.dedup is None
     assert _resolve_dedup(args, "daf") is True
     assert args.dedup_collapse is False
+    assert args.dedup_min_jaccard == 0.95
     assert args.dedup_max_end_diff == 50
 
     monkeypatch.setattr(
@@ -299,6 +300,16 @@ def test_daf_snp_and_nondestructive_dedup_defaults(monkeypatch):
     no_dedup = parse_call_args()
     assert no_dedup.dedup is False
     assert _resolve_dedup(no_dedup, "daf") is False
+
+    monkeypatch.setattr(
+        sys, "argv",
+        ["fiberhmm-call", "-i", "in.bam", "-o", "out.bam", "--enzyme", "dddb",
+         "--dedup-min-jaccard", "0.90"],
+    )
+    more_aggressive = parse_call_args()
+    assert more_aggressive.dedup_min_jaccard == 0.90
+    assert _resolve_dedup(more_aggressive, "daf") is True
+    assert more_aggressive.dedup_collapse is False
 
     monkeypatch.setattr(
         sys,

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased: fixes
+
+- Fix deamination-fingerprint deduplication dropping qualifying candidate
+  edges after a read matched a bucket representative. Candidate components
+  retain all members and merge every matching family, recovering bridges
+  without quadratic fingerprint comparisons for identical-read families.
+  The default Jaccard threshold remains 0.95; document the existing optional
+  0.90 settings (`fiberhmm-call --dedup-min-jaccard` and standalone
+  `fiberhmm-dedup --min-jaccard`) with regression coverage.
+
 ## Unreleased: experimental preview (not part of 3.0.0)
 
 - Frozen lattice transfer streams BED evidence one window at a time and keeps

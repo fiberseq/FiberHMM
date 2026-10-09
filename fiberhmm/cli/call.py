@@ -322,7 +322,8 @@ def parse_args():
                    help='Disable automatic DddA/DddB duplicate marking.')
     p.add_argument('--dedup-min-jaccard', type=float, default=0.95,
                    help='Deamination-set Jaccard threshold for --dedup '
-                        '(default 0.95).')
+                        '(default 0.95). Use 0.90 for optional more aggressive '
+                        'matching; lower thresholds can merge distinct molecules.')
     p.add_argument('--dedup-flag-only', action='store_true',
                    help='Deprecated compatibility spelling for the nondestructive '
                         'integrated default (0x400 + di/ds; retain every read).')

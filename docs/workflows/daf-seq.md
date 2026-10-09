@@ -83,6 +83,10 @@ Two reads are duplicates when:
   found with MinHash and locality-sensitive hashing.
 
 Reads with fewer than `--min-deam` (10) deaminations are not fingerprinted.
+Clusters connect all qualifying pairs found in shared hash buckets. A read
+can bridge two families whose representatives do not directly match. The
+similarity and endpoint limits apply to each connecting pair, not every pair
+in the final family. Hash-based candidate retrieval is approximate.
 Within a cluster, the representative is the read with the highest MAPQ, then
 the most complete alignment.
 
@@ -105,6 +109,20 @@ per cluster; `--flag-only` marks instead:
 fiberhmm-dedup -i demo/ddda.bam -o out/ddda.dedup.bam
 fiberhmm-dedup -i demo/ddda.bam -o out/ddda.markdup.bam --flag-only --stats-tsv out/ddda.clusters.tsv
 ```
+
+**Optional 90% matching.** The default remains 0.95. For a library with
+residual near-identical fingerprints, compare the default with a lower
+threshold, retaining the same endpoint and deamination-flavour checks:
+
+```bash
+fiberhmm-call -i aligned.bam -o calls.j90.bam --enzyme dddb --dedup-min-jaccard 0.90
+fiberhmm-dedup -i aligned.bam -o marked.j90.bam --flag-only --min-jaccard 0.90
+```
+
+Use the original aligned BAM so previously collapsed reads and old duplicate
+annotations do not constrain the comparison. Lower thresholds merge more
+families and may merge distinct molecules; choose based on fingerprint
+separation and controls, rather than the desired accessibility distribution.
 
 ```text
 Clustering (Jaccard >= 0.95; ends ±50 bp): 377 reads -> 325 molecules | 52 duplicates (13.8%) | mean 1.16 copies/molecule [1s]
