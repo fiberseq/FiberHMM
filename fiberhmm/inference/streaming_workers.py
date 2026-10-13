@@ -293,6 +293,15 @@ def _process_fused_payload_chunk_worker(
                 results.append(None)
                 continue
 
+            # The first-pass HMM uses the recall CpG mask (see _process_single_read).
+            hmm_cpg_mask = None
+            if (_worker_recall_state.get('cpg_mask_policy')
+                    and not _worker_recall_state.get('ddda_mcg')):
+                hmm_cpg_mask = payload_cpg_mask(
+                    payload, len(fiber_read['query_sequence']),
+                    _worker_recall_state['cpg_mask_policy'],
+                )
+                fiber_read['_hmm_cpg_mask'] = hmm_cpg_mask
             apply_result = run_hmm_apply_stage(
                 fiber_read,
                 _worker_model,
@@ -327,10 +336,7 @@ def _process_fused_payload_chunk_worker(
                     # early feature fails on one malformed read.
                     m5c_mask, m5c_spans, m5c_failed = None, [], True
             elif _worker_recall_state.get('cpg_mask_policy'):
-                m5c_mask = payload_cpg_mask(
-                    payload, len(fiber_read['query_sequence']),
-                    _worker_recall_state['cpg_mask_policy'],
-                )
+                m5c_mask = hmm_cpg_mask
 
             fused_result = build_fused_recall_result(
                 fiber_read,

@@ -1059,6 +1059,31 @@ def _daf_strand_params(sequence: str, mod_positions: Set[int],
     return 0, 3, True      # A->G on -/unknown strand; RC to C-centered codes.
 
 
+def daf_cpg_target_mask(sequence: str, mod_positions: Set[int],
+                        strand: str) -> np.ndarray:
+    """SEQ-frame positions of DAF target bases that sit in a CpG.
+
+    On the C->T strand a target C is a CpG when the next base is G; on the
+    G->A strand a target G is a CpG when the previous base is C. The partner
+    base is never converted on that strand, so the deaminated sequence
+    identifies CpGs directly. This is the CpG test the CpG-aware recall
+    applies to C-centred context codes.
+    """
+    deam_int, orig_int, _ = _daf_strand_params(sequence, mod_positions, strand)
+    seq_int = _sequence_base_int_array(sequence, uppercase=True)
+    n = len(seq_int)
+    out = np.zeros(n, dtype=bool)
+    if n < 2:
+        return out
+    center = seq_int
+    is_target = (center == orig_int) | (center == deam_int)
+    if orig_int == 1:            # C->T strand: C/T followed by G (G == 3)
+        out[:-1] = is_target[:-1] & (seq_int[1:] == 3)
+    else:                         # G->A strand: G/A preceded by C (C == 1)
+        out[1:] = is_target[1:] & (seq_int[:-1] == 1)
+    return out
+
+
 def _encode_daf_observations(sequence: str, mod_positions: Set[int],
                              edge_trim: int, strand: str, context_size: int,
                              non_target_code: int,

@@ -8,6 +8,8 @@ import numpy as np
 import pysam
 
 from fiberhmm.core.bam_reader import (
+    ContextEncoder,
+    daf_cpg_target_mask,
     detect_daf_strand,
     encode_from_query_sequence,
     extract_daf_iupac_positions,
@@ -1265,8 +1267,29 @@ def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool
     if len(encoded) == 0:
         return None
 
+    # DddA CpG-aware calling: the first-pass HMM sees the same CpG mask as
+    # recall (all CpGs except those in confidently unmethylated islands), so
+    # the initial segmentation does not depend on CpG methylation. The mask
+    # applies to the HMM's copy only; recall keeps the full encoding and
+    # applies its own policy.
+    hmm_encoded = encoded
+    hmm_cpg_mask = fiber_read.get('_hmm_cpg_mask')
+    if hmm_cpg_mask is not None and mode == 'daf':
+        hmm_cpg_mask = np.asarray(hmm_cpg_mask, dtype=bool)
+        if circular_read_length is not None:
+            hmm_cpg_mask = np.tile(hmm_cpg_mask, 3)
+        cpg = daf_cpg_target_mask(encode_sequence, encode_mods, strand)
+        if len(hmm_cpg_mask) == len(cpg) == len(encoded):
+            n_codes = ContextEncoder.get_n_codes(context_size)
+            hide = cpg & hmm_cpg_mask
+            if hide.any():
+                hmm_encoded = encoded.copy()
+                hmm_encoded[hide] = 2 * n_codes + 1  # non-target, no call
+        else:
+            raise ValueError('_hmm_cpg_mask length must match the read')
+
     # Predict
-    fp_result = predict_footprints_and_msps(model, encoded, msp_min_size, with_scores,
+    fp_result = predict_footprints_and_msps(model, hmm_encoded, msp_min_size, with_scores,
                                              return_posteriors=return_posteriors,
                                              nuc_min_size=nuc_min_size,
                                              circular_read_length=circular_read_length)
