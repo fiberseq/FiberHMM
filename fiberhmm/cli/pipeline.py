@@ -162,10 +162,13 @@ def build_parser() -> argparse.ArgumentParser:
     call.add_argument("--prob-threshold", type=int, default=None,
                       help="ML threshold override, 0-255 (default: chemistry preset).")
     call.add_argument("--use-m5c", action=argparse.BooleanOptionalAction, default=None,
-                      help="DddA CpG-aware recall (default: on for ddda).")
+                      help="DddA CpG-aware calling: CpGs masked in the first-pass "
+                           "HMM and recall outside ddda_ucg islands (default: on "
+                           "for ddda).")
     call.add_argument("--cpg-mask-policy", choices=["unmethylated-only", "methylated-only"],
                       default=None,
-                      help="DddA CpG mask policy (default unmethylated-only).")
+                      help="DddA CpG mask policy for the HMM and recall (default "
+                           "unmethylated-only).")
     call.add_argument("--call-args", default=None,
                       help='Other fiberhmm-call options, quoted as one string '
                            '(e.g. --call-args "--with-scores --min-llr 6").')

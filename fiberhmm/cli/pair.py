@@ -380,11 +380,16 @@ Examples:
                    'exposed only by DddA nucleosome refinement (default 12; -1 disables)')
     p.add_argument('--use-m5c', action=argparse.BooleanOptionalAction,
                    default=None,
-                   help='Joint recall: DddA CpG-aware recall, as in '
-                        'fiberhmm-call and fiberhmm-recall-tfs -- CpG '
-                        'observations are excluded except inside the source '
-                        'reads\' ddda_ucg islands (fiberhmm-tag-m5c). Default: '
-                        'on; --no-use-m5c for an ablation.')
+                   help='Joint recall: DddA CpG-aware calling, as in '
+                        'fiberhmm-call -- CpG observations are excluded from '
+                        'the joint HMM and from recall except inside the '
+                        'source reads\' ddda_ucg islands (fiberhmm-tag-m5c). '
+                        'Default: on; --no-use-m5c for an ablation.')
+    p.add_argument('--cpg-mask-policy',
+                   choices=('unmethylated-only', 'methylated-only'), default=None,
+                   help='With CpG-aware calling: keep CpGs only inside ddda_ucg '
+                        'islands (default unmethylated-only), or mask only '
+                        'ddda_mcg spans (methylated-only), as in fiberhmm-call.')
     from fiberhmm.core.bam_reader import add_daf_run_mask_arguments, apply_daf_run_mask_arguments
     add_daf_run_mask_arguments(p)
     from fiberhmm.cli.common import add_version_args
@@ -486,6 +491,8 @@ Examples:
                     else args.ddda_derived_tf_max_edge_gap
                 ),
                 use_m5c=args.use_m5c,
+                cpg_mask_policy=args.cpg_mask_policy,
+                tool='fiberhmm-pair',
             )
     except (OSError, ValueError, RuntimeError) as error:
         print(f'fiberhmm-pair: error: {error}', file=sys.stderr)

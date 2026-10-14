@@ -344,6 +344,7 @@ def _process_bam_streaming_pipeline(
     process_unmapped: bool = False,
     fail_on_mostly_unmapped: bool = False,
     pg_record: Optional[dict] = None,
+    cpg_mask_policy: Optional[str] = None,
 ) -> Tuple[int, int]:
     """Streaming producer-consumer pipeline for BAM processing.
 
@@ -454,7 +455,7 @@ def _process_bam_streaming_pipeline(
                         _process_payload_chunk_worker,
                         chunk_reads, edge_trim, circular, mode, context_size,
                         msp_min_size, nuc_min_size, with_scores,
-                        return_posteriors, prob_threshold,
+                        return_posteriors, prob_threshold, cpg_mask_policy,
                     )
 
                 try:

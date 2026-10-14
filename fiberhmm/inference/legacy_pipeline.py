@@ -17,6 +17,8 @@ from fiberhmm.inference.engine import (
     CHIMERA_SKIP,
     _extract_fiber_read_from_pysam,
     _process_single_read,
+    attach_hmm_cpg_mask,
+    read_cpg_ma_intervals,
 )
 from fiberhmm.inference.mp_context import _MP_CONTEXT
 from fiberhmm.inference.read_filters import (
@@ -163,6 +165,7 @@ def _process_bam_legacy_pipeline(
     write_msps: bool = True,
     io_threads: int = 4,
     pg_record: Optional[dict] = None,
+    cpg_mask_policy: Optional[str] = None,
 ) -> Tuple[int, int]:
     """Process a BAM through the legacy chunked apply path.
 
@@ -267,6 +270,9 @@ def _process_bam_legacy_pipeline(
                             skipped += 1
                             skip_reasons['no_modifications'] += 1
                             continue
+                        if cpg_mask_policy and mode == 'daf':
+                            attach_hmm_cpg_mask(fiber_read, cpg_mask_policy,
+                                                read_cpg_ma_intervals(read))
                     except Exception:
                         from fiberhmm.inference.worker_results import (
                             record_failure_message,

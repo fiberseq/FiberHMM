@@ -76,7 +76,8 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                                 chunk_size: int = 500,
                                 process_unmapped: bool = False,
                                 fail_on_mostly_unmapped: bool = False,
-                                pg_record: Optional[dict] = None) -> Tuple[int, int]:
+                                pg_record: Optional[dict] = None,
+                                cpg_mask_policy: Optional[str] = None) -> Tuple[int, int]:
     """
     Process BAM file and add footprint tags - SINGLE PASS STREAMING.
 
@@ -92,6 +93,9 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
         pg_record: ``@PG`` record plus ``chemistry`` declaration for the output
             header (streaming and chunked paths; see
             :func:`fiberhmm.cli.provenance.output_header_with_provenance`)
+        cpg_mask_policy: DddA CpG-aware calling (``'unmethylated-only'`` /
+            ``'methylated-only'``; None = off): the HMM sees CpGs masked as in
+            ``fiberhmm-call``'s first pass (DAF mode only)
 
     Returns:
         (total_reads_processed, reads_with_footprints)
@@ -134,7 +138,8 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                 primary_only=primary_only,
                 output_posteriors=output_posteriors,
                 write_msps=write_msps,
-                io_threads=io_threads
+                io_threads=io_threads,
+                cpg_mask_policy=cpg_mask_policy,
             )
 
     # Dispatch to streaming pipeline if requested (requires model_path for workers)
@@ -168,6 +173,7 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                 process_unmapped=process_unmapped,
                 fail_on_mostly_unmapped=fail_on_mostly_unmapped,
                 pg_record=pg_record,
+                cpg_mask_policy=cpg_mask_policy,
             )
 
     if model is None and model_path is not None and n_cores <= 1:
@@ -197,4 +203,5 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
         write_msps=write_msps,
         io_threads=io_threads,
         pg_record=pg_record,
+        cpg_mask_policy=cpg_mask_policy,
     )

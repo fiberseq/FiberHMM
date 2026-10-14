@@ -102,7 +102,8 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
                                    primary_only: bool = False,
                                    output_posteriors: Optional[str] = None,
                                    write_msps: bool = True,
-                                   io_threads: int = 4) -> Tuple[int, int]:
+                                   io_threads: int = 4,
+                                   cpg_mask_policy: Optional[str] = None) -> Tuple[int, int]:
     """
     Process BAM using region-based parallelism with indexed access.
 
@@ -156,6 +157,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
             'return_posteriors': return_posteriors,
             'write_msps': write_msps,
             'io_threads': io_threads,
+            'cpg_mask_policy': cpg_mask_policy,
         }
 
         # Work items (processing regions plus pass-through contigs and the

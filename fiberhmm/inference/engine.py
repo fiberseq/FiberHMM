@@ -1220,6 +1220,53 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
     return fiber_read
 
 
+def hide_cpg_observations(encoded: np.ndarray, hide: np.ndarray,
+                          context_size: int) -> np.ndarray:
+    """Copy of ``encoded`` with the ``hide`` positions set to the DAF
+    non-target code (no call); ``encoded`` itself when nothing is hidden.
+
+    This is how the first-pass HMM sees a CpG excluded by the DddA CpG mask:
+    as no observation, exactly as recall treats it.
+    """
+    hide = np.asarray(hide, dtype=bool)
+    if not hide.any():
+        return encoded
+    out = np.array(encoded, copy=True)
+    out[hide] = 2 * ContextEncoder.get_n_codes(context_size) + 1
+    return out
+
+
+def hmm_cpg_mask(read_length: int, policy: str, intervals=None) -> np.ndarray:
+    """Positions whose CpGs the DddA CpG policy excludes, from a read's
+    ``ddda_ucg``/``ddda_mcg`` SEQ-frame intervals (``{'ucg': ..., 'mcg': ...}``)."""
+    from fiberhmm.inference.tf_recaller import cpg_mask_from_intervals
+
+    intervals = intervals or {}
+    return cpg_mask_from_intervals(
+        int(read_length), policy,
+        intervals.get('ucg', ()), intervals.get('mcg', ()),
+    )
+
+
+def read_cpg_ma_intervals(read) -> dict:
+    """The ``ddda_ucg``/``ddda_mcg`` SEQ-frame intervals a read's MA tag carries."""
+    if not read.has_tag('MA'):
+        return {}
+    from fiberhmm.inference.tf_recaller import read_cpg_intervals
+
+    return read_cpg_intervals(read)
+
+
+def attach_hmm_cpg_mask(fiber_read, policy: Optional[str], intervals=None):
+    """Give ``fiber_read`` the first-pass HMM CpG mask of ``policy`` (DddA
+    CpG-aware calling; ``None`` = off), as ``fiberhmm-call`` does. Returns the
+    read; non-dict values (``None``, ``CHIMERA_SKIP``) pass through."""
+    if policy and isinstance(fiber_read, dict) and fiber_read.get('query_sequence'):
+        fiber_read['_hmm_cpg_mask'] = hmm_cpg_mask(
+            len(fiber_read['query_sequence']), policy, intervals)
+    return fiber_read
+
+
 def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool,
                           mode: str, context_size: int, msp_min_size: int,
                           with_scores: bool, return_posteriors: bool = False,
@@ -1280,11 +1327,8 @@ def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool
             hmm_cpg_mask = np.tile(hmm_cpg_mask, 3)
         cpg = daf_cpg_target_mask(encode_sequence, encode_mods, strand)
         if len(hmm_cpg_mask) == len(cpg) == len(encoded):
-            n_codes = ContextEncoder.get_n_codes(context_size)
-            hide = cpg & hmm_cpg_mask
-            if hide.any():
-                hmm_encoded = encoded.copy()
-                hmm_encoded[hide] = 2 * n_codes + 1  # non-target, no call
+            hmm_encoded = hide_cpg_observations(encoded, cpg & hmm_cpg_mask,
+                                                context_size)
         else:
             raise ValueError('_hmm_cpg_mask length must match the read')
 

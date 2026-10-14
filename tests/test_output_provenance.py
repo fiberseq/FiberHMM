@@ -47,6 +47,7 @@ def test_merge_header_records_program_and_recall_chemistry():
     program = recalled.to_dict()["PG"][-1]
     assert program["VN"] == fiberhmm.__version__
     assert "recall=on" in program["DS"] and "cpg_mask=unmethylated-only" in program["DS"]
+    assert "hmm_cpg_mask=on" in program["DS"]
     (declaration,) = declared_chemistries(recalled)
     assert declaration["enzyme"] == "ddda" and declaration["mode"] == "daf"
     assert declaration["pg"] == "fiberhmm-merge"

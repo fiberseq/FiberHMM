@@ -67,8 +67,8 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--primary` | — | Same as --alignments primary. |
 | `--no-primary` | — | Same as --alignments all. |
 | `--prob-threshold` | — | ML threshold override, 0-255 (default: chemistry preset). |
-| `--use-m5c` / `--no-use-m5c` | auto | DddA CpG-aware recall (default: on for ddda). |
-| `--cpg-mask-policy` | — | DddA CpG mask policy (default unmethylated-only). Choices: `unmethylated-only`, `methylated-only`. |
+| `--use-m5c` / `--no-use-m5c` | auto | DddA CpG-aware calling: CpGs masked in the first-pass HMM and recall outside ddda_ucg islands (default: on for ddda). |
+| `--cpg-mask-policy` | — | DddA CpG mask policy for the HMM and recall (default unmethylated-only). Choices: `unmethylated-only`, `methylated-only`. |
 | `--call-args` | — | Other fiberhmm-call options, quoted as one string (e.g. --call-args "--with-scores --min-llr 6"). |
 | `--call-mode` | `auto` | auto (default): fiberhmm-call's resumable region-parallel mode for genome-scale data (&gt;=20,000 reads over at least --cores regions), streaming for targeted runs (one amplicon or plasmid), which it calls faster. Choices: `auto`, `streaming`, `resumable`. |
 | `--no-qc` | off | Skip fiberhmm-qc. |
@@ -120,8 +120,8 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--min-opps` | `3` | Min informative target positions per TF call (default 3). |
 | `--unify-threshold` | `90` | v2 nucs with nl &lt; this may be demoted to tf+ (default 90). |
 | `--emission-uplift` | — | Emission power transform. Default: enzyme preset. |
-| `--use-m5c` / `--no-use-m5c` | auto | DddA CpG-aware recall, as in fiberhmm-recall-tfs: CpG observations are excluded from nucleosome and TF recall except inside confident unmethylated island calls (MA ddda_ucg from fiberhmm-tag-m5c) the input already carries. Default: on for --enzyme ddda, off otherwise; --no-use-m5c for an ablation. |
-| `--cpg-mask-policy` | — | With CpG-aware recall: keep CpGs only inside ddda_ucg islands (default unmethylated-only), or mask only ddda_mcg spans (the former behaviour). DddA only; ignored with a warning otherwise. Choices: `unmethylated-only`, `methylated-only`. |
+| `--use-m5c` / `--no-use-m5c` | auto | DddA CpG-aware calling: CpG observations are excluded from the first-pass HMM and from nucleosome and TF recall, except inside confident unmethylated island calls (MA ddda_ucg from fiberhmm-tag-m5c) the input already carries. The same mask applies in fiberhmm-apply, -posteriors and -pair/-merge. Default: on for --enzyme ddda, off otherwise; --no-use-m5c for an ablation. |
+| `--cpg-mask-policy` | — | With CpG-aware calling (HMM and recall): keep CpGs only inside ddda_ucg islands (default unmethylated-only), or mask only ddda_mcg spans (methylated-only, the former behaviour). DddA only; ignored with a warning otherwise. Choices: `unmethylated-only`, `methylated-only`. |
 | `--no-legacy-tags` | off | Skip ns/nl/as/al, emit only MA/AQ. |
 | `--downstream-compat` | off | Skip MA/AQ; write TF calls into legacy ns/nl track. |
 | `--recall-nucs` / `--no-recall-nucs` | auto | Split over-merged nucleosomes + resolve platform-aware edges (emits nuc.QQQ) and promote nucleosome-sized TF leaks to nuc. ON by default for all enzymes (DddA uses phase-aware radial inference, others the accessible-cut Kadane split). Use --no-recall-nucs for baseline HMM nucleosomes (nuc.Q). |
@@ -212,6 +212,8 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--daf-mask-runs` | — | Thin DAF targets in same-strand runs of &gt;= N original C (CT) or G (GA) bases (N=2: CC/GG and longer). Default: 2 with keep-one for DddA (duplex-validated), off otherwise; 0 disables. |
 | `--daf-run-policy` | `keep-one` | With --daf-mask-runs: keep each run's 5'-most target (default) or drop the run. Choices: `keep-one`, `drop`. |
 | `--daf-mask-unaligned` / `--no-daf-mask-unaligned` | on | DAF only: treat insertion and soft-clip bases as no evidence and leave unaligned stretches of &gt;= 50 bp uncalled (default on, as in fiberhmm-call). |
+| `--use-m5c` / `--no-use-m5c` | auto | DddA CpG-aware calling, as in fiberhmm-call: CpG observations are hidden from the HMM except inside confident unmethylated islands (MA ddda_ucg from fiberhmm-tag-m5c) the input carries. Default: on for --enzyme ddda, off otherwise. |
+| `--cpg-mask-policy` | — | With CpG-aware calling: keep CpGs only inside ddda_ucg islands (default unmethylated-only), or mask only ddda_mcg spans (methylated-only). DddA only; ignored with a warning otherwise. Choices: `unmethylated-only`, `methylated-only`. |
 
 ## fiberhmm-recall-tfs
 
@@ -426,7 +428,8 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--io-threads` | `4` | htslib compression threads for output (default 4) |
 | `--no-index` | off | Do not index a paired-source output |
 | `--ddda-derived-tf-max-edge-gap` | `12` | Edge-evidence requirement for TF calls exposed only by DddA nucleosome refinement (default 12; -1 disables) |
-| `--use-m5c` / `--no-use-m5c` | auto | Joint recall: DddA CpG-aware recall, as in fiberhmm-call and fiberhmm-recall-tfs -- CpG observations are excluded except inside the source reads' ddda_ucg islands (fiberhmm-tag-m5c). Default: on; --no-use-m5c for an ablation. |
+| `--use-m5c` / `--no-use-m5c` | auto | Joint recall: DddA CpG-aware calling, as in fiberhmm-call -- CpG observations are excluded from the joint HMM and from recall except inside the source reads' ddda_ucg islands (fiberhmm-tag-m5c). Default: on; --no-use-m5c for an ablation. |
+| `--cpg-mask-policy` | — | With CpG-aware calling: keep CpGs only inside ddda_ucg islands (default unmethylated-only), or mask only ddda_mcg spans (methylated-only), as in fiberhmm-call. Choices: `unmethylated-only`, `methylated-only`. |
 | `--daf-mask-runs` | — | Thin DAF targets in same-strand runs of &gt;= N original C (CT) or G (GA) bases (N=2: CC/GG and longer). Default: 2 with keep-one for DddA (duplex-validated), off otherwise; 0 disables. |
 | `--daf-run-policy` | `keep-one` | With --daf-mask-runs: keep each run's 5'-most target (default) or drop the run. Choices: `keep-one`, `drop`. |
 
@@ -440,7 +443,8 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--recall` | off | Re-call footprints on each both-strand consensus read (HMM, nucleosome and TF recall over both strands; writes ns/nl/as/al + MA nuc/msp/tf). Reads the deam+/deam- regime and uses C and G targets jointly. |
 | `--enzyme` | `ddda` | Model preset for --recall (default ddda) |
 | `--ddda-derived-tf-max-edge-gap` | `12` | With --recall, require TF calls exposed solely by DddA radial nucleosome refinement to have a deamination hit within BP on both sides (default 12; -1 disables). |
-| `--use-m5c` / `--no-use-m5c` | auto | With --recall: DddA CpG-aware recall, as in fiberhmm-call and fiberhmm-recall-tfs (CpGs excluded except inside the source reads' ddda_ucg islands). Default: on for --enzyme ddda. |
+| `--use-m5c` / `--no-use-m5c` | auto | With --recall: DddA CpG-aware calling, as in fiberhmm-call (CpGs excluded from the joint HMM and from recall except inside the source reads' ddda_ucg islands). Default: on for --enzyme ddda. |
+| `--cpg-mask-policy` | — | With CpG-aware calling: keep CpGs only inside ddda_ucg islands (default unmethylated-only), or mask only ddda_mcg spans (methylated-only), as in fiberhmm-call. Choices: `unmethylated-only`, `methylated-only`. |
 | `-p` / `--prob-threshold` | `128` | Min ML probability for MM/ML-native dU calls (0-255; default 128, the same as fiberhmm-call). R/Y- and MD-encoded input is binary and ignores it. |
 | `--io-threads` | `4` | htslib compression threads (default 4) |
 | `--daf-mask-runs` | — | Thin DAF targets in same-strand runs of &gt;= N original C (CT) or G (GA) bases (N=2: CC/GG and longer). Default: 2 with keep-one for DddA (duplex-validated), off otherwise; 0 disables. |
@@ -722,6 +726,8 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--daf-snp-mask` | — | 0-based BED of reference positions whose conversions are ignored (e.g. the mask fiberhmm-call used) |
 | `--daf-mask-runs` | — | Thin DAF targets in same-strand runs of &gt;= N original C (CT) or G (GA) bases (N=2: CC/GG and longer). Default: 2 with keep-one for DddA (duplex-validated), off otherwise; 0 disables. |
 | `--daf-run-policy` | `keep-one` | With --daf-mask-runs: keep each run's 5'-most target (default) or drop the run. Choices: `keep-one`, `drop`. |
+| `--use-m5c` / `--no-use-m5c` | auto | DddA CpG-aware calling, as in fiberhmm-call: CpGs are hidden from the HMM except inside confident unmethylated islands (MA ddda_ucg) the input carries. Default: on for --enzyme ddda, off otherwise. |
+| `--cpg-mask-policy` | — | With CpG-aware calling: keep CpGs only inside ddda_ucg islands (default unmethylated-only), or mask only ddda_mcg spans (methylated-only). DddA only; ignored with a warning otherwise. Choices: `unmethylated-only`, `methylated-only`. |
 | `--cores` / `-c` | `4` | Worker processes (0 = all CPUs; default: 4) |
 | `--region-size` | `5000000` | Region size in bp for parallel processing (default: 5,000,000) |
 | `--skip-scaffolds` | off | Skip scaffold/contig chromosomes |

@@ -172,19 +172,21 @@ def parse_args():
                    help='Emission power transform. Default: enzyme preset.')
     p.add_argument('--use-m5c', action=argparse.BooleanOptionalAction,
                    default=None,
-                   help='DddA CpG-aware recall, as in fiberhmm-recall-tfs: CpG '
-                        'observations are excluded from nucleosome and TF '
-                        'recall except inside confident unmethylated island '
+                   help='DddA CpG-aware calling: CpG observations are excluded '
+                        'from the first-pass HMM and from nucleosome and TF '
+                        'recall, except inside confident unmethylated island '
                         'calls (MA ddda_ucg from fiberhmm-tag-m5c) the input '
-                        'already carries. Default: on for --enzyme ddda, off '
-                        'otherwise; --no-use-m5c for an ablation.')
+                        'already carries. The same mask applies in '
+                        'fiberhmm-apply, -posteriors and -pair/-merge. '
+                        'Default: on for --enzyme ddda, off otherwise; '
+                        '--no-use-m5c for an ablation.')
     p.add_argument('--cpg-mask-policy',
                    choices=('unmethylated-only', 'methylated-only'),
                    default=None,
-                   help='With CpG-aware recall: keep CpGs only inside ddda_ucg '
-                        'islands (default unmethylated-only), or mask only '
-                        'ddda_mcg spans (the former behaviour). DddA only; '
-                        'ignored with a warning otherwise.')
+                   help='With CpG-aware calling (HMM and recall): keep CpGs only '
+                        'inside ddda_ucg islands (default unmethylated-only), or '
+                        'mask only ddda_mcg spans (methylated-only, the former '
+                        'behaviour). DddA only; ignored with a warning otherwise.')
     p.add_argument('--no-legacy-tags', action='store_true',
                    help='Skip ns/nl/as/al, emit only MA/AQ.')
     p.add_argument('--downstream-compat', action='store_true',
@@ -1471,7 +1473,8 @@ def _main(args):
                    f"daf_unaligned_mask={unaligned_state} "
                    f"daf_insert_consensus={insert_state} "
                    f"daf_run_mask={('>=' + str(args.daf_mask_runs) + '/' + args.daf_run_policy) if args.daf_mask_runs else 'off'} "
-                   f"cpg_mask={cpg_mask_policy or 'off'}"
+                   f"cpg_mask={cpg_mask_policy or 'off'} "
+                   f"hmm_cpg_mask={'on' if cpg_mask_policy and not ddda_mcg else 'off'}"
                    # Basecaller provenance (fiberhmm.io.provenance.ds_tokens).
                    + " " + basecaller_ds_tokens(basecaller)),
         }

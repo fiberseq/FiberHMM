@@ -13,10 +13,12 @@ from fiberhmm.inference.engine import (
     CHIMERA_SKIP,
     _extract_fiber_read_from_pysam,
     _process_single_read,
+    attach_hmm_cpg_mask,
     configure_daf_chimera_filter,
     configure_daf_snp_mask,
     extract_fiber_read_from_payload,
     make_apply_payload,
+    read_cpg_ma_intervals,
 )
 from fiberhmm.inference.fused_stages import (
     apply_result_has_footprints,
@@ -175,6 +177,7 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
         return_posteriors = params.get('return_posteriors', False) and temp_tsv_path is not None
         write_msps = params.get('write_msps', True)
         io_threads = int(params.get('io_threads', 4))
+        cpg_mask_policy = params.get('cpg_mask_policy') if mode == 'daf' else None
 
         def strip(read):
             strip_for_apply(read, write_msps)
@@ -259,6 +262,9 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
                             continue
 
                         total_reads += 1
+                        if cpg_mask_policy:
+                            attach_hmm_cpg_mask(fiber_read, cpg_mask_policy,
+                                                read_cpg_ma_intervals(read))
 
                         result = _process_single_read(
                             fiber_read, model, edge_trim, circular,
@@ -393,6 +399,9 @@ def _process_region_to_bed(args: RegionBedWorkItem) -> RegionBedResult:
                         continue
 
                     total_reads += 1
+                    if params.get('cpg_mask_policy') and mode == 'daf':
+                        attach_hmm_cpg_mask(fiber_read, params['cpg_mask_policy'],
+                                            read_cpg_ma_intervals(read))
 
                     result = _process_single_read(
                         fiber_read, model, edge_trim, circular,

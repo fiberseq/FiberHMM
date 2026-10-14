@@ -58,6 +58,8 @@ from fiberhmm.inference.engine import (
     CHIMERA_SKIP,
     _extract_fiber_read_from_pysam,
     _process_single_read,
+    attach_hmm_cpg_mask,
+    read_cpg_ma_intervals,
     configure_daf_chimera_filter,
     configure_daf_snp_mask,
 )
@@ -119,11 +121,16 @@ def _new_stats() -> Dict[str, int]:
 def extract_posteriors_from_read(read, model: FiberHMM, mode: str,
                                   context_size: int, edge_trim: int,
                                   prob_threshold: int = DEFAULT_PROB_THRESHOLD,
-                                  stats: Optional[Dict[str, int]] = None) -> Optional[Dict]:
+                                  stats: Optional[Dict[str, int]] = None,
+                                  cpg_mask_policy: Optional[str] = None) -> Optional[Dict]:
     """
     Extract posterior probabilities from a single read.
     Returns dict with fiber data or None if filtered (reason tallied in
     ``stats`` when given).
+
+    ``cpg_mask_policy`` (DddA CpG-aware calling, DAF only) hides CpGs from the
+    HMM as ``fiberhmm-call``'s first pass does, so the posteriors describe the
+    same segmentation.
 
     Posteriors, reference positions and footprint runs are all in the stored
     SEQ (query) frame, index-aligned with each other.
@@ -149,6 +156,8 @@ def extract_posteriors_from_read(read, model: FiberHMM, mode: str,
         return _skip('chimera')
     if fiber_read is None or len(fiber_read['m6a_query_positions']) < 10:
         return _skip('no_modifications')
+    if cpg_mask_policy and mode == 'daf':
+        attach_hmm_cpg_mask(fiber_read, cpg_mask_policy, read_cpg_ma_intervals(read))
 
     result = _process_single_read(
         fiber_read, model, edge_trim, False, mode, context_size,
@@ -259,6 +268,7 @@ def _process_region_worker(args) -> Tuple[str, int, int, List[Dict], Dict[str, i
             result = extract_posteriors_from_read(
                 read, _worker_model, mode, context_size, edge_trim,
                 prob_threshold=prob_threshold, stats=stats,
+                cpg_mask_policy=_worker_params.get('cpg_mask_policy'),
             )
             if result is not None:
                 results.append(result)
@@ -460,6 +470,7 @@ def _process_streaming(input_bam, model_path, params, verbose, result_callback,
             result = extract_posteriors_from_read(
                 read, _worker_model, mode, context_size, edge_trim,
                 prob_threshold=prob_threshold, stats=local,
+                cpg_mask_policy=params.get('cpg_mask_policy'),
             )
             if result is None:
                 continue
@@ -542,6 +553,7 @@ def _export_provenance(model_path, prob_threshold, extraction, provenance=None) 
         'daf_snp_mask_sha256': file_sha256(snp_mask) if snp_mask else None,
         'daf_mask_runs': int(run_mask[0]) if run_mask is not None else None,
         'daf_run_policy': run_mask[1] if run_mask is not None else None,
+        'cpg_mask_policy': extraction.get('cpg_mask_policy') or 'off',
         'fiberhmm_commit': fiberhmm_commit(),
     }
     record.update(provenance or {})
@@ -1085,6 +1097,17 @@ def main():
                      help='0-based BED of reference positions whose conversions are '
                           'ignored (e.g. the mask fiberhmm-call used)')
     add_daf_run_mask_arguments(daf)
+    daf.add_argument('--use-m5c', action=argparse.BooleanOptionalAction, default=None,
+                     help='DddA CpG-aware calling, as in fiberhmm-call: CpGs are '
+                          'hidden from the HMM except inside confident '
+                          'unmethylated islands (MA ddda_ucg) the input carries. '
+                          'Default: on for --enzyme ddda, off otherwise.')
+    daf.add_argument('--cpg-mask-policy',
+                     choices=('unmethylated-only', 'methylated-only'), default=None,
+                     help='With CpG-aware calling: keep CpGs only inside ddda_ucg '
+                          'islands (default unmethylated-only), or mask only '
+                          'ddda_mcg spans (methylated-only). DddA only; ignored '
+                          'with a warning otherwise.')
     add_parallel_args(parser, default_cores=4, default_region_size=5_000_000)
     # --chunk-size and --io-threads come from the shared factory but have no
     # posteriors implementation; they are hidden and refused (not ignored).
@@ -1188,6 +1211,13 @@ def main():
         'chimera_purity': args.chimera_purity,
         'daf_snp_mask_path': args.daf_snp_mask,
     }
+    from fiberhmm.inference.tf_recaller import resolve_cpg_mask_policy
+    try:
+        extraction['cpg_mask_policy'] = resolve_cpg_mask_policy(
+            args.use_m5c, args.cpg_mask_policy, args.enzyme, effective_mode,
+            tool='fiberhmm-posteriors')
+    except ValueError as exc:
+        parser.error(str(exc))
     if effective_mode == 'daf':
         # Chemistry default (DddA: keep-one on runs >= 2), as fiberhmm-call.
         extraction['daf_run_mask'] = tuple(

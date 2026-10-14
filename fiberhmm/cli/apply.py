@@ -167,6 +167,20 @@ Examples:
                         help='DAF only: treat insertion and soft-clip bases as no '
                              'evidence and leave unaligned stretches of >= 50 bp '
                              'uncalled (default on, as in fiberhmm-call).')
+    parser.add_argument('--use-m5c', action=argparse.BooleanOptionalAction,
+                        default=None,
+                        help='DddA CpG-aware calling, as in fiberhmm-call: CpG '
+                             'observations are hidden from the HMM except inside '
+                             'confident unmethylated islands (MA ddda_ucg from '
+                             'fiberhmm-tag-m5c) the input carries. Default: on '
+                             'for --enzyme ddda, off otherwise.')
+    parser.add_argument('--cpg-mask-policy',
+                        choices=('unmethylated-only', 'methylated-only'),
+                        default=None,
+                        help='With CpG-aware calling: keep CpGs only inside '
+                             'ddda_ucg islands (default unmethylated-only), or '
+                             'mask only ddda_mcg spans (methylated-only). DddA '
+                             'only; ignored with a warning otherwise.')
 
     return parser.parse_args()
 
@@ -219,7 +233,8 @@ def _resolve_apply_prob_threshold(args):
         args.prob_threshold, args.enzyme, args.seq, args.input)
 
 
-def _apply_pg_record(args, mode, context_size, chemistry, daf_run_mask):
+def _apply_pg_record(args, mode, context_size, chemistry, daf_run_mask,
+                     cpg_mask_policy=None):
     """@PG record plus chemistry declaration for the output header.
 
     The same provenance ``fiberhmm-call`` writes (via the shared
@@ -246,7 +261,9 @@ def _apply_pg_record(args, mode, context_size, chemistry, daf_run_mask):
                f"prob_threshold={args.prob_threshold} "
                f"primary_only={'on' if args.alignments == 'primary' else 'off'} alignments={args.alignments} "
                f"daf_run_mask={f'>={min_run}/{policy}' if min_run else 'off'} "
-               f"daf_unaligned_mask={('on' if args.daf_mask_unaligned else 'off') if mode == 'daf' else 'n/a'}"),
+               f"daf_unaligned_mask={('on' if args.daf_mask_unaligned else 'off') if mode == 'daf' else 'n/a'} "
+               f"cpg_mask={cpg_mask_policy or 'off'} "
+               f"hmm_cpg_mask={'on' if cpg_mask_policy else 'off'}"),
     }
 
 
@@ -413,6 +430,15 @@ def _main(args):
         sys.exit(2)
     from fiberhmm.inference.engine import configure_daf_unaligned_mask
     configure_daf_unaligned_mask(bool(args.daf_mask_unaligned) and mode == 'daf')
+    # DddA CpG-aware calling: the first-pass HMM CpG mask of fiberhmm-call.
+    from fiberhmm.inference.tf_recaller import resolve_cpg_mask_policy
+    try:
+        cpg_mask_policy = resolve_cpg_mask_policy(
+            args.use_m5c, args.cpg_mask_policy, args.enzyme, mode,
+            tool='fiberhmm-apply')
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(2)
 
     # Surface the DddA two-pass workflow whenever a DddA model is detected.
     # ddda_nuc.json deliberately does NOT emit sub-nucleosomal TF calls;
@@ -439,7 +465,7 @@ def _main(args):
     # chemistry still takes that declaration's threshold.
     args.prob_threshold = _resolve_apply_prob_threshold(args)
     pg_record = _apply_pg_record(args, mode, context_size, run_chemistry,
-                                 daf_run_mask)
+                                 daf_run_mask, cpg_mask_policy)
 
     # Determine MSP minimum size (default 60bp for all modes)
     msp_min_size = args.msp_min_size if args.msp_min_size is not None else 0
@@ -482,6 +508,7 @@ def _main(args):
         print("  Confidence scores: enabled")
     if mode == 'daf':
         print("  Strand detection: automatic (C=+, G=-)")
+        print(f"  CpG mask (HMM): {cpg_mask_policy or 'off'}")
     elif mode == 'nanopore-fiber':
         print("  Strand detection: none (A-centered only)")
     if args.no_msps:
@@ -557,6 +584,7 @@ def _main(args):
         # the user asked for pass-through explicitly.
         fail_on_mostly_unmapped=args.process_unmapped is not False,
         pg_record=pg_record,
+        cpg_mask_policy=cpg_mask_policy,
     )
     print(f"\nProcessed {total_reads:,} reads -> {reads_with_footprints:,} with footprints",
           file=sys.stderr if stdout_mode else sys.stdout)

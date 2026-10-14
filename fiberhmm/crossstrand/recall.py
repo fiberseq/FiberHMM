@@ -26,7 +26,7 @@ import numpy as np
 
 from fiberhmm.core.bam_reader import (
     ContextEncoder, _encode_daf_observations, _mod_positions_mask,
-    _sequence_base_int_array,
+    _sequence_base_int_array, daf_cpg_target_mask,
 )
 from fiberhmm.io.ma_tags import parse_ma_tag
 
@@ -73,6 +73,57 @@ def deam_regime_masks(read) -> Optional[Tuple[np.ndarray, np.ndarray]]:
     return (plus, minus) if found else None
 
 
+def _strand_sequences(conv_seq: str, ct_mods: Set[int],
+                      ga_mods: Set[int]) -> Tuple[str, str]:
+    """(plus_seq, minus_seq): ``conv_seq`` with the *other* channel's
+    conversions reverted, so each strand's 7-mer contexts (and CpG test) see
+    the restored sequence while its own deaminations stay converted."""
+    L = len(conv_seq)
+    plus_chars = list(conv_seq)
+    minus_chars = list(conv_seq)
+    for position in ga_mods:
+        if 0 <= position < L:
+            plus_chars[position] = 'G'
+    for position in ct_mods:
+        if 0 <= position < L:
+            minus_chars[position] = 'C'
+    return ''.join(plus_chars), ''.join(minus_chars)
+
+
+def _strand_targets(conv_seq: str, ct_mods: Set[int], ga_mods: Set[int],
+                    plus_mask: np.ndarray, minus_mask: np.ndarray):
+    """(plus_target, minus_target) positions of a both-strand consensus.
+
+    A position contributes on the + strand iff it is a reference C (canonical
+    C, or a deaminated C now stored as T) inside the deam+ region; symmetric
+    for the - strand at reference G's inside deam-.
+    """
+    L = len(conv_seq)
+    seq_int = _sequence_base_int_array(conv_seq, uppercase=True)
+    ct_mask = _mod_positions_mask(ct_mods, L)
+    ga_mask = _mod_positions_mask(ga_mods, L)
+    plus_target = plus_mask & ((seq_int == _BASE_C) | ct_mask)
+    minus_target = minus_mask & ((seq_int == _BASE_G) | ga_mask)
+    return plus_target, minus_target
+
+
+def both_strand_cpg_targets(conv_seq: str, ct_mods: Set[int], ga_mods: Set[int],
+                            plus_mask: np.ndarray, minus_mask: np.ndarray) -> np.ndarray:
+    """Targets of the both-strand observation that sit in a CpG.
+
+    A + strand target C is a CpG when the next base is G, a - strand target G
+    when the previous base is C (each tested on its strand's restored
+    sequence), the same test the single-read first-pass HMM mask applies
+    (:func:`fiberhmm.core.bam_reader.daf_cpg_target_mask`).
+    """
+    plus_seq, minus_seq = _strand_sequences(conv_seq, ct_mods, ga_mods)
+    plus_target, minus_target = _strand_targets(conv_seq, ct_mods, ga_mods,
+                                                plus_mask, minus_mask)
+    plus_cpg = daf_cpg_target_mask(plus_seq, ct_mods, '+') & plus_target
+    minus_cpg = daf_cpg_target_mask(minus_seq, ga_mods, '-') & minus_target
+    return plus_cpg | minus_cpg
+
+
 def encode_daf_both_strand(conv_seq: str, ct_mods: Set[int], ga_mods: Set[int],
                            plus_mask: np.ndarray, minus_mask: np.ndarray,
                            edge_trim: int, context_size: int) -> np.ndarray:
@@ -89,29 +140,14 @@ def encode_daf_both_strand(conv_seq: str, ct_mods: Set[int], ga_mods: Set[int],
     # bases in its 7-mer context.  Revert the opposite channel first; the
     # called channel stays converted so _encode_daf_observations can retain its
     # hit/miss status while deriving context from the fully restored sequence.
-    plus_chars = list(conv_seq)
-    minus_chars = list(conv_seq)
-    for position in ga_mods:
-        if 0 <= position < L:
-            plus_chars[position] = 'G'
-    for position in ct_mods:
-        if 0 <= position < L:
-            minus_chars[position] = 'C'
-    plus_seq = ''.join(plus_chars)
-    minus_seq = ''.join(minus_chars)
+    plus_seq, minus_seq = _strand_sequences(conv_seq, ct_mods, ga_mods)
 
     plus = _encode_daf_observations(plus_seq, ct_mods, edge_trim, '+',
                                     context_size, non_target_code, unmethylated_offset)
     minus = _encode_daf_observations(minus_seq, ga_mods, edge_trim, '-',
                                      context_size, non_target_code, unmethylated_offset)
-    seq_int = _sequence_base_int_array(conv_seq, uppercase=True)
-    ct_mask = _mod_positions_mask(ct_mods, L)
-    ga_mask = _mod_positions_mask(ga_mods, L)
-    # A position contributes on the + strand iff it is a reference C (canonical
-    # C, or a deaminated C now stored as T) inside the deam+ region; symmetric
-    # for the - strand at reference G's inside deam-.
-    plus_target = plus_mask & ((seq_int == _BASE_C) | ct_mask)
-    minus_target = minus_mask & ((seq_int == _BASE_G) | ga_mask)
+    plus_target, minus_target = _strand_targets(conv_seq, ct_mods, ga_mods,
+                                                plus_mask, minus_mask)
 
     out = np.full(L, fill, dtype=np.int32)
     out[minus_target] = minus[minus_target]
@@ -190,7 +226,8 @@ class RecallContext:
     """
 
     def __init__(self, enzyme: str = 'ddda', use_m5c: Optional[bool] = None,
-                 cpg_mask_policy: str = 'unmethylated-only'):
+                 cpg_mask_policy: Optional[str] = None,
+                 tool: str = 'fiberhmm-merge'):
         from fiberhmm.core.model_io import load_model_with_metadata
         from fiberhmm.inference.nuc_recaller import (
             attach_nuc_profile_emissions,
@@ -201,7 +238,7 @@ class RecallContext:
             build_conditional_hit_tables,
             build_llr_tables,
             build_m5c_llr_tables,
-            resolve_cpg_masking,
+            resolve_cpg_mask_policy,
         )
         from fiberhmm.models import _bundled_model_path, get_model_path
         self.apply_model, self.k, _ = load_model_with_metadata(get_model_path(enzyme, tool='apply'))
@@ -227,11 +264,10 @@ class RecallContext:
                 protected_hit,
                 accessible_hit,
             )
-        # DddA CpG-aware recall, as in fiberhmm-call and recall-tfs/-nucs.
-        self.cpg_mask_policy = (
-            cpg_mask_policy
-            if resolve_cpg_masking(use_m5c, enzyme.lower(), 'daf') else None
-        )
+        # DddA CpG-aware calling, as in fiberhmm-call: the policy masks CpGs
+        # in the joint HMM and in nucleosome/TF recall.
+        self.cpg_mask_policy = resolve_cpg_mask_policy(
+            use_m5c, cpg_mask_policy, enzyme.lower(), 'daf', tool=tool)
         self.m5c_llr_hit = self.m5c_llr_miss = None
         self.nuc_m5c_llr_hit = self.nuc_m5c_llr_miss = None
         if self.cpg_mask_policy:
@@ -256,9 +292,9 @@ def recall_consensus_full(seg, ctx: RecallContext, *, edge_trim: int = 10,
     positions (C via the C-table, G reverse-complemented into it), with
     single-strand-flank bases of the absent strand left non-target.
 
-    With CpG-aware recall on (``ctx.cpg_mask_policy``), CpG observations are
-    excluded from nucleosome and TF recall except inside the source reads'
-    ``ddda_ucg`` islands (``cpg_intervals``, see
+    With CpG-aware calling on (``ctx.cpg_mask_policy``), CpG observations are
+    excluded from the joint HMM and from nucleosome and TF recall except
+    inside the source reads' ``ddda_ucg`` islands (``cpg_intervals``, see
     :func:`consensus_cpg_intervals`), exactly as in ``fiberhmm-call``.
     """
     from fiberhmm.inference.engine import predict_footprints_and_msps
@@ -275,19 +311,20 @@ def recall_consensus_full(seg, ctx: RecallContext, *, edge_trim: int = 10,
                                  edge_trim, ctx.k)
     if len(obs) == 0:
         return False
-    fp = predict_footprints_and_msps(ctx.apply_model, obs, msp_min_size=msp_min_size,
+    m5c_mask = None
+    hmm_obs = obs
+    if getattr(ctx, 'cpg_mask_policy', None):
+        from fiberhmm.inference.engine import hide_cpg_observations, hmm_cpg_mask
+        m5c_mask = hmm_cpg_mask(len(conv), ctx.cpg_mask_policy, cpg_intervals)
+        # The joint HMM sees the recall CpG mask, as fiberhmm-call's first
+        # pass does; recall keeps the full observation and applies its own.
+        cpg = both_strand_cpg_targets(conv, ct_mods, ga_mods, plus_mask, minus_mask)
+        hmm_obs = hide_cpg_observations(obs, cpg & m5c_mask, ctx.k)
+    fp = predict_footprints_and_msps(ctx.apply_model, hmm_obs, msp_min_size=msp_min_size,
                                      with_scores=False, nuc_min_size=nuc_min_size)
     apply_result = {'ns': fp['footprint_starts'], 'nl': fp['footprint_sizes'],
                     'as': fp['msp_starts'], 'al': fp['msp_sizes'], 'encoded': obs}
     resolved_min_llr = ctx.min_llr if min_llr is None else float(min_llr)
-    m5c_mask = None
-    if getattr(ctx, 'cpg_mask_policy', None):
-        from fiberhmm.inference.tf_recaller import cpg_mask_from_intervals
-        intervals = cpg_intervals or {}
-        m5c_mask = cpg_mask_from_intervals(
-            len(conv), ctx.cpg_mask_policy,
-            intervals.get('ucg', ()), intervals.get('mcg', ()),
-        )
     res = build_fused_recall_result(
         {'query_sequence': conv}, apply_result, ctx.llr_hit, ctx.llr_miss,
         resolved_min_llr, min_opps, unify_threshold, with_scores=True,

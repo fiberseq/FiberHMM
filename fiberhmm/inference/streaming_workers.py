@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from typing import Optional
+
 import numpy as np
 
 from fiberhmm.core.model_io import freeze_model_for_inference, load_model
 from fiberhmm.inference.engine import (
     CHIMERA_SKIP,
     _process_single_read,
+    attach_hmm_cpg_mask,
     configure_daf_chimera_filter,
     extract_fiber_read_from_payload,
 )
@@ -382,8 +385,12 @@ def _process_payload_chunk_worker(
     with_scores: bool = False,
     return_posteriors: bool = False,
     prob_threshold: int = 125,
+    cpg_mask_policy: Optional[str] = None,
 ) -> list:
     """Slim-IPC worker: parses MM/ML payloads then runs HMM.
+
+    ``cpg_mask_policy`` (DAF only) gives the HMM the first-pass DddA CpG mask
+    of ``fiberhmm-call`` from each payload's ``ddda_ucg``/``ddda_mcg`` spans.
 
     The streaming pipeline ships slim payloads (built by make_apply_payload
     in main) instead of pre-parsed fiber_read dicts. Each worker does the
@@ -405,6 +412,9 @@ def _process_payload_chunk_worker(
                 # passes it through unannotated; region-parallel tallies a count).
                 results.append(None)
                 continue
+            if cpg_mask_policy and mode == 'daf':
+                attach_hmm_cpg_mask(fiber_read, cpg_mask_policy,
+                                    payload.get('_cpg_ma_intervals'))
             result = _process_single_read(
                 fiber_read, _worker_model, edge_trim, circular,
                 mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,

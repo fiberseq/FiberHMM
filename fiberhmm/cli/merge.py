@@ -132,7 +132,8 @@ def _merge_output_header(header, *, recall, enzyme, prob_threshold, pairs_only,
             f"enzyme={enzyme if recall else 'n/a'} prob_threshold={prob_threshold} "
             f"pairs_only={'on' if pairs_only else 'off'}"
             + (f" nuc_recall_policy={nuc_recall_policy} phase_nrl={phase_nrl} "
-               f"cpg_mask={cpg_mask_policy or 'off'}" if recall else ''),
+               f"cpg_mask={cpg_mask_policy or 'off'} "
+               f"hmm_cpg_mask={'on' if cpg_mask_policy else 'off'}" if recall else ''),
             pass_through_frame(header)),
     }
     if recall:
@@ -159,14 +160,16 @@ def _merge_output_header(header, *, recall, enzyme, prob_threshold, pairs_only,
 def run_merge(in_bam, out_bam, prob_threshold=0, pairs_only=False, io_threads=4,
               recall=False, enzyme='ddda', phase_nrl=0,
               nuc_recall_policy='conservative',
-              derived_tf_max_edge_ambiguity=12, use_m5c=None):
+              derived_tf_max_edge_ambiguity=12, use_m5c=None,
+              cpg_mask_policy=None, tool='fiberhmm-merge'):
     t0 = time.time()
     ctx = None
     if recall:
-        ctx = RecallContext(enzyme, use_m5c=use_m5c)
+        ctx = RecallContext(enzyme, use_m5c=use_m5c,
+                            cpg_mask_policy=cpg_mask_policy, tool=tool)
         print(f"merge-recall: loaded {enzyme} apply+recall models (k={ctx.k}); "
               f"re-calling footprints (HMM + nuc + TF recallers) on both-strand "
-              f"consensus reads; CpG-aware recall "
+              f"consensus reads; CpG-aware calling (HMM + recall) "
               f"{ctx.cpg_mask_policy or 'off'}", file=sys.stderr)
     bam = pysam.AlignmentFile(in_bam, 'rb')
     header = append_ma_types(
@@ -384,10 +387,15 @@ Examples:
     )
     p.add_argument('--use-m5c', action=argparse.BooleanOptionalAction,
                    default=None,
-                   help='With --recall: DddA CpG-aware recall, as in '
-                        'fiberhmm-call and fiberhmm-recall-tfs (CpGs excluded '
-                        'except inside the source reads\' ddda_ucg islands). '
-                        'Default: on for --enzyme ddda.')
+                   help='With --recall: DddA CpG-aware calling, as in '
+                        'fiberhmm-call (CpGs excluded from the joint HMM and '
+                        'from recall except inside the source reads\' ddda_ucg '
+                        'islands). Default: on for --enzyme ddda.')
+    p.add_argument('--cpg-mask-policy',
+                   choices=('unmethylated-only', 'methylated-only'), default=None,
+                   help='With CpG-aware calling: keep CpGs only inside ddda_ucg '
+                        'islands (default unmethylated-only), or mask only '
+                        'ddda_mcg spans (methylated-only), as in fiberhmm-call.')
     p.add_argument('-p', '--prob-threshold', type=int,
                    default=DEFAULT_PROB_THRESHOLD,
                    help='Min ML probability for MM/ML-native dU calls (0-255; '
@@ -426,7 +434,7 @@ Examples:
               derived_tf_max_edge_ambiguity=(
                   None if args.ddda_derived_tf_max_edge_gap < 0
                   else args.ddda_derived_tf_max_edge_gap),
-              use_m5c=args.use_m5c)
+              use_m5c=args.use_m5c, cpg_mask_policy=args.cpg_mask_policy)
 
 
 if __name__ == '__main__':
