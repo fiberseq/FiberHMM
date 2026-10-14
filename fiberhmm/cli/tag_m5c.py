@@ -148,7 +148,8 @@ def parse_args(argv=None):
     parser.add_argument(
         "--cpg-islands",
         help=("Optional BED3 of merged, non-overlapping CpG islands. Default: "
-              "infer islands from the reference sequence."),
+              "infer islands from the reference sequence of the contigs the "
+              "reads map to (header-only contigs need not be in the FASTA)."),
     )
     parser.add_argument(
         "--write-cpg-islands",

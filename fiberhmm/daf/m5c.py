@@ -1843,6 +1843,64 @@ def _initial_msp_intervals_seq(read, input_molecular_frame: bool) -> list[tuple[
     ]
 
 
+def _contigs_with_mapped_reads(input_bam: str) -> dict[str, int]:
+    """Mapped primary-or-not record counts per contig (index stats when present)."""
+    import pysam
+
+    with pysam.AlignmentFile(input_bam, "rb", check_sq=False) as source:
+        if source.has_index():
+            try:
+                return {
+                    stat.contig: int(stat.mapped)
+                    for stat in source.get_index_statistics() if stat.mapped
+                }
+            except (ValueError, OSError):
+                pass
+        counts: dict[str, int] = {}
+        names = source.references
+        for read in source.fetch(until_eof=True):
+            if read.is_unmapped or read.reference_id < 0:
+                continue
+            name = names[read.reference_id]
+            counts[name] = counts.get(name, 0) + 1
+        return counts
+
+
+def _island_inference_contigs(input_bam: str, reference: str) -> list[str]:
+    """Contigs whose CpG islands are inferred: those with mapped reads.
+
+    Header contigs without reads (e.g. chrEBV or decoys missing from a UCSC
+    FASTA) are not needed. Contigs that have reads but are absent from the
+    FASTA are skipped with a note: their reads get no island calls.
+    """
+    import pysam
+
+    counts = _contigs_with_mapped_reads(input_bam)
+    with pysam.FastaFile(reference) as fasta:
+        available = set(fasta.references)
+    with pysam.AlignmentFile(input_bam, "rb", check_sq=False) as source:
+        order = [chrom for chrom in source.references if chrom in counts]
+    missing = [chrom for chrom in order if chrom not in available]
+    if order and len(missing) == len(order):
+        preview = ", ".join(missing[:5])
+        suffix = " ..." if len(missing) > 5 else ""
+        raise ValueError(
+            "reference FASTA has none of the contigs the reads map to "
+            f"({preview}{suffix}); is it the reference the BAM was aligned to?"
+        )
+    if missing:
+        import sys
+
+        n_reads = sum(counts[chrom] for chrom in missing)
+        preview = ", ".join(missing[:5]) + (" ..." if len(missing) > 5 else "")
+        print(
+            f"NOTE: {len(missing)} contig(s) with reads are not in the reference "
+            f"FASTA and get no CpG-island calls: {preview} ({n_reads:,} records)",
+            file=sys.stderr,
+        )
+    return [chrom for chrom in order if chrom in available]
+
+
 def annotate_bam_per_read_islands(
     input_bam: str,
     output_bam: str,
@@ -1878,18 +1936,7 @@ def annotate_bam_per_read_islands(
     if island_bed:
         islands = load_cpg_island_bed(island_bed)
     else:
-        with pysam.AlignmentFile(input_bam, "rb", check_sq=False) as source:
-            contigs = source.references
-        with pysam.FastaFile(reference) as fasta:
-            available = set(fasta.references)
-        missing = [chrom for chrom in contigs if chrom not in available]
-        if missing:
-            preview = ", ".join(missing[:5])
-            suffix = " ..." if len(missing) > 5 else ""
-            raise ValueError(
-                "reference FASTA is missing BAM contigs required for automatic "
-                f"CpG-island inference: {preview}{suffix}"
-            )
+        contigs = _island_inference_contigs(input_bam, reference)
         islands = infer_cpg_islands(
             reference,
             contigs=contigs,
@@ -1897,7 +1944,7 @@ def annotate_bam_per_read_islands(
             step=island_step,
             min_gc=island_min_gc,
             min_observed_expected=island_min_observed_expected,
-        )
+        ) if contigs else {}
     if used_islands_bed:
         write_cpg_island_bed(islands, used_islands_bed)
     starts = {

@@ -1153,3 +1153,92 @@ def test_cross_strand_collector_keeps_both_cpg_dyad_members():
     assert g_cpg[0].query_pos == 2
     assert c_cpg[0].strand == "C" and g_cpg[0].strand == "G"
     assert c_cpg[0].deaminated and g_cpg[0].deaminated
+
+
+def _island_bam(tmp_path, header_contigs, reads, name="input.bam"):
+    """Indexed or unindexed BAM with ``reads`` = [(contig, sequence)]."""
+    import pysam
+
+    header = {
+        "HD": {"VN": "1.6", "SO": "coordinate"},
+        "SQ": [{"SN": chrom, "LN": length} for chrom, length in header_contigs],
+        "PG": [{"ID": "fiberhmm-call", "DS": "enzyme=ddda"}],
+    }
+    names = [chrom for chrom, _ in header_contigs]
+    path = tmp_path / name
+    with pysam.AlignmentFile(path, "wb", header=header) as sink:
+        for index, (chrom, sequence) in enumerate(reads):
+            read = pysam.AlignedSegment(sink.header)
+            read.query_name = f"read{index}"
+            read.query_sequence = sequence
+            read.flag = 0
+            read.reference_id = names.index(chrom)
+            read.reference_start = 0
+            read.mapping_quality = 60
+            read.cigartuples = [(0, len(sequence))]
+            read.query_qualities = pysam.qualitystring_to_array("I" * len(sequence))
+            read.set_tag("MA", f"{len(sequence)};msp.:1-{len(sequence)}", value_type="Z")
+            sink.write(read)
+    return path
+
+
+def _methylated_island_reference(tmp_path):
+    import pysam
+
+    reference_sequence = "A" * 250 + "CACG" * 100 + "A" * 250
+    reference = tmp_path / "reference.fa"
+    reference.write_text(">chr1\n" + reference_sequence + "\n")
+    pysam.faidx(str(reference))
+    sequence = list(reference_sequence)
+    for index, base in enumerate(reference_sequence[:-1]):
+        if base == "C" and reference_sequence[index + 1] != "G":
+            sequence[index] = "Y"
+    return reference, reference_sequence, "".join(sequence)
+
+
+@pytest.mark.parametrize("indexed", [False, True])
+def test_island_inference_ignores_header_contigs_absent_from_the_fasta(tmp_path, indexed):
+    """A header contig the FASTA lacks (chrEBV in UCSC hg38) does not block
+    inference when no read maps to it."""
+    import pysam
+
+    reference, reference_sequence, sequence = _methylated_island_reference(tmp_path)
+    input_bam = _island_bam(
+        tmp_path, [("chr1", len(reference_sequence)), ("chrEBV", 171823)],
+        [("chr1", sequence)])
+    if indexed:
+        pysam.index(str(input_bam))
+    used_bed = tmp_path / "islands.used.bed"
+    stats = annotate_bam_per_read_islands(
+        str(input_bam), str(tmp_path / "out.bam"), str(reference), None,
+        DDDA_FIVE_PRIME_FACTORS, threads=1, used_islands_bed=str(used_bed),
+    )
+    assert stats["methylated_islands"] == 1
+    assert stats["tagged_reads"] == 1
+    assert used_bed.read_text().startswith("chr1\t")
+
+
+def test_island_inference_skips_read_contigs_missing_from_the_fasta(tmp_path, capsys):
+    reference, reference_sequence, sequence = _methylated_island_reference(tmp_path)
+    input_bam = _island_bam(
+        tmp_path, [("chr1", len(reference_sequence)), ("chrEBV", 171823)],
+        [("chr1", sequence), ("chrEBV", sequence)])
+    stats = annotate_bam_per_read_islands(
+        str(input_bam), str(tmp_path / "out.bam"), str(reference), None,
+        DDDA_FIVE_PRIME_FACTORS, threads=1,
+    )
+    assert stats["reads"] == 2
+    assert stats["tagged_reads"] == 1
+    err = capsys.readouterr().err
+    assert "chrEBV" in err and "no CpG-island calls" in err
+
+
+def test_island_inference_refuses_a_reference_without_any_read_contig(tmp_path):
+    reference, reference_sequence, sequence = _methylated_island_reference(tmp_path)
+    input_bam = _island_bam(
+        tmp_path, [("chrEBV", 171823)], [("chrEBV", sequence)])
+    with pytest.raises(ValueError, match="none of the contigs"):
+        annotate_bam_per_read_islands(
+            str(input_bam), str(tmp_path / "out.bam"), str(reference), None,
+            DDDA_FIVE_PRIME_FACTORS, threads=1,
+        )
