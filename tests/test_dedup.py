@@ -406,3 +406,59 @@ def test_supplementary_records_follow_their_duplicate_primary(tmp_path, collapse
         for name, supp in supps.items():
             assert supp.is_duplicate == primaries[name].is_duplicate
         assert sum(r.is_duplicate for r in supps.values()) == 2
+
+
+@pytest.mark.parametrize("collapse", [False, True])
+def test_prior_duplicate_marks_are_recomputed_not_kept(daf_bam, tmp_path, collapse):
+    """Re-deduplicating a BAM that already carries 0x400/di/ds (an earlier
+    dedup or call) yields exactly the newly computed duplicate set."""
+    fresh = tmp_path / "fresh.bam"
+    expected = run_dedup(str(daf_bam), str(fresh), min_jaccard=0.95,
+                         min_deam=10, collapse=False)
+    fresh_dups = {r.query_name for r in pysam.AlignmentFile(str(fresh), check_sq=False)
+                  if r.is_duplicate}
+
+    stale = tmp_path / "stale.bam"
+    with pysam.AlignmentFile(str(daf_bam), check_sq=False) as source, \
+            pysam.AlignmentFile(str(stale), "wb", header=source.header) as sink:
+        for read in source:
+            # Mark every record (representatives and the unfingerprintable one
+            # included) as a stale duplicate of a nonexistent cluster.
+            read.is_duplicate = True
+            read.set_tag("di", 999999, value_type="i")
+            read.set_tag("ds", 7, value_type="i")
+            sink.write(read)
+
+    output = tmp_path / "redone.bam"
+    stats = run_dedup(str(stale), str(output), min_jaccard=0.95, min_deam=10,
+                      collapse=collapse)
+    records = list(pysam.AlignmentFile(str(output), check_sq=False))
+    assert stats["n_duplicates"] == expected["n_duplicates"]
+    assert stats["n_prior_marks_cleared"] == 9
+    assert not any(r.has_tag("di") and r.get_tag("di") == 999999 for r in records)
+    assert sum(r.is_duplicate for r in records) == (0 if collapse else stats["n_duplicates"])
+    if not collapse:
+        assert {r.query_name for r in records if r.is_duplicate} == fresh_dups
+    lowdeam = next(r for r in records if r.query_name == "lowdeam")
+    assert not lowdeam.is_duplicate and not lowdeam.has_tag("ds")
+
+
+def test_call_dedup_on_a_marked_bam_reports_what_it_writes(daf_bam, tmp_path):
+    from fiberhmm.cli.call import _dedup_input_first
+
+    stale = tmp_path / "stale.bam"
+    with pysam.AlignmentFile(str(daf_bam), check_sq=False) as source, \
+            pysam.AlignmentFile(str(stale), "wb", header=source.header) as sink:
+        for read in source:
+            read.is_duplicate = True
+            read.set_tag("di", 999999, value_type="i")
+            sink.write(read)
+    temporary_bam, stats = _dedup_input_first(
+        str(stale), str(tmp_path / "output.bam"), 0.95, True, 1,
+        region_parallel=False,
+    )
+    with pysam.AlignmentFile(temporary_bam, check_sq=False) as marked:
+        records = list(marked)
+        description = marked.header.to_dict()["PG"][-1]["DS"]
+    assert sum(r.is_duplicate for r in records) == stats["n_duplicates"] == 6
+    assert "prior_marks=cleared" in description

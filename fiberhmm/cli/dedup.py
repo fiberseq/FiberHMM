@@ -17,7 +17,11 @@ reads whose sets match within a Jaccard threshold (MinHash + LSH, near-linear),
 and by default collapses each cluster to one representative read. Pass ``--flag-only`` to
 instead keep every read and just set the SAM 0x400 duplicate flag + cluster
 tags. Reads with too few deamination calls to fingerprint reliably
-(``--min-deam``) are passed through untouched.
+(``--min-deam``) are passed through unmarked.
+
+Duplicate marks already on the input (0x400 and di/ds from an earlier
+dedup or call) are cleared before this run's marks are set, so the output
+carries exactly the duplicate set computed here.
 """
 from __future__ import annotations
 
@@ -226,7 +230,7 @@ def _dedup_output_header(header, *, min_jaccard, min_deam, ignore_strand,
             f"DAF duplicate marking; grouping={grouping} "
             f"min_jaccard={min_jaccard} min_deam={min_deam} "
             f"max_end_diff={max_end_diff} prob_threshold={prob_threshold} "
-            f"mode={'collapse' if collapse else 'flag'}",
+            f"mode={'collapse' if collapse else 'flag'} prior_marks=cleared",
             pass_through_frame(header)),
     })
 
@@ -339,7 +343,7 @@ def run_dedup(in_bam, out_bam, min_jaccard=0.95, min_deam=10, ignore_strand=Fals
     # Published atomically: a failed pass 2 never leaves a partial BAM at
     # out_bam (or replaces an earlier one there).
     from fiberhmm.inference.bam_output import atomic_output
-    n_written = n_flagged = n_flagged_parts = 0
+    n_written = n_flagged = n_flagged_parts = n_stale = 0
     with atomic_output(out_bam) as out_path, \
             pysam.AlignmentFile(in_bam, "rb", check_sq=False) as bam:
         header = _dedup_output_header(
@@ -349,6 +353,14 @@ def run_dedup(in_bam, out_bam, min_jaccard=0.95, min_deam=10, ignore_strand=Fals
         with pysam.AlignmentFile(out_path, "wb", threads=io_threads,
                                  header=header) as out:
             for idx, read in enumerate(bam.fetch(until_eof=True)):
+                # Marks from an earlier run (re-deduplicating a deduplicated
+                # or called BAM) are recomputed, not accumulated.
+                if (read.is_duplicate or read.has_tag(_TAG_CLUSTER)
+                        or read.has_tag(_TAG_CLUSTER_SIZE)):
+                    n_stale += 1
+                    read.is_duplicate = False
+                    read.set_tag(_TAG_CLUSTER, None)
+                    read.set_tag(_TAG_CLUSTER_SIZE, None)
                 c = int(labels[idx])
                 if c >= 0:
                     sz = cluster_sizes[c]
@@ -371,6 +383,9 @@ def run_dedup(in_bam, out_bam, min_jaccard=0.95, min_deam=10, ignore_strand=Fals
                 n_written += 1
 
     mode = "collapsed" if collapse else "flagged"
+    if n_stale:
+        print(f"  cleared earlier duplicate marks (0x400/di/ds) on {n_stale:,} "
+              "input records before marking", file=sys.stderr)
     print(f"Pass 2: wrote {n_written:,} reads ({n_flagged:,} duplicates {mode}"
           + (f", plus {n_flagged_parts:,} of their supplementary/secondary records"
              if n_flagged_parts else "")
@@ -379,6 +394,7 @@ def run_dedup(in_bam, out_bam, min_jaccard=0.95, min_deam=10, ignore_strand=Fals
         'n_total': n_total, 'n_fingerprintable': n_fingerprintable,
         'n_clusters': n_clusters, 'n_duplicates': n_dups,
         'n_duplicate_supplementary_records': n_flagged_parts,
+        'n_prior_marks_cleared': n_stale,
         'duplication_pct': dup_pct, 'n_written': n_written,
         'n_below_min_deam': n_lowdeam, 'n_unmapped': n_unmapped,
         'n_singleton_molecules': singletons,
