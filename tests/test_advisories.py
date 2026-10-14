@@ -852,3 +852,40 @@ def test_a_clearing_dedup_on_another_branch_does_not_supersede():
                      linked=False)
     found = _by_id(check_header(header))
     assert "daf-dedup-orientation" in found
+
+
+def _ddda_call(version, ds_extra="", cl_extra=""):
+    return {"PN": "fiberhmm-call", "VN": version,
+            "DS": ("FiberHMM fused apply+recall; mode=daf enzyme=ddda primary_only=on "
+                   "daf_unaligned_mask=on cpg_mask=unmethylated-only" + ds_extra),
+            "CL": "fiberhmm-call -i in.bam -o out.bam --enzyme ddda --primary" + cl_extra}
+
+
+def test_ddda_calls_before_the_first_pass_cpg_mask_are_flagged():
+    found = _by_id(check_header(_header([_ddda_call("3.0.0")])))
+    assert found["ddda-hmm-cpg-mask"].severity == "rerun-recommended"
+    # Recorded since the mask: not flagged, on or (explicitly) off.
+    assert "ddda-hmm-cpg-mask" not in _by_id(check_header(
+        _header([_ddda_call("3.0.0", " hmm_cpg_mask=on")])))
+    assert "ddda-hmm-cpg-mask" not in _by_id(check_header(
+        _header([_ddda_call("3.0.0", cl_extra=" --no-use-m5c")])))
+    # Other chemistries never had a CpG mask.
+    hia5 = _header([_hia5_call("3.0.0", "--prob-threshold 248 --primary")])
+    assert "ddda-hmm-cpg-mask" not in _by_id(check_header(hia5))
+
+
+def test_ddda_hmm_cpg_mask_fix_is_indexed():
+    index = adv.load_index()
+    rule = next(r for r in index["advisories"] if r["id"] == "ddda-hmm-cpg-mask")
+    for fix in (rule["fixed_in"]["commit"], *rule["fixed_in"]["by_program"].values()):
+        assert any(fix in entry["contains"] for entry in index["commits"].values())
+
+
+def test_ddda_hmm_cpg_mask_trusts_a_declared_commit():
+    """A call declaring the commit that introduced the mask (before the DS
+    token existed) is cleared by the commit, not flagged for the token."""
+    header = _header([_ddda_call("3.0.0")], comments=[
+        "FIBERHMM-CHEMISTRY:v1:assay=daf;enzyme=ddda;platform=pacbio;mode=daf;"
+        "fiberhmm_commit=6d94c0f77838537b35750e657c43653d211c234d;"
+        "fiberhmm_version=3.0.0;model=ddda_TF;pg=fiberhmm-call"])
+    assert "ddda-hmm-cpg-mask" not in _by_id(check_header(header))

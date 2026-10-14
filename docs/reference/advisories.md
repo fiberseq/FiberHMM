@@ -93,7 +93,9 @@ Strongest first:
    2.16.8 and 3.0.0 reported `2.16.8` while some already contained 3.0
    fixes, so `2.16.8` alone gives `possibly_affected` (low confidence);
    earlier versions give `affected`.
-4. **Options.** `@PG CL`/`DS` decide whether an advisory applies at all:
+4. **Options.** `@PG CL`/`DS` decide whether an advisory applies at all
+   (and, for `ddda-hmm-cpg-mask`, a `DS` token every run since the change
+   writes):
    `--enzyme`/`--seq`/`mode=` pick the chemistry, `-m` without `--enzyme`
    marks a custom-table run, an explicit `--prob-threshold` or
    `--primary`/`--alignments` silences the matching default-change note.
@@ -101,7 +103,9 @@ Strongest first:
    pairing tags and calls without any FiberHMM `@PG`.
 
 Only the calls a file holds count: on each `@PG` history (the `PP` chains),
-the last `fiberhmm-call`/`-apply` run and the recalls after it. A BAM
+the last `fiberhmm-call`/`-apply` run and the recalls after it. A
+`fiberhmm-dedup` run that cleared earlier marks (`prior_marks=cleared`, 3.0)
+likewise supersedes the dedup runs in its history. A BAM
 re-called with 3.0 is clean even if its header still lists a 2.x call. A
 `samtools merge` keeps every input's chain (clashing `@PG` IDs get a
 `-XXXXXXXX` suffix) and joins them with its own records; the calls of every
@@ -143,6 +147,7 @@ of its region files is recognised and does not count.)
 | `daf-unaligned-evidence` | rerun-recommended | calls | DAF calls before 3.0 counted insertion, soft-clip and SNP-masked bases as protected |
 | `primary-only-default` | info | calls | secondary alignments called (2.x default) |
 | `ddda-cpg-mask-default` | info | calls | DddA recall with CpG observations (2.x default) |
+| `ddda-hmm-cpg-mask` | rerun-recommended | calls | DddA calls whose first-pass HMM (call, apply, pair/merge joint HMM) decoded CpG observations, before 3.0; a run without `hmm_cpg_mask=` in its `@PG DS` and no indexed commit predates the mask |
 | `untracked-calls` | unverifiable | calls | calls without any FiberHMM `@PG` (cannot be checked) |
 
 QC reports, posteriors files and `fiberhmm-dedup`/`fiberhmm-merge` BAMs record

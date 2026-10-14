@@ -1100,10 +1100,21 @@ def _check_table(idx, rule, current, path):
 def _check_run_rule(idx, rule, runs, current, path, platform=(None, None)):
     scope = runs if rule["match"].get("scope") == "any" else current
     out = []
+    marker = rule["match"].get("ds_marker")
     for run in scope:
         if not _matches_run(rule, run, runs, platform[0]):
             continue
         finding = _code_finding(idx, rule, run)
+        declared = run.chemistry.get("fiberhmm_commit")
+        exact = bool(declared) and idx.commit(declared.split("+")[0])[1] is not None
+        if marker and marker not in run.ds and not exact:
+            # Runs record ``marker`` in their DS since the change, so a run
+            # without it (and no indexed commit to decide) predates the change
+            # whatever version it reports: development builds before the
+            # change also reported 3.0.0.
+            finding = _Finding(AFFECTED, "high", [
+                f"@PG {run.id} records no {marker} in its DS (written by every run "
+                f"since the change, {_short(_fix_commit(rule, run.program) or '')})"])
         if finding.status != _NOT:
             if rule["match"].get("header_platform"):
                 finding.evidence.insert(0, f"@PG {run.id} ran in {run.chemistry.get('mode')} "
