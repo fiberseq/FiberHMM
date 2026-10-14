@@ -73,7 +73,7 @@ from fiberhmm.inference.parallel import (
 from fiberhmm.inference.tf_recaller import (
     ENZYME_PRESETS,
     TF_DECODER_VERSION,
-    resolve_cpg_masking,
+    resolve_cpg_mask_policy,
 )
 from fiberhmm.models import (
     SUPPORTED_ENZYMES,
@@ -180,10 +180,11 @@ def parse_args():
                         'otherwise; --no-use-m5c for an ablation.')
     p.add_argument('--cpg-mask-policy',
                    choices=('unmethylated-only', 'methylated-only'),
-                   default='unmethylated-only',
+                   default=None,
                    help='With CpG-aware recall: keep CpGs only inside ddda_ucg '
-                        'islands (default), or mask only ddda_mcg spans (the '
-                        'former behaviour).')
+                        'islands (default unmethylated-only), or mask only '
+                        'ddda_mcg spans (the former behaviour). DddA only; '
+                        'ignored with a warning otherwise.')
     p.add_argument('--no-legacy-tags', action='store_true',
                    help='Skip ns/nl/as/al, emit only MA/AQ.')
     p.add_argument('--downstream-compat', action='store_true',
@@ -1075,11 +1076,12 @@ def _main(args):
     ddda_mcg = _configure_ddda_mcg(args, mode)
     # DddA CpG-aware recall: the same default policy as recall-tfs/-nucs.
     try:
-        use_m5c = resolve_cpg_masking(args.use_m5c, args.enzyme, mode)
+        cpg_mask_policy = resolve_cpg_mask_policy(
+            args.use_m5c, args.cpg_mask_policy, args.enzyme, mode,
+            tool='fiberhmm-call')
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(2)
-    cpg_mask_policy = args.cpg_mask_policy if use_m5c else None
     _validate_model_context(
         [('apply model', apply_model_path), ('recall model', recall_model_path)],
         k,

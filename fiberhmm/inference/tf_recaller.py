@@ -124,6 +124,30 @@ def resolve_cpg_masking(use_m5c: Optional[bool], enzyme: Optional[str],
     return enabled
 
 
+def resolve_cpg_mask_policy(use_m5c: Optional[bool], policy: Optional[str],
+                            enzyme: Optional[str], mode: Optional[str],
+                            tool: str = 'fiberhmm') -> Optional[str]:
+    """The effective DddA CpG mask policy of one run (``None`` = off).
+
+    Resolves ``--use-m5c`` as :func:`resolve_cpg_masking` (raising
+    :class:`ValueError` on a refused request); an unset ``--cpg-mask-policy``
+    (``None``) means ``unmethylated-only``. A policy given while CpG masking
+    is off is reported, not silently ignored.
+    """
+    enabled = resolve_cpg_masking(use_m5c, enzyme, mode)
+    if not enabled:
+        if policy is not None:
+            import sys
+
+            why = ('--no-use-m5c' if use_m5c is False else
+                   f"CpG masking is DddA-only (enzyme={enzyme or 'custom'}, "
+                   f"mode={mode})")
+            print(f"{tool}: warning: --cpg-mask-policy {policy} has no effect: "
+                  f"{why}", file=sys.stderr)
+        return None
+    return policy or CPG_MASK_POLICIES[0]
+
+
 def cpg_mask_from_intervals(read_len: int, policy: str = "unmethylated-only",
                             ucg_intervals=(), mcg_intervals=()) -> np.ndarray:
     """CpG mask from SEQ-frame ``ddda_ucg``/``ddda_mcg`` intervals.

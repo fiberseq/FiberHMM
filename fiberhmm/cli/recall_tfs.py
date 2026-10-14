@@ -114,7 +114,7 @@ from fiberhmm.inference.tf_recaller import (
     build_m5c_llr_tables,
     extract_modification_calls,
     recall_read,
-    resolve_cpg_masking,
+    resolve_cpg_mask_policy,
     write_ma_tags,
 )
 # ---------------------------------------------------------------------------
@@ -893,10 +893,11 @@ def parse_args(default_recall_nucs: bool = False):
                         'use --use-m5c explicitly with a custom DddA model.')
     p.add_argument('--cpg-mask-policy',
                    choices=('unmethylated-only', 'methylated-only'),
-                   default='unmethylated-only',
+                   default=None,
                    help='CpG-aware policy: retain CpGs only inside confident '
-                        'unmethylated islands (default), or reproduce the '
-                        'former behavior that masks only ddda_mcg spans.')
+                        'unmethylated islands (default unmethylated-only), or '
+                        'reproduce the former behavior that masks only ddda_mcg '
+                        'spans. DddA only; ignored with a warning otherwise.')
     p.add_argument('--unify-threshold', type=int, default=90,
                    help='v2 nucs with nl < this are scanned + may be demoted '
                         'to tf+ if overlapped by a recaller call (default 90)')
@@ -1424,12 +1425,14 @@ def _recall(args, bam_in, model_path, using_bundled_model, n_cores):
 
     llr_hit, llr_miss = build_llr_tables(model)
     m5c_llr_hit = m5c_llr_miss = None
-    cpg_mask_policy = getattr(args, 'cpg_mask_policy', 'unmethylated-only')
     try:
-        use_m5c = resolve_cpg_masking(
-            getattr(args, 'use_m5c', None), args.enzyme, mode)
+        cpg_mask_policy = resolve_cpg_mask_policy(
+            getattr(args, 'use_m5c', None), getattr(args, 'cpg_mask_policy', None),
+            args.enzyme, mode, tool='fiberhmm-recall-tfs')
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
+    use_m5c = cpg_mask_policy is not None
+    cpg_mask_policy = cpg_mask_policy or 'unmethylated-only'
     if use_m5c:
         m5c_llr_hit, m5c_llr_miss = build_m5c_llr_tables(
             model, emission_uplift=uplift,
