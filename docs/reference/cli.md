@@ -456,7 +456,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--enzyme` | required | Required chemistry assertion. Only DddA DAF-seq is supported. Choices: `ddda`. |
 | `--posterior` | `0.99` | Whole-island posterior needed for a call: &gt;= this is methylated (ddda_mcg), &lt;= 1 - this unmethylated (ddda_ucg) (default 0.99). |
 | `--min-other` | `10` | Minimum non-CpG observations on the molecule's island overlap, the internal accessibility baseline (default 10). |
-| `--cpg-islands` | — | Optional BED3 of merged, non-overlapping CpG islands. Default: infer islands from the reference sequence. |
+| `--cpg-islands` | — | Optional BED3 of merged, non-overlapping CpG islands. Default: infer islands from the reference sequence of the contigs the reads map to (header-only contigs need not be in the FASTA). |
 | `--write-cpg-islands` | — | Optional BED or BED.GZ containing the exact island catalog used. |
 | `--min-island-cpg` | `15` | Minimum CpG observations for a whole-island call (default 15). |
 | `--calls-tsv` | — | Optional whole-island audit table containing methylated, unmethylated and uninformative molecule/island overlaps. |
