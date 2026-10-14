@@ -24,7 +24,7 @@ fiberhmm-pair -i out/ddda.calls.bam -r demo/ref.fa -o out/ddda.duplex.bam \
 
 ```text
 fiberhmm-pair: stages pair -> merge -> recall (use --stop-after pair to write tagged pairs only)
-merge-recall: loaded ddda apply+recall models (k=3); re-calling footprints (HMM + nuc + TF recallers) on both-strand consensus reads; CpG-aware recall unmethylated-only
+merge-recall: loaded ddda apply+recall models (k=3); re-calling footprints (HMM + nuc + TF recallers) on both-strand consensus reads; CpG-aware calling (HMM + recall) unmethylated-only
 resolved pairs seen: 28  | consensus reads built: 28  | build failures (MD/coverage): 0
 ...
 fiberhmm-pair: 28 pairs [sequence 0; sequence-free 28] (52 marked PCR duplicates excluded) in 4.2s
@@ -148,9 +148,10 @@ DddA radial nucleosome recall and TF recall
 masked to `deam+` with a G-target pass masked to `deam-`; before each
 channel's contexts are encoded, the other channel's deaminations are reverted
 so one strand's events cannot corrupt the other's context codes. The DddA
-keep-one run mask applies (`--daf-mask-runs`), and CpG-aware recall is on
-(`--no-use-m5c` to turn off): an island called on either source read is
-projected onto the joint molecule. The output declares `MA-TYPES` `deam`
+keep-one run mask applies (`--daf-mask-runs`), and CpG-aware calling is on
+for the joint HMM and recall, as in `fiberhmm-call` (`--no-use-m5c` to turn
+off, `--cpg-mask-policy` as in `fiberhmm-call`): an island called on either
+source read is projected onto the joint molecule. The output declares `MA-TYPES` `deam`
 next to `nuc,msp,tf`.
 
 Joint `tf.QQQ` keeps the ordinary quality contract (`tq = 10 × LLR`,

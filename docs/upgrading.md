@@ -68,7 +68,7 @@ accessible state. **Re-train models built this way with 2.x**;
 | DAF insertion / soft-clip / SNP-masked bases | counted as protected | **no evidence**; unaligned stretches >= 50 bp uncalled | `--no-daf-mask-unaligned` |
 | `fiberhmm-pipeline` DAF soft clips | hard-clipped | **kept on linear contigs** (hard-clipped on circular ones); supplementary records kept | `--hard-clip`, `--alignments primary` |
 | Bases trimmed at read ends by `posteriors` | 100 | **10** (as `call`/`apply`) | `--edge-trim 100` |
-| DddA CpG-aware recall in `call` and `pair`/`merge` joint recall | off | **on** (`ddda_ucg` islands exempt), as in `recall-tfs` | `--no-use-m5c` |
+| DddA CpG-aware calling: first-pass HMM and recall in `call`, HMM in `apply`/`posteriors`, joint HMM and recall in `pair`/`merge` | off | **on** (`ddda_ucg` islands exempt) | `--no-use-m5c` |
 | DAF tools reading MM/ML dU (`dedup`, `pair`, `merge`) | ML 0 | **ML 128** | `--prob-threshold 0` |
 | DAF duplicate grouping | by alignment orientation | **by deamination flavour** (more duplicates found; for example 5.8% → 9.9% on one DddA data set) | none |
 | TF recall decoder (all chemistries) | one maximum per positive-score excursion | **exact best set of intervals**, `--min-llr` is the per-interval cost (`tf_decoder=multi_interval_v1` in `@PG`) | none |
@@ -126,7 +126,8 @@ These now either work or stop with a clear message:
 - `fiberhmm-consensus` and `fiberhmm-transfer` work on a plain
   `pip install fiberhmm`.
 - `fiberhmm-recall-tfs`/`-recall-nucs` accept `--prob-threshold`;
-  `fiberhmm-call` accepts `--use-m5c`/`--no-use-m5c` and `--cpg-mask-policy`.
+  `fiberhmm-call`, `-apply`, `-posteriors` and `-pair`/`-merge` accept
+  `--use-m5c`/`--no-use-m5c` and `--cpg-mask-policy`.
 - This documentation site, with a generated
   [command-line reference](reference/cli.md).
 

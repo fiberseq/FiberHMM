@@ -59,9 +59,10 @@ Two DAF-specific adjustments change which observations enter the model:
   complementary strand of the same molecule, in every stratum (for example
   0.95 → 0.98 for calls containing runs) at the cost of 16–27% fewer calls.
   DddB has not been validated.
-- **CpG-aware recall (DddA).** 5-methylcytosine slows DddA, so a methylated
-  CpG looks protected. For DddA, CpG observations are excluded from both
-  recallers except inside islands called confidently unmethylated
+- **CpG-aware calling (DddA).** 5-methylcytosine slows DddA, so a methylated
+  CpG looks protected. For DddA, CpG observations are excluded from the
+  first-pass HMM and both recallers except inside islands called confidently
+  unmethylated
   (`MA:ddda_ucg`, from [`fiberhmm-tag-m5c`](../workflows/daf-seq.md#ddda-cpg-island-methylation)).
   Excluded sites contribute no likelihood, do not count toward minimum
   evidence and cannot define a boundary.

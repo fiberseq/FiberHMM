@@ -227,7 +227,7 @@ fiberhmm-call -i calls.m5c.bam -o calls.bam --enzyme ddda -c 8
 ```
 
 The second `fiberhmm-call` re-calls nucleosomes and TFs with CpG-aware
-recall, which keeps CpG observations inside the confident unmethylated
+calling, which keeps CpG observations inside the confident unmethylated
 (`ddda_ucg`) islands, and keeps the island calls. Use `fiberhmm-call` here,
 not `fiberhmm-recall-tfs`: a recall of DddA call output does not reproduce the
 call ([Re-calling](recalling.md#ddda-call-output)).
@@ -263,14 +263,17 @@ How it works:
 - **Output.** Confident methylated islands become `MA` intervals
   `ddda_mcg.`, confident unmethylated ones `ddda_ucg.`, each spanning the
   whole island. There is no boundary inside an island.
-- **Recall.** CpG-aware recall (on for DddA in `fiberhmm-call`,
-  `fiberhmm-recall-tfs`/`-recall-nucs` and `fiberhmm-pair`) excludes every CpG
-  observation except those inside `ddda_ucg` islands the read carries. A
-  first `fiberhmm-call` on fresh data therefore neutralizes all CpGs;
-  re-calling after `fiberhmm-tag-m5c` restores the CpGs of confidently
+- **Calling.** CpG-aware calling (on for DddA) excludes every CpG
+  observation except those inside `ddda_ucg` islands the read carries. The
+  mask applies to the first-pass HMM and to nucleosome and TF recall in
+  `fiberhmm-call`, to the HMM of `fiberhmm-apply` and `fiberhmm-posteriors`,
+  to the joint HMM and recall of `fiberhmm-pair`/`-merge`, and to
+  `fiberhmm-recall-tfs`/`-recall-nucs`, so every tool segments a read the
+  same way. A first `fiberhmm-call` on fresh data therefore neutralizes all
+  CpGs; re-calling after `fiberhmm-tag-m5c` restores the CpGs of confidently
   unmethylated islands. `--cpg-mask-policy methylated-only` reproduces the
   older policy of masking only `ddda_mcg` spans; `--no-use-m5c` turns
-  CpG-aware recall off.
+  CpG-aware calling off.
 - The 5' context correction uses calibrated DddA factors;
   `--estimate-factors` re-estimates them from the BAM.
 

@@ -1,111 +1,5 @@
 # Changelog
 
-## Unreleased: fixes
-
-- Fix deamination-fingerprint deduplication dropping qualifying candidate
-  edges after a read matched a bucket representative. Candidate components
-  retain all members and merge every matching family, recovering bridges
-  without quadratic fingerprint comparisons for identical-read families.
-  The default Jaccard threshold remains 0.95; document the existing optional
-  0.90 settings (`fiberhmm-call --dedup-min-jaccard` and standalone
-  `fiberhmm-dedup --min-jaccard`) with regression coverage.
-
-## Unreleased: experimental preview (not part of 3.0.0)
-
-- Frozen lattice transfer streams BED evidence one window at a time and keeps
-  only compact BAM export plans, avoiding all-window evidence accumulation.
-  Scoring workers persist across windows, sharing imports and JIT warm-up.
-- NFR accepts independent `--bed` windows with persistent workers (`--cores`,
-  `--window-jobs`), preserving single-region outputs and BED ordering.
-- Sampled-loader top-ups cache only native replay changes, once per molecule;
-  decoded arrays and immutable interval calls are shared while collapse metadata
-  remains isolated. This avoids copying whole evidence units every tranche.
-  Refinements that load no new units reuse prepared sources while refreshing
-  loader receipts, avoiding a second full evidence copy.
-- Reuse lattice scoring configurations across validation folds and the final
-  fit; count prediction-strength pairs from label frequencies and reuse
-  molecule split assignments without changing scientific results.
-- Molecule caps are off by default (discovery and quantification both 0 = all).
-  For deep data with thousands of reads per site, 2000 is a suggested opt-in
-  cap for each phase.
-
-- Consensus, frozen transfer and NFR can now sample BAM read names before tag
-  decoding and native replay when all active molecule budgets are finite.
-  Stable per-window hash frontiers oversample, top up after eligibility filters,
-  and cache decoded evidence across tranches. Loader receipts report
-  seen/decoded/retained counts and shortages; zero budgets preserve the full
-  loader path.
-- Add configurable molecule depth budgets to lattice-recaller footprint classes
-  and NFR accessibility: `--max-discovery-molecules` (0 = all, per dataset/chemical
-  channel), `--max-quantification-molecules` (0, all), and `--sample-seed` (1).
-  Either cap at 0 disables that sampling phase. Stable hash priorities balance
-  datasets and DAF CT/GA channels across overlapping tiles. Quantification uses
-  the fixed discovered catalogue and selected eligible denominators; manifests
-  record counts, budgets and capping notes. Both caps at 0 retain legacy output
-  bytes. The browser schema exposes the consensus controls in `recaller`; NFR
-  uses the same field names in its parameter group. Historical fitted consensus
-  engines retain their existing behavior.
-
-- **EXPERIMENTAL: `fiberhmm-nfr`, NFR variants and element co-accessibility
-  (`fiberhmm.inference.accessibility`).** A preview for testing in
-  FiberBrowser; outputs, parameters and formats (schema
-  `fiberhmm.accessibility.preview.v0`) may change without notice. For a region:
-  per-read NFRs (gaps between consecutive >= 90-bp nucleosome calls; factor-sized
-  protections inside do not split them), NFR variants discovered with the
-  lattice recaller's recipe (prediction-strength k, held-out identity merges and
-  support; `--stringency`, default 0.9), per-read membership, prevalence as a
-  strict-to-EM range with conditional bootstrap intervals, Timer depth states
-  (`--mode depth`), and element co-accessibility between variants and footprint
-  classes of a `fiberhmm-consensus` run (`--classes`): spanning reads only,
-  Timer's shared-opening exclusion, an exact test stratified by per-read
-  openness x channel, the Mantel-Haenszel odds ratio and BH. Writes
-  variants.tsv, configurations.tsv, molecules.tsv.gz, coaccess.tsv, combos.tsv,
-  result.json and manifest.json; deterministic.
-- **EXPERIMENTAL: analysis views of an NFR run** (schema
-  `fiberhmm.accessibility.preview.v1`; a v0 result still validates, but a v0
-  run folder has no `context.json.gz`, so `load_result` asks for a re-run
-  (`NeedsRerun`) before these views).
-  - The result now stores, per molecule, its span, its nucleosome calls within
-    the window +- 1 kb, its openness span and its gap edge features. It also
-    stores the read states each pair test used, and each NFR's frozen variant
-    catalogue (in result.json). The TSV outputs are unchanged.
-  - `fiberhmm.inference.accessibility.analysis` splits a pair's reads into
-    A+B+ / A+B- / A-B+ / A-B- and not-informative reads. It uses the test's own
-    eligibility (`coaccess.pair_eligibility`), so the four groups are the 2x2
-    table. It also splits combination patterns, and gives per-stratum tables,
-    the spacing between two openings on one molecule, and per-group
-    accessibility profiles.
-  - It gives variant mini profiles; opening widths; the left-edge x right-edge
-    density; the -1 / +1 boundary nucleosomes; centre and coverage V-plots;
-    and nucleosome phasing on member vs other reads.
-  - It also computes the frozen-catalogue prevalence on any read group or
-    another payload (`quantify_frozen`, `group_prevalence`, `transfer`).
-- **EXPERIMENTAL: raw-rate NFR detection** (`fiberhmm-nfr`, default without
-  `--nfr`). `--detect-method raw` calls positions with a >= 175-bp gap in at
-  least `--min-fraction` (default 0.10) of callable reads, at least
-  `--min-open-reads` (10) open reads and 20 callable reads; regions need 60 bp.
-  Runs still split by opening membership. Background (window q20, floored at
-  0.005), fold and binomial BH q are informative only. Unusable backgrounds
-  remain null with an explanation. `--detect-method enrichment` retains the
-  prior fold/q gates and 0.05 default share. `fixed` retains its strict >0.15
-  rule; a saved `detect_threshold` alone still selects fixed.
-- **Optional gap assignment**: `--clip-gaps-to-region` (default off) assigns
-  each gap to the region with largest overlap, ties to the leftmost region,
-  before discovery, quantification and overflow truncation. Observed edges
-  and gap widths are preserved. Frozen catalogues store `assignment_regions`
-  so transfer quantification follows the same rule.
-- **Descriptive opportunity diagnostic**: `detection.opportunity_diagnostic`
-  compares complete >=175-bp gaps outside NFRs (`background`) with those
-  overlapping NFRs (`nfr`). Each group reports `gaps`,
-  `median_opportunities_per_100bp` and `sparse_share` (fewer than
-  `sparse_below=10` opportunities per gap). Uses native, assay/strand-specific
-  `unit.positions`, including unmarked sites and respecting native context
-  masks. Reports missing and partial gaps separately; absent summaries are
-  null. This does not establish that background gaps arise by chance.
-  `detection.enrichment_test` continues to indicate whether the test was
-  computed; new `enrichment_gates` indicates whether it gates detection.
-  No existing result fields were renamed.
-
 ## 3.0.0
 
 FiberHMM 3.0 is the third generation of the FiberHMM family, released together
@@ -302,8 +196,8 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   `fiberhmm-utils ma-types` adds them to older BAMs in place (`--types` or
   `--scan`).
 - `fiberhmm-recall-tfs`/`-recall-nucs` accept `--prob-threshold`;
-  `fiberhmm-call` accepts `--use-m5c`/`--no-use-m5c` and `--cpg-mask-policy`;
-  `fiberhmm-pair`/`-merge` accept `--use-m5c`/`--no-use-m5c`;
+  `fiberhmm-call`, `-apply`, `-posteriors` and `-pair`/`-merge` accept
+  `--use-m5c`/`--no-use-m5c` and `--cpg-mask-policy`;
   `fiberhmm-posteriors` accepts `--prob-threshold`, `--daf-snp-mask` and the
   chimera options (`--keep-chimeras`, `--chimera-*`).
 - Model files for development chemistries are shipped for method work only
@@ -370,6 +264,33 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   reference generated from the argument parsers.
 
 ### Fixed
+
+- **Dedup keeps every candidate pair.** Deamination-fingerprint dedup dropped
+  qualifying candidate edges once a read had matched a bucket representative,
+  so families bridged only through non-representatives were left split.
+  Candidate components now keep all members and merge every matching family,
+  without quadratic fingerprint comparisons for families of identical reads.
+  The default Jaccard threshold stays 0.95; `fiberhmm-call
+  --dedup-min-jaccard 0.90` and `fiberhmm-dedup --min-jaccard 0.90` are
+  documented options.
+- **Re-deduplicating recomputes the duplicate marks.** `fiberhmm-dedup` and
+  `fiberhmm-call`'s integrated dedup only ever set `0x400` and the `di`/`ds`
+  tags, so re-calling a BAM that already carried marks (a 2.x or earlier 3.0
+  output) kept the old ones: the log reported the new duplicate count while
+  the BAM held both sets. Earlier marks are now cleared on every record before
+  marking (`prior_marks=cleared` in `@PG`), and `fiberhmm-check` no longer
+  recommends re-running dedup when such a run follows the old one.
+- **`fiberhmm-tag-m5c` island inference on hg38 headers.** Without
+  `--cpg-islands`, every `@SQ` contig had to be in the reference FASTA, so the
+  command failed on BAMs listing `chrEBV` (absent from UCSC `hg38.fa`) even
+  when no read mapped there. Islands are now inferred only for contigs that
+  have reads (faster too); a read contig missing from the FASTA is skipped with
+  a note.
+- `--cpg-mask-policy` given for a non-DddA run, or with `--no-use-m5c`, now
+  warns instead of being ignored silently. Worker processes no longer reset
+  `NUMBA_CACHE_DIR`, which made numba write its cache next to the installed
+  sources. Progress lines redirected to a log are written as whole lines.
+  The QC summary line names periodicity among the verdict's components.
 
 - **DAF insertions and soft clips are no longer called as protected.**
   Deaminations are read-versus-reference mismatches, so bases with no
@@ -738,11 +659,20 @@ These change numbers relative to 2.x.
   `-merge` and the consensus lattices (`daf_run_mask=>=2/keep-one` in `@PG`).
   On scDAF duplexes this gave fewer, more precise TF calls. `--daf-mask-runs
   0` restores the 2.x behaviour; DddB stays off.
-- **DddA CpG-aware recall everywhere.** `fiberhmm-call` and the joint recall
-  of `fiberhmm-pair`/`-merge` now exclude CpG observations from nucleosome and
-  TF recall for DddA, except inside confident unmethylated islands
-  (`ddda_ucg`), exactly as `fiberhmm-recall-tfs` does (`--no-use-m5c` to turn
-  off).
+- **DddA CpG-aware calling everywhere.** For DddA, `fiberhmm-call`,
+  `fiberhmm-apply`, `fiberhmm-posteriors` and the joint recall of
+  `fiberhmm-pair`/`-merge` exclude CpG observations, except inside confident
+  unmethylated islands (`ddda_ucg`), from the first-pass HMM as well as from
+  nucleosome and TF recall (`fiberhmm-recall-tfs` applies the same recall
+  mask). The segmentation then does not depend on CpG methylation, and every
+  tool segments a read the same way. The first-pass mask changes about half
+  of DddA reads: on the NAPA demo (3,202 reads) 1,640 reads change and TF
+  calls fall by 2.1% (18,836 to 18,437); nucleosome and MSP calls stay close
+  (per-read Jaccard 0.98-0.996 on NAPA, UBA1 and HG002 scDAF). Recorded in
+  `@PG` as `hmm_cpg_mask=on`; `--no-use-m5c` turns both masks off and
+  `--cpg-mask-policy methylated-only` masks only `ddda_mcg` spans.
+  `fiberhmm-check` flags DddA calls made before the first-pass mask
+  (`ddda-hmm-cpg-mask`).
 - **DAF tools read MM/ML dU at ML ≥ 128** (`fiberhmm-dedup`, `-pair`, `-merge`;
   was 0). R/Y and MD input is binary and unaffected. `fiberhmm-call`'s
   integrated dedup follows the calling threshold.
@@ -801,7 +731,7 @@ fiberhmm-check data/*.bam qc/*.qc.json consensus_out/
   cannot verify (no FiberHMM provenance in the header).
 - Re-calling with 3.0 also applies the new defaults above (ML 248 for Hia5
   Nanopore, primary-only, the TF decoder, DddA models, thinning and CpG-aware
-  recall), so numbers move even where no fix applies. Most have an option to
+  calling), so numbers move even where no fix applies. Most have an option to
   get the 2.x behaviour back (the TF decoder and the DddA tables do not); the
   context-swapped 2.x tables are kept under `fiberhmm/models/legacy/`.
 - **Re-train** models built with 2.x `fiberhmm-train --base-model` on a base
@@ -834,6 +764,106 @@ The full guide, with a table of every default change and how to reproduce
 - `fiberhmm-tag-consensus` needs an assignment table that no shipped command
   produces; its format is documented in the command's help.
 - Legacy `.pickle` models execute code when loaded; load only trusted files.
+
+### Experimental previews (included)
+
+These preview tools and options ship in the 3.0.0 package. Their outputs,
+parameters and formats may change in later releases without a deprecation
+period.
+
+- Frozen lattice transfer streams BED evidence one window at a time and keeps
+  only compact BAM export plans, avoiding all-window evidence accumulation.
+  Scoring workers persist across windows, sharing imports and JIT warm-up.
+- NFR accepts independent `--bed` windows with persistent workers (`--cores`,
+  `--window-jobs`), preserving single-region outputs and BED ordering.
+- Sampled-loader top-ups cache only native replay changes, once per molecule;
+  decoded arrays and immutable interval calls are shared while collapse metadata
+  remains isolated. This avoids copying whole evidence units every tranche.
+  Refinements that load no new units reuse prepared sources while refreshing
+  loader receipts, avoiding a second full evidence copy.
+- Reuse lattice scoring configurations across validation folds and the final
+  fit; count prediction-strength pairs from label frequencies and reuse
+  molecule split assignments without changing scientific results.
+- Molecule caps are off by default (discovery and quantification both 0 = all).
+  For deep data with thousands of reads per site, 2000 is a suggested opt-in
+  cap for each phase.
+
+- Consensus, frozen transfer and NFR can now sample BAM read names before tag
+  decoding and native replay when all active molecule budgets are finite.
+  Stable per-window hash frontiers oversample, top up after eligibility filters,
+  and cache decoded evidence across tranches. Loader receipts report
+  seen/decoded/retained counts and shortages; zero budgets preserve the full
+  loader path.
+- Add configurable molecule depth budgets to lattice-recaller footprint classes
+  and NFR accessibility: `--max-discovery-molecules` (0 = all, per dataset/chemical
+  channel), `--max-quantification-molecules` (0, all), and `--sample-seed` (1).
+  Either cap at 0 disables that sampling phase. Stable hash priorities balance
+  datasets and DAF CT/GA channels across overlapping tiles. Quantification uses
+  the fixed discovered catalogue and selected eligible denominators; manifests
+  record counts, budgets and capping notes. Both caps at 0 retain legacy output
+  bytes. The browser schema exposes the consensus controls in `recaller`; NFR
+  uses the same field names in its parameter group. Historical fitted consensus
+  engines retain their existing behavior.
+
+- **EXPERIMENTAL: `fiberhmm-nfr`, NFR variants and element co-accessibility
+  (`fiberhmm.inference.accessibility`).** A preview for testing in
+  FiberBrowser; outputs, parameters and formats (schema
+  `fiberhmm.accessibility.preview.v0`) may change without notice. For a region:
+  per-read NFRs (gaps between consecutive >= 90-bp nucleosome calls; factor-sized
+  protections inside do not split them), NFR variants discovered with the
+  lattice recaller's recipe (prediction-strength k, held-out identity merges and
+  support; `--stringency`, default 0.9), per-read membership, prevalence as a
+  strict-to-EM range with conditional bootstrap intervals, Timer depth states
+  (`--mode depth`), and element co-accessibility between variants and footprint
+  classes of a `fiberhmm-consensus` run (`--classes`): spanning reads only,
+  Timer's shared-opening exclusion, an exact test stratified by per-read
+  openness x channel, the Mantel-Haenszel odds ratio and BH. Writes
+  variants.tsv, configurations.tsv, molecules.tsv.gz, coaccess.tsv, combos.tsv,
+  result.json and manifest.json; deterministic.
+- **EXPERIMENTAL: analysis views of an NFR run** (schema
+  `fiberhmm.accessibility.preview.v1`; a v0 result still validates, but a v0
+  run folder has no `context.json.gz`, so `load_result` asks for a re-run
+  (`NeedsRerun`) before these views).
+  - The result now stores, per molecule, its span, its nucleosome calls within
+    the window +- 1 kb, its openness span and its gap edge features. It also
+    stores the read states each pair test used, and each NFR's frozen variant
+    catalogue (in result.json). The TSV outputs are unchanged.
+  - `fiberhmm.inference.accessibility.analysis` splits a pair's reads into
+    A+B+ / A+B- / A-B+ / A-B- and not-informative reads. It uses the test's own
+    eligibility (`coaccess.pair_eligibility`), so the four groups are the 2x2
+    table. It also splits combination patterns, and gives per-stratum tables,
+    the spacing between two openings on one molecule, and per-group
+    accessibility profiles.
+  - It gives variant mini profiles; opening widths; the left-edge x right-edge
+    density; the -1 / +1 boundary nucleosomes; centre and coverage V-plots;
+    and nucleosome phasing on member vs other reads.
+  - It also computes the frozen-catalogue prevalence on any read group or
+    another payload (`quantify_frozen`, `group_prevalence`, `transfer`).
+- **EXPERIMENTAL: raw-rate NFR detection** (`fiberhmm-nfr`, default without
+  `--nfr`). `--detect-method raw` calls positions with a >= 175-bp gap in at
+  least `--min-fraction` (default 0.10) of callable reads, at least
+  `--min-open-reads` (10) open reads and 20 callable reads; regions need 60 bp.
+  Runs still split by opening membership. Background (window q20, floored at
+  0.005), fold and binomial BH q are informative only. Unusable backgrounds
+  remain null with an explanation. `--detect-method enrichment` retains the
+  prior fold/q gates and 0.05 default share. `fixed` retains its strict >0.15
+  rule; a saved `detect_threshold` alone still selects fixed.
+- **Optional gap assignment**: `--clip-gaps-to-region` (default off) assigns
+  each gap to the region with largest overlap, ties to the leftmost region,
+  before discovery, quantification and overflow truncation. Observed edges
+  and gap widths are preserved. Frozen catalogues store `assignment_regions`
+  so transfer quantification follows the same rule.
+- **Descriptive opportunity diagnostic**: `detection.opportunity_diagnostic`
+  compares complete >=175-bp gaps outside NFRs (`background`) with those
+  overlapping NFRs (`nfr`). Each group reports `gaps`,
+  `median_opportunities_per_100bp` and `sparse_share` (fewer than
+  `sparse_below=10` opportunities per gap). Uses native, assay/strand-specific
+  `unit.positions`, including unmarked sites and respecting native context
+  masks. Reports missing and partial gaps separately; absent summaries are
+  null. This does not establish that background gaps arise by chance.
+  `detection.enrichment_test` continues to indicate whether the test was
+  computed; new `enrichment_gates` indicates whether it gates detection.
+  No existing result fields were renamed.
 
 ## Earlier versions
 

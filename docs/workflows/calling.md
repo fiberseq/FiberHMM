@@ -203,7 +203,7 @@ and platform (and their defaults) when the observation mode matches.
 | `--min-opps` | 3 | minimum informative targets per TF call |
 | `--unify-threshold` | 90 | HMM footprints shorter than this are TF candidates |
 | `--emission-uplift` | 1.0 | power transform of the emissions (sensitivity experiments only) |
-| `--use-m5c` / `--no-use-m5c` | on for DddA | CpG-aware recall ([DAF-seq](daf-seq.md#ddda-cpg-island-methylation)) |
+| `--use-m5c` / `--no-use-m5c` | on for DddA | CpG-aware calling: CpGs masked in the first-pass HMM and recall ([DAF-seq](daf-seq.md#ddda-cpg-island-methylation)) |
 | `--cpg-mask-policy` | `unmethylated-only` | `methylated-only` masks only `ddda_mcg` spans (the pre-3.0 behaviour) |
 
 ## Nucleosome recall options
