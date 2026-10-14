@@ -1,11 +1,17 @@
 import itertools
 import numpy as np
 import pytest
-from scipy.special import logsumexp
+from scipy.special import logsumexp as _scipy_logsumexp
 
 from fiberhmm.inference.consensus.native_gap_pair_bounds import (
     SeparatedGapUniverse, certified_log_partition, predictive_log_ratio_bounds)
 from fiberhmm.inference.consensus.native_internal_refinement import internal_gap_scores
+
+
+def logsumexp(values):
+    # scipy < 1.8 raises on an empty input; newer releases return -inf.
+    values = np.asarray(values, dtype=float)
+    return -np.inf if values.size == 0 else _scipy_logsumexp(values)
 
 
 def test_positive_prefix_pair_sums_and_incident_sums_match_full_enumeration():
