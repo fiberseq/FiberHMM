@@ -820,3 +820,35 @@ def test_qc_report_with_misdetected_assay_is_flagged(tmp_path):
         good.write_text(json.dumps({"schema_version": 1, "fiberhmm_version": "3.0.0",
                                     "assay": {"mode": mode}, "sampling": {}}))
         assert check_path(good) == []
+
+
+def _old_daf_call_with_dedup():
+    return {"PN": "fiberhmm-call", "VN": "2.16.8",
+            "DS": "FiberHMM fused apply+recall; mode=daf enzyme=dddb dedup=flag",
+            "CL": "fiberhmm-call -i in.bam -o out.bam --enzyme dddb --seq nanopore"}
+
+
+def _dedup_3_0(cleared=True):
+    return {"PN": "fiberhmm-dedup", "VN": "3.0.0",
+            "DS": ("DAF duplicate marking; grouping=deamination_flavour min_jaccard=0.95 "
+                   "min_deam=10 max_end_diff=50 prob_threshold=128 mode=flag"
+                   + (" prior_marks=cleared" if cleared else "")),
+            "CL": "fiberhmm-call -i calls.bam -o recalled.bam --enzyme dddb"}
+
+
+def test_a_later_dedup_that_clears_marks_supersedes_older_dedup():
+    """Re-calling a 2.x DAF output with 3.0 dedup recomputes every duplicate
+    mark, so the old orientation-grouped dedup no longer applies."""
+    found = _by_id(check_header(_header([_old_daf_call_with_dedup(), _dedup_3_0()])))
+    assert "daf-dedup-orientation" not in found
+    # A 3.0 dedup that did not clear earlier marks left them in the file.
+    found = _by_id(check_header(_header([_old_daf_call_with_dedup(),
+                                         _dedup_3_0(cleared=False)])))
+    assert "daf-dedup-orientation" in found
+
+
+def test_a_clearing_dedup_on_another_branch_does_not_supersede():
+    header = _header([_old_daf_call_with_dedup(), dict(_dedup_3_0(), PP=None)],
+                     linked=False)
+    found = _by_id(check_header(header))
+    assert "daf-dedup-orientation" in found

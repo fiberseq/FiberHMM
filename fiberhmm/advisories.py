@@ -709,6 +709,8 @@ class _Reading:
     current: list[_Run]
     notes: list[str]
     upper_bound: bool = False   # findings here are at most possibly affected
+    parents: Optional[list[set[int]]] = None   # history graph of this reading
+    node: Optional[list[int]] = None           # @PG position -> graph node
 
 
 def _readings(header: dict) -> list[_Reading]:
@@ -741,7 +743,8 @@ def _readings(header: dict) -> list[_Reading]:
                 current = _current_runs(runs, graph.parents, node)
                 current = current + _unrecorded_inputs(records, runs, current,
                                                        graph.parents, node)
-                readings.append(_Reading(runs, current, notes))
+                readings.append(_Reading(runs, current, notes,
+                                         parents=graph.parents, node=node))
         else:
             # Upper bound: each ambiguous run once per declaration it could carry.
             base = _runs(header, attribution.fixed)
@@ -757,7 +760,8 @@ def _readings(header: dict) -> list[_Reading]:
                     runs.append(variant)
             current = _current_runs(runs, graph.parents, node)
             current = current + _unrecorded_inputs(records, runs, current, graph.parents, node)
-            readings.append(_Reading(runs, current, notes, upper_bound=True))
+            readings.append(_Reading(runs, current, notes, upper_bound=True,
+                                     parents=graph.parents, node=node))
     return readings
 
 
@@ -1012,7 +1016,7 @@ def _check_reading(idx, data, reading: _Reading, scan, path, platform) -> list[A
         if detector in ("table", "run"):
             continue
         if detector == "dedup":
-            found.extend(_check_dedup(idx, rule, runs, scan, path))
+            found.extend(_check_dedup(idx, rule, runs, scan, path, reading))
         elif detector == "pair":
             found.extend(_check_pair(idx, rule, runs, scan, path))
         elif detector == "untracked_calls":
@@ -1114,20 +1118,35 @@ def _check_run_rule(idx, rule, runs, current, path, platform=(None, None)):
                                               _CONFIDENCE_RANK.get(a.confidence, 0)))]
 
 
-def _check_dedup(idx, rule, runs, scan, path):
-    findings = []
+def _descends_from(reading: Optional[_Reading], later: _Run, earlier: _Run) -> bool:
+    """Is ``earlier`` in the recorded history of ``later``?"""
+    if reading is None or reading.parents is None or reading.node is None:
+        return earlier.position < later.position
+    return reading.node[earlier.position] in _ancestors(
+        reading.parents, reading.node[later.position])
+
+
+def _check_dedup(idx, rule, runs, scan, path, reading=None):
+    found: list[tuple[_Run, _Finding]] = []
     recorded = False
     for run in runs:
         if run.program == "fiberhmm-dedup":
             recorded = True
+            finding = _code_finding(idx, rule, run)
+            if "prior_marks=cleared" in run.ds and finding.status == _NOT:
+                # This run cleared every earlier duplicate mark and recomputed
+                # the set under the fixed rules: the dedup runs (and calls)
+                # in its history no longer decide the file's marks.
+                found = [(r, f) for r, f in found if not _descends_from(reading, run, r)]
             if "grouping=none" in run.ds:
                 continue
-            findings.append(_code_finding(idx, rule, run))
+            found.append((run, finding))
         elif run.program == "fiberhmm-call":
             state = _ds_field(run.ds, "dedup")
             if state and state != "off" and run.chemistry.get("mode") == "daf":
                 recorded = True
-                findings.append(_code_finding(idx, rule, run))
+                found.append((run, _code_finding(idx, rule, run)))
+    findings = [finding for _run, finding in found]
     if scan and scan.dedup_tags and not recorded:
         findings.append(_Finding(POSSIBLY, "medium", [
             f"{scan.dedup_tags} of the first {scan.records} records carry di/ds duplicate-"
