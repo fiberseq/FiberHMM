@@ -47,11 +47,6 @@ def _init_bam_worker(model_path, debug_timing=False):
     """Initialize worker process with model."""
     global _worker_model, _worker_debug_timing
     try:
-        # Disable numba caching to avoid file lock contention between workers.
-        import os
-
-        os.environ['NUMBA_CACHE_DIR'] = ''
-
         _worker_model = freeze_model_for_inference(load_model(model_path))
         _worker_debug_timing = debug_timing
 
@@ -98,9 +93,6 @@ def _init_fused_worker(
     (the common case -- same model file drives both passes).
     """
     global _worker_model, _worker_debug_timing, _worker_recall_state
-    import os
-
-    os.environ['NUMBA_CACHE_DIR'] = ''
 
     _worker_recall_state = {}
     _worker_model = freeze_model_for_inference(load_model(apply_model_path))

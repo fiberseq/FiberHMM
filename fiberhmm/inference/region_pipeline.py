@@ -12,6 +12,7 @@ from typing import Optional, Set, Tuple
 
 import pysam
 
+from fiberhmm.core.progress import progress as progress_line, progress_end
 from fiberhmm.inference.bam_output import (
     _concatenate_region_bams,
     _sort_and_index_bam,
@@ -203,17 +204,16 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
 
                     elapsed = time.time() - start_time
                     rate = aggregation.total_reads / elapsed if elapsed > 0 else 0
-                    _note(f"\r  Regions: {aggregation.completed}/{len(regions)} | "
-                          f"Reads: {aggregation.total_reads:,} | "
-                          f"With footprints: {aggregation.reads_with_footprints:,} | "
-                          f"{rate:.1f} reads/s", end='')
-                    sys.stderr.flush()
+                    progress_line(f"  Regions: {aggregation.completed}/{len(regions)} | "
+                             f"Reads: {aggregation.total_reads:,} | "
+                             f"With footprints: {aggregation.reads_with_footprints:,} | "
+                             f"{rate:.1f} reads/s", file=sys.stderr)
 
                 except Exception as e:
                     _note(f"\nError processing region: {e}")
                     raise
 
-        _note()  # Newline after progress
+        progress_end(sys.stderr)  # Newline after progress
 
         # Print skip reasons summary
         if aggregation.total_skipped > 0:
@@ -381,17 +381,16 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
 
                     elapsed = time.time() - start_time
                     rate = aggregation.total_reads / elapsed if elapsed > 0 else 0
-                    _note(f"\r  Regions: {aggregation.completed}/{len(regions)} | "
-                          f"Reads: {aggregation.total_reads:,} | "
-                          f"With footprints: {aggregation.reads_with_footprints:,} | "
-                          f"{rate:.1f} reads/s", end='')
-                    sys.stderr.flush()
+                    progress_line(f"  Regions: {aggregation.completed}/{len(regions)} | "
+                             f"Reads: {aggregation.total_reads:,} | "
+                             f"With footprints: {aggregation.reads_with_footprints:,} | "
+                             f"{rate:.1f} reads/s", file=sys.stderr)
 
                 except Exception as e:
                     _note(f"\nError processing region: {e}")
                     raise
 
-        _note()  # Newline after progress
+        progress_end(sys.stderr)  # Newline after progress
 
         # Sort temp BEDs by region order and concatenate
         aggregation.temp_beds.sort(key=lambda x: x[0])
@@ -631,13 +630,12 @@ def _process_bam_region_parallel_fused(
                     rate = new_reads / elapsed if elapsed > 0 else 0
                     eta = (elapsed * (pending_bp - done_bp) / done_bp
                            if done_bp > 0 else None)
-                    _note(f"\r  Regions: {aggregation.completed}/{len(regions)} | "
-                          f"Reads: {aggregation.total_reads:,} | "
-                          f"With FP: {aggregation.reads_with_footprints:,} | "
-                          f"{rate:.0f} r/s"
-                          f"{f' | ETA {eta / 60:.1f} min' if eta is not None and aggregation.completed < len(regions) else ''}",
-                          end='')
-                    sys.stderr.flush()
+                    progress_line(f"  Regions: {aggregation.completed}/{len(regions)} | "
+                             f"Reads: {aggregation.total_reads:,} | "
+                             f"With FP: {aggregation.reads_with_footprints:,} | "
+                             f"{rate:.0f} r/s"
+                             f"{f' | ETA {eta / 60:.1f} min' if eta is not None and aggregation.completed < len(regions) else ''}",
+                             file=sys.stderr)
                     emit('region', region=list(work_items[index].region),
                          regions_done=aggregation.completed,
                          regions_total=len(regions), regions_reused=len(reused),
@@ -652,7 +650,7 @@ def _process_bam_region_parallel_fused(
                 raise
             else:
                 executor.shutdown(wait=True)
-            _note()
+            progress_end(sys.stderr)
 
         if aggregation.total_skipped > 0:
             total_enc = aggregation.total_reads + aggregation.total_skipped

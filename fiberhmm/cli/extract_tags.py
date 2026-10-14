@@ -54,6 +54,7 @@ import numpy as np
 import pysam
 
 from fiberhmm.core.bam_reader import cigar_to_query_ref
+from fiberhmm.core.progress import progress, progress_end
 from fiberhmm.inference.bam_output import atomic_output, temporary_output_path
 from fiberhmm.inference.parallel import _get_genome_regions
 from fiberhmm.inference.region_planning import RegionPlanError
@@ -1491,8 +1492,8 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
                 elapsed = time.time() - start_time
                 rate = total_reads / elapsed if elapsed > 0 else 0
                 feat_str = ' '.join(f"{t}={total_features[t]:,}" for t in extract_types)
-                print(f"\r  Regions: {completed}/{len(regions)} | Reads: {total_reads:,} | {feat_str} | {rate:.0f} reads/s", end='')
-        print()
+                progress(f"  Regions: {completed}/{len(regions)} | Reads: {total_reads:,} | {feat_str} | {rate:.0f} reads/s")
+        progress_end()
 
         if failed_regions:
             raise RuntimeError(

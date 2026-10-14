@@ -10,6 +10,7 @@ from typing import Optional, Set, Tuple
 import numpy as np
 import pysam
 
+from fiberhmm.core.progress import progress
 from fiberhmm.inference.bam_output import _sort_and_index_bam, atomic_output
 from fiberhmm.io.bam_header import append_coord_marker
 from fiberhmm.inference.engine import (
@@ -307,8 +308,7 @@ def _process_bam_legacy_pipeline(
                         # Progress update
                         elapsed = time.time() - start_time
                         rate = total_reads / elapsed if elapsed > 0 else 0
-                        print(f"\r  Processed: {total_reads:,} | Skipped: {skipped:,} | {rate:.1f} reads/s", end='')
-                        sys.stdout.flush()
+                        progress(f"  Processed: {total_reads:,} | Skipped: {skipped:,} | {rate:.1f} reads/s")
 
                         chunk_reads = []
                         chunk_read_objs = []
@@ -341,7 +341,8 @@ def _process_bam_legacy_pipeline(
 
         elapsed = time.time() - start_time
         rate = total_reads / elapsed if elapsed > 0 else 0
-        print(f"\r  Processed: {total_reads:,} | Skipped: {skipped:,} | With footprints: {reads_with_footprints:,} | {rate:.1f} reads/s")
+        progress(f"  Processed: {total_reads:,} | Skipped: {skipped:,} | With footprints: {reads_with_footprints:,} | {rate:.1f} reads/s",
+                 final=True)
 
         # Print skip reasons summary
         if skipped > 0:

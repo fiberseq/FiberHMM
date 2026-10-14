@@ -74,12 +74,8 @@ def _write_skipped_region_read(outbam, read, skip_reasons: dict, reason: str) ->
 def _init_region_worker(model_path: str, params: dict):
     """Initialize worker for region-parallel processing."""
     global _worker_model, _worker_region_params
-    import os
 
     try:
-        # Disable numba caching to avoid file lock contention.
-        os.environ['NUMBA_CACHE_DIR'] = ''
-
         # Load model once per worker.
         _worker_model = freeze_model_for_inference(load_model(model_path))
         _worker_region_params = params
@@ -471,9 +467,6 @@ def _init_fused_region_worker(
     params for the region worker to pick up.
     """
     global _worker_model, _worker_region_params, _worker_recall_state
-    import os
-
-    os.environ['NUMBA_CACHE_DIR'] = ''
 
     _worker_recall_state = {}
     _worker_model = freeze_model_for_inference(load_model(apply_model_path))

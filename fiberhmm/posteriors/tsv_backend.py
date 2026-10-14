@@ -21,10 +21,11 @@ import base64
 import gzip
 import json
 import os
-import sys
 from typing import Optional, TextIO
 
 import numpy as np
+
+from fiberhmm.core.progress import progress
 
 
 def _open_text_file(path: str, mode: str) -> TextIO:
@@ -212,11 +213,11 @@ def tsv_to_h5(tsv_path: str, h5_path: str, verbose: bool = True) -> int:
                 n_total += 1
 
                 if verbose and n_total % 500000 == 0:
-                    print(f"\r    Counted {n_total:,} fibers...", end='')
-                    sys.stdout.flush()
+                    progress(f"    Counted {n_total:,} fibers...")
 
     if verbose:
-        print(f"\r    Found {n_total:,} fibers across {len(chrom_counts)} chromosomes")
+        progress(f"    Found {n_total:,} fibers across {len(chrom_counts)} chromosomes",
+                 final=True)
 
     # Create H5 file with pre-allocated structure
     if verbose:
@@ -306,12 +307,12 @@ def tsv_to_h5(tsv_path: str, h5_path: str, verbose: bool = True) -> int:
                 process_line(line)
 
                 if verbose and n_written % 100000 == 0:
-                    print(f"\r    Written {n_written:,} / {n_total:,} fibers...", end='')
-                    sys.stdout.flush()
+                    progress(f"    Written {n_written:,} / {n_total:,} fibers...")
 
     file_size = os.path.getsize(h5_path) / (1024 * 1024)
     if verbose:
-        print(f"\r    Done: {n_written:,} fibers -> {h5_path} ({file_size:.1f} MB)")
+        progress(f"    Done: {n_written:,} fibers -> {h5_path} ({file_size:.1f} MB)",
+                 final=True)
 
     return n_written
 

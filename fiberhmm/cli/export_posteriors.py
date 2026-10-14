@@ -220,10 +220,6 @@ def _init_worker(model_path: str, params: dict):
     """Initialize worker with model and warmup numba JIT."""
     global _worker_model, _worker_params
 
-    # Disable numba caching to avoid file lock contention
-    import os
-    os.environ['NUMBA_CACHE_DIR'] = ''
-
     _worker_model, _, _ = load_model_with_metadata(model_path, normalize=True)
     _worker_model = freeze_model_for_inference(_worker_model)
     _worker_params = params

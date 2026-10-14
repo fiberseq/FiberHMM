@@ -12,6 +12,7 @@ import numpy as np
 import pysam
 
 from fiberhmm.core.bam_reader import get_bam_chrom_sizes
+from fiberhmm.core.progress import progress, progress_end
 from fiberhmm.io.ma_tags import flip_intervals_to_seq
 
 
@@ -489,10 +490,10 @@ def _concatenate_bams_with_pysam(
                 for read in inbam:
                     outbam.write(read)
             if verbose and progress_every > 0 and (i + 1) % progress_every == 0:
-                _note(f"\r    Concatenated {i+1}/{len(bam_files)} BAMs...", end='')
-                sys.stdout.flush()
+                progress(f"    Concatenated {i+1}/{len(bam_files)} BAMs...",
+                         file=sys.stderr)
     if verbose:
-        _note()
+        progress_end(sys.stderr)
 
 
 def _concatenate_region_bams(

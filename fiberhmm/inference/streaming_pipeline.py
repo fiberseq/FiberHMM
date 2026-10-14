@@ -18,6 +18,7 @@ from typing import Optional, Set, Tuple
 
 import pysam
 
+from fiberhmm.core.progress import progress
 from fiberhmm.inference.bam_output import _sort_and_index_bam, atomic_output
 from fiberhmm.inference.engine import configure_daf_snp_mask, make_apply_payload
 from fiberhmm.inference.mp_context import _MP_CONTEXT
@@ -271,10 +272,9 @@ def _process_bam_streaming_pipeline_fused(
                                     if dt > 0 else 0)
                             last_progress_reads = total_reads
                             last_progress_time = now
-                            print(f"\r  Fused: {total_reads:,} | Skipped: {skipped:,} | "
-                                  f"Inflight: {len(inflight)} | {inst:.0f} r/s "
-                                  f"(avg {avg:.0f})", end='', file=_log)
-                            _log.flush()
+                            progress(f"  Fused: {total_reads:,} | Skipped: {skipped:,} | "
+                                     f"Inflight: {len(inflight)} | {inst:.0f} r/s "
+                                     f"(avg {avg:.0f})", file=_log)
 
                     if chunk_read_objs:
                         if len(inflight) >= max_inflight:
@@ -300,8 +300,9 @@ def _process_bam_streaming_pipeline_fused(
         elapsed = time.time() - start_time
         rate = total_reads / elapsed if elapsed > 0 else 0
         reads_with_fp = counters['reads_with_footprints']
-        print(f"\r  Fused: {total_reads:,} | Skipped: {skipped:,} | "
-              f"With footprints: {reads_with_fp:,} | {rate:.1f} r/s", file=_log)
+        progress(f"  Fused: {total_reads:,} | Skipped: {skipped:,} | "
+                 f"With footprints: {reads_with_fp:,} | {rate:.1f} r/s",
+                 file=_log, final=True)
         _print_skip_reasons(skip_reasons, total_reads, skipped, _log)
         if counters.get('chimera'):
             print(f"  DAF strand-swap chimeras filtered: {counters['chimera']:,}",
@@ -493,12 +494,11 @@ def _process_bam_streaming_pipeline(
                                          if dt > 0 else 0)
                             last_progress_reads = total_reads
                             last_progress_time = now
-                            print(f"\r  Processed: {total_reads:,} | "
-                                  f"Skipped: {skipped:,} | "
-                                  f"Inflight: {len(inflight)} | "
-                                  f"{inst_rate:.0f} reads/s (avg {avg_rate:.0f})",
-                                  end='', file=_log)
-                            _log.flush()
+                            progress(f"  Processed: {total_reads:,} | "
+                                     f"Skipped: {skipped:,} | "
+                                     f"Inflight: {len(inflight)} | "
+                                     f"{inst_rate:.0f} reads/s (avg {avg_rate:.0f})",
+                                     file=_log)
 
                     if chunk_read_objs:
                         if len(inflight) >= max_inflight:
@@ -525,9 +525,9 @@ def _process_bam_streaming_pipeline(
         elapsed = time.time() - start_time
         rate = total_reads / elapsed if elapsed > 0 else 0
         reads_with_footprints = counters['reads_with_footprints']
-        print(f"\r  Processed: {total_reads:,} | Skipped: {skipped:,} | "
-              f"With footprints: {reads_with_footprints:,} | {rate:.1f} reads/s",
-              file=_log)
+        progress(f"  Processed: {total_reads:,} | Skipped: {skipped:,} | "
+                 f"With footprints: {reads_with_footprints:,} | {rate:.1f} reads/s",
+                 file=_log, final=True)
         _print_skip_reasons(skip_reasons, total_reads, skipped, _log)
         # Inside the atomic context: raising here discards the temporary BAM.
         _check_run_outcome(counters, total_reads, skip_reasons, skipped,
