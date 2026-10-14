@@ -789,9 +789,9 @@ def test_samtools_cat_command_lines_are_parsed_like_getopt(arguments, joins):
 
 def test_fiberhmm_region_concatenation_is_not_a_join_even_with_spaces():
     for directory in ("/data/run 1/.out.bam.fiberhmm-work",
-                      "/Users/x/FiberHMM v1.0/.fiberhmm_call_tmp_ab12"):
+                      "/Users/x/my project/.fiberhmm_call_tmp_ab12"):
         cl = (f"samtools cat -h {directory}/region_000000.bam "
-              f"-b {directory}/bam_list.txt -o /Users/x/FiberHMM v1.0/out.bam")
+              f"-b {directory}/bam_list.txt -o /Users/x/my project/out.bam")
         assert adv._drops_input_headers({"PN": "samtools", "CL": cl}) is False, cl
     # Same shape but files outside a FiberHMM work directory: a user's join.
     cl = "samtools cat -h /d/region_000000.bam -b /d/bam_list.txt -o /d/out.bam"
