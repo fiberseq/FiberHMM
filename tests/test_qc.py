@@ -745,3 +745,23 @@ def test_qc_platform_ignores_unrelated_command_lines(tmp_path):
     mm2 = {"ID": "minimap2", "PN": "minimap2", "CL": "minimap2 -ax map-ont ref.fa r.fq"}
     path = _header_only_bam(tmp_path / "y.bam", [mm2])
     assert infer_assay(path, [], mode="auto", enzyme="auto")[0] == "nanopore-fiber"
+
+
+def test_state_aware_verdict_line_names_every_counted_component():
+    """The terminal summary names what the verdict counted (periodicity too)."""
+    from fiberhmm.qc.core import _state_terminal_lines
+
+    block = {"available": True, "source": "calls", "definition": {"min_msp_bp": 85},
+             "msp": {"aggregate_rate": 0.3}, "outside_msp": {"aggregate_rate": 0.02},
+             "all_states": {"aggregate_rate": 0.1}, "msp_length_fraction": 0.4,
+             "msp_to_outside_ratio": 15.0}
+    result = {"state_rates": block,
+              "efficiency": {"value": 0.3, "status": "PASS", "score": 90},
+              "background": {"value": 0.02, "status": "PASS", "score": 90},
+              "overall": {"verdict_basis": "state-aware",
+                          "components": ["efficiency", "background", "periodicity"]}}
+    (line,) = [l for l in _state_terminal_lines(result) if "verdict uses" in l]
+    assert "in-MSP efficiency + outside-MSP background + periodicity" in line
+    result["overall"]["components"] = ["background", "periodicity"]
+    (line,) = [l for l in _state_terminal_lines(result) if "verdict uses" in l]
+    assert "verdict uses outside-MSP background + periodicity" in line

@@ -1399,9 +1399,15 @@ def _state_terminal_lines(result: dict) -> list[str]:
     note = efficiency.get("note") or background.get("note")
     if note:
         lines.append(f"  state note: {note}")
-    basis = result.get("overall", {}).get("verdict_basis")
-    if basis == "state-aware":
-        lines.append("  verdict uses in-MSP efficiency + outside-MSP background "
+    overall = result.get("overall", {})
+    if overall.get("verdict_basis") == "state-aware":
+        labels = {"efficiency": "in-MSP efficiency",
+                  "background": "outside-MSP background",
+                  "periodicity": "periodicity"}
+        components = overall.get("components") or ("efficiency", "background",
+                                                    "periodicity")
+        used = " + ".join(labels.get(name, name) for name in components)
+        lines.append(f"  verdict uses {used} "
                      "(the signal-rate grade is reported but excluded from the verdict)")
     return lines
 
