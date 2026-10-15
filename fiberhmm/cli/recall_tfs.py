@@ -1332,38 +1332,60 @@ def _main(args):
 
 
 def _harmonized_apply_input(header) -> bool:
-    """Whether the header records a fiberhmm-apply --harmonize-legacy-tags run
-    that no later full ``fiberhmm-call`` (exact program name) re-called: a
-    call supersedes a harmonized apply only when the apply is in its @PG
-    ancestry, so another merged branch's harmonized reads still count."""
+    """Whether a surviving @PG branch ends in harmonized legacy tags.
+
+    Every leaf record (one no other record names as PP; header order is the
+    chain when no record has PP) is a branch whose reads are in the file. A
+    branch is walked from its leaf towards its root; the first record that
+    rewrote ns/nl decides it: a ``fiberhmm-apply`` with
+    ``legacy_tags=harmonized`` refuses, any other ``fiberhmm-apply`` or a
+    ``fiberhmm-call`` replaced them (exact program names; ID collision
+    suffixes stripped). A replacement on one branch never clears another,
+    even when the two share the harmonized ancestor.
+    """
+    from fiberhmm.io.annotation_frame import _pg_id_base
+
     try:
         records = header.to_dict().get('PG', [])
     except AttributeError:
         records = (header or {}).get('PG', [])
+    records = [record for record in records if isinstance(record, dict)]
+    if not records:
+        return False
 
     def program(record):
-        return str(record.get('PN') or record.get('ID') or '').strip().lower()
+        name = str(record.get('PN') or '').strip().lower()
+        return name or _pg_id_base(str(record.get('ID', '') or '').strip())
 
-    by_id = {}
-    for index, record in enumerate(records):
-        by_id.setdefault(str(record.get('ID', '')), []).append(index)
-
-    def ancestors(index):
-        seen, stack = set(), [index]
-        while stack:
-            item = stack.pop()
-            for parent in by_id.get(str(records[item].get('PP', '')), ()):
-                if parent < item and parent not in seen:
-                    seen.add(parent)
-                    stack.append(parent)
-        return seen
-
-    harmonized = [i for i, record in enumerate(records)
-                  if program(record) == 'fiberhmm-apply'
-                  and 'legacy_tags=harmonized' in str(record.get('DS', ''))]
-    calls = [i for i, record in enumerate(records) if program(record) == 'fiberhmm-call']
-    return any(not any(apply < call and apply in ancestors(call) for call in calls)
-               for apply in harmonized)
+    ids = [str(record.get('ID', '') or '') for record in records]
+    parent = [None] * len(records)
+    if any('PP' in record for record in records):
+        by_id = {}
+        for index, ident in enumerate(ids):
+            by_id.setdefault(ident, []).append(index)
+        for index, record in enumerate(records):
+            pp = str(record.get('PP', '') or '')
+            candidates = [j for j in by_id.get(pp, []) if j != index] if pp else []
+            if candidates:
+                earlier = [j for j in candidates if j < index]
+                parent[index] = earlier[-1] if earlier else candidates[-1]
+    else:
+        parent = [i - 1 if i else None for i in range(len(records))]
+    referenced = {j for j in parent if j is not None}
+    leaves = [i for i in range(len(records)) if i not in referenced] or [len(records) - 1]
+    for leaf in leaves:
+        node, seen = leaf, set()
+        while node is not None and node not in seen:
+            seen.add(node)
+            name = program(records[node])
+            if name == 'fiberhmm-apply':
+                if 'legacy_tags=harmonized' in str(records[node].get('DS', '')):
+                    return True
+                break
+            if name == 'fiberhmm-call':
+                break
+            node = parent[node]
+    return False
 
 
 class HarmonizedInputError(ValueError):

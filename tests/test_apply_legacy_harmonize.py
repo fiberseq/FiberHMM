@@ -237,3 +237,30 @@ def test_recall_tfs_cli_exits_2_on_harmonized_input(tmp_path, capsys, monkeypatc
         sys.argv = argv
     assert exc.value.code == 2
     assert '--harmonize-legacy-tags' in capsys.readouterr().err
+
+
+def test_guard_evaluates_every_surviving_branch():
+    """samtools merge -p of (harmonized apply -> sort) and (the same apply ->
+    call): the call clears only its own branch."""
+    from fiberhmm.cli.recall_tfs import _harmonized_apply_input
+
+    shared = {'PG': [dict(HARMONIZED, ID='fiberhmm-apply'),
+                     {'ID': 'samtools', 'PN': 'samtools', 'PP': 'fiberhmm-apply',
+                      'CL': 'samtools sort'},
+                     dict(CALL, ID='fiberhmm-call', PP='fiberhmm-apply')]}
+    assert _harmonized_apply_input(shared)
+    # Both branches replaced: clear.
+    shared['PG'][1]['PP'] = 'fiberhmm-call'
+    assert not _harmonized_apply_input(shared)
+    # ID collision suffixes from merges are still the same program.
+    renamed = {'PG': [dict(HARMONIZED, ID='fiberhmm-apply-4A2B3C1D', PN=None)]}
+    del renamed['PG'][0]['PN']
+    assert _harmonized_apply_input(renamed)
+
+
+def test_ordinary_apply_after_harmonized_apply_clears_the_refusal():
+    from fiberhmm.cli.recall_tfs import _harmonized_apply_input
+
+    assert not _harmonized_apply_input(_chain(HARMONIZED, RAW))
+    assert _harmonized_apply_input(_chain(RAW, HARMONIZED))
+    assert not _harmonized_apply_input(_chain(HARMONIZED, CALL_M5C, RAW))
