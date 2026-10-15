@@ -109,22 +109,28 @@ def _parse_region(text, fasta):
     return chrom, start, end
 
 
+def _path_error(message: str) -> None:
+    """Exit 2 with one prefixed line, as refuse_path_aliases does."""
+    print(f"fiberhmm-call-m5c: error: {message}", file=sys.stderr)
+    raise SystemExit(2)
+
+
 def _check_paths(args) -> None:
-    """Path conflicts, checked before any input is opened."""
+    """Path conflicts, checked before any input is opened (exit 2)."""
     if bool(args.tag_bam) != bool(args.tag_output):
-        raise SystemExit("--tag-bam and --tag-output must be supplied together")
+        _path_error("--tag-bam and --tag-output must be supplied together")
     if args.output == "-" and args.tag_output == "-":
-        raise SystemExit(
+        _path_error(
             "-o - and --tag-output - would write the BED and the BAM to the same "
             "stdout; send at most one of them to stdout")
     if args.output != "-" and any(_same_file(path, args.output) for path in args.input):
-        raise SystemExit("output BED path must differ from every input BAM")
+        _path_error("output BED path must differ from every input BAM")
     if args.tag_bam and _same_file(args.tag_bam, args.tag_output):
-        raise SystemExit("--tag-bam and --tag-output paths must differ")
+        _path_error("--tag-bam and --tag-output paths must differ")
     if args.tag_output and any(_same_file(path, args.tag_output) for path in args.input):
-        raise SystemExit("--tag-output path must differ from every input BAM")
+        _path_error("--tag-output path must differ from every input BAM")
     if args.tag_output and args.output != "-" and _same_file(args.output, args.tag_output):
-        raise SystemExit("--output BED and --tag-output BAM paths must differ")
+        _path_error("--output BED and --tag-output BAM paths must differ")
     # Also the reference, island catalog and indexes (shared guard).
     from fiberhmm.cli.common import refuse_path_aliases
     refuse_path_aliases(

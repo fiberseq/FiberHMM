@@ -75,8 +75,28 @@ def test_call_m5c_refuses_bed_and_bam_on_one_stdout(tmp_path, capsys):
     from fiberhmm.cli.call_m5c import main
 
     # Refused before any input is opened (the inputs do not exist).
-    with pytest.raises(SystemExit, match="same stdout"):
+    with pytest.raises(SystemExit) as stop:
         main(["-i", str(tmp_path / "in.bam"), "-r", str(tmp_path / "ref.fa"), "-o", "-",
               "--region", "chr1", "--enzyme", "ddda", "--tag-bam", str(tmp_path / "in.bam"),
               "--tag-output", "-", "--tag-mode", "locus"])
-    assert capsys.readouterr().out == ""
+    assert stop.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("fiberhmm-call-m5c: error: ") and "same stdout" in captured.err
+
+
+@pytest.mark.parametrize("extra", [
+    ["-o", "out.bed", "--tag-bam", "in.bam"],                         # no --tag-output
+    ["-o", "in.bam"],                                                 # BED over an input
+    ["-o", "out.bed", "--tag-bam", "in.bam", "--tag-output", "in.bam"],
+])
+def test_call_m5c_path_conflicts_exit_2_like_the_shared_guard(tmp_path, capsys, monkeypatch, extra):
+    """Its own path checks report as refuse_path_aliases (and tag-m5c) do."""
+    from fiberhmm.cli.call_m5c import main
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "in.bam").write_bytes(b"")
+    with pytest.raises(SystemExit) as stop:
+        main(["-i", "in.bam", "-r", "ref.fa", "--region", "chr1", "--enzyme", "ddda", *extra])
+    assert stop.value.code == 2
+    assert capsys.readouterr().err.startswith("fiberhmm-call-m5c: error: ")
