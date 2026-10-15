@@ -908,12 +908,21 @@ def _legacy_molecular(read, input_molecular_frame) -> bool:
     return bool(input_molecular_frame)
 
 
-def ma_strand_intervals(read, feature: str) -> dict[str, list[tuple[int, int]]]:
-    """Parse one MA feature into SEQ-frame intervals grouped by qualifier."""
+def ma_strand_intervals(read, feature: str,
+                        frame_context=None) -> dict[str, list[tuple[int, int]]]:
+    """Parse one MA feature into SEQ-frame intervals grouped by qualifier.
+
+    MA is read as molecular (reverse reads flipped). ``frame_context`` is the
+    run's legacy frame; when it is a per-read resolver for a header without
+    frame evidence (``annotation_frame.LegacyFrame``, ``assumed``), each
+    group's own strand decides instead: '.' groups are molecular, '+'/'-'
+    groups follow the header rule (SEQ, not flipped).
+    """
     from fiberhmm.io.ma_tags import flip_interval_frame
 
     if not read.has_tag("MA"):
         return {}
+    per_group = bool(getattr(frame_context, "assumed", False))
     read_length = read.query_length or len(read.query_sequence or "")
     intervals: dict[str, list[tuple[int, int]]] = {}
     for group in str(read.get_tag("MA")).split(";")[1:]:
@@ -929,7 +938,8 @@ def ma_strand_intervals(read, feature: str) -> dict[str, list[tuple[int, int]]]:
                 continue
             one_based, size = (int(v) for v in item.split("-", 1))
             interval = (one_based - 1, size)
-            if read.is_reverse:
+            molecular = (strand == "." or not per_group)
+            if read.is_reverse and molecular:
                 interval = flip_interval_frame(*interval, read_length)
             strand_intervals.append((interval[0], interval[0] + interval[1]))
     for values in intervals.values():
@@ -937,11 +947,12 @@ def ma_strand_intervals(read, feature: str) -> dict[str, list[tuple[int, int]]]:
     return intervals
 
 
-def ma_intervals(read, feature: str) -> list[tuple[int, int]]:
-    """Parse all qualifiers of an MA feature as SEQ-frame intervals."""
+def ma_intervals(read, feature: str, frame_context=None) -> list[tuple[int, int]]:
+    """Parse all qualifiers of an MA feature as SEQ-frame intervals
+    (``frame_context``: see :func:`ma_strand_intervals`)."""
     intervals = [
         interval
-        for values in ma_strand_intervals(read, feature).values()
+        for values in ma_strand_intervals(read, feature, frame_context).values()
         for interval in values
     ]
     intervals.sort()
@@ -1021,7 +1032,8 @@ def collect_read_observations(read, fasta, chrom: str | None = None,
     original_base = ord("C") if top else ord("G")
     deamination_mark = ord("Y") if top else ord("R")
     excluded = np.zeros(len(sequence), dtype=bool)
-    nuc_intervals = ma_intervals(read, "nuc") if read.has_tag("MA") else []
+    nuc_intervals = (ma_intervals(read, "nuc", input_molecular_frame)
+                     if read.has_tag("MA") else [])
     if not nuc_intervals and read.has_tag("ns") and read.has_tag("nl"):
         starts = read.get_tag("ns")
         lengths = read.get_tag("nl")
@@ -1090,7 +1102,8 @@ def _interval_mask(length: int, intervals: Sequence[tuple[int, int]]) -> np.ndar
 
 
 def _nucleosome_intervals_seq(read, input_molecular_frame: bool) -> list[tuple[int, int]]:
-    intervals = ma_intervals(read, "nuc") if read.has_tag("MA") else []
+    intervals = (ma_intervals(read, "nuc", input_molecular_frame)
+                 if read.has_tag("MA") else [])
     if not intervals and read.has_tag("ns") and read.has_tag("nl"):
         starts = read.get_tag("ns")
         lengths = read.get_tag("nl")
@@ -1872,7 +1885,8 @@ def write_cpg_island_bed(
 
 def _initial_msp_intervals_seq(read, input_molecular_frame: bool) -> list[tuple[int, int]]:
     """Return initial MSPs in SEQ coordinates from MA or legacy as/al tags."""
-    intervals = ma_intervals(read, "msp") if read.has_tag("MA") else []
+    intervals = (ma_intervals(read, "msp", input_molecular_frame)
+                 if read.has_tag("MA") else [])
     if intervals or not (read.has_tag("as") and read.has_tag("al")):
         return intervals
     starts, lengths = list(read.get_tag("as")), list(read.get_tag("al"))

@@ -1508,3 +1508,52 @@ def test_m5c_observations_resolve_stripped_headers_per_read(tmp_path):
     # An m5C layer alone decides nothing.
     read.set_tag("MA", "1000;ddda_mcg.:301-200", value_type="Z")
     assert m5c._nucleosome_intervals_seq(read, resolver) == [(100, 150)]
+
+
+@pytest.mark.parametrize("with_legacy", [False, True])
+def test_m5c_footprint_ma_follows_each_group_strand_without_header_evidence(with_legacy):
+    """Codex round 5: a historical merge --recall header with @PG stripped
+    (chemistry kept); a reverse read whose MA has historical '+' footprints
+    and an appended '.' m5C group. The m5C readers keep the '+' groups in
+    SEQ frame (as QC and recall do); with header evidence they are unchanged."""
+    import array
+
+    import pysam
+
+    import fiberhmm.daf.m5c as m5c
+    from fiberhmm.cli.merge import _merge_output_header
+
+    base = {"HD": {"VN": "1.6"}, "SQ": [{"SN": "chr1", "LN": 10_000}],
+            "PG": [{"ID": "fiberhmm-call", "PN": "fiberhmm-call", "VN": "2.12.0",
+                    "DS": "FiberHMM fused apply+recall; mode=daf"}]}
+    merged = _merge_output_header(
+        base, recall=True, enzyme="ddda", prob_threshold=128, pairs_only=False,
+        nuc_recall_policy="conservative", phase_nrl=0,
+        cpg_mask_policy="unmethylated-only").to_dict()
+    stripped = {key: value for key, value in merged.items() if key != "PG"}
+    assert any(c.startswith("FIBERHMM-CHEMISTRY") for c in stripped.get("CO", []))
+
+    read = pysam.AlignedSegment(pysam.AlignmentHeader.from_dict(stripped))
+    read.query_name = "r"
+    read.flag = 16
+    read.reference_id = 0
+    read.reference_start = 0
+    read.query_sequence = "A" * 1000
+    read.cigarstring = "1000M"
+    read.set_tag("MA", "1000;nuc+Q:101-50;msp+:301-200;ddda_mcg.:351-50", value_type="Z")
+    read.set_tag("AQ", array.array("B", [200]))
+    if with_legacy:
+        read.set_tag("ns", array.array("I", [100]))
+        read.set_tag("nl", array.array("I", [50]))
+        read.set_tag("as", array.array("I", [300]))
+        read.set_tag("al", array.array("I", [200]))
+
+    frame = m5c._default_input_frame(stripped)
+    assert m5c._nucleosome_intervals_seq(read, frame) == [(100, 150)]
+    assert m5c._initial_msp_intervals_seq(read, frame) == [(300, 500)]
+    # The '.' m5C layer itself is still molecular.
+    assert m5c.ma_intervals(read, "ddda_mcg", frame) == [(600, 650)]
+    # With the @PG chain kept, the long-standing reading is unchanged.
+    chained = m5c._default_input_frame(merged)
+    assert m5c._nucleosome_intervals_seq(read, chained) == [(850, 900)]
+    assert m5c._initial_msp_intervals_seq(read, chained) == [(500, 700)]
