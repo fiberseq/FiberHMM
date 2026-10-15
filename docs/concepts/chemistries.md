@@ -96,9 +96,8 @@ Consequences for Nanopore Hia5:
   channel.
 
 !!! warning "2.x Nanopore Hia5 table"
-    The Nanopore Hia5 emission table shipped in every 2.x release was indexed
-    in the wrong context order. Re-run ONT Hia5 calls made with 2.x; see
-    [Upgrading from 2.x](../upgrading.md).
+    3.0 ships an updated Nanopore Hia5 emission table. Re-run ONT Hia5 calls
+    made with 2.x; see [Upgrading from 2.x](../upgrading.md).
 
 ## DAF-seq: DddA and DddB
 

@@ -27,6 +27,6 @@ The full documentation is at
 [fiberseq.github.io/FiberHMM](https://fiberseq.github.io/FiberHMM/); the
 source is on [GitHub](https://github.com/fiberseq/FiberHMM).
 
-> **FiberHMM 3.0** corrects the Nanopore Hia5 emission table, which was
-> context-swapped in every 2.x release. Re-run ONT Hia5 calls made with 2.x
+> **FiberHMM 3.0** ships updated Nanopore Hia5 and DddB emission tables.
+> Re-run calls made with earlier versions
 > ([upgrading from 2.x](https://fiberseq.github.io/FiberHMM/upgrading/)).

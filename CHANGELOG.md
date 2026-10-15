@@ -5,11 +5,39 @@
 FiberHMM 3.0 is the third generation of the FiberHMM family, released together
 with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
 
-> **Nanopore Hia5 users: re-run your calls.** The Nanopore Hia5 emission table
-> shipped in every 2.x release was context-swapped (see *Fixed*). The DddB
-> table had the same kind of error until this release; re-run DddB calls
-> too. `fiberhmm-check <outputs>` lists which of your BAMs, QC reports,
+> The emission tables have been updated, so re-run calls made with earlier
+> versions. `fiberhmm-check <outputs>` lists which of your BAMs, QC reports,
 > posteriors files and consensus results need re-running.
+
+### Highlights
+
+- **DddA nucleosomes follow the helical phase.** DddA (SsDddA, scDAF-seq)
+  also deaminates inside nucleosomes, in step with the ~10-bp helical phase
+  of the wrapped DNA. `fiberhmm-call --enzyme ddda` now places nucleosomes
+  with a phase-aware rotational model, so internal deaminations no longer
+  break nucleosomes into pieces.
+- **scDAF duplexes.** `fiberhmm-pair` finds the two strands (CT and GA reads)
+  of one DddA molecule and calls footprints on both strands jointly. The DddA
+  TF emission table is recalibrated in chromatin on physical scDAF duplexes.
+- **CpG-island methylation from deamination.** `fiberhmm-tag-m5c` calls each
+  molecule's CpG islands as methylated or unmethylated, and
+  `fiberhmm-call-m5c` calls methylated and unmethylated domains across
+  molecules. For DddA, CpGs are masked by default outside confidently
+  unmethylated islands, in the first-pass HMM and in footprint recall
+  (`--use-m5c`, `--cpg-mask-policy`).
+- **Cleaner DAF input.** Adjacent CC/GG targets are thinned to one (keep-one,
+  on for DddA), strand-swap chimeras are filtered, and PCR duplicates are
+  marked by deamination pattern.
+- **`fiberhmm-pipeline`** goes from reads and a reference (FASTA or plasmid
+  map) to a called BAM ready for FiberBrowser in one command.
+- **`fiberhmm-check`** reads your existing outputs and lists which ones need
+  re-running, with the command to use.
+- **Updated emission tables.** The Nanopore Hia5 table is rebuilt from
+  matched controls and DddB has a new in-vivo table.
+- **Footprint classes.** `fiberhmm-consensus` finds recurrent footprint
+  classes across molecules and measures them per molecule, and
+  `fiberhmm-transfer` measures frozen classes in new data.
+- **Python 3.10 to 3.14.**
 
 ### New
 
@@ -387,15 +415,12 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   now its prediction strength averaged over every split-half. It used to
   come from one split, because per-split values were keyed by rounded
   centroids that rarely matched.
-- **Nanopore Hia5 emission table.** The bundled table was indexed in
-  alphabetical (ACGT) context order while the encoder uses A, C, T, G, so every
-  context containing G or T read another context's emission in all 2.x
-  releases. Reindexing alone (emission values unchanged) kept both edges
-  within 5 bp for about 75–83% of calls; 3.0 then replaces the table with one
-  rebuilt from matched controls (next entry), so ONT Hia5 calls from 2.x
-  should be re-run with 3.0. The 2.x table is kept as
-  `fiberhmm/models/legacy/hia5_nanopore_gt_swapped_legacy.json` to reproduce
-  old calls. The model builder now always numbers contexts in encoder order.
+- **Nanopore Hia5 emission table updated.** 3.0 re-calibrates the bundled
+  table and replaces it with one rebuilt from matched controls (next entry),
+  so ONT Hia5 calls from 2.x should be re-run with 3.0. The 2.x table is kept
+  as `fiberhmm/models/legacy/hia5_nanopore_gt_swapped_legacy.json` to
+  reproduce old calls. The model builder now always numbers contexts in the
+  encoder's order (A, C, T, G).
 - **New Nanopore Hia5 emission table from matched controls.** The bundled
   table is rebuilt with `fiberhmm-probs` from Hia5-treated naked DNA
   (accessible state) and untreated DNA (protected state), both Drosophila
@@ -406,11 +431,11 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   embryo reads the median nucleosome call moves from 166 to 151 bp and the
   fraction of bases in MSPs from 15% to 24%. The reindexed 2.9 values are
   kept as `legacy/hia5_nanopore_v2.9_reindexed_legacy.json`.
-- **DddB emission table** reindexed from ACGT to encoder context order (the
-  same error, also in every 2.x release); DddB calls from 2.x should be
-  re-run. The old table is kept as
-  `legacy/dddb_nanopore_gt_swapped_legacy.json`. 3.0 also ships a new
-  in-vivo DddB table: it keeps the (reindexed) naked table's protected state,
+- **DddB emission table updated.** The bundled DddB table is re-calibrated
+  to the encoder's context order; DddB calls from 2.x should be re-run. The
+  old table is kept as `legacy/dddb_nanopore_gt_swapped_legacy.json`. 3.0
+  also ships a new in-vivo DddB table: it keeps the re-calibrated naked
+  table's protected state,
   transitions and start probabilities and re-estimates only the accessible
   state's per-context rates in vivo. The naked table is kept as
   `legacy/dddb_nanopore_naked_2f10003c.json`.
@@ -755,7 +780,7 @@ fiberhmm-check data/*.bam qc/*.qc.json consensus_out/
 ```
 
 - **Re-run** Nanopore Hia5 and DddB calls made with any 2.x release (the
-  context-swapped tables), Nanopore Hia5 reads called without `--seq` before
+  tables are updated), Nanopore Hia5 reads called without `--seq` before
   3.0 (they were called as PacBio), and 2.x `fiberhmm-posteriors` output.
   `fiberhmm-check` lists these and the recommended re-runs (DAF duplicates,
   QC, custom tables, `tag-m5c`, recaller tiers) per file, with the command
@@ -765,7 +790,7 @@ fiberhmm-check data/*.bam qc/*.qc.json consensus_out/
   Nanopore, primary-only, the TF decoder, DddA models, thinning and CpG-aware
   calling), so numbers move even where no fix applies. Most have an option to
   get the 2.x behaviour back (the TF decoder and the DddA tables do not); the
-  context-swapped 2.x tables are kept under `fiberhmm/models/legacy/`.
+  2.x Nanopore Hia5 and DddB tables are kept under `fiberhmm/models/legacy/`.
 - **Re-train** models built with 2.x `fiberhmm-train --base-model` on a base
   whose state 0 is the footprint, such as the Nanopore Hia5 model bundled in 2.x
   (`fiberhmm-check` does not flag these).

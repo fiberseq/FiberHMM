@@ -15,13 +15,12 @@ fiberhmm-check calls.bam other.bam qc/sample.qc.json consensus_out/ pipeline_out
 ```text
 ont_hia5.bam: RE-RUN REQUIRED
   - hia5-nanopore-gt-table (rerun-required; affected, medium confidence)
-    Nanopore Hia5 calls made with the context-swapped emission table [calls]
+    Nanopore Hia5 calls made with the 2.x emission table [calls]
     evidence:
       @PG fiberhmm-call.3 command line runs code from a tree named after commit 1ca7d0a, which
       predates the fix (dc7abba)
     why:
-      The Nanopore Hia5 emission table shipped in every 2.x release was indexed in ACGT context
-      ...
+      The Nanopore Hia5 emission table has been updated in 3.0. ...
     fix:
       Re-call from the aligned reads with FiberHMM >= 3.0: fiberhmm-call -i aligned.bam -o calls.bam
       --enzyme hia5 --seq nanopore (or fiberhmm-pipeline). ...
@@ -132,8 +131,8 @@ of its region files is recognised and does not count.)
 
 | ID | Severity | Output | Applies to |
 |---|---|---|---|
-| `hia5-nanopore-gt-table` | rerun-required | calls | Nanopore Hia5 calls with the 2.x context-swapped table |
-| `dddb-gt-table` | rerun-required | calls | DddB calls with the pre-3.0 context-swapped table |
+| `hia5-nanopore-gt-table` | rerun-required | calls | Nanopore Hia5 calls with the 2.x emission table |
+| `dddb-gt-table` | rerun-required | calls | DddB calls with the pre-3.0 emission table |
 | `hia5-nanopore-called-as-pacbio` | rerun-required | calls | Hia5 run without `--seq` before 3.0 on reads the header shows are Nanopore (`@RG PL`, `map-ont`, basecaller `@PG`) |
 | `custom-table-without-enzyme-defaults` | rerun-recommended | calls | `-m` without `--enzyme` on DddA/DddB input, before 3.0 |
 | `daf-dedup-orientation` | rerun-recommended | dedup flags | DAF duplicates grouped by alignment orientation, before 3.0 |
@@ -178,7 +177,7 @@ their FiberHMM version since 3.0; older ones without it are reported as
       "status": "affected",
       "confidence": "medium",
       "needs_rerun": true,
-      "title": "Nanopore Hia5 calls made with the context-swapped emission table",
+      "title": "Nanopore Hia5 calls made with the 2.x emission table",
       "reason": "...",
       "artifact": "calls",
       "fix": "Re-call from the aligned reads with FiberHMM >= 3.0: ...",

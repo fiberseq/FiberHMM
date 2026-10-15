@@ -53,8 +53,8 @@ warning; pass `--seq nanopore` for Nanopore data.
 
 ### Nanopore Hia5 calls from 2.x
 
-Re-run them with 3.0: the 2.x Nanopore Hia5 table was context-swapped. See
-[Upgrading from 2.x](upgrading.md).
+Re-run them with 3.0, which ships an updated Nanopore Hia5 emission table.
+See [Upgrading from 2.x](upgrading.md).
 
 ## Calling
 

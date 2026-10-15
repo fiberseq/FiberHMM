@@ -13,11 +13,40 @@ tags, readable by `ft`, FIRE and FiberBrowser.
 (source in [`docs/`](https://github.com/fiberseq/FiberHMM/tree/main/docs)).
 
 > **FiberHMM 3.0.0** is the third generation of the FiberHMM family, released
-> with FiberBrowser 3.0.0. **Nanopore Hia5 and DddB users:** the Nanopore Hia5
-> and DddB emission tables shipped in 2.x releases were context-swapped; re-run
-> those calls made with 2.x. `fiberhmm-check <your outputs>` lists which files
-> need re-running. See [Upgrading from 2.x](https://fiberseq.github.io/FiberHMM/upgrading/)
+> with FiberBrowser 3.0.0. The emission tables have been updated, so re-run
+> calls made with earlier versions. `fiberhmm-check <your outputs>` lists which
+> files need re-running. See [Upgrading from 2.x](https://fiberseq.github.io/FiberHMM/upgrading/)
 > and the [CHANGELOG](https://github.com/fiberseq/FiberHMM/blob/main/CHANGELOG.md).
+
+## What's new in 3.0
+
+- **DddA nucleosomes follow the helical phase.** DddA (SsDddA, scDAF-seq)
+  also deaminates inside nucleosomes, in step with the ~10-bp helical phase
+  of the wrapped DNA. `fiberhmm-call --enzyme ddda` now places nucleosomes
+  with a phase-aware rotational model, so internal deaminations no longer
+  break nucleosomes into pieces.
+- **scDAF duplexes.** `fiberhmm-pair` finds the two strands (CT and GA reads)
+  of one DddA molecule and calls footprints on both strands jointly. The DddA
+  TF emission table is recalibrated in chromatin on physical scDAF duplexes.
+- **CpG-island methylation from deamination.** `fiberhmm-tag-m5c` calls each
+  molecule's CpG islands as methylated or unmethylated, and
+  `fiberhmm-call-m5c` calls methylated and unmethylated domains across
+  molecules. For DddA, CpGs are masked by default outside confidently
+  unmethylated islands, in the first-pass HMM and in footprint recall
+  (`--use-m5c`, `--cpg-mask-policy`).
+- **Cleaner DAF input.** Adjacent CC/GG targets are thinned to one (keep-one,
+  on for DddA), strand-swap chimeras are filtered, and PCR duplicates are
+  marked by deamination pattern.
+- **`fiberhmm-pipeline`** goes from reads and a reference (FASTA or plasmid
+  map) to a called BAM ready for FiberBrowser in one command.
+- **`fiberhmm-check`** reads your existing outputs and lists which ones need
+  re-running, with the command to use.
+- **Updated emission tables.** The Nanopore Hia5 table is rebuilt from
+  matched controls and DddB has a new in-vivo table.
+- **Footprint classes.** `fiberhmm-consensus` finds recurrent footprint
+  classes across molecules and measures them per molecule, and
+  `fiberhmm-transfer` measures frozen classes in new data.
+- **Python 3.10 to 3.14.**
 
 ## Install
 

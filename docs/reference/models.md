@@ -46,9 +46,9 @@ selected by a preset.
 
 | File | What it is |
 |---|---|
-| `hia5_nanopore_gt_swapped_legacy.json` | the Nanopore Hia5 table as shipped through 2.x, with contexts in alphabetical order (every context with a G or T read another context's emission) |
+| `hia5_nanopore_gt_swapped_legacy.json` | the Nanopore Hia5 table as shipped through 2.x |
 | `hia5_nanopore_v2.9_reindexed_legacy.json` | the 2.x Nanopore Hia5 values in encoder order, bundled in 3.0 development builds before the control-built table (3.0 development builds only) |
-| `dddb_nanopore_gt_swapped_legacy.json` | the DddB table before its reindexing, with the same error |
+| `dddb_nanopore_gt_swapped_legacy.json` | the DddB table as shipped through 2.x |
 | `dddb_nanopore_naked_2f10003c.json` | the reindexed naked DddB table the in-vivo table is built on (3.0 development builds only) |
 | `ddda_nuc_refine_context_v2.6.json` | the earlier per-context radial-nucleosome likelihoods (3.0 development builds only) |
 | `ddda_pacbio.json` | the older one-pass DddA model, superseded by `ddda_nuc.json` + `ddda_TF.json` |

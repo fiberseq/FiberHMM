@@ -15,7 +15,7 @@ preset has its own defaults: for example Nanopore Hia5 reads m6A at ML ≥ 248,
 and DddA uses phase-aware radial nucleosome recall and CpG-aware TF recall.
 See [Chemistries and platforms](https://fiberseq.github.io/FiberHMM/concepts/chemistries/).
 
-Older tables, including the context-swapped 2.x Nanopore Hia5 table
+Older tables, including the 2.x Nanopore Hia5 table
 (`hia5_nanopore_gt_swapped_legacy.json`), are kept in
 `fiberhmm/models/legacy/` to reproduce earlier results.
 

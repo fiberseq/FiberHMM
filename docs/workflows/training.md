@@ -56,9 +56,8 @@ targets on GA reads are reverse-complemented into C-centred contexts).
 **How contexts are numbered.** Emission tables are indexed by the code the
 inference encoder gives each context, which numbers bases **A = 0, C = 1,
 T = 2, G = 3**, not alphabetically. The `encode` column of every table is
-that code. Tables built by FiberHMM before 3.0 through the alphabetical path
-had every G and T swapped; this is why the 2.x Nanopore Hia5 and DddB tables
-were wrong. The builder can no longer produce an alphabetical table.
+that code. The 3.0 builder always numbers contexts this way; rebuild tables
+made with the 2.x builder.
 
 ## 2. Transitions: `fiberhmm-train`
 

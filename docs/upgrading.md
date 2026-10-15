@@ -27,27 +27,24 @@ for 2.x BAMs the check uses the version and command line, and says so when
 that cannot decide (development builds reported 2.16.8 on both sides of some
 fixes). See [Checking outputs for re-runs](reference/advisories.md).
 
-## Re-run Nanopore Hia5 calls
+## Re-run Nanopore Hia5 and DddB calls
 
-!!! danger "Nanopore Hia5 emission table"
-    The Nanopore Hia5 emission table shipped in **every 2.x release** was
-    indexed in alphabetical (ACGT) context order, while the encoder numbers
-    bases A, C, T, G. Every context containing a G or a T therefore read
-    another context's emission probabilities. 3.0 ships a new table built
-    from matched naked-DNA and untreated controls, and 3.0 nucleosome recall
-    also changed (see the [changelog](changelog.md)).
+!!! danger "Updated emission tables"
+    The Nanopore Hia5 and DddB emission tables have been updated
+    (re-calibrated). The Nanopore Hia5 table is rebuilt from matched
+    naked-DNA and untreated controls, and 3.0 nucleosome recall also changed
+    (see the [changelog](changelog.md)).
 
-    **Re-run ONT Hia5 calls made with 2.x.** Nucleosome, MSP and footprint
-    calls all change. The PacBio Hia5 table was not affected. The DddB table
-    had the same kind of error and is reindexed.
+    **Re-run Nanopore Hia5 and DddB calls made with 2.x.** Nucleosome, MSP
+    and footprint calls all change. The PacBio Hia5 table is unchanged.
+    `fiberhmm-check` lists the affected files.
 
 The 2.x tables are kept as
 `fiberhmm/models/legacy/hia5_nanopore_gt_swapped_legacy.json` and
 `legacy/dddb_nanopore_gt_swapped_legacy.json` to reproduce old calls
 ([Bundled models](reference/models.md#legacy-tables)). The model builder now
-always numbers contexts in encoder order, so custom tables built with
-`fiberhmm-probs` in 3.0 are correct; **rebuild custom m6A tables made with
-the 2.x builder**, which had the same ordering error.
+always numbers contexts in encoder order (A, C, T, G); **rebuild custom m6A
+tables made with the 2.x builder** with `fiberhmm-probs` from 3.0.
 
 ## Re-train models built with `--base-model`
 
