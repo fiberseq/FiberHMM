@@ -292,7 +292,9 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
 - **`fiberhmm-apply` keeps `ddda_ucg`/`ddda_mcg`.** Apply dropped every `MA`
   group, so recalling an applied tag-m5c BAM lost the island calls the CpG
   mask depends on; region-parallel apply also read them only after stripping.
-  The island groups are kept (with this run's nucleosomes and MSPs in `MA`).
+  The island groups are kept, with this run's nucleosomes (footprints outside
+  MSPs) and MSPs in `MA`; legacy `ns/nl` still lists every HMM footprint, as
+  `fiberhmm-recall-tfs` expects, so it can hold more footprints than `MA`.
   `fiberhmm.cli.export_posteriors.export_posteriors_from_bam` resolves the
   DddA run thinning and CpG mask like the command line and now applies
   `min_mapq` (default 0).

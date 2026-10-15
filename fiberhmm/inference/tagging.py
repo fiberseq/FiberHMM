@@ -84,6 +84,13 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
     This intentionally preserves the compatibility apply behavior: a non-empty
     result writes only the tag groups that have calls, and skipped/empty reads
     are passed through by callers.
+
+    Two views, on purpose: legacy ``ns/nl`` lists every HMM footprint (TF-sized
+    ones inside MSPs included; that is what ``fiberhmm-recall-tfs`` reads), and
+    ``as/al`` the MSPs. MA is written only when the read keeps DddA CpG-island
+    groups (``ddda_ucg``/``ddda_mcg``), and then follows the MA spec: the
+    nucleosomes are the footprints outside MSPs, so nuc and msp tile the read
+    and ``ns/nl`` may list more footprints than MA ``nuc``.
     """
     # Apply recomputes the read structure, so the footprint groups of any
     # pre-existing MA/AN/AQ from a prior call/recall pass are stale. They are
