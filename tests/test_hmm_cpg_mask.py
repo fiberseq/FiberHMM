@@ -314,3 +314,29 @@ def test_qc_light_call_masks_the_first_pass_like_call(monkeypatch):
     assert block['definition']['hmm_cpg_mask'] == 'off'
     assert np.array_equal(seen[-1], plain)
 
+
+def test_posteriors_api_takes_the_cli_cpg_options(monkeypatch, tmp_path):
+    from fiberhmm.cli import export_posteriors as ep
+    from fiberhmm.models import get_model_path
+
+    captured = {}
+    monkeypatch.setattr(ep, 'export_posteriors',
+                        lambda **kwargs: captured.update(kwargs) or 0)
+    model = get_model_path('ddda', tool='apply')
+    ep.export_posteriors_from_bam('in.bam', model, str(tmp_path / 'p.tsv.gz'),
+                                  enzyme='ddda')
+    assert captured['extraction']['cpg_mask_policy'] == POLICY
+    ep.export_posteriors_from_bam('in.bam', model, str(tmp_path / 'p.tsv.gz'),
+                                  enzyme='ddda', cpg_mask_policy='methylated-only')
+    assert captured['extraction']['cpg_mask_policy'] == 'methylated-only'
+    ep.export_posteriors_from_bam('in.bam', model, str(tmp_path / 'p.tsv.gz'),
+                                  enzyme='ddda', use_m5c=False)
+    assert captured['extraction']['cpg_mask_policy'] is None
+    # As on the command line, a custom model without --enzyme is unmasked
+    # unless asked, and a non-DAF model refuses the request.
+    ep.export_posteriors_from_bam('in.bam', model, str(tmp_path / 'p.tsv.gz'))
+    assert captured['extraction']['cpg_mask_policy'] is None
+    import pytest
+    with pytest.raises(ValueError):
+        ep.export_posteriors_from_bam('in.bam', get_model_path('hia5', tool='apply', seq='pacbio'),
+                                      str(tmp_path / 'p.tsv.gz'), use_m5c=True)

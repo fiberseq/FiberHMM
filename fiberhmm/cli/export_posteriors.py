@@ -1275,7 +1275,26 @@ def export_posteriors_from_bam(
     n_workers: int = 4,
     chroms: Optional[Set[str]] = None,
     verbose: bool = True,
+    enzyme: Optional[str] = None,
+    use_m5c: Optional[bool] = None,
+    cpg_mask_policy: Optional[str] = None,
 ) -> int:
+    """Python API of ``fiberhmm-posteriors``.
+
+    ``enzyme``, ``use_m5c`` and ``cpg_mask_policy`` mean what ``--enzyme``,
+    ``--use-m5c`` and ``--cpg-mask-policy`` mean on the command line: with
+    ``enzyme='ddda'`` the HMM sees fiberhmm-call's first-pass CpG mask unless
+    ``use_m5c=False``; ``use_m5c=True`` enables it for a custom DAF model.
+    """
+    from fiberhmm.inference.tf_recaller import resolve_cpg_mask_policy
+
+    effective_mode = mode
+    if effective_mode is None:
+        _, _, model_mode = load_model_with_metadata(model_path, normalize=False)
+        effective_mode = resolve_observation_mode(model_mode, source_label='custom model')
+    extraction = {'cpg_mask_policy': resolve_cpg_mask_policy(
+        use_m5c, cpg_mask_policy, enzyme, effective_mode,
+        tool='export_posteriors_from_bam')}
     return export_posteriors(
         input_bam=input_bam,
         model_path=model_path,
@@ -1288,6 +1307,8 @@ def export_posteriors_from_bam(
         mode_override=mode,
         context_size_override=context_size,
         prob_threshold=prob_threshold,
+        extraction=extraction,
+        provenance={'enzyme': enzyme} if enzyme else None,
     )
 
 
