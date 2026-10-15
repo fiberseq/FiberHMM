@@ -1542,9 +1542,20 @@ def annotate_bam_from_domains(input_bam: str, output_bam: str,
     succeeds (``atomic_output``): a failed run leaves an earlier output
     untouched, and indexes describing an earlier BAM are removed.
     """
-    import pysam
-
     from fiberhmm.inference.bam_output import atomic_output
+
+    with atomic_output(output_bam) as output_path:
+        return _annotate_bam_from_domains(input_bam, output_path, domains,
+                                          threads=threads, header_record=header_record)
+
+
+def _annotate_bam_from_domains(input_bam: str, output_bam: str,
+                               domains: Sequence[M5CDomain],
+                               threads: int = 4,
+                               header_record: dict | None = None
+                               ) -> tuple[int, int]:
+    """:func:`annotate_bam_from_domains` writing ``output_bam`` directly."""
+    import pysam
 
     by_chrom: dict[str, list[M5CDomain]] = {}
     for domain in domains:
@@ -1557,14 +1568,13 @@ def annotate_bam_from_domains(input_bam: str, output_bam: str,
             values, np.asarray([value.start for value in values], dtype=np.int64),
         )
     total = tagged = 0
-    with atomic_output(output_bam) as output_path, \
-            pysam.AlignmentFile(input_bam, "rb", threads=threads) as source:
+    with pysam.AlignmentFile(input_bam, "rb", threads=threads) as source:
         from fiberhmm.io.bam_header import append_ma_types, maybe_append_pg
         output_header = append_ma_types(
             maybe_append_pg(source.header, header_record),
             (DDDA_MCG_FEATURE,),
         )
-        with pysam.AlignmentFile(output_path, "wb", header=output_header,
+        with pysam.AlignmentFile(output_bam, "wb", header=output_header,
                                  threads=threads) as sink:
             for read in source:
                 spans = []
@@ -1935,20 +1945,17 @@ def annotate_bam_per_read_islands(
     """Call whole CpG islands from observations inside initial MSPs.
 
     See :func:`_annotate_bam_per_read_islands`. The BAM, the audit table and
-    the island BED are written to hidden siblings and published only when
-    the whole run succeeds (``atomic_output``: a failed run leaves earlier
-    outputs untouched, and indexes of an earlier BAM are removed).
+    the island BED are written to hidden siblings and published together
+    only when the whole run succeeds (``atomic_output_group``: if anything,
+    publication included, fails, all three keep their previous generation;
+    indexes of an earlier BAM are removed).
     """
-    from contextlib import ExitStack
+    from fiberhmm.inference.bam_output import atomic_output_group
 
-    from fiberhmm.inference.bam_output import atomic_output
-
-    with ExitStack() as publish:
-        bed_path = (publish.enter_context(atomic_output(used_islands_bed))
-                    if used_islands_bed else None)
-        tsv_path = (publish.enter_context(atomic_output(calls_tsv))
-                    if calls_tsv else None)
-        bam_path = publish.enter_context(atomic_output(output_bam))
+    with atomic_output_group([output_bam, calls_tsv, used_islands_bed]) as staged:
+        bed_path = staged[used_islands_bed] if used_islands_bed else None
+        tsv_path = staged[calls_tsv] if calls_tsv else None
+        bam_path = staged[output_bam]
         return _annotate_bam_per_read_islands(
             input_bam, bam_path, reference, island_bed, five_prime_factors,
             posterior_threshold=posterior_threshold, min_other=min_other,

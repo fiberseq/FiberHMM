@@ -18,8 +18,6 @@ from fiberhmm.daf.m5c import (
     F_METH,
     M5CDomain,
     U_UNMETH,
-    annotate_bam_from_domains,
-    annotate_bam_per_read_islands,
     call_domains,
     call_domains_from_emissions,
     collect_bam_observations,
@@ -265,16 +263,30 @@ def main(argv=None):
                   domain.methylated, domain.posterior)
         for domain in domains if domain.start < end and domain.end > start
     ]
-    from fiberhmm.inference.bam_output import ensure_parent_dir
-    for path in (args.output, args.tag_output):
-        if path and path != "-":
-            ensure_parent_dir(path)
+    # The BED, the tagged BAM and the island catalog are published together:
+    # all of them, or (on any failure) none, keeping the previous generation.
+    from fiberhmm.inference.bam_output import atomic_output_group
+    group = [args.output, args.tag_output if args.tag_bam else None,
+             args.write_cpg_islands if args.tag_bam and args.tag_mode != "locus" else None]
+    with atomic_output_group(group) as staged:
+        _write_outputs(args, staged, domains, factors, total_observations,
+                       observed_windows, total_windows)
+    return 0
+
+
+def _write_outputs(args, staged, domains, factors, total_observations,
+                   observed_windows, total_windows):
+    """Write the BED and the optional tagged BAM to their staged paths."""
+    from fiberhmm.cli.tag_m5c import _preflight_input
+    from fiberhmm.daf.m5c import (
+        _annotate_bam_from_domains,
+        _annotate_bam_per_read_islands,
+    )
+
     if args.output == "-":
         write_bed(domains, sys.stdout)
     else:
-        # Published only once written in full (no partial BED on failure).
-        from fiberhmm.inference.bam_output import atomic_output
-        with atomic_output(args.output) as bed_path, open(bed_path, "w") as handle:
+        with open(staged[args.output], "w") as handle:
             write_bed(domains, handle)
     print(f"m5C: {total_observations:,} cytosine observations; "
           f"{observed_windows:,}/{total_windows:,} informative windows; "
@@ -309,15 +321,15 @@ def main(argv=None):
                 carried_frame),
         }
         if args.tag_mode == "locus":
-            total, tagged = annotate_bam_from_domains(
-                args.tag_bam, args.tag_output, domains, threads=args.io_threads,
+            total, tagged = _annotate_bam_from_domains(
+                args.tag_bam, staged[args.tag_output], domains, threads=args.io_threads,
                 header_record=header_record,
             )
             print(f"m5C locus mode: tagged {tagged:,}/{total:,} reads", file=sys.stderr)
         else:
             _preflight_input(args.tag_bam)
-            stats = annotate_bam_per_read_islands(
-                args.tag_bam, args.tag_output, args.reference,
+            stats = _annotate_bam_per_read_islands(
+                args.tag_bam, staged[args.tag_output], args.reference,
                 args.cpg_islands, factors,
                 posterior_threshold=args.read_posterior,
                 min_other=args.min_other,
@@ -325,13 +337,15 @@ def main(argv=None):
                 input_molecular_frame=tag_input_frame,
                 threads=args.io_threads,
                 header_record=header_record,
-                used_islands_bed=args.write_cpg_islands,
+                used_islands_bed=(staged[args.write_cpg_islands]
+                                  if args.write_cpg_islands else None),
+                used_islands_gzip=bool(args.write_cpg_islands
+                                       and args.write_cpg_islands.endswith(".gz")),
             )
             print("m5C island mode: " + ", ".join(
                 f"{key}={value:,}" for key, value in stats.items()
             ), file=sys.stderr)
         print(f"m5C: wrote {args.tag_output}", file=sys.stderr)
-    return 0
 
 
 if __name__ == "__main__":

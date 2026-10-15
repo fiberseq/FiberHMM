@@ -1361,3 +1361,62 @@ def test_locus_domain_tagging_publishes_atomically(tmp_path, monkeypatch):
     assert not (tmp_path / "locus.bam.bai").exists()
     with pysam.AlignmentFile(str(output), check_sq=False) as tagged:
         assert all("ddda_mcg" in read.get_tag("MA") for read in tagged)
+
+
+@pytest.mark.parametrize("failing_suffix", [".tsv", ".bed.gz"])
+def test_island_outputs_are_published_as_a_group(tmp_path, monkeypatch, failing_suffix):
+    """A failure while publishing the audit table or the island BED (after the
+    BAM was already published) restores every output's previous generation,
+    the BAM index included."""
+    import pysam
+
+    from fiberhmm.inference import bam_output
+
+    reference, reference_sequence, sequence = _methylated_island_reference(tmp_path)
+    input_bam = _island_bam(tmp_path, [("chr1", len(reference_sequence))],
+                            [("chr1", sequence)])
+    output, tsv, bed = tmp_path / "out.bam", tmp_path / "calls.tsv", tmp_path / "islands.bed.gz"
+
+    def run():
+        return annotate_bam_per_read_islands(
+            str(input_bam), str(output), str(reference), None,
+            DDDA_FIVE_PRIME_FACTORS, threads=1, calls_tsv=str(tsv),
+            used_islands_bed=str(bed))
+
+    run()
+    pysam.index(str(output))
+    before = {p: p.read_bytes() for p in (output, tsv, bed, tmp_path / "out.bam.bai")}
+
+    real = bam_output.commit_output
+
+    def failing(temporary, final):
+        if final.endswith(failing_suffix):
+            raise OSError("injected publication failure")
+        return real(temporary, final)
+
+    monkeypatch.setattr(bam_output, "commit_output", failing)
+    with pytest.raises(OSError, match="injected"):
+        run()
+    assert {p: p.read_bytes() for p in before} == before
+    assert not [p for p in tmp_path.iterdir() if p.name.startswith(".")]
+
+
+def test_output_group_without_previous_outputs_leaves_nothing(tmp_path, monkeypatch):
+    from fiberhmm.inference import bam_output
+
+    first, second = tmp_path / "a.bed", tmp_path / "b.bam"
+    real = bam_output.commit_output
+
+    def failing(temporary, final):
+        if final.endswith(".bam"):
+            raise OSError("injected")
+        return real(temporary, final)
+
+    monkeypatch.setattr(bam_output, "commit_output", failing)
+    with pytest.raises(OSError):
+        with bam_output.atomic_output_group([str(first), str(second), None, "-"]) as staged:
+            assert staged["-"] == "-" and staged[None] is None
+            for path in (first, second):
+                with open(staged[str(path)], "w") as handle:
+                    handle.write("new\n")
+    assert list(tmp_path.iterdir()) == []

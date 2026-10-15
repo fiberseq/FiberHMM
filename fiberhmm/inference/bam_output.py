@@ -232,6 +232,73 @@ def atomic_output(path, finalize=None):
         raise
 
 
+@contextmanager
+def atomic_output_group(paths):
+    """Publish several outputs together: all of them, or none.
+
+    Yields ``{path: temporary}`` for every ``path`` in ``paths`` (``None`` and
+    ``'-'`` map to themselves and are not published). After the body succeeds
+    the previous generation of every output (file and indexes beside it) is
+    backed up, then each temporary is published (:func:`commit_output`, which
+    removes obsolete indexes). If any step fails, every output already
+    published in this group is put back to its previous generation (or
+    removed, when there was none), the remaining temporaries are deleted and
+    the error propagates: a failed run never leaves a mix of generations.
+    """
+    targets = [p for p in dict.fromkeys(paths) if p is not None and p != '-']
+    temporaries = {}
+    for path in targets:
+        ensure_parent_dir(path)
+        temporaries[path] = temporary_output_path(path)
+    mapping = {p: temporaries.get(p, p) for p in paths}
+    try:
+        yield mapping
+        for path, temporary in temporaries.items():
+            if not os.path.exists(temporary):
+                raise FileNotFoundError(
+                    f"internal error: temporary output {temporary} was not written")
+    except BaseException:
+        for temporary in temporaries.values():
+            _remove_temporaries(temporary)
+        raise
+
+    token = f"{os.getpid()}.{uuid.uuid4().hex[:8]}.group"
+    backups = {}      # final path (data or index) -> backup
+    previous = {}     # final data path -> its previous files
+    published = []
+    try:
+        for path in targets:
+            final = os.path.abspath(path)
+            files = [p for p in [final, *index_paths_for(final)] if os.path.lexists(p)]
+            previous[final] = files
+            for item in files:
+                backup = os.path.join(os.path.dirname(item),
+                                      f".{os.path.basename(item)}.{token}.previous")
+                _backup_copy(item, backup)
+                backups[item] = backup
+        for path in targets:
+            final = os.path.abspath(path)
+            commit_output(temporaries[path], final)
+            published.append(final)
+    except BaseException:
+        for path in targets:
+            _remove_temporaries(temporaries[path])
+        for final in published:
+            for item in [final, *index_paths_for(final)]:
+                _remove_quietly(item)
+            for item in previous.get(final, ()):
+                if item in backups:
+                    try:
+                        _restore(backups.pop(item), item)
+                    except OSError:
+                        print(f"WARNING: could not restore the previous {item}; it is "
+                              f"kept as {backups.get(item)}", file=sys.stderr)
+        raise
+    finally:
+        for backup in backups.values():
+            _remove_quietly(backup)
+
+
 def _note(*args, **kwargs) -> None:
     """Progress and diagnostics of sorting, indexing and concatenating go to
     stderr with the rest of a run's log; stdout is left for data."""
