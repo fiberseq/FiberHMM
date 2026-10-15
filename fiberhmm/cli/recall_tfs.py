@@ -1359,7 +1359,8 @@ _HARMONIZED_MESSAGE = (
 def _refuse_harmonized_read(read) -> None:
     from fiberhmm.inference.read_filters import HARMONIZED_LEGACY_TAG
 
-    if read.has_tag(HARMONIZED_LEGACY_TAG):
+    has_tag = getattr(read, 'has_tag', None)
+    if has_tag is not None and has_tag(HARMONIZED_LEGACY_TAG):
         raise HarmonizedInputError(
             f"read {read.query_name!r} carries {HARMONIZED_LEGACY_TAG}: {_HARMONIZED_MESSAGE}")
 

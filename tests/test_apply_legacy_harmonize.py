@@ -137,12 +137,26 @@ def test_harmonized_reads_carry_a_marker_that_recall_refuses(tmp_path):
     _refuse_harmonized_read(raw)
 
 
-def test_recall_refuses_a_marked_read_whatever_the_header(tmp_path, capsys):
+def _isolate_recall_state(monkeypatch):
+    """main() configures recall_tfs's per-process worker state; restore it."""
+    import copy
+
+    from fiberhmm.cli import recall_tfs
+
+    for name in dir(recall_tfs):
+        value = getattr(recall_tfs, name)
+        if name.startswith('_') and name.lstrip('_').isupper() and isinstance(value, dict):
+            monkeypatch.setattr(recall_tfs, name, copy.deepcopy(value))
+
+
+def test_recall_refuses_a_marked_read_whatever_the_header(tmp_path, capsys, monkeypatch):
     import sys
 
     import pytest
 
     from fiberhmm.cli import recall_tfs
+
+    _isolate_recall_state(monkeypatch)
 
     header = {'HD': {'VN': '1.6'}, 'SQ': [{'SN': 'chr1', 'LN': 10_000}],
               'PG': [{'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call',
@@ -198,12 +212,14 @@ def test_region_api_output_carries_the_harmonization_provenance(tmp_path):
     assert called and all(r.has_tag(HARMONIZED_LEGACY_TAG) for r in called)
 
 
-def test_recall_tfs_cli_exits_2_on_harmonized_input(tmp_path, capsys):
+def test_recall_tfs_cli_exits_2_on_harmonized_input(tmp_path, capsys, monkeypatch):
     import sys
 
     import pytest
 
     from fiberhmm.cli import recall_tfs
+
+    _isolate_recall_state(monkeypatch)
 
     bam = tmp_path / 'h.bam'
     header = {'HD': {'VN': '1.6'}, 'SQ': [{'SN': 'chr1', 'LN': 1000}],
