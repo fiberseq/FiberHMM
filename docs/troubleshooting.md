@@ -5,7 +5,7 @@ Messages are quoted as the commands print them.
 ## Installation
 
 **`requires a different Python` / `SyntaxError` / `int has no attribute bit_count`.**
-FiberHMM 3.x needs Python 3.10 or later (3.9 lacks `int.bit_count` and the
+FiberHMM 3.x needs Python 3.10–3.14 (3.9 lacks `int.bit_count` and the
 Numba parallel kernels fail). Create an environment with a newer Python; see
 [Installation](getting-started/installation.md).
 
@@ -51,10 +51,22 @@ The reads (or reads and header) disagree about PacBio versus Nanopore. Pass
 `--seq`. For stdin, detection is impossible and PacBio is assumed with a
 warning; pass `--seq nanopore` for Nanopore data.
 
-### Nanopore Hia5 calls from 2.x
+### `--seq` contradicts the reads, or Hia5 reads carry no m6A calls
 
-Re-run them with 3.0, which ships an updated Nanopore Hia5 emission table.
-See [Upgrading from 2.x](upgrading.md).
+```text
+error: fiberhmm-call: --seq pacbio was given, but the input looks like nanopore (MM specs of 200 read(s) (A+a only, no T-a)). ... Pass --seq nanopore, omit --seq to detect it, or add --force-seq to use --seq pacbio anyway.
+error: fiberhmm-call: --enzyme hia5 calls footprints from m6A modification calls, but none of the first 200 primary reads carries an m6A MM/ML tag (MM A+a or T-a), so every read would get no footprints. Is this DAF-seq? ...
+```
+
+Fix `--seq` (or leave it out), or use `--enzyme dddb`/`ddda` for DAF-seq
+reads. `--force-seq` runs anyway. See
+[Choosing the chemistry](getting-started/choosing-chemistry.md#automatic-detection-of-seq).
+
+### Nanopore Hia5 and DddB calls from 2.x
+
+Re-run them with 3.0, which ships re-calibrated Nanopore Hia5 and DddB
+emission tables. `fiberhmm-check` lists the outputs that need it. See
+[Upgrading from 2.x](upgrading.md#re-run-nanopore-hia5-and-dddb-calls).
 
 ## Calling
 
@@ -153,6 +165,17 @@ index the input to make a long run resumable.
 
 ## DAF-seq
 
+**`fiberhmm-recall-tfs`/`-recall-nucs`: `the input is fiberhmm-apply --harmonize-legacy-tags output`.**
+Reads marked `hl:i:1` have `ns`/`nl` that no longer list every HMM footprint
+recall needs. Re-run `fiberhmm-apply` without `--harmonize-legacy-tags`, or
+use `fiberhmm-call` ([Re-calling](workflows/recalling.md)).
+
+**`fiberhmm-check` reports `ddda-hmm-cpg-mask`.** DddA calls from before 3.0
+decoded CpG observations in the first-pass HMM. Re-run `fiberhmm-call` (then
+`fiberhmm-pair` for duplexes, `fiberhmm-posteriors` for posteriors); 3.0
+masks CpGs (outside `ddda_ucg` islands) by default (`--use-m5c`,
+`--cpg-mask-policy`; [DAF-seq](workflows/daf-seq.md)).
+
 **`fiberhmm-tag-m5c`: `input BAM has no Y/R-encoded DAF sequence`.** The
 CpG-island caller needs R/Y-encoded reads: run `fiberhmm-daf-encode` before
 `fiberhmm-call` ([DAF-seq](workflows/daf-seq.md#ddda-cpg-island-methylation)).
@@ -172,7 +195,7 @@ you need SNP-masked calls ([Re-calling](workflows/recalling.md#what-is-kept-and-
 ```text
 fiberhmm-consensus: error: cr.seed is not used by the lattice recaller; reset it to its default (the recaller's own controls are in the recaller group)
 fiberhmm-consensus: error: recaller.stringency is not used by staged families; reset it to its default (use the families controls)
-fiberhmm-consensus: error: --stop-after applies to --engine staged_native_families only; the lattice recaller discovers and scores classes in one pass (every run saves evidence.json.gz for replay with --evidence or --resume)
+fiberhmm-consensus: error: families.stop_after (--stop-after) applies to staged_native_families only: the lattice recaller discovers and scores classes in one pass. Every run saves evidence.json.gz for replay with --evidence or --resume
 ```
 
 Each engine rejects settings it would ignore, so a run never records a
@@ -253,9 +276,9 @@ Nucleosome edge normalization is off by default; add
 
 ## QC
 
-**`INSUFFICIENT`.** Too few reads or opportunities to grade: QC samples
-aligned primary reads at MAPQ ≥ 20, so unaligned call sets always report
-`INSUFFICIENT`.
+**`INSUFFICIENT`.** Too few reads or opportunities to grade. QC samples
+primary reads at MAPQ ≥ 20 (`--min-mapq`); a BAM with no aligned records at
+all (calls made on an unaligned BAM) is graded on its unmapped reads.
 
 **Rate capped at WARN with a threshold mismatch.** The run's ML threshold
 differs from the QC reference's calibration by more than 5; use the default

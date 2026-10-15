@@ -12,8 +12,10 @@ the bundled model, the observation mode and every chemistry-dependent default.
 | DAF-seq with the double-stranded deaminase DddB | `dddb` | C→T / G→A conversions |
 | DAF-seq with the single-strand-preferring deaminase DddA | `ddda` | C→T / G→A conversions |
 
-`fiberhmm-call`, `fiberhmm-apply`, `fiberhmm-recall-tfs`/`-recall-nucs` and
-`fiberhmm-posteriors` take `--enzyme`. Only these three presets are accepted.
+`fiberhmm-pipeline`, `fiberhmm-call`, `fiberhmm-apply`,
+`fiberhmm-recall-tfs`/`-recall-nucs` and `fiberhmm-posteriors` take
+`--enzyme`. Only these three presets are accepted. `fiberhmm-qc` also takes
+`--enzyme` (default `auto`, read from the header).
 For anything else, supply a model file with `-m/--model` (see
 [Training a model](../workflows/training.md)).
 
@@ -31,12 +33,15 @@ The two platforms therefore have different models (`hia5_pacbio.json`,
 
 For DddA and DddB the deamination read-out does not depend on the platform:
 both use the `daf` mode on every platform, and `--seq` only sets the platform
-recorded in the output header (default: `pacbio` for DddA, `nanopore` for
-DddB).
+recorded in the output header. Without `--seq`, `fiberhmm-call` takes it from
+the header (`@RG PL`, aligner or basecaller `@PG`) and otherwise records
+`pacbio` for DddA and `nanopore` for DddB; `fiberhmm-pipeline` records
+`nanopore` for DAF reads it aligns that name no platform.
 
 ## Automatic detection of `--seq`
 
-When `--seq` is omitted for Hia5, `fiberhmm-call`, `fiberhmm-apply` and
+When `--seq` is omitted for Hia5, `fiberhmm-pipeline`, `fiberhmm-call`,
+`fiberhmm-apply`, `fiberhmm-posteriors` and
 `fiberhmm-recall-tfs`/`-recall-nucs` look at the input, strongest evidence
 first:
 
@@ -65,11 +70,21 @@ Input that cannot be inspected (stdin) falls back to PacBio with a warning,
 so pass `--seq` when you stream:
 
 ```text
-WARNING: --seq not given for --enzyme hia5 and the platform could not be detected (stdin (not inspected)); assuming PacBio. Pass --seq nanopore for Nanopore data.
+WARNING: --seq not given for --enzyme hia5 and the platform could not be detected (stdin (not inspected)); assuming PacBio (--seq pacbio). Pass --seq nanopore for Nanopore data.
 ```
 
-An explicit `--seq` always wins; if the input looks like the other platform
-you get a warning, not an error.
+For Hia5, an explicit `--seq` that the reads contradict is refused, because
+the other platform's model changes the calls:
+
+```text
+error: fiberhmm-call: --seq pacbio was given, but the input looks like nanopore (MM specs of 200 read(s) (A+a only, no T-a)). Calling nanopore reads with the pacbio model changes the calls (for example, Nanopore reads called as PacBio give ~100x more TF calls). Pass --seq nanopore, omit --seq to detect it, or add --force-seq to use --seq pacbio anyway.
+```
+
+Hia5 runs on reads whose first records carry no m6A calls at all
+(`MM A+a` or `T-a`) are refused too, with a hint that the data may be
+DAF-seq. `--force-seq` (in `fiberhmm-call`, `-apply`, `-posteriors` and
+`-recall-tfs`/`-recall-nucs`) runs anyway in both cases. For DddA and DddB
+a `--seq` that disagrees with the header only warns.
 
 ## What the chemistry changes
 
@@ -78,8 +93,8 @@ you get a warning, not an error.
 | Model | `hia5_pacbio.json` | `hia5_nanopore.json` | `dddb_nanopore.json` | `ddda_nuc.json` (HMM), `ddda_TF.json` (TF recall) |
 | Observation mode | `pacbio-fiber` | `nanopore-fiber` | `daf` | `daf` |
 | ML threshold in `fiberhmm-call` | 128 | **248** | 128 (MM/ML dU only) | 128 (MM/ML dU only) |
-| Nucleosome recall | conservative | conservative | conservative | phase-aware radial |
-| CpG-aware recall | off | off | off | on |
+| Nucleosome recall | accessible-cut split | accessible-cut split | accessible-cut split | phase-aware radial |
+| CpG mask (first-pass HMM and recall; `--use-m5c`) | off | off | off | on |
 | Adjacent-target thinning | — | — | off | runs ≥ 2, keep-one |
 | Duplicate marking, SNP screen | — | — | on (file input) | on (file input) |
 

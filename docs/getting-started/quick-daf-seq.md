@@ -10,7 +10,8 @@ fiberhmm-pipeline reads.fastq.gz --reference construct.dna --enzyme dddb -o my_r
 ```
 
 It aligns the reads, calls nucleosomes, accessible patches (MSPs) and TF
-footprints, runs QC and tells you how to open the result in FiberBrowser.
+footprints, runs QC and prints the command that opens the result in
+FiberBrowser.
 
 ## What you need
 
@@ -38,6 +39,10 @@ footprints, runs QC and tells you how to open the result in FiberBrowser.
     - for **amplicons of a genome**, the genome FASTA (for example
       `dm6.fa`).
 
+    A map file records whether the plasmid is circular. A FASTA does not:
+    its contigs are treated as linear unless you add `--topology circular`,
+    so give a plasmid FASTA with `--topology circular`.
+
 ## Run it
 
 ```bash
@@ -48,27 +53,43 @@ fiberhmm-pipeline QR4H6G_1.fastq --reference N1.dna --enzyme dddb -o n1_run/
 fiberhmm-pipeline fastq/ --reference dm6.fa --enzyme dddb -o sna_run/ -c 4
 ```
 
-`--enzyme` is `dddb` or `ddda`; `-c` sets the CPU cores (default 4). The
-output directory is created. The command prints each step as it goes:
+`--enzyme` is `dddb` or `ddda` for DAF-seq (`hia5` for Fiber-seq, see
+below); `-c` sets the CPU cores (default 4). The output directory is
+created. The command prints each step as it goes, with absolute paths
+(shortened here):
 
 ```text
+[10:31:02] basecaller: unknown
+[10:31:02] basecaller: NOTE: basecaller provenance is not recorded in the input (FASTQ, or a BAM without the basecaller's @PG/@RG lines); pass --basecaller-info / --modbase-model to record it
 [10:31:02] reference: N1.dna -> N1.fa, 1 contig (circular: N1)
-[10:31:02] index: built ~/.fiberhmm/minimap2_index/02a6527923193fe83549604d.mmi (minimap2 2.30-r1287, 0.0 s)
-[10:31:02] align: minimap2 -a -x map-ont --MD -Y -t 4 -R '@RG\tID:QR4H6G_1\tSM:QR4H6G_1\tPL:ONT' ...
+[10:31:02] platform: nanopore (the DAF-seq default; the reads record no platform). Pass --seq pacbio for PacBio reads.
+[10:31:02] index: built ~/.fiberhmm/minimap2_index/02a6527923193fe83549604d.mmi (minimap2 2.30-r1287 (/opt/homebrew/bin/minimap2), 0.0 s)
+[10:31:02] align: /opt/homebrew/bin/minimap2 -a -x map-ont --MD -Y -t 4 -R '@RG\tID:QR4H6G_1\tSM:QR4H6G_1\tPL:ONT' ...
 [10:31:05] align: 1892 reads: 1271 kept (primary, MAPQ>=20), 620 unmapped, 1 below MAPQ 20; 1159 joined across a circular origin; 1269 hard-clipped
+[10:31:05] call: .../python -m fiberhmm.cli.call -i .../n1_run/QR4H6G_1.aligned.bam -o .../n1_run/QR4H6G_1.fiberhmm.bam --enzyme dddb -c 4 --io-threads 4 --min-mapq 20 --seq nanopore --no-qc
 [10:31:25] call: 1250 of 1271 reads called, 386 duplicate-flagged
+[10:31:25] qc: .../python -m fiberhmm.cli.qc -i .../n1_run/QR4H6G_1.fiberhmm.bam -o .../n1_run/qc --min-mapq 20 --mode daf --enzyme dddb
 [10:31:40] qc: QC FAIL (60/100)
 
 Outputs:
-  called bam       n1_run/QR4H6G_1.fiberhmm.bam
-  aligned bam      n1_run/QR4H6G_1.aligned.bam
-  reference fasta  n1_run/N1.fa
-  plasmid map      n1_run/N1.dna
-  qc report        n1_run/qc/QR4H6G_1.fiberhmm.qc.pdf
+  called bam       .../n1_run/QR4H6G_1.fiberhmm.bam
+  aligned bam      .../n1_run/QR4H6G_1.aligned.bam
+  reference fasta  .../n1_run/N1.fa
+  plasmid map      .../n1_run/N1.dna
+  qc report        .../n1_run/qc/QR4H6G_1.fiberhmm.qc.pdf
+  QC               FAIL
+  basecaller       unknown
+  reads            1892 reads: 1271 kept (primary, MAPQ>=20), 620 unmapped, 1 below MAPQ 20; 1159 joined across a circular origin; 1269 hard-clipped
 
 Open in FiberBrowser:
-  fiberbrowser -f n1_run/N1.fa --dataset n1_run/QR4H6G_1.fiberhmm.bam:QR4H6G_1
+  fiberbrowser -f .../n1_run/N1.fa --dataset .../n1_run/QR4H6G_1.fiberhmm.bam:QR4H6G_1
 ```
+
+The `basecaller` lines appear because FASTQ records no basecaller; pass
+`--basecaller-info` and `--modbase-model` to record it
+([Run everything](run-everything.md#unaligned-bam-to-called-bam)). For a
+genome reference the command also prints `(region chr2L:15474001-15489000)`
+under the FiberBrowser command: the region with most reads.
 
 How long it takes, on a laptop with `-c 4` (Apple M-series):
 
@@ -88,12 +109,14 @@ runs on the same genome start aligning at once.
 | File | What it is |
 |---|---|
 | `<sample>.fiberhmm.bam` (+ `.bai`) | the calls: nucleosomes, MSPs and TF footprints on every read ([BAM tags](../reference/bam-tags.md)) |
-| `<sample>.aligned.bam` (+ `.bai`) | the alignment the calls were made on |
+| `<sample>.aligned.bam` (+ `.bai`) | the alignment the calls were made on (not written for input that is already aligned to the reference) |
 | `qc/<sample>.fiberhmm.qc.pdf`, `.png` | the QC report: deamination rate, nucleosome periodicity, footprint sizes, duplicates and SNPs ([Quality control](../workflows/qc.md)); written only with `fiberhmm[plots]` (matplotlib), otherwise the run lists the `.qc.json` as its QC report |
-| `qc/<sample>.fiberhmm.qc.json`, `.qc.curves.json` | the same, machine-readable (always written) |
-| `<contig>.fa` and a copy of the map | the reference the reads were aligned to (plasmid runs) |
-| `tracks/` | bigBed/BED tracks, with `--tracks` ([Extracting tracks](../workflows/extracting.md)) |
-| `outputs.json` | every path above and what to open in FiberBrowser |
+| `qc/<sample>.fiberhmm.qc.json`, `.qc.curves.json`, `.qc.tsv` | the same, machine-readable (always written) |
+| `qc/<sample>.fiberhmm.dedup.json`, `.daf_snps.{json,bed,vcf,amplicons.tsv}`, `.insert_consensus.json` | the DAF duplicate, SNP-screen and insert summaries of the call step |
+| `<map name>.fa` and a copy of the map | for a plasmid map, the FASTA made from it |
+| `<reference>.fa` (+ `.fai`) | for a FASTA reference up to 20 MB (or gzipped), a plain copy; a larger FASTA is used where it is |
+| `tracks/<sample>.fiberhmm_{nucleosome,msp,tf,deam}.bb` | bigBed tracks (BED without `bedToBigBed`), with `--tracks` ([Extracting tracks](../workflows/extracting.md)) |
+| `outputs.json` | every path above, the QC verdicts and what to open in FiberBrowser |
 | `logs/` | the log of each step |
 
 The reference identity is recorded in the BAM header: each contig's MD5
@@ -105,13 +128,19 @@ FiberBrowser can pair the BAM with its map.
 ## Open it in FiberBrowser
 
 FiberBrowser, the companion browser, is installed separately
-(`pip install fiberbrowser`). Run the printed command, or open the called
-BAM and the reference in the FiberBrowser window. For a plasmid, also load
-the plasmid map (it adds the features); its contig name is the one the BAM uses, because
-the pipeline names the contig the way FiberBrowser names the map: the file
-name without its extension for SnapGene maps (`N1.dna` → `N1`), the `LOCUS`
-name for GenBank. For amplicons on a genome, `outputs.json` also gives the
-region with most reads (`"open": {"region": "chr2L:15474001-15489000"}`).
+(`pip install fiberbrowser`). Run the printed command
+(`fiberbrowser -f <reference FASTA> --dataset <called BAM>:<sample>`; it is
+also `fiberbrowser_command` in `outputs.json`), or open the called BAM and
+the reference in the FiberBrowser window. For a plasmid, also load the
+plasmid map (it adds the features); its contig name is the one the BAM uses,
+because the pipeline names the contig the way FiberBrowser names the map:
+the file name without its extension for SnapGene maps (`N1.dna` → `N1`),
+the `LOCUS` name for GenBank, the `ID` name for EMBL. `outputs.json` lists
+what to open under `"open"`: the FASTA, the called BAM, the plasmid map and,
+for a genome reference, the region with most reads
+(`"region": "chr2L:15474001-15489000"`; `null` for a plasmid). When you add
+the called BAM to FiberBrowser's Library, it reads the `outputs.json` beside
+it and shows the run's QC verdicts with the dataset.
 
 ## What the pipeline does
 
@@ -152,13 +181,17 @@ starts changing the directory and written again when it finishes.
 
 | Option | Effect |
 |---|---|
-| `--sample NAME` | name of the output files and read group (default: the first input's name); one plain file name: letters, digits, `_`, `-`, `.` (no path, no leading `.`) |
+| `--sample NAME` | name of the output files and read group (default: the first input's name); one plain file name, for example letters, digits, `_`, `-`, `.` (no path separators or spaces, no leading `.` or `-`) |
+| `--seq pacbio` | PacBio reads (minimap2 `map-hifi`); DAF reads that record no platform are taken as Nanopore |
+| `--topology circular` | treat every FASTA contig as circular (a plasmid FASTA) |
 | `--region chr:start-end` | keep only reads overlapping the region (repeatable); the first is the one to open |
 | `--min-read-length N` | shortest aligned read to call (default 1000; short amplicons may want 500) |
 | `--dedup auto/on/off`, `--dedup-mode flag/collapse` | PCR-duplicate marking, and whether duplicates are kept (flagged) or collapsed |
 | `--snp-screen auto/on/off`, `--snp-mask BED` | the recurrent-SNP screen, and your own sites to mask |
 | `--no-chimera-filter` | call strand-swap chimeric reads |
 | `--tracks` | also write bigBed/BED tracks |
+| `--no-qc` | skip `fiberhmm-qc` |
+| `--call-args "..."` | other `fiberhmm-call` options, quoted as one string |
 | `--progress-json FILE` | machine-readable progress for a GUI |
 
 Every option is in the [command-line reference](../reference/cli.md#fiberhmm-pipeline).
@@ -166,7 +199,8 @@ Every option is in the [command-line reference](../reference/cli.md#fiberhmm-pip
 ## Fiber-seq and already-aligned data
 
 The pipeline also accepts a BAM that is already aligned to the reference
-(with `MD` tags for DAF-seq): it skips alignment and calls it as it is. This
+(with `MD` tags for DAF-seq): it skips alignment and calls the BAM in place
+(no `<sample>.aligned.bam` is written). This
 is the route for Hia5 Fiber-seq, which is usually aligned with `pbmm2` on a
 cluster:
 
@@ -174,5 +208,8 @@ cluster:
 fiberhmm-pipeline sample.pbmm2.bam --reference hg38.fa --enzyme hia5 -o sample_run/ -c 8
 ```
 
-For genome-scale inputs the call step uses `fiberhmm-call`'s resumable
-region-parallel mode ([Long runs and resuming](../workflows/calling.md#long-runs-and-resuming)).
+For genome-scale inputs (20,000 or more reads spread over at least `-c`
+regions) the call step uses `fiberhmm-call`'s resumable region-parallel mode
+([Long runs and resuming](../workflows/calling.md#long-runs-and-resuming));
+`--call-mode streaming` or `--call-mode resumable` chooses the mode
+yourself.

@@ -7,8 +7,10 @@ footprints with `fiberhmm-call` and runs QC. For many samples, the
 sample.
 
 Every run writes `OUTDIR/<sample>.fiberhmm.bam` (+ `.bai`), `qc/` and
-`outputs.json`, which says what to open in FiberBrowser. Running the same
-command again continues where an earlier run stopped.
+`outputs.json`, which says what to open in FiberBrowser (its
+`fiberbrowser_command` is the command the run prints; see
+[Open it in FiberBrowser](quick-daf-seq.md#open-it-in-fiberbrowser)). Running
+the same command again continues where an earlier run stopped.
 
 ## What you need
 

@@ -2,8 +2,7 @@
 
 ## Requirements
 
-- Python 3.10 or later (3.10–3.13 are supported, and CI runs 3.10, 3.12 and
-  3.13; 3.9 does not work).
+- Python 3.10–3.14 (CI runs 3.10, 3.12 and 3.13; 3.9 does not work).
 - Linux or macOS.
 - A C toolchain and htslib headers only if `pip` has to build `pysam` from
   source (see [Troubleshooting](#troubleshooting)); prebuilt wheels cover the
@@ -34,8 +33,9 @@ Optional extras:
 pip install "fiberhmm[all]"
 ```
 
-`fiberhmm[consensus]` and `fiberhmm[numba]` still resolve (FiberBrowser pins
-`fiberhmm[consensus]>=3.0,<4`) but add nothing beyond the core install.
+`fiberhmm[consensus]` and `fiberhmm[numba]` are compatibility aliases: they
+still resolve (FiberBrowser pins `fiberhmm[consensus]>=3.0,<4`) but add
+nothing beyond the core install.
 
 We recommend a virtual environment:
 
@@ -97,9 +97,13 @@ python -c "import fiberhmm; print(fiberhmm.__version__)"   # 3.0.0
 fiberhmm-call --help
 ```
 
-Then run the [Quick start](quickstart.md) on the synthetic demo data.
+Then run the [Quick start](quickstart.md) on the synthetic demo data, or go
+from your own reads to a called BAM with
+[`fiberhmm-pipeline`](quick-daf-seq.md) after
+[choosing the chemistry](choosing-chemistry.md).
 
-Every command except `fiberhmm-consensus` and `fiberhmm-transfer` checks PyPI
+Every command except `fiberhmm-consensus`, `fiberhmm-transfer` and
+`fiberhmm-nfr` checks PyPI
 at most once a day for a newer release and prints a one-line reminder on
 stderr. Set `FIBERHMM_NO_UPDATE_CHECK=1` to turn this off
 (see [Environment variables](../reference/environment.md)).
@@ -136,6 +140,7 @@ has a prebuilt wheel, or install `pysam` from conda first
 `pip install --upgrade numpy numba`.
 
 **`ERROR: Package 'fiberhmm' requires a different Python`.** FiberHMM 3.x needs
-Python 3.10 or later; create an environment with a newer Python.
+Python 3.10 or later (3.10–3.14 are supported); create an environment with
+one of those versions.
 
 More in [Troubleshooting](../troubleshooting.md).
