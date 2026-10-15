@@ -25,9 +25,8 @@ footprints on accessible evidence and refines each nucleosome's conservative
 edges + quality (nuc+QQQ), re-derives MSPs, then runs TF recall over the
 cleaner accessible space. It reuses the apply-tagged ``ns``/``nl``/``as``/``al``
 -- the HMM is NOT re-run -- so its footprint tags are equivalent to
-``fiberhmm-call --recall-nucs`` for a given ``--phase-nrl`` (linear reads only;
-``--phase-nrl auto`` is estimated from the existing nuc tags). The BAM headers
-retain distinct command provenance.
+``fiberhmm-call --recall-nucs`` (linear reads only). The BAM headers retain
+distinct command provenance.
 
 Examples:
   # Add nucleosome recall to an apply-tagged BAM (no HMM re-run)
@@ -944,7 +943,10 @@ def parse_args(default_recall_nucs: bool = False):
                         'call/apply/recall -> molecular when declared '
                         'coord=molecular, else query); no writer -> '
                         'molecular if coord=molecular is declared, else '
-                        'query (FiberHMM <= 2.12). Merged histories whose '
+                        'query (FiberHMM <= 2.12); a header with no writer '
+                        'and no declaration (stripped @PG) is read as query, '
+                        'except reads whose MA has a "." nuc/msp/tf group '
+                        '(molecular). Merged histories whose '
                         'writers disagree, with no declaration, stop the run '
                         'at the first read with these tags. A wrong frame '
                         'mirrors reverse-strand calls. fibertools Ma tags are '

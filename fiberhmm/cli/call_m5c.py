@@ -89,7 +89,8 @@ def parse_args(argv=None):
                         help="Minimum CpGs per molecule-island call (default: 15)")
     parser.add_argument("--tag-input-frame", choices=("auto", "molecular", "query"),
                         default="auto",
-                        help="Frame of tag-BAM legacy ns/nl when MA is absent")
+                        help="Frame of tag-BAM legacy ns/nl when MA is absent; "
+                             "auto as in fiberhmm-tag-m5c --input-frame")
     parser.add_argument("--io-threads", type=int, default=4,
                         help="htslib BAM threads (default 4).")
     return parser.parse_args(argv)

@@ -239,7 +239,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--use-m5c` / `--no-use-m5c` | auto | Enable CpG-aware DddA recall. By default, retain CpGs only inside confident ddda_ucg MA spans. Enabled automatically for DddA, disabled for other enzymes; use --use-m5c explicitly with a custom DddA model. |
 | `--cpg-mask-policy` | — | CpG-aware policy: retain CpGs only inside confident unmethylated islands (default unmethylated-only), or reproduce the former behavior that masks only ddda_mcg spans. DddA only; ignored with a warning otherwise. Choices: `unmethylated-only`, `methylated-only`. |
 | `--unify-threshold` | `90` | v2 nucs with nl &lt; this are scanned + may be demoted to tf+ if overlapped by a recaller call (default 90) |
-| `--input-frame` | `auto` | Coordinate frame of the input ns/nl/as/al tags. "auto" (default) follows the @PG PP chain: the last footprint writer decides (fibertools predict-m6a/add-nucleosomes/fire -&gt; molecular; FiberHMM call/apply/recall -&gt; molecular when declared coord=molecular, else query); no writer -&gt; molecular if coord=molecular is declared, else query (FiberHMM &lt;= 2.12). Merged histories whose writers disagree, with no declaration, stop the run at the first read with these tags. A wrong frame mirrors reverse-strand calls. fibertools Ma tags are always molecular. Choices: `auto`, `molecular`, `query`. |
+| `--input-frame` | `auto` | Coordinate frame of the input ns/nl/as/al tags. "auto" (default) follows the @PG PP chain: the last footprint writer decides (fibertools predict-m6a/add-nucleosomes/fire -&gt; molecular; FiberHMM call/apply/recall -&gt; molecular when declared coord=molecular, else query); no writer -&gt; molecular if coord=molecular is declared, else query (FiberHMM &lt;= 2.12); a header with no writer and no declaration (stripped @PG) is read as query, except reads whose MA has a "." nuc/msp/tf group (molecular). Merged histories whose writers disagree, with no declaration, stop the run at the first read with these tags. A wrong frame mirrors reverse-strand calls. fibertools Ma tags are always molecular. Choices: `auto`, `molecular`, `query`. |
 | `--no-legacy-tags` | off | Skip refreshed ns/nl/as/al -- emit only MA/AQ. |
 | `--downstream-compat` | off | Downstream-compatibility mode: skip MA/AQ entirely and write TF calls INTO the legacy ns/nl tag alongside nucleosomes (sorted by start). Use for older tools that do not understand the Molecular-annotation spec. Loses per-TF quality scoring (tq/el/er) -- positions and lengths only. |
 | `-c` / `--cores` | `1` | Worker processes (0 = all CPUs; default 1). |
@@ -277,7 +277,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--use-m5c` / `--no-use-m5c` | auto | Enable CpG-aware DddA recall. By default, retain CpGs only inside confident ddda_ucg MA spans. Enabled automatically for DddA, disabled for other enzymes; use --use-m5c explicitly with a custom DddA model. |
 | `--cpg-mask-policy` | — | CpG-aware policy: retain CpGs only inside confident unmethylated islands (default unmethylated-only), or reproduce the former behavior that masks only ddda_mcg spans. DddA only; ignored with a warning otherwise. Choices: `unmethylated-only`, `methylated-only`. |
 | `--unify-threshold` | `90` | v2 nucs with nl &lt; this are scanned + may be demoted to tf+ if overlapped by a recaller call (default 90) |
-| `--input-frame` | `auto` | Coordinate frame of the input ns/nl/as/al tags. "auto" (default) follows the @PG PP chain: the last footprint writer decides (fibertools predict-m6a/add-nucleosomes/fire -&gt; molecular; FiberHMM call/apply/recall -&gt; molecular when declared coord=molecular, else query); no writer -&gt; molecular if coord=molecular is declared, else query (FiberHMM &lt;= 2.12). Merged histories whose writers disagree, with no declaration, stop the run at the first read with these tags. A wrong frame mirrors reverse-strand calls. fibertools Ma tags are always molecular. Choices: `auto`, `molecular`, `query`. |
+| `--input-frame` | `auto` | Coordinate frame of the input ns/nl/as/al tags. "auto" (default) follows the @PG PP chain: the last footprint writer decides (fibertools predict-m6a/add-nucleosomes/fire -&gt; molecular; FiberHMM call/apply/recall -&gt; molecular when declared coord=molecular, else query); no writer -&gt; molecular if coord=molecular is declared, else query (FiberHMM &lt;= 2.12); a header with no writer and no declaration (stripped @PG) is read as query, except reads whose MA has a "." nuc/msp/tf group (molecular). Merged histories whose writers disagree, with no declaration, stop the run at the first read with these tags. A wrong frame mirrors reverse-strand calls. fibertools Ma tags are always molecular. Choices: `auto`, `molecular`, `query`. |
 | `--no-legacy-tags` | off | Skip refreshed ns/nl/as/al -- emit only MA/AQ. |
 | `--downstream-compat` | off | Downstream-compatibility mode: skip MA/AQ entirely and write TF calls INTO the legacy ns/nl tag alongside nucleosomes (sorted by start). Use for older tools that do not understand the Molecular-annotation spec. Loses per-TF quality scoring (tq/el/er) -- positions and lengths only. |
 | `-c` / `--cores` | `1` | Worker processes (0 = all CPUs; default 1). |
@@ -473,7 +473,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--five-prime-factors` | — | Comma-separated A,C,G,T factors; default calibrated DddA values |
 | `--estimate-factors` | off | Estimate 5' factors from this BAM instead of using calibrated values |
 | `--factor-sample-reads` | `5000` | Reads sampled by --estimate-factors (default 5000). |
-| `--input-frame` | `auto` | Frame of legacy ns/nl tags when MA is absent; auto uses the FiberHMM header marker Choices: `auto`, `molecular`, `query`. |
+| `--input-frame` | `auto` | Frame of legacy ns/nl tags when MA is absent. auto follows the @PG provenance, as fiberhmm-recall-tfs --input-frame auto (last footprint writer; no writer: molecular if coord=molecular is declared, else query); a header with no evidence (stripped @PG) is read as query, except reads whose MA has a '.' nuc/msp/tf group (molecular); merged histories that disagree are read as query Choices: `auto`, `molecular`, `query`. |
 | `--io-threads` | `4` | htslib BAM compression threads (default 4). |
 
 ## fiberhmm-call-m5c
@@ -500,7 +500,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--write-cpg-islands` | — | Optional BED/BED.GZ recording the exact catalog used |
 | `--read-posterior` | `0.99` | Whole-island posterior threshold (default: 0.99) |
 | `--read-min-island-cpg` | `15` | Minimum CpGs per molecule-island call (default: 15) |
-| `--tag-input-frame` | `auto` | Frame of tag-BAM legacy ns/nl when MA is absent Choices: `auto`, `molecular`, `query`. |
+| `--tag-input-frame` | `auto` | Frame of tag-BAM legacy ns/nl when MA is absent; auto as in fiberhmm-tag-m5c --input-frame Choices: `auto`, `molecular`, `query`. |
 | `--io-threads` | `4` | htslib BAM threads (default 4). |
 
 ## fiberhmm-consensus

@@ -173,8 +173,15 @@ def parse_args(argv=None):
                         help="Reads sampled by --estimate-factors (default 5000).")
     parser.add_argument("--input-frame", choices=("auto", "molecular", "query"),
                         default="auto",
-                        help="Frame of legacy ns/nl tags when MA is absent; "
-                             "auto uses the FiberHMM header marker")
+                        help="Frame of legacy ns/nl tags when MA is absent. "
+                             "auto follows the @PG provenance, as "
+                             "fiberhmm-recall-tfs --input-frame auto (last "
+                             "footprint writer; no writer: molecular if "
+                             "coord=molecular is declared, else query); a "
+                             "header with no evidence (stripped @PG) is read "
+                             "as query, except reads whose MA has a '.' "
+                             "nuc/msp/tf group (molecular); merged histories "
+                             "that disagree are read as query")
     parser.add_argument("--io-threads", type=int, default=4,
                         help="htslib BAM compression threads (default 4).")
     return parser.parse_args(argv)

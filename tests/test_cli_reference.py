@@ -81,3 +81,29 @@ def test_positional_default_cell_does_not_depend_on_the_python_version(
     action = parser.add_argument("paths", nargs=nargs, metavar="PATH")
     action.required = argparse_says_required
     assert generator._default(parser, action) == expected
+
+
+def _option_help(module, option, function="main"):
+    parser = _generator().capture_parser(module, function)
+    action = next(a for a in parser._actions if option in a.option_strings)
+    return " ".join(action.help.split())
+
+
+@pytest.mark.parametrize("module, option", [
+    ("fiberhmm.cli.recall_tfs", "--input-frame"),
+    ("fiberhmm.cli.tag_m5c", "--input-frame"),
+    ("fiberhmm.cli.extract_tags", "--input-frame"),
+])
+def test_input_frame_help_states_the_shared_rule(module, option):
+    """auto is the @PG provenance rule with the no-evidence '.' group case,
+    not the header marker alone."""
+    text = _option_help(module, option)
+    assert "provenance" in text or "PP chain" in text
+    assert "nuc/msp/tf group" in text
+    assert "header marker" not in text
+
+
+def test_recall_tfs_description_omits_retired_options():
+    parser = _generator().capture_parser("fiberhmm.cli.recall_tfs", "main")
+    assert "--phase-nrl" not in parser.description
+    assert "--nuc-recall-policy" not in parser.description
