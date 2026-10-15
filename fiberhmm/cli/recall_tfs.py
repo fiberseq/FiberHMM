@@ -89,12 +89,13 @@ from fiberhmm.inference.worker_results import (
 )
 from fiberhmm.io.annotation_frame import (
     MOLECULAR,
+    LegacyFrame,
     ambiguous_frame_message,
-    frame_assumed_warning,
+    header_has_frame_evidence,
     legacy_tag_frame,
-    legacy_tag_frame_report,
     ma_annotation_frame,
-    ma_string_is_molecular,
+    ma_group_is_molecular,
+    read_has_dot_footprint_group,
 )
 from fiberhmm.io.bam_header import append_coord_marker
 from fiberhmm.io.ma_tags import (
@@ -296,27 +297,31 @@ def _fiberhmm_ma_footprints(read) -> dict | None:
     quals = parse_aq_array(aq, [rt[2] for rt in raw_types],
                            [len(rt[3]) for rt in raw_types])
     nucs, msps, nq = [], [], []
+    strands = {'nuc': [], 'msp': []}
     has_nq = aq is not None
     index = 0
-    for name, _strand, qual_spec, intervals in raw_types:
+    for name, strand, qual_spec, intervals in raw_types:
         for start, length in intervals:
             q = quals[index]
             index += 1
             if name == 'nuc':
                 nucs.append((int(start), int(length)))
+                strands['nuc'].append(strand)
                 if q and qual_spec.startswith('Q'):
                     nq.append(int(q[0]))
                 else:
                     has_nq = False
             elif name == 'msp':
                 msps.append((int(start), int(length)))
-    return {'nuc': nucs, 'msp': msps, 'nq': nq if has_nq and nucs else None}
+                strands['msp'].append(strand)
+    return {'nuc': nucs, 'msp': msps, 'nq': nq if has_nq and nucs else None,
+            'strands': strands}
 
 
 # Frame of FiberHMM MA intervals in the input (molecular when the header
 # declares coord=molecular, else SEQ: fiberhmm.io.annotation_frame), set by
 # _recall() from the input header before any payload is built.
-_MA_FRAME = {'molecular': True}
+_MA_FRAME = {'molecular': True, 'evidence': True}
 
 
 def _annotation_footprints_as_legacy_tags(read, input_molecular_frame=True) -> dict:
@@ -339,20 +344,32 @@ def _annotation_footprints_as_legacy_tags(read, input_molecular_frame=True) -> d
     ma_molecular = True
     if ma is None:
         ma = _fiberhmm_ma_footprints(read)
-        # A '.'-type MA (FiberHMM >= 2.13.2) is molecular whatever the header.
-        ma_molecular = bool(_MA_FRAME['molecular']) or ma_string_is_molecular(
-            read.get_tag('MA') if read.has_tag('MA') else None)
+        ma_molecular = bool(_MA_FRAME['molecular'])
     if not ma or not (ma['nuc'] or ma['msp']):
         return {}
     want_molecular = bool(input_molecular_frame)
+    header_ma_frame = MOLECULAR if ma_molecular else 'seq'
     tags = {}
     for (start_tag, length_tag), feature in ((('ns', 'nl'), 'nuc'), (('as', 'al'), 'msp')):
         starts = [int(s) for s, _ in ma[feature]]
         lengths = [int(n) for _, n in ma[feature]]
-        if ma_molecular != want_molecular:
-            # flip_intervals_to_seq mirrors reverse reads' intervals; it is its
-            # own inverse, so it also takes SEQ intervals to molecular.
-            starts, lengths = flip_intervals_to_seq(starts, lengths, read)
+        strands = (ma.get('strands') or {}).get(feature)
+        if strands is None or _MA_FRAME.get('evidence', True):
+            if ma_molecular != want_molecular:
+                # flip_intervals_to_seq mirrors reverse reads' intervals; it is
+                # its own inverse, so it also takes SEQ intervals to molecular.
+                starts, lengths = flip_intervals_to_seq(starts, lengths, read)
+        else:
+            # No header evidence: each MA group's own strand decides its frame.
+            converted = []
+            for start, length, strand in zip(starts, lengths, strands):
+                molecular = ma_group_is_molecular(strand, header_ma_frame, False)
+                if molecular != want_molecular:
+                    flipped = flip_intervals_to_seq([start], [length], read)
+                    start, length = flipped[0][0], flipped[1][0]
+                converted.append((int(start), int(length)))
+            starts = [s for s, _ in converted]
+            lengths = [n for _, n in converted]
         tags[start_tag], tags[length_tag] = starts, lengths
     if ma.get('nq') is not None:
         tags['nq'] = list(ma['nq'])
@@ -382,9 +399,9 @@ def _make_payload(read, mode=None, input_molecular_frame=True) -> dict:
             _UNDECIDED_FRAME['reason'] or 'the header does not decide it'))
     read_frame = input_molecular_frame
     if (_UNDECIDED_FRAME.get('assumed') and not input_molecular_frame
-            and read.has_tag('MA') and ma_string_is_molecular(read.get_tag('MA'))):
-        # No header evidence: a '.'-type MA marks FiberHMM >= 2.13.2, whose
-        # legacy tags are molecular too.
+            and read_has_dot_footprint_group(read)):
+        # No header evidence: a '.' nuc/msp/tf MA group marks FiberHMM
+        # >= 2.13.2, whose legacy tags are molecular too.
         read_frame = True
     tags = {}
     for t in ('MM', 'Mm', 'ML', 'Ml', 'ns', 'nl', 'as', 'al', 'nq', 'st', 'MA'):
@@ -1132,10 +1149,13 @@ def _resolve_input_molecular_frame(args, header) -> bool:
               "SEQ-frame tags (no molecular flip).", file=sys.stderr)
         return False
     frame, reason = legacy_tag_frame(header)
-    warning = frame_assumed_warning('fiberhmm-recall-tfs', legacy_tag_frame_report(header))
-    _UNDECIDED_FRAME['assumed'] = warning is not None
-    if warning:
-        print(warning, file=sys.stderr)
+    resolver = LegacyFrame(header)
+    if resolver.chemistry:
+        print(f"  [recall] input frame: molecular ({resolver.reason}).", file=sys.stderr)
+        return True
+    if resolver.assumed:
+        _UNDECIDED_FRAME['assumed'] = True
+        print(resolver.warning('fiberhmm-recall-tfs'), file=sys.stderr)
     if frame is None:
         # Only reads with ns/nl/as/al need the frame (fibertools Ma is always
         # molecular), so the run stops at the first such read (_make_payload).
@@ -1636,6 +1656,7 @@ def _recall(args, bam_in, model_path, using_bundled_model, n_cores):
         # Reads whose footprints are only in FiberHMM's MA (--no-legacy-tags
         # output) are read in the MA frame rule's frame.
         _MA_FRAME['molecular'] = ma_annotation_frame(bam_in.header) == MOLECULAR
+        _MA_FRAME['evidence'] = header_has_frame_evidence(bam_in.header)
         # ML threshold for re-reading MM/ML: explicit, else the chemistry
         # preset (Hia5 Nanopore 248, otherwise 125), taken from --enzyme/--seq
         # or the input's own chemistry declaration.

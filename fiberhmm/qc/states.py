@@ -59,27 +59,24 @@ _PLATFORM_FOR_MODE = {"pacbio-fiber": "pacbio", "nanopore-fiber": "nanopore"}
 
 def tag_frames(header) -> dict:
     """Coordinate frames of the annotation tag families in ``header``."""
-    from fiberhmm.io.annotation_frame import (
-        legacy_tag_frame,
-        legacy_tag_frame_report,
-        ma_annotation_frame,
-    )
+    from fiberhmm.io.annotation_frame import LegacyFrame, ma_annotation_frame
 
-    assumed = False
+    resolver = None
     try:
-        legacy_frame, legacy_reason = legacy_tag_frame(header)
-        assumed = legacy_tag_frame_report(header).get("source") == "default"
+        resolver = LegacyFrame(header)
+        legacy_frame, legacy_reason = resolver.frame, resolver.reason
     except Exception as exc:  # malformed @PG chains: treat as unknown
         legacy_frame, legacy_reason = None, f"unreadable @PG history ({exc})"
     try:
         ma_frame = ma_annotation_frame(header)
     except Exception:
         ma_frame = "seq"
-    if assumed:
-        legacy_reason += ("; assumed (no header evidence): reads whose MA uses "
-                          "'.' types are taken as molecular")
+    if resolver is not None and resolver.assumed:
+        legacy_reason += ("; assumed (no header evidence): reads with a '.' "
+                          "nuc/msp/tf MA group are taken as molecular")
     return {"MA": ma_frame, "legacy": legacy_frame, "legacy_reason": legacy_reason,
-            "legacy_assumed": assumed}
+            "evidence": resolver.evidence if resolver is not None else True,
+            "legacy_resolver": resolver}
 
 
 def _to_seq_frame(intervals, read, frame: Optional[str]):
@@ -100,6 +97,21 @@ def _to_seq_frame(intervals, read, frame: Optional[str]):
     if read_length:
         starts = [start % read_length for start in starts]
     return list(zip(starts, lengths, features))
+
+
+def _ma_msps_per_group_seq(parsed: dict, an_names, read, header_frame: str) -> list:
+    """SEQ-frame MSP triples when each MA group's strand decides its frame
+    (headers without frame evidence; see annotation_frame.ma_group_is_molecular)."""
+    from fiberhmm.io.annotation_frame import ma_group_is_molecular
+
+    pieces = _ma_msps(parsed, an_names)
+    strands = [strand for name, strand, _qual, intervals in parsed["raw_types"]
+               if name == "msp" for _ in intervals]
+    out = []
+    for piece, strand in zip(pieces, strands):
+        frame = "molecular" if ma_group_is_molecular(strand, header_frame, False) else "seq"
+        out.extend(_to_seq_frame([piece], read, frame))
+    return out
 
 
 def _ma_msps(parsed: dict, an_names) -> list:
@@ -129,10 +141,9 @@ def msp_intervals_from_tags(read, frames: dict) -> Optional[list]:
     ``None`` when the read carries no usable footprint annotation (or its
     frame cannot be decided); ``[]`` for a called read without MSPs.
     """
-    from fiberhmm.io.annotation_frame import read_legacy_frame, read_ma_frame
     from fiberhmm.io.ma_tags import parse_an_tag, parse_ma_tag
 
-    for tag, an_tag, frame in (("MA", "AN", read_ma_frame(read, frames.get("MA", "seq"))),
+    for tag, an_tag, frame in (("MA", "AN", frames.get("MA", "seq")),
                                ("Ma", "An", "molecular")):
         if not read.has_tag(tag):
             continue
@@ -145,17 +156,20 @@ def msp_intervals_from_tags(read, frames: dict) -> Optional[list]:
         if parsed["read_length"] and length and parsed["read_length"] != length:
             return None
         if not (parsed["msp"] or parsed["nuc"]):
-            # e.g. an MA carrying only m5C/TF features: the read's legacy
-            # tags (if any) hold its footprints.
-            break
+            return None  # e.g. an MA carrying only m5C/TF features
+        if tag == "MA" and not frames.get("evidence", True):
+            # No header evidence: each msp group's own strand decides its frame.
+            return _ma_msps_per_group_seq(parsed, names, read, frame)
         return _to_seq_frame(_ma_msps(parsed, names), read, frame)
     # Legacy footprint tags come in start/length pairs. Other pipelines use
     # the same two-letter names for unrelated scalars (e.g. an integer ``ns``),
     # so only array-valued pairs count as calls.
     has_msps = _array_tag_pair(read, "as", "al")
     if has_msps or _array_tag_pair(read, "ns", "nl"):
-        frame = read_legacy_frame(read, frames.get("legacy"),
-                                  bool(frames.get("legacy_assumed")))
+        frame = frames.get("legacy")
+        resolver = frames.get("legacy_resolver")
+        if resolver is not None and resolver.assumed:
+            frame = resolver.for_read(read)
         if frame is None:
             return None
         if not has_msps:

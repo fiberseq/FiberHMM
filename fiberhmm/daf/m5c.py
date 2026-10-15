@@ -886,6 +886,15 @@ def ma_group_strand(group: str) -> str:
     return ""
 
 
+def _legacy_molecular(read, input_molecular_frame) -> bool:
+    """Whether this read's legacy ns/nl/as/al are molecular: ``input_molecular_frame``
+    is a bool, or a per-read resolver (``annotation_frame.LegacyFrame``) for
+    headers without frame evidence."""
+    if hasattr(input_molecular_frame, 'is_molecular'):
+        return input_molecular_frame.is_molecular(read)
+    return bool(input_molecular_frame)
+
+
 def ma_strand_intervals(read, feature: str) -> dict[str, list[tuple[int, int]]]:
     """Parse one MA feature into SEQ-frame intervals grouped by qualifier."""
     from fiberhmm.io.ma_tags import flip_interval_frame
@@ -1004,7 +1013,7 @@ def collect_read_observations(read, fasta, chrom: str | None = None,
     if not nuc_intervals and read.has_tag("ns") and read.has_tag("nl"):
         starts = read.get_tag("ns")
         lengths = read.get_tag("nl")
-        if input_molecular_frame:
+        if _legacy_molecular(read, input_molecular_frame):
             from fiberhmm.io.ma_tags import flip_intervals_to_seq
             starts, lengths = flip_intervals_to_seq(starts, lengths, read)
         nuc_intervals = [
@@ -1073,7 +1082,7 @@ def _nucleosome_intervals_seq(read, input_molecular_frame: bool) -> list[tuple[i
     if not intervals and read.has_tag("ns") and read.has_tag("nl"):
         starts = read.get_tag("ns")
         lengths = read.get_tag("nl")
-        if input_molecular_frame:
+        if _legacy_molecular(read, input_molecular_frame):
             from fiberhmm.io.ma_tags import flip_intervals_to_seq
             starts, lengths = flip_intervals_to_seq(starts, lengths, read)
         intervals = [
@@ -1856,7 +1865,7 @@ def _initial_msp_intervals_seq(read, input_molecular_frame: bool) -> list[tuple[
     if intervals or not (read.has_tag("as") and read.has_tag("al")):
         return intervals
     starts, lengths = list(read.get_tag("as")), list(read.get_tag("al"))
-    if input_molecular_frame:
+    if _legacy_molecular(read, input_molecular_frame):
         from fiberhmm.io.ma_tags import flip_intervals_to_seq
         starts, lengths = flip_intervals_to_seq(starts, lengths, read)
     return [
@@ -2078,7 +2087,7 @@ def _annotate_bam_per_read_islands(
                         if candidate_islands:
                             payload = build_ddda_mcg_observation_payload(read, fasta)
                             msp = _initial_msp_intervals_seq(
-                                read, bool(input_molecular_frame),
+                                read, input_molecular_frame,
                             )
                             if payload and msp:
                                 observations = observations_from_ddda_mcg_payload(payload)

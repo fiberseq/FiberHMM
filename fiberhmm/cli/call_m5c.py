@@ -295,7 +295,6 @@ def _write_outputs(args, staged, domains, factors, total_observations,
     if args.tag_bam:
         import fiberhmm
         from fiberhmm.io.annotation_frame import append_coord_to_ds, pass_through_frame
-        from fiberhmm.io.annotation_frame import MOLECULAR, legacy_tag_frame
         tag_input_frame = {
             "auto": None, "molecular": True, "query": False,
         }[args.tag_input_frame]
@@ -305,14 +304,10 @@ def _write_outputs(args, staged, domains, factors, total_observations,
                 if tag_input_frame is None:
                     # auto: the shared provenance rule; an undecided header
                     # keeps the coord=molecular-marker fallback in daf.m5c.
-                    resolved = legacy_tag_frame(source.header)[0]
+                    from fiberhmm.io.annotation_frame import auto_legacy_frame
+                    resolved = auto_legacy_frame(source.header, "fiberhmm-call-m5c")
                     if resolved is not None:
-                        tag_input_frame = resolved == MOLECULAR
-                    from fiberhmm.io.annotation_frame import (
-                        frame_assumed_warning, legacy_tag_frame_report)
-                    warning = frame_assumed_warning("fiberhmm-call-m5c", legacy_tag_frame_report(source.header))
-                    if warning:
-                        print(warning, file=sys.stderr)
+                        tag_input_frame = resolved
                 carried_frame = pass_through_frame(
                     source.header,
                     tag_input_frame if args.tag_mode != "locus" else None)

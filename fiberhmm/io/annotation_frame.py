@@ -7,29 +7,20 @@ Three tag families carry footprints, and each has its own frame rule
 ``MA``/``AQ``/``AN`` (written only by FiberHMM)
     Historical unmarked FiberHMM BAMs use stored SEQ coordinates. Molecular MA
     producers declare ``coord=molecular`` in PG/CO; never infer it from
-    alignment flags (:func:`ma_annotation_frame`). FiberHMM up to 2.13.1
-    wrote its nuc/msp/tf types with the ``+`` strand; from 2.13.2 every type
-    uses ``.`` and is molecular. So an MA with a ``.`` type is molecular
-    whatever the header says (it survives a stripped @PG); ``+`` types follow
-    the header rule (:func:`read_ma_frame`).
+    alignment flags (:func:`ma_annotation_frame`).
 
 ``Ma``/``Aq``/``An`` (fibertools-rs >= 0.13)
     Always molecular (original read orientation), whatever the header says.
 
 ``ns/nl/as/al`` (fibertools, and FiberHMM >= 2.0)
-    The tags carry no frame. A FIBERHMM-CHEMISTRY declaration (written by
-    FiberHMM >= 2.16 footprint writers, which write molecular tags, and kept
-    by pipelines that strip @PG) decides first. Otherwise the frame comes
-    from the @PG provenance
+    The tags carry no frame, so it comes from the @PG provenance
     (:func:`legacy_tag_frame_report`): every @PG leaf starts a chain walked up
     through PP; the chain votes with the frame of the last footprint writer
     that ran on it (fibertools nucleosome commands: molecular; FiberHMM
     apply/call/recall-tfs/recall-nucs: molecular when declared, else SEQ).
     FiberHMM pass-through tools do not vote. Agreeing votes decide; no votes
     mean molecular if coord=molecular is declared anywhere, else SEQ
-    (unmarked FiberHMM <= 2.12), and then, with no header evidence at all, a
-    read whose MA uses ``.`` types has molecular legacy tags too
-    (:func:`read_legacy_frame`). Disagreeing votes (merged files) mean
+    (unmarked FiberHMM <= 2.12). Disagreeing votes (merged files) mean
     molecular when declared; otherwise FiberBrowser shows the majority, while
     FiberHMM, where a wrong guess changes calls, refuses
     (:func:`legacy_tag_frame` returns ``None``).
@@ -64,55 +55,6 @@ _PG_ID_SUFFIX_RE = re.compile(r'(?:\.\d+|-[0-9a-f]{6,8})$')
 # Pass-through tools append this to their @PG DS with coord=molecular when the
 # tags they carried are molecular (append_coord_to_ds).
 CARRIED_OVER = 'footprint tags carried over from the input'
-CHEMISTRY_DECLARATION_PREFIX = 'FIBERHMM-CHEMISTRY:v1:'
-# An MA annotation type written with the "." strand, e.g. ``;nuc.QQQ:`` or ``;msp.:``.
-_MA_DOT_STRAND_RE = re.compile(r';[A-Za-z0-9_]+\.[A-Za-z]*:')
-
-
-def ma_string_is_molecular(ma) -> bool:
-    """Whether an ``MA`` string shows by itself that it is molecular: it has a
-    ``.``-strand type (FiberHMM >= 2.13.2, fibertools), whatever the header."""
-    return isinstance(ma, str) and _MA_DOT_STRAND_RE.search(ma) is not None
-
-
-def read_ma_frame(read, header_frame: str) -> str:
-    """The frame of one read's ``MA``: molecular when the header says so or
-    its MA has a ``.`` type, else ``header_frame``."""
-    if header_frame == MOLECULAR:
-        return MOLECULAR
-    try:
-        if read.has_tag('MA') and ma_string_is_molecular(read.get_tag('MA')):
-            return MOLECULAR
-    except (AttributeError, KeyError, TypeError):
-        pass
-    return header_frame
-
-
-def read_legacy_frame(read, frame: Optional[str], assumed: bool) -> Optional[str]:
-    """One read's ns/nl/as/al frame given the header's (``legacy_tag_frame``):
-    when the header gave no evidence (``assumed``), a read whose MA has a
-    ``.`` type was written by FiberHMM >= 2.13.2, whose legacy tags are
-    molecular too; otherwise the header's frame."""
-    if not assumed or frame == MOLECULAR:
-        return frame
-    try:
-        if read.has_tag('MA') and ma_string_is_molecular(read.get_tag('MA')):
-            return MOLECULAR
-    except (AttributeError, KeyError, TypeError):
-        pass
-    return frame
-
-
-def frame_assumed_warning(tool: str, report: dict) -> Optional[str]:
-    """A warning line when ``report`` (:func:`legacy_tag_frame_report`) had no
-    header evidence and the SEQ frame is assumed; ``None`` otherwise."""
-    if report.get('source') != 'default':
-        return None
-    return (f"{tool}: warning: the header records no footprint writer, "
-            "coord=molecular or chemistry declaration (stripped @PG?); legacy "
-            "ns/nl/as/al are assumed SEQ frame, except on reads whose MA uses "
-            "'.' types (FiberHMM >= 2.13.2), taken as molecular. Pass "
-            "--input-frame to decide it.")
 
 
 def _header_dict(header) -> Optional[dict]:
@@ -239,9 +181,7 @@ def legacy_tag_frame_report(header, *, carried_votes: bool = True) -> dict:
     if hdr is None:
         return report
     pgs = [pg for pg in (hdr.get('PG', []) or []) if isinstance(pg, dict)]
-    raw_comments = [str(c) for c in (hdr.get('CO', []) or [])]
-    chemistry_declared = any(c.startswith(CHEMISTRY_DECLARATION_PREFIX) for c in raw_comments)
-    comments = [c.lower() for c in raw_comments]
+    comments = [str(c).lower() for c in (hdr.get('CO', []) or [])]
     header_marker = any(_COORD_MOLECULAR in c for c in comments)
     declared = header_marker or any(_COORD_MOLECULAR in _pg_text(pg) for pg in pgs)
     report['declared'] = declared
@@ -279,14 +219,6 @@ def legacy_tag_frame_report(header, *, carried_votes: bool = True) -> dict:
             node = parent[node]
 
     mol, seq = report['votes'][MOLECULAR], report['votes'][SEQ]
-    if chemistry_declared:
-        # Only FiberHMM >= 2.16 footprint writers declare chemistry, and they
-        # write molecular tags; @CO survives pipelines that rewrite @PG.
-        report['ambiguous'] = bool(mol and seq)
-        report['declared'] = True
-        report['source'] = 'chemistry'
-        report['frame'] = MOLECULAR
-        return report
     if mol and seq:
         report['ambiguous'] = True
         report['source'] = 'declared' if declared else 'majority'
@@ -314,7 +246,6 @@ def legacy_tag_frame(header) -> Tuple[Optional[str], str]:
         return None, (f'merged @PG histories disagree ({votes} footprint-writer votes) '
                       'and nothing declares coord=molecular')
     reasons = {
-        'chemistry': 'a FIBERHMM-CHEMISTRY declaration (FiberHMM >= 2.16 writes molecular tags)',
         'provenance': 'the last footprint writer on the @PG chains that have one',
         'declared': 'coord=molecular is declared in the header',
         'default': 'no footprint writer in the @PG history (unmarked FiberHMM <= 2.12 wrote SEQ)',
@@ -429,3 +360,130 @@ def ambiguous_frame_message(reason: str, *, query_flag: str = '--input-frame que
                             molecular_flag: str = '--input-frame molecular') -> str:
     return AMBIGUOUS_FRAME_HELP.format(reason=reason, query_flag=query_flag,
                                        molecular_flag=molecular_flag)
+
+
+# ---------------------------------------------------------------------------
+# Headers that give no frame evidence (a pipeline stripped @PG)
+# ---------------------------------------------------------------------------
+#
+# Every rule above is unchanged and decides whenever the header has any
+# evidence (a footprint writer on a @PG chain, or coord=molecular anywhere).
+# Only when it has none:
+#
+# * MA, per annotation group: a group written with the '.' strand is molecular
+#   (FiberHMM >= 2.13.2 and fibertools write every type that way); '+'/'-'
+#   groups follow the header rule (SEQ). A group never decides another
+#   group's frame.
+# * legacy ns/nl/as/al: a FIBERHMM-CHEMISTRY declaration (written only by
+#   FiberHMM >= 2.16 footprint writers, molecular) decides; else a read whose
+#   MA has a '.' *footprint* group (nuc/msp/tf, not an m5C layer) has
+#   molecular legacy tags (the same writer wrote both); else SEQ is assumed,
+#   with a warning.
+
+CHEMISTRY_DECLARATION_PREFIX = 'FIBERHMM-CHEMISTRY:v1:'
+FOOTPRINT_GROUPS = frozenset({'nuc', 'msp', 'tf'})
+_MA_GROUP_HEAD_RE = re.compile(r'^([A-Za-z0-9_]+?)([.+-])([A-Za-z]*)$')
+
+
+def ma_group_strands(ma) -> List[Tuple[str, str]]:
+    """``[(name, strand), ...]`` of an MA string's groups, in order."""
+    out = []
+    for group in str(ma or '').split(';')[1:]:
+        head = group.partition(':')[0]
+        match = _MA_GROUP_HEAD_RE.match(head)
+        if match:
+            out.append((match.group(1), match.group(2)))
+    return out
+
+
+def read_has_dot_footprint_group(read) -> bool:
+    """Whether the read's MA has a '.'-strand nuc/msp/tf group."""
+    try:
+        if not read.has_tag('MA'):
+            return False
+        ma = read.get_tag('MA')
+    except (AttributeError, KeyError, TypeError):
+        return False
+    return any(name in FOOTPRINT_GROUPS and strand == '.'
+               for name, strand in ma_group_strands(ma))
+
+
+def header_has_frame_evidence(header) -> bool:
+    """Whether the header decides footprint frames by the rules above: a
+    footprint writer on a @PG chain or a coord=molecular declaration."""
+    return legacy_tag_frame_report(header)['source'] != 'default'
+
+
+def header_chemistry_declared(header) -> bool:
+    hdr = _header_dict(header) or {}
+    return any(str(c).startswith(CHEMISTRY_DECLARATION_PREFIX)
+               for c in (hdr.get('CO', []) or []))
+
+
+def ma_group_is_molecular(strand: str, header_ma_frame: str, header_evidence: bool) -> bool:
+    """One MA group's frame: the header rule, except that without header
+    evidence a '.'-strand group is molecular."""
+    if header_ma_frame == MOLECULAR:
+        return True
+    return (not header_evidence) and strand == '.'
+
+
+class LegacyFrame:
+    """Frame of legacy ns/nl/as/al, per read.
+
+    ``explicit`` (True/False) is a user's choice and always wins. Otherwise
+    the header rule (:func:`legacy_tag_frame`) decides whenever the header has
+    evidence (``frame`` may then be ``None``: undecided merged histories).
+    Without evidence: a FIBERHMM-CHEMISTRY declaration means molecular; else
+    a read with a '.' footprint MA group is molecular; else SEQ, assumed.
+    """
+
+    def __init__(self, header, explicit: Optional[bool] = None):
+        self.explicit = explicit
+        self.evidence = header_has_frame_evidence(header)
+        self.chemistry = (not self.evidence) and header_chemistry_declared(header)
+        frame, reason = legacy_tag_frame(header)
+        if explicit is not None:
+            self.frame, self.reason = (MOLECULAR if explicit else SEQ), 'explicit'
+        elif self.chemistry:
+            self.frame = MOLECULAR
+            self.reason = ('no footprint writer or coord=molecular in the header; a '
+                           'FIBERHMM-CHEMISTRY declaration (FiberHMM >= 2.16 writes '
+                           'molecular tags) decides')
+        else:
+            self.frame, self.reason = frame, reason
+        self.assumed = explicit is None and not self.evidence and not self.chemistry
+
+    def for_read(self, read) -> Optional[str]:
+        if self.assumed and read_has_dot_footprint_group(read):
+            return MOLECULAR
+        return self.frame
+
+    def is_molecular(self, read) -> bool:
+        return self.for_read(read) == MOLECULAR
+
+    def warning(self, tool: str) -> Optional[str]:
+        if not self.assumed:
+            return None
+        return (f"{tool}: warning: the header records no footprint writer, "
+                "coord=molecular or chemistry declaration (stripped @PG?); legacy "
+                "ns/nl/as/al are assumed SEQ frame, except on reads whose MA has a "
+                "'.' nuc/msp/tf group (FiberHMM >= 2.13.2), taken as molecular. "
+                "Pass --input-frame to decide it.")
+
+
+def auto_legacy_frame(header, tool: Optional[str] = None):
+    """``--input-frame auto`` for tools taking a per-read frame (tag-m5c,
+    call-m5c): ``True``/``False`` when the header decides (exactly
+    :func:`legacy_tag_frame`), ``None`` when it is undecided, or a per-read
+    :class:`LegacyFrame` when the header has no evidence (warns on stderr
+    when ``tool`` is given)."""
+    resolver = LegacyFrame(header)
+    if resolver.assumed:
+        if tool:
+            import sys
+            print(resolver.warning(tool), file=sys.stderr)
+        return resolver
+    if resolver.frame is None:
+        return None
+    return resolver.frame == MOLECULAR

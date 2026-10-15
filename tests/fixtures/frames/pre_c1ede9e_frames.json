@@ -1,0 +1,4886 @@
+{
+ "apply_2x_legacy|legacy_and_ma_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "apply_2x_legacy|legacy_and_ma_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "apply_2x_legacy|legacy_only|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "apply_2x_legacy|legacy_only|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "apply_2x_legacy|legacy_plus_m5c_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": null,
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "apply_2x_legacy|legacy_plus_m5c_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": null,
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "apply_2x_legacy|ma_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "apply_2x_legacy|ma_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "apply_2x_legacy|ma_plus_m5c_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "apply_2x_legacy|ma_plus_m5c_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "apply_2x_legacy|ma_plus|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "apply_2x_legacy|ma_plus|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "fibertools|legacy_and_ma_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "fibertools|legacy_and_ma_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "fibertools|legacy_only|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "fibertools|legacy_only|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "fibertools|legacy_plus_m5c_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": null,
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "fibertools|legacy_plus_m5c_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": null,
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "fibertools|ma_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "fibertools|ma_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     500
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     850
+    ]
+   }
+  }
+ },
+ "fibertools|ma_plus_m5c_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "fibertools|ma_plus_m5c_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     500
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     850
+    ]
+   }
+  }
+ },
+ "fibertools|ma_plus|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "fibertools|ma_plus|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     500
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     850
+    ]
+   }
+  }
+ },
+ "merge_recall_over_212|legacy_and_ma_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "merge_recall_over_212|legacy_and_ma_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "merge_recall_over_212|legacy_only|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "merge_recall_over_212|legacy_only|rev": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "merge_recall_over_212|legacy_plus_m5c_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": null,
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "merge_recall_over_212|legacy_plus_m5c_dot|rev": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": null,
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "merge_recall_over_212|ma_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "merge_recall_over_212|ma_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "merge_recall_over_212|ma_plus_m5c_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "merge_recall_over_212|ma_plus_m5c_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "merge_recall_over_212|ma_plus|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "merge_recall_over_212|ma_plus|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "merged_212_and_2132|legacy_and_ma_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "merged_212_and_2132|legacy_and_ma_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "merged_212_and_2132|legacy_only|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "merged_212_and_2132|legacy_only|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "merged_212_and_2132|legacy_plus_m5c_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": null,
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "merged_212_and_2132|legacy_plus_m5c_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": null,
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "merged_212_and_2132|ma_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "merged_212_and_2132|ma_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "merged_212_and_2132|ma_plus_m5c_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "merged_212_and_2132|ma_plus_m5c_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "merged_212_and_2132|ma_plus|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "merged_212_and_2132|ma_plus|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "tag_m5c_over_212|legacy_and_ma_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "tag_m5c_over_212|legacy_and_ma_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "tag_m5c_over_212|legacy_only|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "tag_m5c_over_212|legacy_only|rev": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "tag_m5c_over_212|legacy_plus_m5c_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": null,
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "tag_m5c_over_212|legacy_plus_m5c_dot|rev": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": null,
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "tag_m5c_over_212|ma_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "tag_m5c_over_212|ma_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "tag_m5c_over_212|ma_plus_m5c_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "tag_m5c_over_212|ma_plus_m5c_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "tag_m5c_over_212|ma_plus|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "tag_m5c_over_212|ma_plus|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "tag_m5c_over_2132|legacy_and_ma_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "tag_m5c_over_2132|legacy_and_ma_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "tag_m5c_over_2132|legacy_only|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "tag_m5c_over_2132|legacy_only|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "tag_m5c_over_2132|legacy_plus_m5c_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": null,
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "tag_m5c_over_2132|legacy_plus_m5c_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": null,
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "tag_m5c_over_2132|ma_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "tag_m5c_over_2132|ma_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "tag_m5c_over_2132|ma_plus_m5c_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "tag_m5c_over_2132|ma_plus_m5c_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "tag_m5c_over_2132|ma_plus|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "tag_m5c_over_2132|ma_plus|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_seq_plus|legacy_and_ma_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_seq_plus|legacy_and_ma_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_seq_plus|legacy_only|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_seq_plus|legacy_only|rev": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_seq_plus|legacy_plus_m5c_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": null,
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_seq_plus|legacy_plus_m5c_dot|rev": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": null,
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_seq_plus|ma_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_seq_plus|ma_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_seq_plus|ma_plus_m5c_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_seq_plus|ma_plus_m5c_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_seq_plus|ma_plus|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_seq_plus|ma_plus|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_with_chemistry|legacy_and_ma_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_with_chemistry|legacy_and_ma_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_with_chemistry|legacy_only|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_with_chemistry|legacy_only|rev": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_with_chemistry|legacy_plus_m5c_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": null,
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_with_chemistry|legacy_plus_m5c_dot|rev": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": null,
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_with_chemistry|ma_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_with_chemistry|ma_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_with_chemistry|ma_plus_m5c_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_with_chemistry|ma_plus_m5c_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_with_chemistry|ma_plus|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_with_chemistry|ma_plus|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": false,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_with_co_marker|legacy_and_ma_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_with_co_marker|legacy_and_ma_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_with_co_marker|legacy_only|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_with_co_marker|legacy_only|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_with_co_marker|legacy_plus_m5c_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": null,
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_with_co_marker|legacy_plus_m5c_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": null,
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_with_co_marker|ma_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_with_co_marker|ma_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_with_co_marker|ma_plus_m5c_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_with_co_marker|ma_plus_m5c_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_with_co_marker|ma_plus|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v212_with_co_marker|ma_plus|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v2131_plus_molecular|legacy_and_ma_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v2131_plus_molecular|legacy_and_ma_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v2131_plus_molecular|legacy_only|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v2131_plus_molecular|legacy_only|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v2131_plus_molecular|legacy_plus_m5c_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": null,
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v2131_plus_molecular|legacy_plus_m5c_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": null,
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v2131_plus_molecular|ma_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v2131_plus_molecular|ma_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v2131_plus_molecular|ma_plus_m5c_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v2131_plus_molecular|ma_plus_m5c_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v2131_plus_molecular|ma_plus|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v2131_plus_molecular|ma_plus|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v2132_dot|legacy_and_ma_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v2132_dot|legacy_and_ma_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v2132_dot|legacy_only|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v2132_dot|legacy_only|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v2132_dot|legacy_plus_m5c_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": null,
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v2132_dot|legacy_plus_m5c_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": null,
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v2132_dot|ma_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v2132_dot|ma_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v2132_dot|ma_plus_m5c_dot|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v2132_dot|ma_plus_m5c_dot|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v2132_dot|ma_plus|fwd": {
+  "m5c_msps": [
+   [
+    300,
+    500
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    100,
+    150
+   ]
+  ],
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ },
+ "v2132_dot|ma_plus|rev": {
+  "m5c_msps": [
+   [
+    500,
+    700
+   ]
+  ],
+  "m5c_nucs": [
+   [
+    850,
+    900
+   ]
+  ],
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
+  "recall": {
+   "frame": true,
+   "tags": {
+    "al": [
+     200
+    ],
+    "as": [
+     300
+    ],
+    "nl": [
+     50
+    ],
+    "ns": [
+     100
+    ]
+   }
+  }
+ }
+}
