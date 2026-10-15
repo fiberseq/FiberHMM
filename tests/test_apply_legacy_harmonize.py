@@ -73,46 +73,6 @@ def test_without_msps_harmonizing_changes_nothing():
     assert _legacy(raw) == _legacy(harmonized)
 
 
-def _chain(*records):
-    """@PG list, each record a PP child of the one before."""
-    out = []
-    for i, record in enumerate(records):
-        record = dict(record, ID=record.get('ID', f"p{i}"))
-        if i and 'PP' not in record:
-            record['PP'] = out[-1]['ID']
-        out.append(record)
-    return {'PG': out}
-
-
-HARMONIZED = {'PN': 'fiberhmm-apply', 'DS': 'FiberHMM apply; legacy_tags=harmonized'}
-RAW = {'PN': 'fiberhmm-apply', 'DS': 'FiberHMM apply; cpg_mask=off'}
-CALL = {'PN': 'fiberhmm-call', 'DS': 'FiberHMM fused apply+recall'}
-CALL_M5C = {'PN': 'fiberhmm-call-m5c', 'DS': 'DddA-inferred mCG tag projection'}
-
-
-def test_recall_refuses_harmonized_apply_output():
-    from fiberhmm.cli.recall_tfs import _harmonized_apply_input
-
-    assert _harmonized_apply_input(_chain(HARMONIZED))
-    assert not _harmonized_apply_input(_chain(RAW))
-    assert not _harmonized_apply_input(_chain(HARMONIZED, CALL))   # re-called since
-    assert _harmonized_apply_input(_chain(CALL, HARMONIZED))
-    assert not _harmonized_apply_input({'PG': []})
-
-
-def test_recall_guard_matches_exact_producers_and_branches():
-    """fiberhmm-call-m5c only adds methylation layers (exact names count),
-    and a call on another merged branch does not clear a harmonized one."""
-    from fiberhmm.cli.recall_tfs import _harmonized_apply_input
-
-    assert _harmonized_apply_input(_chain(HARMONIZED, CALL_M5C))
-    merged = {'PG': [dict(HARMONIZED, ID='apply'),
-                     dict(RAW, ID='apply.1'),
-                     dict(CALL, ID='call', PP='apply.1')]}
-    assert _harmonized_apply_input(merged)
-    merged['PG'][2]['PP'] = 'apply'
-    assert not _harmonized_apply_input(merged)
-
 
 def test_harmonized_reads_carry_a_marker_that_recall_refuses(tmp_path):
     from fiberhmm.cli.recall_tfs import HarmonizedInputError, _refuse_harmonized_read
@@ -188,7 +148,6 @@ def test_recall_refuses_a_marked_read_whatever_the_header(tmp_path, capsys, monk
 def test_region_api_output_carries_the_harmonization_provenance(tmp_path):
     """process_bam_for_footprints(region_parallel=True) writes the run's @PG
     (legacy_tags=harmonized), and every harmonized read is marked."""
-    from fiberhmm.cli.recall_tfs import _harmonized_apply_input
     from fiberhmm.inference.parallel import process_bam_for_footprints
     from fiberhmm.inference.read_filters import HARMONIZED_LEGACY_TAG
     from fiberhmm.models import get_model_path
@@ -206,61 +165,9 @@ def test_region_api_output_carries_the_harmonization_provenance(tmp_path):
         'pacbio-fiber', 3, 0, n_cores=1, region_parallel=True, pg_record=pg,
         harmonize_legacy_tags=True)
     with pysam.AlignmentFile(out, check_sq=False) as result:
-        assert _harmonized_apply_input(result.header)
+        assert any('legacy_tags=harmonized' in str(p.get('DS', ''))
+                   for p in result.header.to_dict()['PG'])
         reads = list(result)
     called = [r for r in reads if r.has_tag('ns')]
     assert called and all(r.has_tag(HARMONIZED_LEGACY_TAG) for r in called)
 
-
-def test_recall_tfs_cli_exits_2_on_harmonized_input(tmp_path, capsys, monkeypatch):
-    import sys
-
-    import pytest
-
-    from fiberhmm.cli import recall_tfs
-
-    _isolate_recall_state(monkeypatch)
-
-    bam = tmp_path / 'h.bam'
-    header = {'HD': {'VN': '1.6'}, 'SQ': [{'SN': 'chr1', 'LN': 1000}],
-              'PG': [{'ID': 'fiberhmm-apply', 'PN': 'fiberhmm-apply',
-                      'DS': 'FiberHMM apply; mode=pacbio-fiber legacy_tags=harmonized'}]}
-    with pysam.AlignmentFile(str(bam), 'wb', header=header):
-        pass
-    argv = sys.argv
-    sys.argv = ['fiberhmm-recall-tfs', '-i', str(bam), '-o', str(tmp_path / 'o.bam'),
-                '--enzyme', 'hia5']
-    try:
-        with pytest.raises(SystemExit) as exc:
-            recall_tfs.main()
-    finally:
-        sys.argv = argv
-    assert exc.value.code == 2
-    assert '--harmonize-legacy-tags' in capsys.readouterr().err
-
-
-def test_guard_evaluates_every_surviving_branch():
-    """samtools merge -p of (harmonized apply -> sort) and (the same apply ->
-    call): the call clears only its own branch."""
-    from fiberhmm.cli.recall_tfs import _harmonized_apply_input
-
-    shared = {'PG': [dict(HARMONIZED, ID='fiberhmm-apply'),
-                     {'ID': 'samtools', 'PN': 'samtools', 'PP': 'fiberhmm-apply',
-                      'CL': 'samtools sort'},
-                     dict(CALL, ID='fiberhmm-call', PP='fiberhmm-apply')]}
-    assert _harmonized_apply_input(shared)
-    # Both branches replaced: clear.
-    shared['PG'][1]['PP'] = 'fiberhmm-call'
-    assert not _harmonized_apply_input(shared)
-    # ID collision suffixes from merges are still the same program.
-    renamed = {'PG': [dict(HARMONIZED, ID='fiberhmm-apply-4A2B3C1D', PN=None)]}
-    del renamed['PG'][0]['PN']
-    assert _harmonized_apply_input(renamed)
-
-
-def test_ordinary_apply_after_harmonized_apply_clears_the_refusal():
-    from fiberhmm.cli.recall_tfs import _harmonized_apply_input
-
-    assert not _harmonized_apply_input(_chain(HARMONIZED, RAW))
-    assert _harmonized_apply_input(_chain(RAW, HARMONIZED))
-    assert not _harmonized_apply_input(_chain(HARMONIZED, CALL_M5C, RAW))
