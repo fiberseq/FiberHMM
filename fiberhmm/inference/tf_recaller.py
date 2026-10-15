@@ -1457,6 +1457,11 @@ def write_ma_tags(read, read_length: int,
                     pass
 
     if also_write_legacy:
+        # Rewriting ns/nl replaces any harmonized apply arrays: drop the
+        # hl marker (an MA-only write leaves legacy tags, and hl, alone).
+        from fiberhmm.inference.read_filters import HARMONIZED_LEGACY_TAG
+        if read.has_tag(HARMONIZED_LEGACY_TAG):
+            read.set_tag(HARMONIZED_LEGACY_TAG, None)
         # Build the ns/nl track. In default mode it's nucleosomes only.
         # In downstream_compat mode, TF calls are merged in, sorted by start.
         if downstream_compat and tf_intervals:

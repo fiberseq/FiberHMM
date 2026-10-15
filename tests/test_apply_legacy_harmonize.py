@@ -171,3 +171,29 @@ def test_region_api_output_carries_the_harmonization_provenance(tmp_path):
     called = [r for r in reads if r.has_tag('ns')]
     assert called and all(r.has_tag(HARMONIZED_LEGACY_TAG) for r in called)
 
+
+
+def test_direct_footprint_writers_clear_hl_only_when_they_replace_legacy_tags():
+    from fiberhmm.crossstrand.recall import attach_footprint_tags
+    from fiberhmm.inference.read_filters import HARMONIZED_LEGACY_TAG
+    from fiberhmm.inference.tf_recaller import write_ma_tags
+
+    def harmonized():
+        read = _read()
+        set_legacy_apply_tags(read, RESULT, with_scores=True, harmonize=True)
+        assert read.has_tag(HARMONIZED_LEGACY_TAG)
+        return read
+
+    read = harmonized()
+    write_ma_tags(read, 400, [], [(30, 150)], [(200, 100)])
+    assert list(read.get_tag('ns')) == [30] and not read.has_tag(HARMONIZED_LEGACY_TAG)
+
+    read = harmonized()
+    write_ma_tags(read, 400, [], [(30, 150)], [(200, 100)], also_write_legacy=False)
+    assert read.has_tag(HARMONIZED_LEGACY_TAG)            # MA-only write
+    assert list(read.get_tag('ns')) == [10, 260]
+
+    read = harmonized()
+    attach_footprint_tags(read, {'footprint_starts': [30], 'footprint_sizes': [150],
+                                 'msp_starts': [200], 'msp_sizes': [100]}, '')
+    assert list(read.get_tag('ns')) == [30] and not read.has_tag(HARMONIZED_LEGACY_TAG)
