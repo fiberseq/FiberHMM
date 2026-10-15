@@ -7,7 +7,8 @@ written 1-based). The meaning of the scores is explained in
 
 ## Footprint calls
 
-Written by `fiberhmm-call`, `fiberhmm-apply` (legacy tags only),
+Written by `fiberhmm-call`, `fiberhmm-apply` (legacy tags, plus `MA`
+`nuc`/`msp` groups on reads that already carry DddA island groups),
 `fiberhmm-recall-tfs`/`-recall-nucs`, and the joint recall of
 `fiberhmm-pair`/`fiberhmm-merge --recall`.
 
@@ -20,7 +21,7 @@ Written by `fiberhmm-call`, `fiberhmm-apply` (legacy tags only),
 | `MA` | `Z` | molecular annotations (groups below) |
 | `AQ` | `B:C` | quality bytes of every `MA` annotation, in `MA` order |
 | `AN` | `Z` | one name per `MA` annotation (`.` for unnamed); written when a call wraps a circular origin (`fhw_*`), for strand-rescue roles, consensus class tokens, or when preserved groups carry names |
-| `hl` | `i` | `1` on reads written by `fiberhmm-apply --harmonize-legacy-tags`: `ns`/`nl` hold only the nucleosomes of the `MA` view, not every HMM footprint, so `fiberhmm-recall-tfs`/`-nucs` refuse the read. Any writer that rewrites `ns`/`nl` (call, apply, recall) removes it |
+| `hl` | `i` | `1` on reads written by `fiberhmm-apply --harmonize-legacy-tags` (opt-in): `ns`/`nl` hold only the nucleosomes of the `MA` view, not every HMM footprint, so `fiberhmm-recall-tfs`/`-nucs` refuse the read. A later run removes it only when it replaces `ns`/`nl` (call, apply, recall, duplex joint recall); a run that leaves `ns`/`nl` in place, such as an `MA`-only write, keeps it |
 
 FiberHMM also reads fibertools-rs 0.13+ `Ma`/`Aq`/`An` tags (same spec,
 always molecular frame) as input; it never writes them. See

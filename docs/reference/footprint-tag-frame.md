@@ -4,7 +4,8 @@ This is the rule FiberBrowser (`browser/services/bam_tags.py`,
 `legacy_tag_frame_report`) and FiberHMM (`fiberhmm.io.annotation_frame`,
 `legacy_tag_frame_report`; used by `fiberhmm-recall-tfs` /
 `fiberhmm-recall-nucs --input-frame auto`, the pass-through tools' `@PG`
-records, `fiberhmm-tag-m5c` / `-call-m5c` auto frames and consensus) use to
+records, `fiberhmm-tag-m5c` / `-call-m5c` auto frames, QC, strand rescue and
+consensus) use to
 decide how to read a BAM's footprint tags on reverse-strand reads. Both
 implementations must follow it; the same page is in both repositories.
 
@@ -14,7 +15,8 @@ implementations must follow it; the same page is in both repositories.
   so a reverse read's offsets count from its genomic right end. To get SEQ
   offsets, use `seq_start = read_length - (start + length)`.
 - **SEQ frame:** offsets count along the BAM SEQ (the reference-forward
-  orientation). v1.0 FiberHMM wrote this frame and marked nothing.
+  orientation). FiberHMM 2.12 and earlier wrote this frame and marked
+  nothing.
 
 | Tags | Frame |
 |---|---|
@@ -47,9 +49,12 @@ See `tests/fixtures/fibertools_frame`.
 The token is `coord=molecular`, matched case-insensitively. It has two scopes:
 
 - **Record level:** the token appears in a FiberHMM `@PG` record, in its `DS`
-  field for `fiberhmm-call`, `-apply` and `-recall-*`.
-- **Header level:** an `@CO` line contains it, for example
-  `@CO fiberhmm:coord=molecular`.
+  field for `fiberhmm-call`, `-apply` and `-recall-*`, and for pass-through
+  tools that carried molecular tags (below).
+- **Header level:** an `@CO` line contains it. `fiberhmm-call`, `-apply` and
+  `-recall-*` write `@CO fiberhmm:coord=molecular` as well as the `DS` token;
+  `fiberhmm-call` adds it before its `FIBERHMM-CHEMISTRY` and `MA-TYPES`
+  lines.
 
 No token declares SEQ frame.
 
@@ -130,7 +135,7 @@ single chain, with each record the child of the one before it.
 |---|---|---|---|
 | All agree | That frame | `provenance` | No |
 | None, but `coord=molecular` appears anywhere | Molecular | `declared` | No |
-| None, no declaration | SEQ | `default` (unmarked v1.0 FiberHMM) | No |
+| None, no declaration | SEQ | `default` (unmarked FiberHMM ≤ 2.12) | No |
 | Disagree, `coord=molecular` appears anywhere | Molecular | `declared` | **Yes** |
 | Disagree, no declaration | Majority of chain votes; SEQ on a tie | `majority` | **Yes** |
 
@@ -176,8 +181,10 @@ pipeline stripped `@PG`, or kept only unrelated programs) gets this extension:
   m5C layer (`ddda_mcg.`, `ddda_ucg.`) leaves historical `+` footprints alone.
 - **Legacy `ns/nl/as/al`.** A read whose `MA` has a `.` nuc/msp/tf group is
   molecular (the same writer wrote both); an m5C group does not count.
-  Otherwise SEQ is assumed, and FiberHMM's recall, tag-m5c, call-m5c and QC
-  say so.
+  Otherwise SEQ is assumed. FiberHMM's recall, tag-m5c and call-m5c print a
+  warning when they use this extension, and QC applies it too. Strand rescue
+  and consensus apply the `MA` part; their legacy tags follow consensus's
+  `legacy_hia5_annotation_frame` rule (section 4).
 
 A `FIBERHMM-CHEMISTRY` declaration never decides a frame: pass-through
 producers such as `fiberhmm-merge --recall` and `fiberhmm-pair` add it while

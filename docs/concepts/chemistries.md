@@ -10,7 +10,7 @@ defaults tuned for it and coverage in the test suite.
 | Hia5 (m6A) Fiber-seq | PacBio | supported | `--enzyme hia5 --seq pacbio` | m6A on both strands (`A+a`, `T-a`) |
 | Hia5 (m6A) Fiber-seq | Nanopore | supported | `--enzyme hia5 --seq nanopore` | m6A on the sequenced strand (`A+a`); strict ML ≥ 248 |
 | DddB DAF-seq | any | supported | `--enzyme dddb` | double-stranded deaminase; one strand per read |
-| DddA DAF-seq | any | supported | `--enzyme ddda` | separate nucleosome and TF models, radial nucleosome recall, CpG-aware recall |
+| DddA DAF-seq | any | supported | `--enzyme ddda` | separate nucleosome and TF models, radial nucleosome recall, CpG-aware calling |
 | EcoGII (m6A) | PacBio, Nanopore | development | custom `-m` only | a model file is shipped (`ecogii_pacbio.json`); not accepted by `--enzyme`, not validated; rejected by `fiberhmm-consensus` |
 | CpG methyltransferase (SssI) | Nanopore | development | custom `-m` only | `cpg_nanopore.json`, observation mode `cpg` |
 | GpC methyltransferase | — | development | custom `-m` only | observation mode `gpc`; no bundled model |
@@ -46,8 +46,8 @@ The resolved chemistry (`--enzyme`, the given or
 | ML threshold: `recall-tfs`/`-nucs`, `extract`, `qc` | 125 | **248** | 125 | 125 |
 | ML threshold: `dedup`, `pair`, `merge` (MM/ML dU) | — | — | 128 | 128 |
 | TF interval cost `--min-llr` | 5.0 | 5.0 | 5.0 | 5.0 |
-| Nucleosome recall | conservative | conservative | conservative | phase-aware radial |
-| CpG-aware calling (`--use-m5c`) | off | off | off | **on** (call, apply, posteriors, recall, pair/merge) |
+| Nucleosome recall | accessible-cut split | accessible-cut split | accessible-cut split | phase-aware radial |
+| CpG-aware calling (`--use-m5c`) | off | off | off | **on** (call, pipeline, apply, posteriors, recall, pair/merge, qc) |
 | Adjacent-target thinning (`--daf-mask-runs`) | — | — | off | 2, keep-one |
 | Strand-swap chimera filter | — | — | on | on |
 | Duplicate marking and SNP screen (file input) | — | — | on | on |
@@ -95,9 +95,11 @@ Consequences for Nanopore Hia5:
 - in consensus, both alignment orientations of Hia5 are pooled into one
   channel.
 
-!!! warning "2.x Nanopore Hia5 table"
-    3.0 ships an updated Nanopore Hia5 emission table. Re-run ONT Hia5 calls
-    made with 2.x; see [Upgrading from 2.x](../upgrading.md).
+!!! warning "Updated Nanopore Hia5 and DddB tables"
+    3.0 ships re-calibrated Nanopore Hia5 and DddB emission tables. Re-run
+    Nanopore Hia5 and DddB calls made with 2.x; `fiberhmm-check` lists the
+    BAMs that need it. See
+    [Upgrading from 2.x](../upgrading.md#re-run-nanopore-hia5-and-dddb-calls).
 
 ## DAF-seq: DddA and DddB
 
@@ -112,8 +114,8 @@ its alignment orientation, decides which bases are targets.
 - **DddA** also deaminates inside nucleosomes, in a helically phased pattern.
   FiberHMM therefore uses separate models for
   the nucleosome HMM (`ddda_nuc.json`), TF recall (`ddda_TF.json`) and radial
-  nucleosome refinement, and enables CpG-aware recall and keep-one masking by
-  default. DddA is also the chemistry of scDAF duplex pairing and of the
+  nucleosome refinement, and enables CpG-aware calling (HMM and recall) and
+  keep-one masking by default. DddA is also the chemistry of scDAF duplex pairing and of the
   CpG-island methylation caller.
 
 Where the deaminations come from, duplicate marking, SNP screening and the

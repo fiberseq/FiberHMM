@@ -65,7 +65,12 @@ Two DAF-specific adjustments change which observations enter the model:
   unmethylated
   (`MA:ddda_ucg`, from [`fiberhmm-tag-m5c`](../workflows/daf-seq.md#ddda-cpg-island-methylation)).
   Excluded sites contribute no likelihood, do not count toward minimum
-  evidence and cannot define a boundary.
+  evidence and cannot define a boundary. The mask is on by default for
+  `--enzyme ddda` and applies in `fiberhmm-call`, `-pipeline`, `-apply`,
+  `-posteriors`, `-pair`/`-merge` and `-qc`. `--cpg-mask-policy
+  methylated-only` masks only `ddda_mcg` spans instead; `--no-use-m5c` turns
+  the mask off. The `@PG` records it (`cpg_mask=unmethylated-only
+  hmm_cpg_mask=on`).
 
 ## 2. The HMM
 
@@ -81,7 +86,8 @@ the most likely state path; each run of the protected state is a footprint.
   TF recaller (step 4); a recaller call that overlaps one replaces it.
 - `--edge-trim` (10) masks the read ends, where calls are unreliable.
 
-`fiberhmm-apply` stops here and writes `ns`/`nl`/`as`/`al` only.
+`fiberhmm-apply` stops here and writes `ns`/`nl`/`as`/`al` (and `MA` on
+reads that already carry DddA island groups).
 
 ## 3. Nucleosome recall
 
@@ -104,10 +110,11 @@ the accessible-cut split above would shatter DddA nucleosomes. For DddA, nucleos
 
 1. nominates nucleosome dyads from the radial (helically phased) deamination
    profile (`ddda_nuc_profile.json`);
-2. scores candidate edges around each dyad with sequence-context-aware
-   likelihoods, marginalizing the uncertain helical register and a local
-   9–12 bp pitch, so on-phase internal deaminations remain compatible with
-   wrapping;
+2. scores candidate edges around each dyad with a rotational model of
+   access along the wrapped DNA: a helical period of 10.12 bp (marginalized
+   over a ±2 × 0.2 bp grid) and a helical register inferred from the
+   molecule's own deaminations (8 phase bins), so on-phase internal
+   deaminations remain compatible with wrapping;
 3. places each edge at the median of its posterior and encodes the width of
    the central 90% interval in the edge bytes (`el`/`er`);
 4. validates the final configuration against the HMM topology with a
@@ -115,8 +122,9 @@ the accessible-cut split above would shatter DddA nucleosomes. For DddA, nucleos
    edge, protected evidence can move it.
 
 The radial caller uses its own internal likelihood table
-(`ddda_nuc_refine.json`, internal radial-nucleosome likelihoods); updating the
-TF table does not change nucleosome calls. HMM footprints with no radial dyad
+(`ddda_nuc_refine.json`), which has one deamination rate per state, the same
+in every sequence context; updating the TF table does not change nucleosome
+calls. HMM footprints with no radial dyad
 are kept as fallback calls with zero quality. TF recall then runs once on the
 resulting MSPs; TF calls exposed only by the new nucleosome geometry need a
 deamination within `--ddda-derived-tf-max-edge-gap` (12 bp) on both sides
@@ -125,7 +133,8 @@ deamination within `--ddda-derived-tf-max-edge-gap` (12 bp) on both sides
 The profile (`ddda_phase_posterior_v1`) was locked after validation on twelve
 independent HG002 scDAF libraries and the GM12878 NAPA and UBA1 targeted
 cohorts. Its identity and file digest are recorded in the output header
-(`nuc_model`, `nuc_sha256`).
+(`nuc_model`, `nuc_sha256`), with the digest of the likelihood table
+(`nuc_model_sha256`).
 
 ## 4. TF recall: the likelihood-ratio recaller
 

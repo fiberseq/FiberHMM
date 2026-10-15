@@ -152,7 +152,7 @@ Legacy tags are split the same way but carry no shared identity.
 
 ## Stale tags
 
-Records a run skips (filtered, secondary or supplementary, no observations)
-are written without the previous run's call tags, so a re-call never leaves
-an old call next to a new one. DddA island groups (`ddda_mcg`, `ddda_ucg`) are
+Records a run skips (filtered, outside the called alignment set, no
+observations) are written without the previous run's call tags, so a re-call
+never leaves an old call next to a new one. DddA island groups (`ddda_mcg`, `ddda_ucg`) are
 kept.

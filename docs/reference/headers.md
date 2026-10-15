@@ -7,9 +7,9 @@ header lines. `@CO` lines are written as `@CO<TAB><text>`; pysam's
 | Line | Written by | Purpose |
 |---|---|---|
 | `@PG` | every producer (`call`, `apply`, `recall-tfs`/`-nucs`, `dedup`, `pair`, `merge`, `tag-m5c`, `consensus`, `tag-consensus`, …) | provenance: command line, version, resolved settings |
-| `@CO FIBERHMM-CHEMISTRY:v1:` | `call`, `apply`, `recall-tfs`/`-nucs`, `merge` (joint recall) | authoritative chemistry of the calls, and the code and tables that made them |
+| `@CO FIBERHMM-CHEMISTRY:v1:` | `call`, `apply`, `recall-tfs`/`-nucs`, `pair`/`merge` (joint recall) | authoritative chemistry of the calls, and the code and tables that made them |
 | `@CO MA-TYPES:v1:` | every command that writes `MA` | advisory list of `MA` group names |
-| `@CO fiberhmm:coord=molecular` | `apply`, `recall-tfs`/`-nucs` | coordinate-frame marker (`call` puts `coord=molecular` in its `@PG DS`; `dedup`, `pair`, `merge`, `tag-m5c`, `call-m5c`, `tag-consensus` and `strand-rescue-annotate` put `coord=molecular` in theirs when the tags they carried over are molecular). See [Footprint-tag coordinate frame](footprint-tag-frame.md) |
+| `@CO fiberhmm:coord=molecular` | `call`, `apply`, `recall-tfs`/`-nucs` | coordinate-frame marker; the same runs also put `coord=molecular` in their `@PG DS`. `dedup`, `pair`, `merge`, `tag-m5c`, `call-m5c`, `tag-consensus` and `strand-rescue-annotate` put `coord=molecular` in their own `@PG DS` when the tags they carried over are molecular. See [Footprint-tag coordinate frame](footprint-tag-frame.md) |
 | `@CO FIBERHMM-CONSENSUS-MA:v1:` | `consensus`, `transfer` | meaning of the consensus layers' bytes |
 | `@CO FIBERHMM-CONSENSUS-FAMILY:v1:` | `consensus`, `transfer` | one entry per class and layer |
 | `@CO FIBERHMM-STRAND-RESCUE:v6:` | `strand-rescue-annotate` | shadow-layer contract |
@@ -20,12 +20,20 @@ header lines. `@CO` lines are written as `@CO<TAB><text>`; pysam's
 Header lines are copied by `samtools` and most other tools, so they survive
 downstream processing unless a tool rewrites the header.
 
+A `fiberhmm-call` output adds its three `@CO` lines in this order:
+
+```text
+@CO	fiberhmm:coord=molecular
+@CO	FIBERHMM-CHEMISTRY:v1:assay=daf;enzyme=ddda;platform=pacbio;mode=daf;apply_sha256=…;pg=fiberhmm-call;…
+@CO	MA-TYPES:v1:nuc,msp,tf
+```
+
 ## `@PG`
 
 `fiberhmm-call`'s `DS` field states the frame and every resolved setting:
 
 ```text
-FiberHMM fused apply+recall; coord=molecular (ns/nl/as/al/MA in molecular original-fiber coordinates); mode=daf enzyme=ddda prob_threshold=128 primary_only=off alignments=primary-supplementary tf_decoder=multi_interval_v1 tf_interval_penalty=5.0 recall_nucs=True nuc_recall_policy=conservative nuc_profile=ddda_phase_posterior_v1 nuc_sha256=c86b05dc... phase_nrl=0 ddda_derived_tf_edge_gap=12 chimera_filter=on dedup=j0.95/mark/ends50 daf_snp_mask=on/3sites daf_unaligned_mask=on daf_insert_consensus=on/0of0/min20 daf_run_mask=>=2/keep-one cpg_mask=unmethylated-only
+FiberHMM fused apply+recall; coord=molecular (ns/nl/as/al/MA in molecular original-fiber coordinates); mode=daf enzyme=ddda prob_threshold=128 primary_only=off alignments=primary-supplementary tf_decoder=multi_interval_v1 tf_interval_penalty=5.0 recall_nucs=True nuc_recall_policy=conservative nuc_profile=ddda_phase_posterior_v1 nuc_sha256=c86b05dc... phase_nrl=0 ddda_derived_tf_edge_gap=12 chimera_filter=on dedup=j0.95/mark/ends50 daf_snp_mask=on/3sites daf_unaligned_mask=on daf_insert_consensus=on/0of0/min20 daf_run_mask=>=2/keep-one cpg_mask=unmethylated-only hmm_cpg_mask=on
 ```
 
 `primary_only=on` only with `--alignments primary`. DAF runs record
@@ -77,7 +85,11 @@ Vocabulary:
 - `custom` for a custom assay, enzyme or mode (for example a run with
   `-m` and no `--enzyme`: `enzyme=custom`).
 
-A valid declaration is authoritative. Several lines with the same four
+A valid declaration is authoritative for the chemistry. It never decides the
+coordinate frame of the footprint tags: pass-through producers add it while
+carrying older reads unchanged (see
+[Footprint-tag coordinate frame](footprint-tag-frame.md#headers-without-evidence)).
+Several lines with the same four
 required fields are allowed (for example after successive models add
 different `model` values); incompatible required fields are a conflict, and
 FiberHMM producers refuse to relabel silently. Readers ignore malformed lines

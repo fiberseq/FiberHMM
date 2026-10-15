@@ -41,8 +41,9 @@ header's `@PG` provenance, with the rule it shares with FiberBrowser
   predict-m6a`, `m6a`, `add-nucleosomes`, `fire`, `fiber-hmm`, the older
   `predict` and `add`) write molecular frame. `fiberhmm-call`, `-apply`,
   `-recall-tfs` and `-recall-nucs` write molecular frame when they declare
-  `coord=molecular`, otherwise query frame. Other FiberHMM tools pass the
-  tags through and do not vote.
+  `coord=molecular`, otherwise query frame. Current releases always declare
+  it, both in their `@PG` `DS` and as an `@CO fiberhmm:coord=molecular` line.
+  Other FiberHMM tools pass the tags through and do not vote.
 - If the votes agree, they decide. With no votes, a `coord=molecular`
   declaration anywhere means molecular, otherwise query frame (unmarked
   FiberHMM 2.12 output).
@@ -70,7 +71,30 @@ query-frame tags and no `@PG`. Run on a BAM that had already been through
 Pass `--input-frame query` for such files.
 
 `MA`, `AQ` and `AN` are written only by FiberHMM, so their frame comes from
-the `coord=molecular` declaration alone (unmarked `MA` is query frame).
+the `coord=molecular` declaration (unmarked `MA` is query frame, except as
+below).
+
+### Headers without frame evidence
+
+A header has frame evidence when it shows a footprint writer on a `@PG` chain
+or declares `coord=molecular` anywhere. A pipeline that strips `@PG` (or keeps
+only unrelated programs) leaves none. Only then does FiberHMM look at the
+reads:
+
+- **`MA`, per annotation group.** A group written with the `.` strand
+  (`nuc.QQQ:`, `msp.:`; FiberHMM 2.13.2 and later write every group that way)
+  is molecular. A `+`/`-` group (FiberHMM 2.13.1 and earlier) is query frame.
+  One group never decides another, so a `.` m5C layer appended later
+  (`ddda_mcg.`, `ddda_ucg.`) leaves older `+` footprints in query frame.
+- **Legacy `ns`/`nl`/`as`/`al`.** They are molecular on a read whose `MA` has
+  a `.` `nuc`, `msp` or `tf` group, because the same writer wrote both. An m5C
+  group does not count. On every other read they are taken as query frame.
+  Recall, `fiberhmm-tag-m5c` and `fiberhmm-call-m5c` print a warning when
+  they fall back to this rule; pass `--input-frame` to decide it yourself.
+
+A `FIBERHMM-CHEMISTRY` declaration never decides the frame. Pass-through
+producers such as `fiberhmm-merge --recall` and `fiberhmm-pair` add one while
+carrying older reads unchanged.
 
 ### fibertools `Ma` tags
 
