@@ -38,8 +38,15 @@ treat those layers as molecular ahead of the header rule: FiberBrowser in
 its compact read loader, FiberHMM in `consensus_molecular_layers`. The rest
 of an exported `MA` follows the header rule. FiberHMM's export copies a
 fibertools read's `Ma` groups into the `MA` it writes, because `MA` wins over
-`Ma`. It writes the copy in that file's `MA` frame, which is SEQ unless
-`coord=molecular` is declared, and adds no `coord=` token of its own.
+`Ma`. It writes each copied group in the frame the written header gives it
+(`annotation_frame.MAGroupFrame`): SEQ unless `coord=molecular` is declared,
+or molecular for a `.` group when the header has no frame evidence, so the
+copy reads back at the same positions. It adds no `coord=` token of its own.
+
+Every FiberHMM reader of `MA` groups (extract, QC, recall, the m5C tools,
+the duplex recall mask, `fiberhmm-pair` dyads, consensus loading and
+replay) resolves each group through `MAGroupFrame`, per group rather than
+per feature name.
 
 Evidence that fibertools-rs writes molecular frame:
 

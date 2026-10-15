@@ -6,8 +6,11 @@ chain, or coord=molecular), every reader must resolve exactly what the
 pre-extension code resolved; ``fixtures/frames/pre_c1ede9e_frames.json``
 holds those results (QC MSPs, recall-tfs payload frame and tags, m5C
 MSP/nucleosome intervals) for historical header variants x read shapes,
-computed by the pre-c1ede9e code with one intended change applied: QC uses
-a read's legacy tags when its MA holds no nuc/msp (as at 88cecd0).
+computed by the pre-c1ede9e code with two intended changes applied: QC uses
+a read's legacy tags when its MA holds no nuc/msp (as at 88cecd0), and (3.0.1)
+the m5C readers' MA footprints follow the header's MA frame
+(annotation_frame.MAGroupFrame), as QC and recall do, instead of always
+molecular.
 """
 import array
 import json

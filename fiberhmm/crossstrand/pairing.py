@@ -126,24 +126,33 @@ def read_flavor(read, prob_threshold: int = 0) -> Optional[int]:
 def nuc_dyads_ref(read) -> np.ndarray:
     """Reference-coordinate nucleosome dyad centers from the MA ``nuc`` track.
 
-    MA intervals are in the molecular frame; for reverse reads they are flipped
-    to the SEQ (query) frame before the query->reference lookup, matching
-    ``fiberhmm-extract``. Returns a sorted int64 array (possibly empty).
+    Each ``nuc`` group's frame follows the read header's rule
+    (``annotation_frame.MAGroupFrame``, as ``fiberhmm-extract`` reads it;
+    molecular without a header); molecular groups of a reverse read are
+    flipped to the SEQ (query) frame before the query->reference lookup.
+    Returns a sorted int64 array (possibly empty).
     """
     try:
         parsed = parse_ma_tag(read.get_tag('MA'))
     except (KeyError, ValueError):
         return np.empty(0, dtype=np.int64)
-    nucs = parsed['nuc']
-    if not nucs:
+    groups = [(strand, intervals) for name, strand, _q, intervals in parsed['raw_types']
+              if name == 'nuc']
+    if not any(intervals for _strand, intervals in groups):
         return np.empty(0, dtype=np.int64)
     q2r = _build_query_to_ref(read)
     n = len(q2r)
     read_len = int(parsed['read_length'])
     is_rev = bool(read.is_reverse)
+    group_frame = None
+    if is_rev and getattr(read, 'header', None) is not None:
+        from fiberhmm.io.annotation_frame import ma_group_frame_of
+        group_frame = ma_group_frame_of(read.header)
+    nucs = [(s, length, group_frame is None or group_frame.is_molecular('nuc', strand))
+            for strand, intervals in groups for s, length in intervals]
     out: List[int] = []
-    for s, length in nucs:
-        if is_rev:
+    for s, length, molecular in nucs:
+        if is_rev and molecular:
             s, length = flip_interval_frame(int(s), int(length), read_len)
         qc = int(s) + int(length) // 2
         if 0 <= qc < n:

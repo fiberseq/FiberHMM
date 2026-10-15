@@ -183,7 +183,7 @@ def _duplicate_bed_value(read) -> int:
 
 
 def _parse_all_ma_annotations(read, *, annotation_frame='molecular', molecular_layers=frozenset(),
-                              dot_groups_molecular=False):
+                              dot_groups_molecular=False, group_frame=None):
     """Parse MA/AQ/AN once and return annotations grouped by type.
 
     Values retain the exact target-specific ordering and quality orientation
@@ -194,6 +194,8 @@ def _parse_all_ma_annotations(read, *, annotation_frame='molecular', molecular_l
     molecular by their FIBERHMM-CONSENSUS-MA contract) are molecular too, and
     with ``dot_groups_molecular`` (a header without frame evidence) so is
     every '.'-strand group (``annotation_frame.ma_group_is_molecular``).
+    ``group_frame`` (``annotation_frame.MAGroupFrame``) decides each group
+    instead of the three options above.
     """
     if annotation_frame not in ('seq', 'molecular'):
         raise ValueError('Unknown MA annotation frame')
@@ -223,8 +225,12 @@ def _parse_all_ma_annotations(read, *, annotation_frame='molecular', molecular_l
     read_length = int(parsed['read_length'])
     read_reverse = bool(getattr(read, 'is_reverse', False))
     for name, strand, _qspec, intervals in parsed['raw_types']:
-        is_reverse = read_reverse and (annotation_frame == 'molecular' or name in molecular_layers
-                                       or (dot_groups_molecular and strand == '.'))
+        if group_frame is not None and annotation_frame != 'molecular':
+            molecular = group_frame.is_molecular(name, strand)
+        else:
+            molecular = (annotation_frame == 'molecular' or name in molecular_layers
+                         or (dot_groups_molecular and strand == '.'))
+        is_reverse = read_reverse and molecular
         for s, length in intervals:
             quals = per_annotation[ann_idx] if ann_idx < len(per_annotation) else []
             ann_name = an_names[ann_idx] if ann_idx < len(an_names) else ''
@@ -285,9 +291,7 @@ def _ma_parse_options(frames) -> dict:
     (``None``: every MA group molecular, the reading of direct callers)."""
     if frames is None:
         return {}
-    return {'annotation_frame': frames['ma'],
-            'molecular_layers': frames['molecular_layers'],
-            'dot_groups_molecular': frames['ma_dot_molecular']}
+    return {'annotation_frame': frames['ma'], 'group_frame': frames['ma_groups']}
 
 
 def _legacy_tags_to_seq(starts, lengths, read, frames):

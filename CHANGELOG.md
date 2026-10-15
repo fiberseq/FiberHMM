@@ -15,6 +15,16 @@
   rule. On reverse-strand reads of BAMs without `coord=molecular` the
   both-strand region was mirrored; `fiberhmm-pair` output (forward
   consensus reads) is unchanged.
+- The other readers of `MA` groups follow the same per-group frame rule.
+  On reverse-strand reads of BAMs called with FiberHMM 2.12 or earlier (or
+  whose header lost its `@PG` lines): `fiberhmm-tag-m5c`/`-call-m5c` read
+  nucleosome and MSP footprints mirrored; consensus loading placed a `.`
+  group wrongly when the same feature also had a `+`/`-` group; consensus
+  export moved fibertools `Ma` footprints on headers without frame
+  evidence; `fiberhmm-pair` placed nucleosome dyads mirrored; and
+  `fiberhmm-utils transfer --reference-bam` read SEQ-frame `ns`/`nl` as
+  molecular. Re-run those steps on such BAMs; BAMs called with 3.0 are
+  unchanged.
 - The QC that `fiberhmm-call` runs after calling follows `--no-use-m5c` and
   `--cpg-mask-policy` for the sampled reads it calls itself.
 - Writing apply tags without footprints keeps the `hl:i:1` marker on reads

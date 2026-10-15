@@ -279,7 +279,7 @@ class AccessibilityCounter:
         return df
 
 
-def _parse_footprints_from_bam_read(read):
+def _parse_footprints_from_bam_read(read, molecular=True):
     """Parse footprint positions from BAM read tags (ns/nl)."""
     seq_len = len(read.query_sequence) if read.query_sequence else 0
     if seq_len == 0:
@@ -300,7 +300,8 @@ def _parse_footprints_from_bam_read(read):
         starts = list(ns_tag) if hasattr(ns_tag, '__iter__') else [ns_tag]
         lengths = list(nl_tag) if hasattr(nl_tag, '__iter__') else [nl_tag]
         # molecular frame -> SEQ/query coords for the per-base scan below
-        starts, lengths = flip_intervals_to_seq(starts, lengths, read)
+        if molecular:
+            starts, lengths = flip_intervals_to_seq(starts, lengths, read)
 
         for start, length in zip(starts, lengths):
             end = min(start + length, seq_len)
@@ -418,6 +419,15 @@ def _process_reference_bam(bam_path, max_context, args):
     reads_with_footprints = 0
 
     with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
+        # ns/nl frame by the shared provenance rule (annotation_frame).
+        from fiberhmm.io.annotation_frame import LegacyFrame
+        legacy_frame = LegacyFrame(bam.header)
+        if legacy_frame.frame is None and not legacy_frame.assumed:
+            raise ValueError(f"cannot tell the coordinate frame of {bam_path}'s ns/nl "
+                             f"tags: {legacy_frame.reason}; split a merged BAM by input")
+        if legacy_frame.assumed:
+            print(legacy_frame.warning('fiberhmm-utils transfer').replace(
+                ' Pass --input-frame to decide it.', ''), file=sys.stderr)
         pbar = tqdm(bam.fetch(), desc="Processing reference BAM")
 
         for read in pbar:
@@ -430,7 +440,8 @@ def _process_reference_bam(bam_path, max_context, args):
 
             total_reads += 1
 
-            footprint_mask = _parse_footprints_from_bam_read(read)
+            footprint_mask = _parse_footprints_from_bam_read(
+                read, legacy_frame.is_molecular(read))
             if footprint_mask is None:
                 continue
 

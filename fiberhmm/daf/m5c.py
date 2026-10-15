@@ -912,16 +912,23 @@ def ma_strand_intervals(read, feature: str,
                         frame_context=None) -> dict[str, list[tuple[int, int]]]:
     """Parse one MA feature into SEQ-frame intervals grouped by qualifier.
 
-    MA is read as molecular (reverse reads flipped). ``frame_context`` is the
-    run's legacy frame; when it is a per-read resolver for a header without
-    frame evidence (``annotation_frame.LegacyFrame``, ``assumed``), each
-    group's own strand decides instead: '.' groups are molecular, '+'/'-'
-    groups follow the header rule (SEQ, not flipped).
+    Each group's frame comes from the read's header by the shared rule
+    (``annotation_frame.MAGroupFrame``): m5C groups always molecular, other
+    groups by the header (SEQ unless ``coord=molecular``; without frame
+    evidence '.' groups molecular). Molecular groups of a reverse read are
+    flipped. Without a header, MA is read as molecular, except that a
+    ``frame_context`` resolver for a header without evidence
+    (``annotation_frame.LegacyFrame``, ``assumed``) keeps '+'/'-' groups SEQ.
     """
     from fiberhmm.io.ma_tags import flip_interval_frame
 
     if not read.has_tag("MA"):
         return {}
+    header = getattr(read, "header", None)
+    group_frame = None
+    if header is not None:
+        from fiberhmm.io.annotation_frame import ma_group_frame_of
+        group_frame = ma_group_frame_of(header)
     per_group = bool(getattr(frame_context, "assumed", False))
     read_length = read.query_length or len(read.query_sequence or "")
     intervals: dict[str, list[tuple[int, int]]] = {}
@@ -938,7 +945,8 @@ def ma_strand_intervals(read, feature: str,
                 continue
             one_based, size = (int(v) for v in item.split("-", 1))
             interval = (one_based - 1, size)
-            molecular = (strand == "." or not per_group)
+            molecular = (group_frame.is_molecular(feature, strand) if group_frame is not None
+                         else (strand == "." or not per_group))
             if read.is_reverse and molecular:
                 interval = flip_interval_frame(*interval, read_length)
             strand_intervals.append((interval[0], interval[0] + interval[1]))

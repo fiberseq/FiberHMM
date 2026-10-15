@@ -240,11 +240,20 @@ def _fibertools_ma_in_frame(ma, aq, an, read, frame):
     molecular separately by the export contract. For a SEQ-frame file a
     reverse read's intervals are flipped and each group re-sorted, carrying
     its Aq bytes and An names. fibertools groups carry at most one quality
-    byte, so no edge bytes need swapping; anything else is refused."""
+    byte, so no edge bytes need swapping; anything else is refused.
+
+    ``frame`` is ``'molecular'``/``'seq'`` (every group), or an
+    ``annotation_frame.MAGroupFrame`` of the written header, which decides
+    per group: a group it reads as molecular (for example a '.' group under
+    a header without frame evidence) is kept, the others are flipped."""
     if frame=='molecular' or not read.is_reverse:
         return ma,aq,an
+    def kept(name,strand):
+        return frame.is_molecular(name,strand) if hasattr(frame,'is_molecular') else False
     parsed=parse_ma_tag(ma);types=parsed['raw_types'];length=int(parsed['read_length'])
-    if any(len(spec)>1 for _,_,spec,_ in types):
+    if all(kept(name,strand) for name,strand,_,_ in types):
+        return ma,aq,an
+    if any(len(spec)>1 for name,strand,spec,_ in types if not kept(name,strand)):
         raise ValueError('fibertools Ma group with edge-quality bytes; cannot re-express it in SEQ frame')
     count=sum(len(iv) for _,_,_,iv in types)
     quals=parse_aq_array(aq,[t[2] for t in types],[len(t[3]) for t in types])
@@ -252,10 +261,10 @@ def _fibertools_ma_in_frame(ma, aq, an, read, frame):
     if len(names)!=count: raise ValueError('Source Ma/An length mismatch')
     groups=[];new_aq=[];new_names=[];cursor=0
     for name,strand,spec,intervals in types:
-        items=[]
+        items=[];flip=not kept(name,strand)
         for start,size in intervals:
-            items.append((length-start-size,size,quals[cursor],names[cursor]));cursor+=1
-        items.sort(key=lambda item:item[0])
+            items.append((length-start-size if flip else start,size,quals[cursor],names[cursor]));cursor+=1
+        if flip: items.sort(key=lambda item:item[0])
         groups.append(name+strand+spec+':'+','.join(f'{s+1}-{n}' for s,n,_,_ in items))
         for _,_,q,nm in items:
             new_aq.extend(q);new_names.append(nm)
@@ -446,8 +455,10 @@ def _export_source_bams(analyses, output_dir, scope):
                 while source_rg in existing_rg: source_rg+='_'
                 hd['RG']=[*retained_rg,dict(ID=source_rg,DS='Original source BAM: '+str(source))]
                 header=append_pg_record(pysam.AlignmentHeader.from_dict(hd),dict(PN='fiberhmm-consensus',DS=EXPORT_DS))
-                from ...io.annotation_frame import ma_annotation_frame
-                ma_frame=ma_annotation_frame(bam.header)
+                from ...io.annotation_frame import MAGroupFrame
+                # Copied Ma groups are written so the output header's rule
+                # (per group) reads them at their original positions.
+                ma_frame=MAGroupFrame(header)
                 with pysam.AlignmentFile(str(temporary),'wb',header=header) as dest:
                     for read in _export_reads(bam,windows,scope):
                         sha=hashlib.sha256(read.to_string().encode()).hexdigest()

@@ -496,14 +496,14 @@
  "fibertools|legacy_and_ma_dot|rev": {
   "m5c_msps": [
    [
-    500,
-    700
+    300,
+    500
    ]
   ],
   "m5c_nucs": [
    [
-    850,
-    900
+    100,
+    150
    ]
   ],
   "qc_msps": [
@@ -724,14 +724,14 @@
  "fibertools|ma_dot|rev": {
   "m5c_msps": [
    [
-    500,
-    700
+    300,
+    500
    ]
   ],
   "m5c_nucs": [
    [
-    850,
-    900
+    100,
+    150
    ]
   ],
   "qc_msps": [
@@ -800,14 +800,14 @@
  "fibertools|ma_plus_m5c_dot|rev": {
   "m5c_msps": [
    [
-    500,
-    700
+    300,
+    500
    ]
   ],
   "m5c_nucs": [
    [
-    850,
-    900
+    100,
+    150
    ]
   ],
   "qc_msps": [
@@ -876,14 +876,14 @@
  "fibertools|ma_plus|rev": {
   "m5c_msps": [
    [
-    500,
-    700
+    300,
+    500
    ]
   ],
   "m5c_nucs": [
    [
-    850,
-    900
+    100,
+    150
    ]
   ],
   "qc_msps": [
@@ -952,14 +952,14 @@
  "merge_recall_over_212|legacy_and_ma_dot|rev": {
   "m5c_msps": [
    [
-    500,
-    700
+    300,
+    500
    ]
   ],
   "m5c_nucs": [
    [
-    850,
-    900
+    100,
+    150
    ]
   ],
   "qc_msps": [
@@ -1180,14 +1180,14 @@
  "merge_recall_over_212|ma_dot|rev": {
   "m5c_msps": [
    [
-    500,
-    700
+    300,
+    500
    ]
   ],
   "m5c_nucs": [
    [
-    850,
-    900
+    100,
+    150
    ]
   ],
   "qc_msps": [
@@ -1256,14 +1256,14 @@
  "merge_recall_over_212|ma_plus_m5c_dot|rev": {
   "m5c_msps": [
    [
-    500,
-    700
+    300,
+    500
    ]
   ],
   "m5c_nucs": [
    [
-    850,
-    900
+    100,
+    150
    ]
   ],
   "qc_msps": [
@@ -1332,14 +1332,14 @@
  "merge_recall_over_212|ma_plus|rev": {
   "m5c_msps": [
    [
-    500,
-    700
+    300,
+    500
    ]
   ],
   "m5c_nucs": [
    [
-    850,
-    900
+    100,
+    150
    ]
   ],
   "qc_msps": [
@@ -1864,14 +1864,14 @@
  "tag_m5c_over_212|legacy_and_ma_dot|rev": {
   "m5c_msps": [
    [
-    500,
-    700
+    300,
+    500
    ]
   ],
   "m5c_nucs": [
    [
-    850,
-    900
+    100,
+    150
    ]
   ],
   "qc_msps": [
@@ -2092,14 +2092,14 @@
  "tag_m5c_over_212|ma_dot|rev": {
   "m5c_msps": [
    [
-    500,
-    700
+    300,
+    500
    ]
   ],
   "m5c_nucs": [
    [
-    850,
-    900
+    100,
+    150
    ]
   ],
   "qc_msps": [
@@ -2168,14 +2168,14 @@
  "tag_m5c_over_212|ma_plus_m5c_dot|rev": {
   "m5c_msps": [
    [
-    500,
-    700
+    300,
+    500
    ]
   ],
   "m5c_nucs": [
    [
-    850,
-    900
+    100,
+    150
    ]
   ],
   "qc_msps": [
@@ -2244,14 +2244,14 @@
  "tag_m5c_over_212|ma_plus|rev": {
   "m5c_msps": [
    [
-    500,
-    700
+    300,
+    500
    ]
   ],
   "m5c_nucs": [
    [
-    850,
-    900
+    100,
+    150
    ]
   ],
   "qc_msps": [
@@ -2776,14 +2776,14 @@
  "v212_seq_plus|legacy_and_ma_dot|rev": {
   "m5c_msps": [
    [
-    500,
-    700
+    300,
+    500
    ]
   ],
   "m5c_nucs": [
    [
-    850,
-    900
+    100,
+    150
    ]
   ],
   "qc_msps": [
@@ -3004,14 +3004,14 @@
  "v212_seq_plus|ma_dot|rev": {
   "m5c_msps": [
    [
-    500,
-    700
+    300,
+    500
    ]
   ],
   "m5c_nucs": [
    [
-    850,
-    900
+    100,
+    150
    ]
   ],
   "qc_msps": [
@@ -3080,14 +3080,14 @@
  "v212_seq_plus|ma_plus_m5c_dot|rev": {
   "m5c_msps": [
    [
-    500,
-    700
+    300,
+    500
    ]
   ],
   "m5c_nucs": [
    [
-    850,
-    900
+    100,
+    150
    ]
   ],
   "qc_msps": [
@@ -3156,14 +3156,14 @@
  "v212_seq_plus|ma_plus|rev": {
   "m5c_msps": [
    [
-    500,
-    700
+    300,
+    500
    ]
   ],
   "m5c_nucs": [
    [
-    850,
-    900
+    100,
+    150
    ]
   ],
   "qc_msps": [
@@ -3232,14 +3232,14 @@
  "v212_with_chemistry|legacy_and_ma_dot|rev": {
   "m5c_msps": [
    [
-    500,
-    700
+    300,
+    500
    ]
   ],
   "m5c_nucs": [
    [
-    850,
-    900
+    100,
+    150
    ]
   ],
   "qc_msps": [
@@ -3460,14 +3460,14 @@
  "v212_with_chemistry|ma_dot|rev": {
   "m5c_msps": [
    [
-    500,
-    700
+    300,
+    500
    ]
   ],
   "m5c_nucs": [
    [
-    850,
-    900
+    100,
+    150
    ]
   ],
   "qc_msps": [
@@ -3536,14 +3536,14 @@
  "v212_with_chemistry|ma_plus_m5c_dot|rev": {
   "m5c_msps": [
    [
-    500,
-    700
+    300,
+    500
    ]
   ],
   "m5c_nucs": [
    [
-    850,
-    900
+    100,
+    150
    ]
   ],
   "qc_msps": [
@@ -3612,14 +3612,14 @@
  "v212_with_chemistry|ma_plus|rev": {
   "m5c_msps": [
    [
-    500,
-    700
+    300,
+    500
    ]
   ],
   "m5c_nucs": [
    [
-    850,
-    900
+    100,
+    150
    ]
   ],
   "qc_msps": [

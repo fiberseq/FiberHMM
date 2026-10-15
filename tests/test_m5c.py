@@ -1553,7 +1553,15 @@ def test_m5c_footprint_ma_follows_each_group_strand_without_header_evidence(with
     assert m5c._initial_msp_intervals_seq(read, frame) == [(300, 500)]
     # The '.' m5C layer itself is still molecular.
     assert m5c.ma_intervals(read, "ddda_mcg", frame) == [(600, 650)]
-    # With the @PG chain kept, the long-standing reading is unchanged.
+    # With the @PG chain kept, the header's MA frame decides (SEQ: no
+    # coord=molecular on this merge-over-2.12 chain), as in QC and recall.
+    chained_read = pysam.AlignedSegment(pysam.AlignmentHeader.from_dict(merged))
+    for key in ("query_name", "flag", "reference_id", "reference_start",
+                "query_sequence", "cigarstring"):
+        setattr(chained_read, key, getattr(read, key))
+    for tag, value in read.get_tags():
+        chained_read.set_tag(tag, value)
     chained = m5c._default_input_frame(merged)
-    assert m5c._nucleosome_intervals_seq(read, chained) == [(850, 900)]
-    assert m5c._initial_msp_intervals_seq(read, chained) == [(500, 700)]
+    assert m5c._nucleosome_intervals_seq(chained_read, chained) == [(100, 150)]
+    assert m5c._initial_msp_intervals_seq(chained_read, chained) == [(300, 500)]
+    assert m5c.ma_intervals(chained_read, "ddda_mcg", chained) == [(600, 650)]

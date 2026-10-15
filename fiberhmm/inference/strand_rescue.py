@@ -1134,6 +1134,7 @@ def _has_mapped_annotation_overlap(
     end: int,
     annotation_frame: str = 'molecular',
     molecular_layers: frozenset = frozenset(),
+    group_frame=None,
 ) -> bool:
     """Test one MA layer against a reference window without decoding evidence.
 
@@ -1154,18 +1155,21 @@ def _has_mapped_annotation_overlap(
         return False
     query_to_reference = None
     read_length = int(parsed["read_length"])
-    for name, _strand, _quality_spec, intervals in parsed["raw_types"]:
+    for name, strand, _quality_spec, intervals in parsed["raw_types"]:
         if name != target:
             continue
         if query_to_reference is None:
             query_to_reference = cigar_to_query_ref(read)
+        if group_frame is not None and annotation_frame != 'molecular':
+            molecular = group_frame.is_molecular(name, strand)
+        else:
+            molecular = annotation_frame == 'molecular' or name in molecular_layers
         for raw_start, raw_length in intervals:
             query_start, length = (
                 flip_interval_frame(
                     int(raw_start), int(raw_length), read_length
                 )
-                if read.is_reverse and (annotation_frame == 'molecular'
-                                        or name in molecular_layers)
+                if read.is_reverse and molecular
                 else (int(raw_start), int(raw_length))
             )
             query_end = query_start + length
@@ -1315,17 +1319,14 @@ def load_region_evidence(
     annotation_overlap_excluded_count = 0
     read_name_excluded_count = 0
     with pysam.AlignmentFile(bam_path, "rb") as bam:
-        per_group_ma_frame = False
+        group_frame = None
         if ma_annotation_frame == 'auto':
-            from fiberhmm.io.annotation_frame import (
-                header_has_frame_evidence,
-                ma_annotation_frame as resolve_ma_frame,
-            )
-            ma_annotation_frame = resolve_ma_frame(bam.header)
-            # Without header evidence each MA group's strand decides its own
-            # frame ('.' molecular); otherwise the header rule, as before.
-            per_group_ma_frame = (ma_annotation_frame != 'molecular'
-                                  and not header_has_frame_evidence(bam.header))
+            from fiberhmm.io.annotation_frame import MAGroupFrame
+            # Each MA group's frame by the shared rule (MAGroupFrame): the
+            # header rule, '.' groups molecular without header evidence,
+            # m5C groups and consensus layers molecular.
+            group_frame = MAGroupFrame(bam.header)
+            ma_annotation_frame = group_frame.header_frame
         if load_diagnostics is not None:
             load_diagnostics['ma_annotation_frame'] = ma_annotation_frame
         from fiberhmm.io.annotation_frame import consensus_molecular_layers
@@ -1367,13 +1368,6 @@ def load_region_evidence(
                 read_name_excluded_count += 1
                 continue
             read_molecular_layers = molecular_layers
-            if per_group_ma_frame and read.has_tag('MA'):
-                from fiberhmm.io.annotation_frame import ma_group_strands
-                groups = ma_group_strands(read.get_tag('MA'))
-                dotted = {name for name, strand in groups if strand == '.'}
-                dotted -= {name for name, strand in groups if strand != '.'}
-                if dotted:
-                    read_molecular_layers = frozenset(molecular_layers | dotted)
             if required_annotation_overlap is not None and not (
                 _has_mapped_annotation_overlap(
                     read,
@@ -1382,6 +1376,7 @@ def load_region_evidence(
                     int(required_annotation_overlap[2]),
                     annotation_frame=ma_annotation_frame,
                     molecular_layers=read_molecular_layers,
+                    group_frame=group_frame,
                 )
             ):
                 annotation_overlap_excluded_count += 1
@@ -1464,7 +1459,8 @@ def load_region_evidence(
             try:
                 parsed_annotations = _parse_all_ma_annotations(
                     read, annotation_frame=ma_annotation_frame,
-                    molecular_layers=read_molecular_layers) or {}
+                    molecular_layers=read_molecular_layers,
+                    group_frame=group_frame) or {}
             except (KeyError, TypeError, ValueError):
                 parsed_annotations = {}
             if legacy_annotation_frame is not None and not has_annotation_tag(read):
