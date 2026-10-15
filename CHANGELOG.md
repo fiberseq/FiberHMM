@@ -285,7 +285,17 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   command failed on BAMs listing `chrEBV` (absent from UCSC `hg38.fa`) even
   when no read mapped there. Islands are now inferred only for contigs that
   have reads (faster too); a read contig missing from the FASTA is skipped with
-  a note.
+  a note. Its BAM, `--calls-tsv` and `--write-cpg-islands` are published only
+  when the run succeeds (a failed rerun leaves the earlier outputs, and a stale
+  BAM index is removed), and no output may name the reference, the island
+  catalog, an input index or another output (also `fiberhmm-call-m5c`).
+- **`fiberhmm-apply` keeps `ddda_ucg`/`ddda_mcg`.** Apply dropped every `MA`
+  group, so recalling an applied tag-m5c BAM lost the island calls the CpG
+  mask depends on; region-parallel apply also read them only after stripping.
+  The island groups are kept (with this run's nucleosomes and MSPs in `MA`).
+  `fiberhmm.cli.export_posteriors.export_posteriors_from_bam` resolves the
+  DddA run thinning and CpG mask like the command line and now applies
+  `min_mapq` (default 0).
 - `--cpg-mask-policy` given for a non-DddA run, or with `--no-use-m5c`, now
   warns instead of being ignored silently. Worker processes no longer reset
   `NUMBA_CACHE_DIR`, which made numba write its cache next to the installed
