@@ -126,10 +126,16 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
     # read-intrinsic and kept, so a later recall applies the same CpG policy.
     from fiberhmm.inference.read_filters import strip_stale_call_tags
 
+    from fiberhmm.inference.read_filters import HARMONIZED_LEGACY_TAG
+
     strip_stale_call_tags(read, legacy_tags=(), keep_m5c_groups=True)
     keeps_m5c = read.has_tag("MA")
+    if read.has_tag(HARMONIZED_LEGACY_TAG):
+        read.set_tag(HARMONIZED_LEGACY_TAG, None)
     if harmonize:
         result = _harmonized_result(result, write_msps)
+        # Marks the read so recall refuses it whatever happens to the header.
+        read.set_tag(HARMONIZED_LEGACY_TAG, 1, value_type="i")
 
     # FiberHMM works in SEQ (query_sequence) coordinates; ns/nl/as/al must be
     # written in molecular (original-fiber) frame for fibertools. Flip + re-sort

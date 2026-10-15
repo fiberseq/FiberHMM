@@ -34,6 +34,10 @@ SKIP_REASONS = (
 
 # Legacy footprint tags written by FiberHMM (and fibertools) call passes.
 LEGACY_CALL_TAGS = ("ns", "nl", "as", "al", "nq", "aq")
+# Per-read marker of fiberhmm-apply --harmonize-legacy-tags: this read's ns/nl
+# hold only the MA-view nucleosomes, not every HMM footprint recall needs.
+# Every writer that rewrites ns/nl removes it.
+HARMONIZED_LEGACY_TAG = "hl"
 
 # Above this fraction of records skipped as unmapped, a call run produced
 # essentially nothing and is treated as a configuration error.
@@ -227,6 +231,8 @@ def strip_stale_call_tags(read, *, legacy_tags=LEGACY_CALL_TAGS,
         return
     for tag in legacy_tags or ():
         _strip_tag(read, tag)
+    if "ns" in (legacy_tags or ()):
+        _strip_tag(read, HARMONIZED_LEGACY_TAG)
     if not read.has_tag("MA"):
         for tag in ("AQ", "AN"):
             _strip_tag(read, tag)

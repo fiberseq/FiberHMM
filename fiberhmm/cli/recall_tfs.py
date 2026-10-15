@@ -715,6 +715,7 @@ def _single_thread_loop(bam_in, bam_out, _header_text,
     for read in bam_in:
         if max_reads and n_reads >= max_reads:
             break
+        _refuse_harmonized_read(read)
         try:
             result, stats = _process_payload_record(_make_payload(read, mode, input_molecular_frame))
         except Exception:
@@ -798,6 +799,7 @@ def _parallel_loop(bam_in, bam_out, _header_text,
         for read in bam_in:
             if max_reads and n >= max_reads:
                 break
+            _refuse_harmonized_read(read)
             buf_reads.append(read)
             buf_payloads.append(_make_payload(read, mode, input_molecular_frame))
             n += 1
@@ -1210,7 +1212,7 @@ def main(default_recall_nucs: bool = False):
     args = parse_args(default_recall_nucs=default_recall_nucs)
     try:
         _main(args)
-    except ChemistryConflictError as exc:
+    except (ChemistryConflictError, HarmonizedInputError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(2)
     except WorkerFailureError as exc:
@@ -1302,10 +1304,7 @@ def _main(args):
                                  threads=args.io_threads)
     try:
         if _harmonized_apply_input(bam_in.header):
-            print("error: the input is fiberhmm-apply --harmonize-legacy-tags "
-                  "output, whose ns/nl no longer list every HMM footprint that "
-                  "recall needs; re-run fiberhmm-apply without "
-                  "--harmonize-legacy-tags (or use fiberhmm-call)", file=sys.stderr)
+            print(f"error: {_HARMONIZED_MESSAGE}", file=sys.stderr)
             sys.exit(2)
         _recall(args, bam_in, model_path, using_bundled_model, n_cores)
     finally:
@@ -1313,19 +1312,56 @@ def _main(args):
 
 
 def _harmonized_apply_input(header) -> bool:
-    """Whether the footprints this BAM carries come from a harmonized apply:
-    the newest fiberhmm-apply/-call @PG is an apply with legacy_tags=harmonized."""
+    """Whether the header records a fiberhmm-apply --harmonize-legacy-tags run
+    that no later full ``fiberhmm-call`` (exact program name) re-called: a
+    call supersedes a harmonized apply only when the apply is in its @PG
+    ancestry, so another merged branch's harmonized reads still count."""
     try:
         records = header.to_dict().get('PG', [])
     except AttributeError:
         records = (header or {}).get('PG', [])
-    for record in reversed(records):
-        program = str(record.get('PN') or record.get('ID') or '')
-        if program.startswith('fiberhmm-call'):
-            return False
-        if program.startswith('fiberhmm-apply'):
-            return 'legacy_tags=harmonized' in str(record.get('DS', ''))
-    return False
+
+    def program(record):
+        return str(record.get('PN') or record.get('ID') or '').strip().lower()
+
+    by_id = {}
+    for index, record in enumerate(records):
+        by_id.setdefault(str(record.get('ID', '')), []).append(index)
+
+    def ancestors(index):
+        seen, stack = set(), [index]
+        while stack:
+            item = stack.pop()
+            for parent in by_id.get(str(records[item].get('PP', '')), ()):
+                if parent < item and parent not in seen:
+                    seen.add(parent)
+                    stack.append(parent)
+        return seen
+
+    harmonized = [i for i, record in enumerate(records)
+                  if program(record) == 'fiberhmm-apply'
+                  and 'legacy_tags=harmonized' in str(record.get('DS', ''))]
+    calls = [i for i, record in enumerate(records) if program(record) == 'fiberhmm-call']
+    return any(not any(apply < call and apply in ancestors(call) for call in calls)
+               for apply in harmonized)
+
+
+class HarmonizedInputError(ValueError):
+    """A read carries the fiberhmm-apply --harmonize-legacy-tags marker."""
+
+
+_HARMONIZED_MESSAGE = (
+    "the input is fiberhmm-apply --harmonize-legacy-tags output, whose ns/nl "
+    "no longer list every HMM footprint that recall needs; re-run "
+    "fiberhmm-apply without --harmonize-legacy-tags (or use fiberhmm-call)")
+
+
+def _refuse_harmonized_read(read) -> None:
+    from fiberhmm.inference.read_filters import HARMONIZED_LEGACY_TAG
+
+    if read.has_tag(HARMONIZED_LEGACY_TAG):
+        raise HarmonizedInputError(
+            f"read {read.query_name!r} carries {HARMONIZED_LEGACY_TAG}: {_HARMONIZED_MESSAGE}")
 
 
 def _recall(args, bam_in, model_path, using_bundled_model, n_cores):

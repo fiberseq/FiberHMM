@@ -302,7 +302,10 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   because recall reads the raw footprints from `ns/nl`: recalling harmonized
   arrays changed recall output on 147 of 3,202 NAPA DddA reads, 42 of 169 Hia5
   PacBio and 358 of 400 Hia5 Nanopore reads. `fiberhmm-recall-tfs`/`-nucs`
-  therefore refuse harmonized input; the default apply output is unchanged.
+  therefore refuse harmonized input: each harmonized read carries `hl:i:1`
+  (removed by any later writer of `ns/nl`), and a header whose harmonized
+  apply no exact `fiberhmm-call` on its `@PG` branch replaced is refused too.
+  The default apply output is unchanged.
   `fiberhmm.cli.export_posteriors.export_posteriors_from_bam` resolves the
   DddA run thinning and CpG mask like the command line and now applies
   `min_mapq` (default 0).

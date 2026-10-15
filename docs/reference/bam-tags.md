@@ -20,6 +20,7 @@ Written by `fiberhmm-call`, `fiberhmm-apply` (legacy tags only),
 | `MA` | `Z` | molecular annotations (groups below) |
 | `AQ` | `B:C` | quality bytes of every `MA` annotation, in `MA` order |
 | `AN` | `Z` | one name per `MA` annotation (`.` for unnamed); written when a call wraps a circular origin (`fhw_*`), for strand-rescue roles, consensus class tokens, or when preserved groups carry names |
+| `hl` | `i` | `1` on reads written by `fiberhmm-apply --harmonize-legacy-tags`: `ns`/`nl` hold only the nucleosomes of the `MA` view, not every HMM footprint, so `fiberhmm-recall-tfs`/`-nucs` refuse the read. Any writer that rewrites `ns`/`nl` (call, apply, recall) removes it |
 
 FiberHMM also reads fibertools-rs 0.13+ `Ma`/`Aq`/`An` tags (same spec,
 always molecular frame) as input; it never writes them. See
