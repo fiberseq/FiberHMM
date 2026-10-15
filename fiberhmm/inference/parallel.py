@@ -142,6 +142,7 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                 io_threads=io_threads,
                 cpg_mask_policy=cpg_mask_policy,
                 harmonize_legacy_tags=harmonize_legacy_tags,
+                pg_record=pg_record,
             )
 
     # Dispatch to streaming pipeline if requested (requires model_path for workers)

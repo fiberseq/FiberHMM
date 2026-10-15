@@ -170,3 +170,54 @@ def test_recall_refuses_a_marked_read_whatever_the_header(tmp_path, capsys):
     assert 'carries hl' in capsys.readouterr().err
     assert not (tmp_path / 'o.bam').exists()
 
+
+def test_region_api_output_carries_the_harmonization_provenance(tmp_path):
+    """process_bam_for_footprints(region_parallel=True) writes the run's @PG
+    (legacy_tags=harmonized), and every harmonized read is marked."""
+    from fiberhmm.cli.recall_tfs import _harmonized_apply_input
+    from fiberhmm.inference.parallel import process_bam_for_footprints
+    from fiberhmm.inference.read_filters import HARMONIZED_LEGACY_TAG
+    from fiberhmm.models import get_model_path
+    from conftest import make_synthetic_bam
+
+    bam = str(tmp_path / 'in.bam')
+    make_synthetic_bam(bam, n_reads=6, read_length=1500, n_chroms=1,
+                       chrom_length=20_000, seed=3)
+    pysam.index(bam)
+    out = str(tmp_path / 'out.bam')
+    pg = {'PN': 'fiberhmm-apply', 'VN': '3.0.0', 'CL': 'fiberhmm-apply',
+          'DS': 'FiberHMM apply; coord=molecular legacy_tags=harmonized'}
+    process_bam_for_footprints(
+        bam, out, get_model_path('hia5', tool='apply', seq='pacbio'), set(), 10, False,
+        'pacbio-fiber', 3, 0, n_cores=1, region_parallel=True, pg_record=pg,
+        harmonize_legacy_tags=True)
+    with pysam.AlignmentFile(out, check_sq=False) as result:
+        assert _harmonized_apply_input(result.header)
+        reads = list(result)
+    called = [r for r in reads if r.has_tag('ns')]
+    assert called and all(r.has_tag(HARMONIZED_LEGACY_TAG) for r in called)
+
+
+def test_recall_tfs_cli_exits_2_on_harmonized_input(tmp_path, capsys):
+    import sys
+
+    import pytest
+
+    from fiberhmm.cli import recall_tfs
+
+    bam = tmp_path / 'h.bam'
+    header = {'HD': {'VN': '1.6'}, 'SQ': [{'SN': 'chr1', 'LN': 1000}],
+              'PG': [{'ID': 'fiberhmm-apply', 'PN': 'fiberhmm-apply',
+                      'DS': 'FiberHMM apply; mode=pacbio-fiber legacy_tags=harmonized'}]}
+    with pysam.AlignmentFile(str(bam), 'wb', header=header):
+        pass
+    argv = sys.argv
+    sys.argv = ['fiberhmm-recall-tfs', '-i', str(bam), '-o', str(tmp_path / 'o.bam'),
+                '--enzyme', 'hia5']
+    try:
+        with pytest.raises(SystemExit) as exc:
+            recall_tfs.main()
+    finally:
+        sys.argv = argv
+    assert exc.value.code == 2
+    assert '--harmonize-legacy-tags' in capsys.readouterr().err

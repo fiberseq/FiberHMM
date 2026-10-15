@@ -212,8 +212,15 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
 
         try:
             with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
+                region_header = append_coord_marker(inbam.header)
+                if params.get('pg_record'):
+                    # The run's @PG and chemistry declaration (the region BAMs'
+                    # header becomes the output's).
+                    from fiberhmm.cli.provenance import output_header_with_provenance
+                    region_header = output_header_with_provenance(
+                        region_header, params['pg_record'])
                 with pysam.AlignmentFile(temp_bam_path, "wb",
-                                         header=append_coord_marker(inbam.header),
+                                         header=region_header,
                                          threads=io_threads) as outbam:
 
                     if work_item.passthrough:
