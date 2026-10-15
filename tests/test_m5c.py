@@ -1420,3 +1420,51 @@ def test_output_group_without_previous_outputs_leaves_nothing(tmp_path, monkeypa
                 with open(staged[str(path)], "w") as handle:
                     handle.write("new\n")
     assert list(tmp_path.iterdir()) == []
+
+
+def test_failed_rollback_keeps_backups_and_never_pairs_an_old_index(tmp_path, monkeypatch, capsys):
+    """If the BAM cannot be put back during a group rollback, its old index is
+    not restored next to the new data, and the backup is kept and named."""
+    import re
+
+    import pysam
+
+    from fiberhmm.inference import bam_output
+
+    reference, reference_sequence, sequence = _methylated_island_reference(tmp_path)
+    input_bam = _island_bam(tmp_path, [("chr1", len(reference_sequence))],
+                            [("chr1", sequence)])
+    output, tsv = tmp_path / "out.bam", tmp_path / "calls.tsv"
+
+    def run():
+        return annotate_bam_per_read_islands(
+            str(input_bam), str(output), str(reference), None,
+            DDDA_FIVE_PRIME_FACTORS, threads=1, calls_tsv=str(tsv))
+
+    run()
+    pysam.index(str(output))
+    old_bam, old_tsv = output.read_bytes(), tsv.read_bytes()
+
+    real_commit, real_restore = bam_output.commit_output, bam_output._restore
+
+    def failing_commit(temporary, final):
+        if final.endswith(".tsv"):
+            raise OSError("injected publication failure")
+        return real_commit(temporary, final)
+
+    def failing_restore(backup, path):
+        if path.endswith(".bam"):
+            raise OSError("injected restore failure")
+        return real_restore(backup, path)
+
+    monkeypatch.setattr(bam_output, "commit_output", failing_commit)
+    monkeypatch.setattr(bam_output, "_restore", failing_restore)
+    with pytest.raises(OSError, match="injected publication"):
+        run()
+    err = capsys.readouterr().err
+    assert tsv.read_bytes() == old_tsv
+    assert not (tmp_path / "out.bam.bai").exists()       # no old index on new data
+    kept = re.findall(r"kept as (\S+)", err)
+    assert kept, err
+    backups = [p.rstrip(",") for p in " ".join(kept).split()]
+    assert any(open(p, "rb").read() == old_bam for p in backups)

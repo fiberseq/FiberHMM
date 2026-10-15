@@ -266,6 +266,7 @@ def atomic_output_group(paths):
     backups = {}      # final path (data or index) -> backup
     previous = {}     # final data path -> its previous files
     published = []
+    kept = set()      # backups kept because their rollback failed
     try:
         for path in targets:
             final = os.path.abspath(path)
@@ -284,19 +285,59 @@ def atomic_output_group(paths):
         for path in targets:
             _remove_temporaries(temporaries[path])
         for final in published:
-            for item in [final, *index_paths_for(final)]:
-                _remove_quietly(item)
-            for item in previous.get(final, ()):
-                if item in backups:
-                    try:
-                        _restore(backups.pop(item), item)
-                    except OSError:
-                        print(f"WARNING: could not restore the previous {item}; it is "
-                              f"kept as {backups.get(item)}", file=sys.stderr)
+            _rollback_published(final, previous.get(final, ()), backups, kept)
         raise
     finally:
-        for backup in backups.values():
-            _remove_quietly(backup)
+        for item, backup in backups.items():
+            if item not in kept:
+                _remove_quietly(backup)
+
+
+def _rollback_published(final, previous_files, backups, kept) -> None:
+    """Put ``final`` back to its previous generation (group rollback).
+
+    Order matters so no index ever describes other data: the new indexes go
+    first, then the data is restored (or removed when there was none), and
+    only after the data is back are its old indexes restored. If a step
+    fails, every backup of this output is kept (``kept``) and its real path
+    reported.
+    """
+    def keep_all(reason):
+        for item in previous_files:
+            if item in backups:
+                kept.add(item)
+        paths = ", ".join(backups[item] for item in previous_files if item in backups)
+        print(f"WARNING: could not restore the previous {final} ({reason}); "
+              + (f"its previous generation is kept as {paths}" if paths
+                 else "there was no previous generation"), file=sys.stderr)
+
+    try:
+        for index in index_paths_for(final):
+            _remove_obsolete(index)
+    except OSError as exc:
+        keep_all(f"could not remove the new index: {exc}")
+        return
+    try:
+        if final in backups:
+            _restore(backups[final], final)
+        else:
+            os.remove(final)
+    except OSError as exc:
+        keep_all(f"could not restore the data: {exc}")
+        return
+    backups_done = {final}
+    for item in previous_files:
+        if item == final or item not in backups:
+            continue
+        try:
+            _restore(backups[item], item)
+            backups_done.add(item)
+        except OSError as exc:
+            kept.add(item)
+            print(f"WARNING: could not restore the index {item} of {final} ({exc}); "
+                  f"it is kept as {backups[item]}", file=sys.stderr)
+    for item in backups_done:
+        backups.pop(item, None)
 
 
 def _note(*args, **kwargs) -> None:
