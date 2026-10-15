@@ -60,8 +60,6 @@ from fiberhmm.inference.parallel import _get_genome_regions
 from fiberhmm.inference.region_planning import RegionPlanError
 from fiberhmm.io.ma_tags import (
     DDDA_MCG_FEATURE,
-    DDDA_MCG_HEMI_FEATURE,
-    DDDA_UCG_FEATURE,
     annotation_tags,
     flip_interval_frame,
     flip_intervals_to_seq,
@@ -261,26 +259,17 @@ def resolve_extract_frames(header, input_frame: str = 'auto') -> dict:
     ``input_frame`` (``molecular``/``query``) when given; ``legacy`` is
     ``None`` when merged histories disagree. Picklable, for the workers.
     """
-    from fiberhmm.io.annotation_frame import (
-        LegacyFrame,
-        consensus_molecular_layers,
-        header_has_frame_evidence,
-        ma_annotation_frame,
-    )
+    from fiberhmm.io.annotation_frame import LegacyFrame, MAGroupFrame
     if input_frame not in _INPUT_FRAMES:
         raise ValueError(f'input_frame must be one of {", ".join(_INPUT_FRAMES)}')
     legacy = LegacyFrame(header, _INPUT_FRAMES[input_frame])
-    evidence = header_has_frame_evidence(header)
-    layers = consensus_molecular_layers(header)
-    if evidence:
-        # m5C groups (tag-m5c/call-m5c/pair: ddda_mcg_frame=molecular) are
-        # molecular, as fiberhmm.daf.m5c.ma_strand_intervals reads them;
-        # without evidence their own strand decides, like any group.
-        layers = layers | M5C_MA_FEATURES
+    groups = MAGroupFrame(header)   # shared with the duplex recall mask
     return {
-        'ma': ma_annotation_frame(header),
-        'ma_dot_molecular': not evidence,
-        'molecular_layers': frozenset(layers),
+        'ma_groups': groups,
+        'ma': groups.header_frame,
+        'ma_dot_molecular': not groups.evidence,
+        # Consensus family layers and m5C groups (always molecular).
+        'molecular_layers': groups.molecular_layers,
         'legacy': legacy.frame,
         'legacy_reason': legacy.reason,
         'legacy_dot_molecular': legacy.assumed,
@@ -289,7 +278,6 @@ def resolve_extract_frames(header, input_frame: str = 'auto') -> dict:
 
 
 _INPUT_FRAMES = {'auto': None, 'molecular': True, 'query': False}
-M5C_MA_FEATURES = frozenset({DDDA_MCG_FEATURE, DDDA_UCG_FEATURE, DDDA_MCG_HEMI_FEATURE})
 
 
 def _ma_parse_options(frames) -> dict:
@@ -1379,9 +1367,7 @@ def _extract_both_strand(read, bed_out, query_to_ref=None,
     for name, strand, _qspec, intervals in parsed['raw_types']:
         if name != 'deam':
             continue
-        molecular = frames is None or (
-            frames['ma'] == 'molecular' or name in frames['molecular_layers']
-            or (frames['ma_dot_molecular'] and strand == '.'))
+        molecular = frames is None or frames['ma_groups'].is_molecular(name, strand)
         for start, length in intervals:
             if is_reverse and molecular:
                 start, length = flip_interval_frame(

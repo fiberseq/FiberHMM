@@ -214,3 +214,92 @@ def test_both_strand_of_a_pair_consensus_read(tmp_path, pg):
         out.write(_make_consensus_segment(cons, out.header, 0))
     pysam.index(path)
     assert _span(path, tmp_path, 'bothstrand') == ['1120', '1160']
+
+
+# --- m5C groups x header state x orientation, against the CpG-mask reader ---
+
+M5C_HEADERS = {
+    'stripped': [],
+    'unmarked_writer': [OLD_APPLY],
+    'declared': [NEW_APPLY],
+    'tag_m5c_only': [dict(TAG_M5C, PP=None)],
+}
+
+
+def _m5c_writers():
+    from fiberhmm.daf import m5c
+    spans = [(10, 110)]
+    other = [(150, 170)]
+    return {
+        'mcg.': lambda r: m5c.add_m5c_ma_tag(r, spans),
+        'island.': lambda r: m5c.add_island_m5c_ma_tags(r, spans, other),
+        'paired+-': lambda r: m5c.add_paired_m5c_ma_tags(r, spans, other, [(200, 220)], [(300, 330)]),
+        'paired+': lambda r: m5c.add_paired_m5c_ma_tags(r, spans, [], [], []),
+        'ucg+-': lambda r: m5c._replace_m5c_ma_groups(
+            r, [('ddda_ucg', '+', spans), ('ddda_ucg', '-', other)]),
+    }
+
+
+@pytest.mark.parametrize('state', sorted(M5C_HEADERS))
+@pytest.mark.parametrize('writer', sorted(_m5c_writers()))
+@pytest.mark.parametrize('reverse', [False, True])
+def test_m5c_groups_read_exactly_as_the_cpg_mask_reads_them(state, writer, reverse):
+    from fiberhmm.cli.extract_tags import _parse_ma_annotations, resolve_extract_frames
+    from fiberhmm.daf.m5c import ma_strand_intervals
+
+    pg = [{k: v for k, v in p.items() if v is not None} for p in M5C_HEADERS[state]]
+    header = pysam.AlignmentHeader.from_dict(
+        {'HD': {'VN': '1.6'}, 'SQ': [{'SN': 'chr1', 'LN': 10_000}], **({'PG': pg} if pg else {})})
+    read = pysam.AlignedSegment(header)
+    read.query_name, read.flag, read.reference_id = 'r', 16 if reverse else 0, 0
+    read.reference_start, read.query_sequence, read.cigarstring = 1000, 'A' * 400, '400M'
+    _m5c_writers()[writer](read)
+    frames = resolve_extract_frames(header)
+    for feature in ('ddda_mcg', 'ddda_ucg', 'ddda_mcg_hemi'):
+        expected = sorted(iv for values in ma_strand_intervals(read, feature).values()
+                          for iv in values)
+        got = sorted((a['start'], a['start'] + a['length'])
+                     for a in (_parse_ma_annotations(read, feature, frames) or []))
+        assert got == expected, (feature, read.get_tag('MA'))
+    # The writers take SEQ-frame spans: the first one reads back unchanged.
+    assert (10, 110) in sorted((a['start'], a['start'] + a['length'])
+                               for f in ('ddda_mcg', 'ddda_ucg')
+                               for a in (_parse_ma_annotations(read, f, frames) or []))
+
+
+def test_signed_m5c_span_on_a_stripped_header_end_to_end(tmp_path):
+    from fiberhmm.daf.m5c import add_paired_m5c_ma_tags
+
+    def tags(read):
+        add_paired_m5c_ma_tags(read, [(10, 110)], [], [], [])
+        assert read.get_tag('MA') == '400;ddda_mcg+:291-100'
+
+    path = _reverse_read_bam(tmp_path / 'signed.bam', [], tags)
+    assert _span(path, tmp_path, 'm5c') == SEQ_SPAN
+    assert _span(path, tmp_path, 'm5c', input_frame='query') == SEQ_SPAN
+
+
+@pytest.mark.parametrize('header_extra, expected', [
+    ({'CO': ['fiberhmm:coord=molecular']}, (1290, 1350)),   # molecular groups
+    ({}, (1050, 1110)),                                      # no evidence: SEQ
+    ({'PG': [OLD_APPLY]}, (1050, 1110)),                     # unmarked writer: SEQ
+])
+def test_duplex_mask_and_both_strand_extract_agree(tmp_path, header_extra, expected):
+    from fiberhmm.crossstrand.recall import deam_regime_masks
+
+    path = str(tmp_path / 'deam.bam')
+    header = {'HD': {'VN': '1.6', 'SO': 'coordinate'},
+              'SQ': [{'SN': 'chr1', 'LN': 10_000}], **header_extra}
+    with pysam.AlignmentFile(path, 'wb', header=header) as out:
+        read = pysam.AlignedSegment(out.header)
+        read.query_name, read.flag, read.reference_id = 'rev', 16, 0
+        read.reference_start, read.mapping_quality = 1000, 60
+        read.query_sequence, read.cigarstring = 'A' * 400, '400M'
+        read.set_tag('MA', '400;deam+:11-100;deam-:51-100')
+        out.write(read)
+    pysam.index(path)
+    with pysam.AlignmentFile(path) as bam:
+        plus, minus = deam_regime_masks(next(iter(bam)))
+    both = [i for i in range(400) if plus[i] and minus[i]]
+    assert (1000 + both[0], 1000 + both[-1] + 1) == expected
+    assert _span(path, tmp_path, 'bothstrand') == [str(v) for v in expected]

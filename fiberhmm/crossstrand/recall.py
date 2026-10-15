@@ -28,7 +28,7 @@ from fiberhmm.core.bam_reader import (
     ContextEncoder, _encode_daf_observations, _mod_positions_mask,
     _sequence_base_int_array, daf_cpg_target_mask,
 )
-from fiberhmm.io.ma_tags import parse_ma_tag
+from fiberhmm.io.ma_tags import flip_interval_frame, parse_ma_tag
 
 _BASE_C = 1   # _BASE_TO_INT: A=0, C=1, T=2, G=3
 _BASE_G = 3
@@ -48,17 +48,30 @@ def decode_ry_consensus(seq: str) -> Tuple[str, Set[int], Set[int]]:
     return conv, ct, ga
 
 
-def deam_regime_masks(read) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+def deam_regime_masks(read, group_frame=None) -> Optional[Tuple[np.ndarray, np.ndarray]]:
     """Boolean (plus_mask, minus_mask) over query positions from the MA ``deam``
-    track (deam+ = CT coverage, deam- = GA coverage), or None if absent."""
+    track (deam+ = CT coverage, deam- = GA coverage), or None if absent.
+
+    The groups' frame follows the MA rule of the read's header
+    (``annotation_frame.MAGroupFrame``, as ``fiberhmm-extract --both-strand``
+    reads them; ``group_frame`` overrides it): molecular groups of a reverse
+    read are flipped to SEQ frame. Duplex consensus reads are forward, so
+    their masks do not depend on it.
+    """
     try:
-        raw = parse_ma_tag(read.get_tag('MA'))['raw_types']
+        ma = parse_ma_tag(read.get_tag('MA'))
     except (KeyError, ValueError):
         return None
+    raw = ma['raw_types']
     n = read.query_length
     plus = np.zeros(n, dtype=bool)
     minus = np.zeros(n, dtype=bool)
     found = False
+    reverse = bool(getattr(read, 'is_reverse', False))
+    if reverse and group_frame is None:
+        from fiberhmm.io.annotation_frame import ma_group_frame_of
+        header = getattr(read, 'header', None)
+        group_frame = ma_group_frame_of(header) if header is not None else None
     for name, strand, _qspec, intervals in raw:
         if name != 'deam':
             continue
@@ -66,7 +79,10 @@ def deam_regime_masks(read) -> Optional[Tuple[np.ndarray, np.ndarray]]:
         target = plus if strand == '+' else minus if strand == '-' else None
         if target is None:
             continue
+        flip = reverse and group_frame is not None and group_frame.is_molecular(name, strand)
         for s, length in intervals:              # 0-based start, length
+            if flip:
+                s, length = flip_interval_frame(int(s), int(length), int(ma['read_length']))
             lo = max(0, int(s)); hi = min(n, int(s) + int(length))
             if hi > lo:
                 target[lo:hi] = True

@@ -421,6 +421,45 @@ def ma_group_is_molecular(strand: str, header_ma_frame: str, header_evidence: bo
     return (not header_evidence) and strand == '.'
 
 
+# DddA m5C groups. Their producers (tag-m5c, call-m5c, pair; @PG DS
+# ddda_mcg_frame=molecular) write every qualifier ('.', '+', '-') molecular,
+# whatever frame the footprint tags use, and fiberhmm.daf.m5c reads them so
+# (the recall CpG mask); readers follow that in every header state.
+M5C_GROUPS = frozenset({'ddda_mcg', 'ddda_ucg', 'ddda_mcg_hemi'})
+
+
+class MAGroupFrame:
+    """Frame of each MA group of a BAM, by the rules above: m5C groups and
+    consensus family layers molecular; otherwise the header rule, except that
+    without header evidence a '.' group is molecular. Picklable."""
+
+    def __init__(self, header):
+        self.header_frame = ma_annotation_frame(header)
+        self.evidence = header_has_frame_evidence(header)
+        self.molecular_layers = frozenset(consensus_molecular_layers(header) | M5C_GROUPS)
+
+    def is_molecular(self, name: str, strand: str) -> bool:
+        return (name in self.molecular_layers
+                or ma_group_is_molecular(strand, self.header_frame, self.evidence))
+
+
+_GROUP_FRAMES: Dict[int, tuple] = {}
+
+
+def ma_group_frame_of(header) -> MAGroupFrame:
+    """:class:`MAGroupFrame` of ``header``, cached per header object (pysam
+    hands every record of one file the same header)."""
+    key = id(header)
+    cached = _GROUP_FRAMES.get(key)
+    if cached is not None and cached[0] is header:
+        return cached[1]
+    resolver = MAGroupFrame(header)
+    if len(_GROUP_FRAMES) > 16:
+        _GROUP_FRAMES.clear()
+    _GROUP_FRAMES[key] = (header, resolver)
+    return resolver
+
+
 class LegacyFrame:
     """Frame of legacy ns/nl/as/al, per read.
 

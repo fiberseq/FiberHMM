@@ -24,6 +24,13 @@ implementations must follow it; the same page is in both repositories.
 | `MA`/`AQ`/`AN` | Molecular when `coord=molecular` appears anywhere in `@PG` or `@CO`, otherwise SEQ. This is FiberHMM's `ma_annotation_frame`, and this rule does not change it. Only for headers without evidence (below) does each group's own strand decide that group's frame. |
 | Legacy `ns/nl`, `as/al` and the parallel `nq`, `aq`, `lq`, `rq` | Decided by the rule below. The quality arrays follow their intervals' order. |
 
+**DddA m5C groups** in `MA` (`ddda_mcg`, `ddda_ucg`, `ddda_mcg_hemi`, with
+any qualifier `.`, `+` or `-`) are always molecular: `fiberhmm-tag-m5c`,
+`-call-m5c` and `-pair` write them so (`ddda_mcg_frame=molecular` in their
+`@PG DS`) whatever frame the footprint tags use, and FiberHMM's CpG mask and
+`fiberhmm-extract` read them so in every header state
+(`annotation_frame.MAGroupFrame`).
+
 **Consensus family layers** in `MA` carry their own frame. The
 `@CO FIBERHMM-CONSENSUS-MA:v1:` contract lists them with
 `"coordinates": "original_source_call_in_molecular_frame"`, and both readers

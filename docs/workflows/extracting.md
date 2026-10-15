@@ -95,10 +95,10 @@ records, by the [shared rule](../reference/footprint-tag-frame.md) that
 recall, QC and consensus use: `MA` is SEQ frame unless the header declares
 `coord=molecular`, and legacy `ns`/`nl`/`as`/`al` follow the `@PG` history
 (SEQ for FiberHMM 2.12 and earlier, molecular for fibertools and 3.0).
-DddA m5C groups (`ddda_mcg`, `ddda_ucg`) are molecular, as `fiberhmm-tag-m5c`
-writes them. The `deam+`/`deam-` groups of `--both-strand` follow the `MA`
-rule; `fiberhmm-pair` consensus reads are forward, so either frame reads them
-the same.
+DddA m5C groups (`ddda_mcg`, `ddda_ucg`, any qualifier) are always molecular,
+as `fiberhmm-tag-m5c` writes them. The `deam+`/`deam-` groups of `--both-strand` follow the `MA`
+rule, as the duplex recall mask reads them; `fiberhmm-pair` consensus reads
+are forward, so either frame reads them the same.
 `--input-frame query|molecular` sets the legacy-tag frame instead. If merged
 `@PG` histories disagree and nothing declares `coord=molecular`, nucleosome
 and MSP extraction stops and asks for `--input-frame`.
