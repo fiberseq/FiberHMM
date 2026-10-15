@@ -1356,7 +1356,11 @@ def check_posteriors(path, *, index: Optional[dict] = None) -> list[Advisory]:
     if mask_rule is not None:
         mask = _posteriors_cpg_mask_finding(idx, mask_rule, metadata)
         if mask is not None:
-            found.append(_make(mask_rule, mask, program="fiberhmm-posteriors", path=path))
+            from dataclasses import replace
+
+            found.append(replace(
+                _make(mask_rule, mask, program="fiberhmm-posteriors", path=path),
+                artifact="posteriors"))
     return found
 
 

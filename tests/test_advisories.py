@@ -905,6 +905,7 @@ def test_ddda_posteriors_before_the_cpg_mask_are_flagged(tmp_path):
     # A 3.0.0 development build before the mask (commit 1978eb0 is indexed).
     found = export("pre.tsv", fiberhmm_commit="1978eb0")
     assert found["ddda-hmm-cpg-mask"].status == "affected"
+    assert found["ddda-hmm-cpg-mask"].artifact == "posteriors"
     assert "predates" in " ".join(found["ddda-hmm-cpg-mask"].evidence)
     # No commit and no cpg_mask_policy: the key is written by every later export.
     assert export("bare.tsv")["ddda-hmm-cpg-mask"].status == "affected"
