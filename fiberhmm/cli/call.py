@@ -1726,6 +1726,10 @@ def _main(args):
                         snp_mask_path=snp_mask_path,
                         snp_preflight_summary=snp_preflight,
                         dedup_run_summary=dedup_stats,
+                        # QC's light call (sampled reads without calls)
+                        # resolves the CpG mask from this run's options.
+                        use_m5c=args.use_m5c,
+                        cpg_mask_policy=args.cpg_mask_policy,
                     )
                 except Exception as exc:
                     # QC must never invalidate a successfully written callset.

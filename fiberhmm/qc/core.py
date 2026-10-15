@@ -2650,12 +2650,16 @@ def run_qc(
     min_msp_bp: int = DEFAULT_MIN_MSP_BP,
     light_call_reads: int = DEFAULT_LIGHT_CALL_READS,
     light_call_seconds: float = DEFAULT_LIGHT_CALL_SECONDS,
+    use_m5c: Optional[bool] = None,
+    cpg_mask_policy: Optional[str] = None,
 ) -> dict:
     """Run bounded QC, write machine-readable output/plot, and print a scorecard.
 
     ``state_source`` selects where the in-MSP/outside-MSP split comes from:
     ``auto`` (the BAM's FiberHMM calls when the sample carries them, else a
     bounded light call), ``tags``, ``light-call`` or ``none`` (skip).
+    ``use_m5c``/``cpg_mask_policy`` set the light call's DddA CpG mask as in
+    ``fiberhmm-call`` (default: on for DddA).
     """
     sampled = sample_bam_reads(
         input_path,
@@ -2746,6 +2750,7 @@ def run_qc(
         snp_mask=snp_mask, state_source=state_source, seed=seed,
         min_msp_bp=min_msp_bp, light_call_reads=light_call_reads,
         light_call_seconds=light_call_seconds,
+        use_m5c=use_m5c, cpg_mask_policy=cpg_mask_policy,
     )
     efficiency, background = grade_state_rates(state_block, profile, prob_threshold)
     reference_states = ((profile or {}).get("state_rates") or {}).get("by_source", {})

@@ -1107,3 +1107,49 @@ def test_fused_call_output_declares_the_molecular_frame_in_co(tmp_path, benchmar
     with pysam.AlignmentFile(str(output), check_sq=False) as handle:
         comments = handle.header.to_dict().get("CO", [])
     assert comments.count(COORD_MOLECULAR_MARKER) == 1
+
+
+# ---------------------------------------------------------------------------
+# 3.0.1: fiberhmm-call's integrated QC ignored --no-use-m5c / --cpg-mask-policy.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("flags, expected", [
+    ([], (None, None)),
+    (["--no-use-m5c"], (False, None)),
+    (["--cpg-mask-policy", "methylated-only"], (None, "methylated-only")),
+])
+def test_call_qc_receives_the_cpg_mask_options(tmp_path, monkeypatch, flags, expected):
+    import fiberhmm.qc.core as qc_core
+    from fiberhmm.cli import call
+
+    seen = {}
+
+    def fake_run_qc(**kwargs):
+        seen.update(kwargs)
+        return {}
+
+    monkeypatch.setattr(qc_core, "run_qc", fake_run_qc)
+    bam = make_daf_chimera_bam(tmp_path / "daf.bam")
+    monkeypatch.setattr(sys, "argv", [
+        "fiberhmm-call", "-i", bam, "-o", str(tmp_path / "out.bam"),
+        "--enzyme", "ddda", "-c", "1", "--io-threads", "1", "--no-dedup", *flags])
+    call.main()
+    assert seen["input_path"] == str(tmp_path / "out.bam")
+    assert (seen["use_m5c"], seen["cpg_mask_policy"]) == expected
+
+
+def test_run_qc_forwards_the_cpg_mask_options(tmp_path, monkeypatch):
+    import fiberhmm.qc.core as qc_core
+
+    seen = {}
+
+    def fake_state_rates(reads, mode, enzyme, header=None, **options):
+        seen.update(options)
+        return {"available": False, "source": None}, {}
+
+    monkeypatch.setattr(qc_core, "compute_state_rates", fake_state_rates)
+    bam = make_daf_chimera_bam(tmp_path / "daf.bam")
+    qc_core.run_qc(bam, output_prefix=str(tmp_path / "qc" / "s"), mode="daf",
+                   enzyme="ddda", min_mapq=0, stream=None, use_m5c=False,
+                   cpg_mask_policy="methylated-only")
+    assert seen["use_m5c"] is False and seen["cpg_mask_policy"] == "methylated-only"
