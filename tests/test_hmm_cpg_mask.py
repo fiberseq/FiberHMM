@@ -328,6 +328,12 @@ def test_posteriors_api_takes_the_cli_cpg_options(monkeypatch, tmp_path):
     ep.export_posteriors_from_bam('in.bam', model, str(tmp_path / 'p.tsv.gz'),
                                   enzyme='ddda')
     assert captured['extraction']['cpg_mask_policy'] == POLICY
+    assert captured['extraction']['daf_run_mask'] == (2, 'keep-one')
+    assert captured['extraction']['min_mapq'] == 0
+    ep.export_posteriors_from_bam('in.bam', model, str(tmp_path / 'p.tsv.gz'),
+                                  enzyme='ddda', daf_mask_runs=0, min_mapq=30)
+    assert captured['extraction']['daf_run_mask'][0] == 0
+    assert captured['extraction']['min_mapq'] == 30
     ep.export_posteriors_from_bam('in.bam', model, str(tmp_path / 'p.tsv.gz'),
                                   enzyme='ddda', cpg_mask_policy='methylated-only')
     assert captured['extraction']['cpg_mask_policy'] == 'methylated-only'
@@ -416,3 +422,58 @@ def test_region_apply_worker_reads_the_island_mask_before_stripping(monkeypatch,
     with pysam.AlignmentFile(str(tmp_path / 'out.bam'), check_sq=False) as out:
         written = next(out)
     assert 'ddda_ucg.:101-100' in written.get_tag('MA')
+
+
+def test_posteriors_api_matches_the_cli(monkeypatch, tmp_path):
+    """export_posteriors_from_bam(enzyme='ddda') resolves the CpG mask and
+    the DddA run thinning as fiberhmm-posteriors --enzyme ddda does, and the
+    two write the same posteriors."""
+    import gzip
+    import sys
+
+    import pysam
+
+    from fiberhmm.cli import export_posteriors as ep
+    from fiberhmm.core.bam_reader import configure_daf_run_mask
+
+    read = _tagged_ddda_read()
+    bam = tmp_path / 'in.bam'
+    with pysam.AlignmentFile(str(bam), 'wb', header=read.header) as out:
+        out.write(read)
+    pysam.index(str(bam))
+
+    def body(path):
+        with gzip.open(path, 'rt') as handle:
+            return [line for line in handle if not line.startswith('#')]
+
+    configure_daf_run_mask(0, 'keep-one')   # a stale process setting must not leak
+    cli = tmp_path / 'cli.tsv.gz'
+    monkeypatch.setattr(sys, 'argv', ['fiberhmm-posteriors', '-i', str(bam), '-o', str(cli),
+                                      '--enzyme', 'ddda', '--seq', 'pacbio', '-c', '1',
+                                      '--streaming'])
+    ep.main()
+    configure_daf_run_mask(0, 'keep-one')
+    api = tmp_path / 'api.tsv.gz'
+    model = __import__('fiberhmm.models', fromlist=['x']).get_model_path('ddda', tool='apply')
+    ep.export_posteriors_from_bam(str(bam), model, str(api), mode='daf', enzyme='ddda',
+                                  n_workers=1, verbose=False)
+    assert body(api) == body(cli) and body(api)
+    off = tmp_path / 'off.tsv.gz'
+    ep.export_posteriors_from_bam(str(bam), model, str(off), mode='daf', enzyme='ddda',
+                                  n_workers=1, verbose=False, daf_mask_runs=0)
+    assert body(off) != body(api)
+    configure_daf_run_mask(0, 'keep-one')
+
+
+def test_posteriors_api_honours_min_mapq(tmp_path):
+    from fiberhmm.cli.export_posteriors import extract_posteriors_from_read
+
+    read = _ddda_read()
+    read.mapping_quality = 0
+    model, k = _model()
+    stats = {}
+    assert extract_posteriors_from_read(read, model, 'daf', k, EDGE_TRIM, prob_threshold=128,
+                                        stats=stats, min_mapq=20) is None
+    assert stats['filtered'] == 1
+    assert extract_posteriors_from_read(read, model, 'daf', k, EDGE_TRIM,
+                                        prob_threshold=128) is not None

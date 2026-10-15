@@ -122,7 +122,8 @@ def extract_posteriors_from_read(read, model: FiberHMM, mode: str,
                                   context_size: int, edge_trim: int,
                                   prob_threshold: int = DEFAULT_PROB_THRESHOLD,
                                   stats: Optional[Dict[str, int]] = None,
-                                  cpg_mask_policy: Optional[str] = None) -> Optional[Dict]:
+                                  cpg_mask_policy: Optional[str] = None,
+                                  min_mapq: int = 0) -> Optional[Dict]:
     """
     Extract posterior probabilities from a single read.
     Returns dict with fiber data or None if filtered (reason tallied in
@@ -141,6 +142,8 @@ def extract_posteriors_from_read(read, model: FiberHMM, mode: str,
         return None
 
     if read.is_unmapped or read.is_secondary or read.is_supplementary:
+        return _skip('filtered')
+    if min_mapq and int(read.mapping_quality) < int(min_mapq):
         return _skip('filtered')
 
     sequence = read.query_sequence
@@ -269,6 +272,7 @@ def _process_region_worker(args) -> Tuple[str, int, int, List[Dict], Dict[str, i
                 read, _worker_model, mode, context_size, edge_trim,
                 prob_threshold=prob_threshold, stats=stats,
                 cpg_mask_policy=_worker_params.get('cpg_mask_policy'),
+                min_mapq=_worker_params.get('min_mapq', 0),
             )
             if result is not None:
                 results.append(result)
@@ -471,6 +475,7 @@ def _process_streaming(input_bam, model_path, params, verbose, result_callback,
                 read, _worker_model, mode, context_size, edge_trim,
                 prob_threshold=prob_threshold, stats=local,
                 cpg_mask_policy=params.get('cpg_mask_policy'),
+                min_mapq=params.get('min_mapq', 0),
             )
             if result is None:
                 continue
@@ -554,6 +559,7 @@ def _export_provenance(model_path, prob_threshold, extraction, provenance=None) 
         'daf_mask_runs': int(run_mask[0]) if run_mask is not None else None,
         'daf_run_policy': run_mask[1] if run_mask is not None else None,
         'cpg_mask_policy': extraction.get('cpg_mask_policy') or 'off',
+        'min_mapq': int(extraction['min_mapq']) if extraction.get('min_mapq') else None,
         'fiberhmm_commit': fiberhmm_commit(),
     }
     record.update(provenance or {})
@@ -1270,7 +1276,7 @@ def export_posteriors_from_bam(
     mode: str = None,
     context_size: int = None,
     edge_trim: int = DEFAULT_EDGE_TRIM,
-    min_mapq: int = 20,
+    min_mapq: int = 0,
     prob_threshold: int = DEFAULT_PROB_THRESHOLD,
     n_workers: int = 4,
     chroms: Optional[Set[str]] = None,
@@ -1278,23 +1284,40 @@ def export_posteriors_from_bam(
     enzyme: Optional[str] = None,
     use_m5c: Optional[bool] = None,
     cpg_mask_policy: Optional[str] = None,
+    daf_mask_runs: Optional[int] = None,
+    daf_run_policy: str = 'keep-one',
 ) -> int:
     """Python API of ``fiberhmm-posteriors``.
 
-    ``enzyme``, ``use_m5c`` and ``cpg_mask_policy`` mean what ``--enzyme``,
-    ``--use-m5c`` and ``--cpg-mask-policy`` mean on the command line: with
-    ``enzyme='ddda'`` the HMM sees fiberhmm-call's first-pass CpG mask unless
-    ``use_m5c=False``; ``use_m5c=True`` enables it for a custom DAF model.
+    ``enzyme``, ``use_m5c``, ``cpg_mask_policy``, ``daf_mask_runs`` and
+    ``daf_run_policy`` mean what ``--enzyme``, ``--use-m5c``,
+    ``--cpg-mask-policy``, ``--daf-mask-runs`` and ``--daf-run-policy`` mean on
+    the command line and resolve the same way: with ``enzyme='ddda'`` the HMM
+    sees fiberhmm-call's first-pass CpG mask (unless ``use_m5c=False``) and
+    the DddA keep-one run thinning (unless ``daf_mask_runs=0``).
+    ``min_mapq`` skips primary alignments below that MAPQ (default 0: none,
+    as the command line).
     """
+    from fiberhmm.core.bam_reader import resolve_daf_run_mask
     from fiberhmm.inference.tf_recaller import resolve_cpg_mask_policy
 
     effective_mode = mode
     if effective_mode is None:
         _, _, model_mode = load_model_with_metadata(model_path, normalize=False)
         effective_mode = resolve_observation_mode(model_mode, source_label='custom model')
-    extraction = {'cpg_mask_policy': resolve_cpg_mask_policy(
-        use_m5c, cpg_mask_policy, enzyme, effective_mode,
-        tool='export_posteriors_from_bam')}
+    if effective_mode == 'daf':
+        run_mask = tuple(resolve_daf_run_mask(daf_mask_runs, daf_run_policy, enzyme))
+    elif daf_mask_runs:
+        raise ValueError("daf_mask_runs requires mode daf")
+    else:
+        run_mask = (0, 'keep-one')
+    extraction = {
+        'cpg_mask_policy': resolve_cpg_mask_policy(
+            use_m5c, cpg_mask_policy, enzyme, effective_mode,
+            tool='export_posteriors_from_bam'),
+        'daf_run_mask': run_mask,
+        'min_mapq': int(min_mapq),
+    }
     return export_posteriors(
         input_bam=input_bam,
         model_path=model_path,
