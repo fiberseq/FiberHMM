@@ -280,7 +280,9 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
                         if result is not None:
                             reads_with_footprints += 1
 
-                            set_legacy_apply_tags(read, result, with_scores, write_msps)
+                            set_legacy_apply_tags(
+                                read, result, with_scores, write_msps,
+                                harmonize=bool(params.get('harmonize_legacy_tags')))
 
                             # Stream posteriors to TSV immediately (no memory accumulation).
                             if tsv_file and result.get('posteriors') is not None:

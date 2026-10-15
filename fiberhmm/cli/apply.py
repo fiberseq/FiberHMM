@@ -181,6 +181,12 @@ Examples:
                              'ddda_ucg islands (default unmethylated-only), or '
                              'mask only ddda_mcg spans (methylated-only). DddA '
                              'only; ignored with a warning otherwise.')
+    parser.add_argument('--harmonize-legacy-tags', action='store_true',
+                        help='Write ns/nl as the nucleosomes that MA would hold '
+                             '(footprints outside MSPs), so legacy tags tile with '
+                             'as/al like fiberhmm-call output. Default: ns/nl list '
+                             'every HMM footprint, which fiberhmm-recall-tfs/-nucs '
+                             'need; they refuse harmonized input.')
 
     return parser.parse_args()
 
@@ -263,7 +269,9 @@ def _apply_pg_record(args, mode, context_size, chemistry, daf_run_mask,
                f"daf_run_mask={f'>={min_run}/{policy}' if min_run else 'off'} "
                f"daf_unaligned_mask={('on' if args.daf_mask_unaligned else 'off') if mode == 'daf' else 'n/a'} "
                f"cpg_mask={cpg_mask_policy or 'off'} "
-               f"hmm_cpg_mask={'on' if cpg_mask_policy else 'off'}"),
+               f"hmm_cpg_mask={'on' if cpg_mask_policy else 'off'}"
+               + (" legacy_tags=harmonized"
+                  if getattr(args, 'harmonize_legacy_tags', False) else "")),
     }
 
 
@@ -585,6 +593,7 @@ def _main(args):
         fail_on_mostly_unmapped=args.process_unmapped is not False,
         pg_record=pg_record,
         cpg_mask_policy=cpg_mask_policy,
+        harmonize_legacy_tags=args.harmonize_legacy_tags,
     )
     print(f"\nProcessed {total_reads:,} reads -> {reads_with_footprints:,} with footprints",
           file=sys.stderr if stdout_mode else sys.stdout)

@@ -1301,9 +1301,31 @@ def _main(args):
                                  check_sq=False,
                                  threads=args.io_threads)
     try:
+        if _harmonized_apply_input(bam_in.header):
+            print("error: the input is fiberhmm-apply --harmonize-legacy-tags "
+                  "output, whose ns/nl no longer list every HMM footprint that "
+                  "recall needs; re-run fiberhmm-apply without "
+                  "--harmonize-legacy-tags (or use fiberhmm-call)", file=sys.stderr)
+            sys.exit(2)
         _recall(args, bam_in, model_path, using_bundled_model, n_cores)
     finally:
         bam_in.close()
+
+
+def _harmonized_apply_input(header) -> bool:
+    """Whether the footprints this BAM carries come from a harmonized apply:
+    the newest fiberhmm-apply/-call @PG is an apply with legacy_tags=harmonized."""
+    try:
+        records = header.to_dict().get('PG', [])
+    except AttributeError:
+        records = (header or {}).get('PG', [])
+    for record in reversed(records):
+        program = str(record.get('PN') or record.get('ID') or '')
+        if program.startswith('fiberhmm-call'):
+            return False
+        if program.startswith('fiberhmm-apply'):
+            return 'legacy_tags=harmonized' in str(record.get('DS', ''))
+    return False
 
 
 def _recall(args, bam_in, model_path, using_bundled_model, n_cores):

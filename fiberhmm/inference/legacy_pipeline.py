@@ -56,6 +56,7 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
                               return_posteriors: bool = False,
                               write_msps: bool = True,
                               failure_messages: Optional[list] = None,
+                              harmonize_legacy_tags: bool = False,
                               ) -> Tuple[int, int, int, Optional[list]]:
     """
     Process a chunk of reads and write to BAM.
@@ -98,7 +99,8 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
     for read_obj, result in zip(chunk_read_objs, results):
         strip_for_apply(read_obj, write_msps)
         if result is not None:
-            set_legacy_apply_tags(read_obj, result, with_scores, write_msps)
+            set_legacy_apply_tags(read_obj, result, with_scores, write_msps,
+                                  harmonize=harmonize_legacy_tags)
             reads_with_footprints += 1
         else:
             no_footprints += 1
@@ -166,6 +168,7 @@ def _process_bam_legacy_pipeline(
     io_threads: int = 4,
     pg_record: Optional[dict] = None,
     cpg_mask_policy: Optional[str] = None,
+    harmonize_legacy_tags: bool = False,
 ) -> Tuple[int, int]:
     """Process a BAM through the legacy chunked apply path.
 
@@ -304,6 +307,7 @@ def _process_bam_legacy_pipeline(
                             return_posteriors=return_posteriors,
                             write_msps=write_msps,
                             failure_messages=failure_messages,
+                            harmonize_legacy_tags=harmonize_legacy_tags,
                         )
                         reads_with_footprints += n_fp
                         skip_reasons['no_footprints'] += n_nofp
@@ -329,6 +333,7 @@ def _process_bam_legacy_pipeline(
                         return_posteriors=return_posteriors,
                         write_msps=write_msps,
                         failure_messages=failure_messages,
+                        harmonize_legacy_tags=harmonize_legacy_tags,
                     )
                     reads_with_footprints += n_fp
                     skip_reasons['no_footprints'] += n_nofp

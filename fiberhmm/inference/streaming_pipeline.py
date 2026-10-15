@@ -345,6 +345,7 @@ def _process_bam_streaming_pipeline(
     fail_on_mostly_unmapped: bool = False,
     pg_record: Optional[dict] = None,
     cpg_mask_policy: Optional[str] = None,
+    harmonize_legacy_tags: bool = False,
 ) -> Tuple[int, int]:
     """Streaming producer-consumer pipeline for BAM processing.
 
@@ -447,7 +448,8 @@ def _process_bam_streaming_pipeline(
                 def _drain():
                     _drain_oldest_chunk(
                         inflight, outbam, with_scores, write_msps,
-                        posterior_writer, counters
+                        posterior_writer, counters,
+                        harmonize_legacy_tags=harmonize_legacy_tags,
                     )
 
                 def _submit():

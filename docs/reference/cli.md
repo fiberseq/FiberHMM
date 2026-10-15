@@ -214,6 +214,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--daf-mask-unaligned` / `--no-daf-mask-unaligned` | on | DAF only: treat insertion and soft-clip bases as no evidence and leave unaligned stretches of &gt;= 50 bp uncalled (default on, as in fiberhmm-call). |
 | `--use-m5c` / `--no-use-m5c` | auto | DddA CpG-aware calling, as in fiberhmm-call: CpG observations are hidden from the HMM except inside confident unmethylated islands (MA ddda_ucg from fiberhmm-tag-m5c) the input carries. Default: on for --enzyme ddda, off otherwise. |
 | `--cpg-mask-policy` | — | With CpG-aware calling: keep CpGs only inside ddda_ucg islands (default unmethylated-only), or mask only ddda_mcg spans (methylated-only). DddA only; ignored with a warning otherwise. Choices: `unmethylated-only`, `methylated-only`. |
+| `--harmonize-legacy-tags` | off | Write ns/nl as the nucleosomes that MA would hold (footprints outside MSPs), so legacy tags tile with as/al like fiberhmm-call output. Default: ns/nl list every HMM footprint, which fiberhmm-recall-tfs/-nucs need; they refuse harmonized input. |
 
 ## fiberhmm-recall-tfs
 

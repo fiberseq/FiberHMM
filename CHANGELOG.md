@@ -295,6 +295,14 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   The island groups are kept, with this run's nucleosomes (footprints outside
   MSPs) and MSPs in `MA`; legacy `ns/nl` still lists every HMM footprint, as
   `fiberhmm-recall-tfs` expects, so it can hold more footprints than `MA`.
+- **`fiberhmm-apply --harmonize-legacy-tags` (opt-in).** Writes `ns/nl` as the
+  nucleosomes `MA` would hold (footprints outside MSPs), so the legacy tags tile
+  with `as/al` as in `fiberhmm-call` output; `as/al`, `MA` and the calls are
+  unchanged, and `@PG` records `legacy_tags=harmonized`. It is not the default
+  because recall reads the raw footprints from `ns/nl`: recalling harmonized
+  arrays changed recall output on 147 of 3,202 NAPA DddA reads, 42 of 169 Hia5
+  PacBio and 358 of 400 Hia5 Nanopore reads. `fiberhmm-recall-tfs`/`-nucs`
+  therefore refuse harmonized input; the default apply output is unchanged.
   `fiberhmm.cli.export_posteriors.export_posteriors_from_bam` resolves the
   DddA run thinning and CpG mask like the command line and now applies
   `min_mapq` (default 0).

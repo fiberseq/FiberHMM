@@ -60,6 +60,7 @@ def _drain_oldest_chunk(
     write_msps,
     posterior_writer,
     counters,
+    harmonize_legacy_tags=False,
 ):
     """
     Block on the oldest in-flight apply chunk, apply tags, and write to BAM.
@@ -89,7 +90,8 @@ def _drain_oldest_chunk(
         next(fiber_iter)
         result = next(result_iter)
         if result is not None:
-            set_legacy_apply_tags(read_obj, result, with_scores, write_msps)
+            set_legacy_apply_tags(read_obj, result, with_scores, write_msps,
+                                  harmonize=harmonize_legacy_tags)
             counters['reads_with_footprints'] += 1
 
             if posterior_writer and result.get('posteriors') is not None:

@@ -78,7 +78,30 @@ def _u32_bam_array(values) -> pyarray.array:
     return arr
 
 
-def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: bool = True) -> None:
+def _footprints_outside_msps(result: dict, write_msps: bool) -> list:
+    """Indexes of ``result``'s HMM footprints that are nucleosomes in the MA
+    view: those overlapping no MSP (all of them when MSPs are not written)."""
+    msps = ([(int(s), int(n)) for s, n in zip(result["as"], result["al"]) if int(n) > 0]
+            if write_msps else [])
+    return [i for i, (s, n) in enumerate(zip(result["ns"], result["nl"]))
+            if int(n) > 0 and not any(int(s) < ms + ml and ms < int(s) + int(n)
+                                      for ms, ml in msps)]
+
+
+def _harmonized_result(result: dict, write_msps: bool) -> dict:
+    """``result`` with only the nucleosomes of the MA view (and their scores)."""
+    keep = _footprints_outside_msps(result, write_msps)
+    out = dict(result)
+    out["ns"] = np.asarray(result["ns"])[keep] if len(keep) else np.asarray([], dtype=np.int64)
+    out["nl"] = np.asarray(result["nl"])[keep] if len(keep) else np.asarray([], dtype=np.int64)
+    scores = result.get("ns_scores")
+    if scores is not None and len(scores) == len(result["ns"]):
+        out["ns_scores"] = np.asarray(scores)[keep]
+    return out
+
+
+def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: bool = True,
+                          harmonize: bool = False) -> None:
     """Write legacy apply tags (`ns/nl/as/al`, optional `nq/aq`) in place.
 
     This intentionally preserves the compatibility apply behavior: a non-empty
@@ -91,6 +114,11 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
     groups (``ddda_ucg``/``ddda_mcg``), and then follows the MA spec: the
     nucleosomes are the footprints outside MSPs, so nuc and msp tile the read
     and ``ns/nl`` may list more footprints than MA ``nuc``.
+
+    ``harmonize`` (``fiberhmm-apply --harmonize-legacy-tags``) writes ``ns/nl``
+    from the MA view instead (footprints outside MSPs), so legacy tags and MA
+    agree as in fiberhmm-call output; ``as/al`` are unchanged. Recall needs the
+    raw footprints, so harmonized output is not recall input.
     """
     # Apply recomputes the read structure, so the footprint groups of any
     # pre-existing MA/AN/AQ from a prior call/recall pass are stale. They are
@@ -100,6 +128,8 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
 
     strip_stale_call_tags(read, legacy_tags=(), keep_m5c_groups=True)
     keeps_m5c = read.has_tag("MA")
+    if harmonize:
+        result = _harmonized_result(result, write_msps)
 
     # FiberHMM works in SEQ (query_sequence) coordinates; ns/nl/as/al must be
     # written in molecular (original-fiber) frame for fibertools. Flip + re-sort
@@ -147,8 +177,7 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
         # Legacy ns also lists sub-nucleosomal footprints inside MSPs; in MA
         # (where nuc and msp tile the read) only footprints outside MSPs are
         # nucleosomes. TF-sized footprints are left to recall, as in call.
-        keep = [i for i, (s, n) in enumerate(footprints)
-                if n > 0 and not any(s < ms + ml and ms < s + n for ms, ml in msps)]
+        keep = _footprints_outside_msps(result, write_msps)
         nucs = [footprints[i] for i in keep]
         nq = [scores[i] for i in keep] if scores is not None else None
         write_ma_tags(read, len(read.query_sequence or "") or int(read.query_length or 0),

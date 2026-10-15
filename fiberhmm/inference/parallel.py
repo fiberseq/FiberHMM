@@ -77,7 +77,8 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                                 process_unmapped: bool = False,
                                 fail_on_mostly_unmapped: bool = False,
                                 pg_record: Optional[dict] = None,
-                                cpg_mask_policy: Optional[str] = None) -> Tuple[int, int]:
+                                cpg_mask_policy: Optional[str] = None,
+                                harmonize_legacy_tags: bool = False) -> Tuple[int, int]:
     """
     Process BAM file and add footprint tags - SINGLE PASS STREAMING.
 
@@ -140,6 +141,7 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                 write_msps=write_msps,
                 io_threads=io_threads,
                 cpg_mask_policy=cpg_mask_policy,
+                harmonize_legacy_tags=harmonize_legacy_tags,
             )
 
     # Dispatch to streaming pipeline if requested (requires model_path for workers)
@@ -174,6 +176,7 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                 fail_on_mostly_unmapped=fail_on_mostly_unmapped,
                 pg_record=pg_record,
                 cpg_mask_policy=cpg_mask_policy,
+                harmonize_legacy_tags=harmonize_legacy_tags,
             )
 
     if model is None and model_path is not None and n_cores <= 1:
@@ -204,4 +207,5 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
         io_threads=io_threads,
         pg_record=pg_record,
         cpg_mask_policy=cpg_mask_policy,
+        harmonize_legacy_tags=harmonize_legacy_tags,
     )
