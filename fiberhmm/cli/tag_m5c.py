@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import shlex
 import sys
@@ -115,12 +114,6 @@ def _preflight_input(path: str, max_primary_reads: int = 5000) -> None:
     )
 
 
-def _same_file(left: str, right: str) -> bool:
-    if os.path.abspath(left) == os.path.abspath(right):
-        return True
-    return os.path.exists(left) and os.path.exists(right) and os.path.samefile(left, right)
-
-
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         prog="fiberhmm-tag-m5c",
@@ -201,11 +194,16 @@ def main(argv=None):
         raise SystemExit("invalid CpG-island GC or observed/expected threshold")
     if args.factor_sample_reads < 1 or args.io_threads < 1:
         raise SystemExit("--factor-sample-reads and --io-threads must be positive")
-    if _same_file(args.input, args.output):
-        raise SystemExit("input and output BAM paths must differ")
-    for extra in (args.calls_tsv, args.write_cpg_islands):
-        if extra and (_same_file(extra, args.input) or _same_file(extra, args.output)):
-            raise SystemExit("audit-table and island-BED paths must differ from BAM paths")
+    # No output may be an input, an input's index (.bai/.fai/...), another
+    # output, or the index an output's publication replaces.
+    from fiberhmm.cli.common import refuse_path_aliases
+    refuse_path_aliases(
+        "fiberhmm-tag-m5c",
+        inputs={"--input": args.input, "--reference": args.reference,
+                "--cpg-islands": args.cpg_islands},
+        outputs={"--output": args.output, "--calls-tsv": args.calls_tsv,
+                 "--write-cpg-islands": args.write_cpg_islands},
+    )
     input_molecular_frame = {
         "auto": None, "molecular": True, "query": False,
     }[args.input_frame]

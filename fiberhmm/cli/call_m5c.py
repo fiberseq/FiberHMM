@@ -126,6 +126,15 @@ def _check_paths(args) -> None:
         raise SystemExit("--tag-output path must differ from every input BAM")
     if args.tag_output and args.output != "-" and _same_file(args.output, args.tag_output):
         raise SystemExit("--output BED and --tag-output BAM paths must differ")
+    # Also the reference, island catalog and indexes (shared guard).
+    from fiberhmm.cli.common import refuse_path_aliases
+    refuse_path_aliases(
+        "fiberhmm-call-m5c",
+        inputs={"--input": list(args.input), "--reference": args.reference,
+                "--cpg-islands": args.cpg_islands, "--tag-bam": args.tag_bam},
+        outputs={"--output": args.output, "--tag-output": args.tag_output,
+                 "--write-cpg-islands": args.write_cpg_islands},
+    )
 
 
 def main(argv=None):

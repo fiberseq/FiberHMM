@@ -1242,3 +1242,36 @@ def test_island_inference_refuses_a_reference_without_any_read_contig(tmp_path):
             str(input_bam), str(tmp_path / "out.bam"), str(reference), None,
             DDDA_FIVE_PRIME_FACTORS, threads=1,
         )
+
+
+def test_tag_m5c_refuses_outputs_that_alias_its_inputs(tmp_path, capsys):
+    """No output may overwrite the reference, the island catalog, an input
+    index or another output (checked before anything is opened)."""
+    from fiberhmm.cli.tag_m5c import main as tag_main
+
+    reference = tmp_path / "ref.fa"
+    reference.write_text(">chr1\nACGT\n")
+    (tmp_path / "ref.fa.fai").write_text("chr1\t4\t6\t4\t5\n")
+    islands = tmp_path / "islands.bed"
+    islands.write_text("chr1\t0\t4\n")
+    bam = tmp_path / "in.bam"
+    bam.write_bytes(b"")
+    base = ["-i", str(bam), "-r", str(reference), "--enzyme", "ddda"]
+    cases = [
+        ["-o", str(tmp_path / "out.bam"), "--calls-tsv", str(reference)],
+        ["-o", str(reference)],
+        ["-o", str(tmp_path / "ref.fa.fai")],
+        ["-o", str(tmp_path / "out.bam"), "--cpg-islands", str(islands),
+         "--write-cpg-islands", str(islands)],
+        ["-o", str(tmp_path / "out.bam"), "--calls-tsv", str(tmp_path / "x.tsv"),
+         "--write-cpg-islands", str(tmp_path / "x.tsv")],
+        ["-o", str(bam)],
+    ]
+    for extra in cases:
+        with pytest.raises(SystemExit) as exc:
+            tag_main(base + extra)
+        assert exc.value.code == 2, extra
+        assert "fiberhmm-tag-m5c: error" in capsys.readouterr().err
+    assert reference.read_text() == ">chr1\nACGT\n"
+    assert islands.read_text() == "chr1\t0\t4\n"
+
