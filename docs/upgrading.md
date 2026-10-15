@@ -71,7 +71,7 @@ accessible state. **Re-train models built this way with 2.x**;
 | DAF duplicate grouping | by alignment orientation | **by deamination flavour** (more duplicates found; for example 5.8% → 9.9% on one DddA data set) | none |
 | TF recall decoder (all chemistries) | one maximum per positive-score excursion | **exact best set of intervals**, `--min-llr` is the per-interval cost (`tf_decoder=multi_interval_v1` in `@PG`) | none |
 | TF `--min-llr` preset for DddB | 4.0 | **5.0** (as every preset) | `--min-llr 4` |
-| Nucleosome recall for Hia5 and DddB | periodicity prior (`--phase-nrl auto`); `topology` policy for Nanopore Hia5 | **conservative, no periodicity prior**; nucleosome calls change | none (`--phase-nrl` and `--nuc-recall-policy` are retired) |
+| Nucleosome recall for Hia5 and DddB | periodicity prior (`--phase-nrl auto`); `topology` policy for Nanopore Hia5 | **accessible-cut split, no periodicity prior**; nucleosome calls change | none (`--phase-nrl` and `--nuc-recall-policy` are retired) |
 | DddA TF table and radial nucleosome recall | 2.x `ddda_TF.json`, radial template | **duplex-calibrated `ddda_TF.json`; phase-aware posterior edges** (`ddda_nuc_profile.json`, `ddda_nuc_refine.json`) | none |
 | DddA adjacent-target thinning (`call`, `apply`, `recall-tfs`/`-nucs`, `pair`/`merge`, consensus) | off | **runs of ≥ 2 CC/GG targets keep one** | `--daf-mask-runs 0` |
 | Looser consensus prevalence tiers (`prevalence_edge`, `prevalence_loose`) | could double-count and exceed 1 | coherent union; drops by up to about 0.14 (typically 0.002–0.04); core unchanged | none (the old value was an error) |
@@ -124,7 +124,7 @@ These now either work or stop with a clear message:
 | `fiberhmm-merge` (development builds only) | still installed but deprecated: `fiberhmm-pair --from-paired` |
 | `fiberhmm-call --ddda-mcg` (development builds only) | `fiberhmm-tag-m5c`, then `fiberhmm-call` on the tagged BAM ([DAF-seq](workflows/daf-seq.md#ddda-cpg-island-methylation)) |
 | `fiberhmm-apply --chroms`, `--skip-scaffolds`, `--region-size`, `--scores-db`, `-l` | rejected (they never had an effect); use `fiberhmm-call --region-parallel` |
-| `--phase-nrl`, `--nuc-recall-policy` (`call`, `recall-tfs`/`-nucs`) | retired; nucleosome recall is conservative without a periodicity prior |
+| `--phase-nrl`, `--nuc-recall-policy` (`call`, `recall-tfs`/`-nucs`) | retired; nucleosome recall is the accessible-cut split, without a periodicity prior |
 | `recaller.abutting` (development builds only) | removed; use the "+ edge" tier or `recaller.linker=either` |
 | `--engine staged_native_families` (consensus) | deprecated but available |
 | `fiberhmm[consensus]`, `fiberhmm[numba]` | still accepted; their packages are core dependencies now |

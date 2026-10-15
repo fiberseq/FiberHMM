@@ -111,8 +111,8 @@ the accessible-cut split above would shatter DddA nucleosomes. For DddA, nucleos
 1. nominates nucleosome dyads from the radial (helically phased) deamination
    profile (`ddda_nuc_profile.json`);
 2. scores candidate edges around each dyad with a rotational model of
-   access along the wrapped DNA: a helical period of 10.12 bp (marginalized
-   over a ±2 × 0.2 bp grid) and a helical register inferred from the
+   access along the wrapped DNA: a helical period of 10.12 bp (averaged
+   over five periods from 9.72 to 10.52 bp) and a helical register inferred from the
    molecule's own deaminations (8 phase bins), so on-phase internal
    deaminations remain compatible with wrapping;
 3. places each edge at the median of its posterior and encodes the width of

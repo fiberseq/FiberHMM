@@ -701,8 +701,8 @@ These change numbers relative to 2.x.
   `--min-llr` is now the per-interval cost. TF calls change for every
   chemistry. Recorded in `@PG` (`tf_decoder=multi_interval_v1`).
 - **TF `--min-llr` 5.0 for every preset** (DddB was 4.0).
-- **One nucleosome-recall mode for Hia5 and DddB: conservative, without a
-  periodicity prior.** 2.x and 3.0 development builds split long protected
+- **One nucleosome-recall mode for Hia5 and DddB: the accessible-cut split,
+  without a periodicity prior.** 2.x and 3.0 development builds split long protected
   blocks with a periodicity prior (estimated nucleosome repeat length) and,
   for Nanopore Hia5, used a `topology` recall policy. Both are retired: the
   prior split blocks at least 1.5 repeat lengths long on a single mark, which
