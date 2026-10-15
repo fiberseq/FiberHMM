@@ -157,6 +157,21 @@ def _leftovers(directory):
 # Item 9: failed runs must not leave valid-looking outputs.
 # ---------------------------------------------------------------------------
 
+
+def _fork_workers(monkeypatch):
+    """Run pipeline workers under fork, so they inherit this test's patches.
+
+    Python >= 3.14 defaults FiberHMM to spawn, whose fresh workers would not
+    see a monkeypatched worker function.
+    """
+    import multiprocessing
+
+    from fiberhmm.inference import region_pipeline, streaming_pipeline
+
+    fork = multiprocessing.get_context("fork")
+    monkeypatch.setattr(streaming_pipeline, "_MP_CONTEXT", fork)
+    monkeypatch.setattr(region_pipeline, "_MP_CONTEXT", fork)
+
 def test_fused_streaming_fails_when_every_read_fails(tmp_path, monkeypatch,
                                                      benchmark_model_path, capsys):
     from conftest import make_synthetic_bam
@@ -175,6 +190,7 @@ def test_fused_streaming_fails_when_every_read_fails(tmp_path, monkeypatch,
         raise RuntimeError("injected recall failure")
 
     monkeypatch.setattr(streaming_workers, "build_fused_recall_result", boom)
+    _fork_workers(monkeypatch)
     output = tmp_path / "out.bam"
     with pytest.raises(WorkerFailureError):
         _process_bam_streaming_pipeline_fused(
@@ -208,6 +224,7 @@ def test_fused_streaming_tolerates_rare_failures(tmp_path, monkeypatch,
         return real(fiber_read, *args, **kwargs)
 
     monkeypatch.setattr(streaming_workers, "build_fused_recall_result", flaky)
+    _fork_workers(monkeypatch)
     output = tmp_path / "out.bam"
     _process_bam_streaming_pipeline_fused(
         input_bam=bam, output_bam=str(output),
@@ -550,6 +567,7 @@ def test_region_parallel_fused_fails_on_worker_errors(tmp_path, monkeypatch,
         raise RuntimeError("injected region failure")
 
     monkeypatch.setattr(region_workers, "build_fused_recall_result", boom)
+    _fork_workers(monkeypatch)
     kwargs = _fused_kwargs(benchmark_model_path)
     for key in ("model_path", "max_reads", "chunk_size"):
         kwargs.pop(key)
