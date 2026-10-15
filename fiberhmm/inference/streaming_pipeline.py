@@ -179,8 +179,11 @@ def _process_bam_streaming_pipeline_fused(
             ma_types = [] if downstream_compat else ["nuc", "msp", "tf"]
             if ddda_mcg:
                 ma_types.append("ddda_mcg")
+            # The @CO marker keeps the frame declared when a pipeline strips
+            # or rewrites @PG (the @PG DS carries it too).
             output_header = append_ma_types(
-                output_header_with_provenance(inbam.header, pg_record),
+                output_header_with_provenance(append_coord_marker(inbam.header),
+                                              pg_record),
                 ma_types,
             )
             with pysam.AlignmentFile(_output_target(output_path), "wb",

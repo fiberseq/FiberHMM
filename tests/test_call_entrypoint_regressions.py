@@ -1071,3 +1071,39 @@ def test_call_region_parallel_matches_streaming_tags(tmp_path, benchmark_model_p
     streamed_tags = tags(streamed)
     assert streamed_tags == tags(region)
     assert sum(value[0] is not None for value in streamed_tags.values()) > 0
+
+
+@pytest.mark.parametrize("path", ["streaming", "region"])
+def test_fused_call_output_declares_the_molecular_frame_in_co(tmp_path, benchmark_model_path,
+                                                              path):
+    """fiberhmm-call output carries @CO fiberhmm:coord=molecular, which
+    survives pipelines that strip or rewrite @PG (not only the @PG DS)."""
+    from fiberhmm.io.bam_header import COORD_MOLECULAR_MARKER
+
+    output = tmp_path / "out.bam"
+    if path == "streaming":
+        from conftest import make_synthetic_bam
+
+        from fiberhmm.inference.streaming_pipeline import (
+            _process_bam_streaming_pipeline_fused,
+        )
+
+        bam = str(tmp_path / "in.bam")
+        make_synthetic_bam(bam, n_reads=6, read_length=1500, n_chroms=1,
+                           chrom_length=20_000, seed=3)
+        _process_bam_streaming_pipeline_fused(
+            input_bam=bam, output_bam=str(output), **_fused_kwargs(benchmark_model_path))
+    else:
+        from fiberhmm.inference.region_pipeline import _process_bam_region_parallel_fused
+
+        bam = make_region_test_bam(tmp_path / "in.bam")
+        kwargs = _fused_kwargs(benchmark_model_path)
+        for key in ("model_path", "max_reads", "chunk_size"):
+            kwargs.pop(key)
+        _process_bam_region_parallel_fused(
+            input_bam=str(bam), output_bam=str(output),
+            apply_model_path=benchmark_model_path, region_size=20_000,
+            skip_scaffolds=False, chroms=None, **kwargs)
+    with pysam.AlignmentFile(str(output), check_sq=False) as handle:
+        comments = handle.header.to_dict().get("CO", [])
+    assert comments.count(COORD_MOLECULAR_MARKER) == 1

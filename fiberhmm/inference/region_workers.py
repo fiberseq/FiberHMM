@@ -690,7 +690,8 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
             if params.get("ddda_mcg", False):
                 ma_types.append("ddda_mcg")
             output_header = append_ma_types(
-                output_header_with_provenance(inbam.header, params.get('pg_record')),
+                output_header_with_provenance(append_coord_marker(inbam.header),
+                                              params.get('pg_record')),
                 ma_types,
             )
             with pysam.AlignmentFile(
