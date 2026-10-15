@@ -447,9 +447,11 @@ def main():
             n_inacc = len(inacc_probs)
             print(f"    k={ctx_size} ({2*ctx_size + 1}-mer): {n_acc} accessible, {n_inacc} inaccessible contexts")
 
-    # Also create combined probability files for direct use with fiberhmm-train
+    # Also a combined side-by-side table for inspection. fiberhmm-train -p
+    # takes the separate accessible and inaccessible tables, not this file.
     print("\n" + "-" * 60)
-    print("Creating combined probability files for fiberhmm-train:")
+    print("Creating combined accessible/inaccessible tables (for inspection; "
+          "fiberhmm-train -p takes the separate tables):")
 
     for ctx_size in args.context_sizes:
         for base in target_bases:

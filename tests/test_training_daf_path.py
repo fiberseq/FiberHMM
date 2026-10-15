@@ -130,6 +130,26 @@ def test_probs_exits_nonzero_when_no_read_passes(tmp_path, monkeypatch):
     assert exc.value.code == 1
 
 
+def test_probs_points_train_at_the_tables_it_accepts(tmp_path, monkeypatch, capsys):
+    """The combined *_probs.tsv is for inspection: fiberhmm-train -p rejects it
+    and takes the separate accessible/inaccessible tables, which the output
+    must name instead."""
+    bam = _write_daf_bam(tmp_path / "md.bam", "md")
+    out = tmp_path / "probs_out"
+    monkeypatch.setattr(sys, "argv", [
+        "fiberhmm-probs", "-a", bam, "-u", bam, "-o", str(out),
+        "--mode", "daf", "-k", "3", "-q", "0", "--min-read-length", "100"])
+    generate_probs.main()
+    printed = capsys.readouterr().out
+    assert "combined probability files for fiberhmm-train" not in printed
+    assert "fiberhmm-train -p takes the separate tables" in printed
+    tables = out / "tables"
+    acc, inacc = (tables / "probs_out_accessible_C_k3.tsv", tables / "probs_out_inaccessible_C_k3.tsv")
+    train.load_probability_file(str(acc)); train.load_probability_file(str(inacc))
+    with pytest.raises(ValueError, match="Cannot find probability values"):
+        train.load_probability_file(str(tables / "probs_out_C_k3_probs.tsv"))
+
+
 def test_transfer_daf_counts_deaminations(tmp_path):
     """transfer --mode daf used process_read on C/G counters, so deaminations
     (on T/A) never counted: P(m) estimates were 0 for every context."""

@@ -24,7 +24,7 @@ fiberhmm-probs -a demo/hia5_pacbio.naked.bam -u demo/hia5_pacbio.bam \
 
 ```text
     k=3 (7-mer): 3344 accessible, 3378 inaccessible contexts
-Creating combined probability files for fiberhmm-train:
+Creating combined accessible/inaccessible tables (for inspection; fiberhmm-train -p takes the separate tables):
   out/probs/demo/tables/demo_A_k3_probs.tsv (3378 contexts)
 ```
 
