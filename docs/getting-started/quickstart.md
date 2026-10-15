@@ -70,7 +70,7 @@ Outputs:
 ```text
 out/pacbio.calls.bam                 calls (sorted, indexed)
 out/pacbio.calls.bam.bai
-out/qc/pacbio.calls.qc.json          QC report (also .tsv; .png and .pdf with fiberhmm[plots])
+out/qc/pacbio.calls.qc.json          QC report (also .qc.tsv and .qc.curves.json; .png and .pdf with fiberhmm[plots])
 ```
 
 Each called read now carries `ns`/`nl` (nucleosomes), `as`/`al` (MSPs) and an
@@ -87,10 +87,12 @@ ns:B:I,86,480,674,870,1062,1255,1443,1639,1835,2231,2416,2608,3000,3183,3382,358
 as:B:I,0,232,625,823,1017,1218,1403,1590,1783,1986,2378,2564,2755,3144,3331,3529,3733
 ```
 
-The header records what was run and on which chemistry:
+The header records the coordinate frame of the calls, what was run and on
+which chemistry (abridged):
 
 ```text
-@CO	FIBERHMM-CHEMISTRY:v1:assay=fiber-seq;enzyme=hia5;platform=pacbio;mode=pacbio-fiber;model=hia5_pacbio
+@CO	fiberhmm:coord=molecular
+@CO	FIBERHMM-CHEMISTRY:v1:assay=fiber-seq;enzyme=hia5;platform=pacbio;mode=pacbio-fiber;apply_sha256=13342f5f...;fiberhmm_version=3.0.0;model=hia5_pacbio;pg=fiberhmm-call;...
 @CO	MA-TYPES:v1:nuc,msp,tf
 ```
 
@@ -138,8 +140,9 @@ Clustering (Jaccard >= 0.95; ends ±50 bp): 300 reads -> 300 molecules | 0 dupli
 
 Deaminations are read from the `MD` tags (from `minimap2 --MD` or
 `samtools calmd`). The run adds the SNP-screen outputs
-(`out/qc/dddb.calls.daf_snps.{bed,vcf,json,amplicons.tsv}`) and a duplicate
-report (`out/qc/dddb.calls.dedup.json`) to the QC directory. See
+(`out/qc/dddb.calls.daf_snps.{bed,vcf,json,amplicons.tsv}`), a duplicate
+report (`out/qc/dddb.calls.dedup.json`) and an insertion-consensus report
+(`out/qc/dddb.calls.insert_consensus.json`) to the QC directory. See
 [DAF-seq](../workflows/daf-seq.md).
 
 ## DddA DAF-seq
@@ -215,6 +218,38 @@ class_002  dataset_1::pooled  10110.0  10126.0  supported  176        0.4108
 
 (columns selected from `out/classes/classes.tsv`; the planted occupancies were
 0.7 and 0.5).
+
+## Check outputs for re-runs
+
+`fiberhmm-check` reads what each output records about how it was made and
+says whether a newer FiberHMM fix applies to it. Outputs made with 3.0.0 are
+clean:
+
+```bash
+fiberhmm-check out/*.bam out/qc/*.qc.json out/classes
+```
+
+```text
+out/ddda.calls.bam: clean
+out/dddb.calls.bam: clean
+...
+out/classes: clean
+```
+
+Run it on older outputs before reusing them; see
+[Checking outputs for re-runs](../reference/advisories.md).
+
+## View in FiberBrowser
+
+FiberBrowser, the companion browser, reads the called BAMs directly
+(`pip install fiberbrowser`). Open it on the reference and a called BAM:
+
+```bash
+fiberbrowser -f demo/ref.fa --dataset out/pacbio.calls.bam:pacbio
+```
+
+and go to `chrDemo:9,900-10,250` to see the two planted TF sites. The
+consensus run also writes an HTML report, `out/classes/report.html`.
 
 ## Where to go next
 
