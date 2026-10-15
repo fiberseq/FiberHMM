@@ -93,7 +93,7 @@ chmod +x bedToBigBed && mv bedToBigBed ~/bin/   # any directory on your PATH
 ## Check the installation
 
 ```bash
-python -c "import fiberhmm; print(fiberhmm.__version__)"   # 3.0.0
+python -c "import fiberhmm; print(fiberhmm.__version__)"   # 3.0.1
 fiberhmm-call --help
 ```
 

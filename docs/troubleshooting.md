@@ -284,7 +284,7 @@ all (calls made on an unaligned BAM) is graded on its unmapped reads.
 differs from the QC reference's calibration by more than 5; use the default
 threshold for the chemistry.
 
-## Known issues in 3.0.0
+## Known issues in 3.0
 
 - Tools that re-read `MM`/`ML` from a BAM (`recall-tfs`, `extract`, `qc`) use
   ML 125 for non-Nanopore chemistries while `call`/`apply`/`posteriors` use

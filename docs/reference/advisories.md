@@ -132,7 +132,7 @@ of its region files is recognised and does not count.)
 
 ## Advisories
 
-`fiberhmm-check --list` prints the current list. For 3.0.0:
+`fiberhmm-check --list` prints the current list. For 3.0.1:
 
 | ID | Severity | Output | Applies to |
 |---|---|---|---|

@@ -1,5 +1,37 @@
 # Changelog
 
+## 3.0.1
+
+### Fixed
+
+- **`fiberhmm-extract` reads footprint tags in the frame the BAM records**,
+  by the same rule as recall, QC and consensus. Nucleosome, MSP and TF
+  tracks from BAMs called with FiberHMM 2.12 or earlier were mirrored on
+  reverse-strand reads; extract those BAMs again. Tracks from BAMs called
+  with 3.0 are unchanged. New `--input-frame auto|molecular|query` sets the
+  frame of legacy `ns`/`nl`/`as`/`al`; a merged BAM whose histories
+  disagree now stops nucleosome and MSP extraction and asks for it.
+- The QC that `fiberhmm-call` runs after calling follows `--no-use-m5c` and
+  `--cpg-mask-policy` for the sampled reads it calls itself.
+- Writing apply tags without footprints keeps the `hl:i:1` marker on reads
+  whose harmonized `ns`/`nl` stay in place (Python API; `fiberhmm-apply`
+  output is unchanged).
+- `fiberhmm-transfer --parameters` naming a parameter group the frozen
+  catalog fixes exits 2 with one error line instead of a traceback.
+- `fiberhmm-call-m5c` path conflicts exit 2 with a
+  `fiberhmm-call-m5c: error:` line, as `fiberhmm-tag-m5c` does.
+- `fiberhmm-check` describes the 2.x Nanopore Hia5 and pre-3.0 DddB tables
+  as earlier emission tables. Its findings are unchanged.
+
+### Documentation
+
+- `--input-frame` help (`recall-tfs`/`-nucs`, `tag-m5c`, `call-m5c
+  --tag-input-frame`) states the full frame rule.
+- `fiberhmm-probs` no longer names the combined `*_probs.tsv` as
+  `fiberhmm-train` input; `-p` takes the accessible and inaccessible tables.
+- The `fiberhmm-recall-tfs` description no longer mentions `--phase-nrl`.
+- CI tests Python 3.14.
+
 ## 3.0.0
 
 FiberHMM 3.0 is the third generation of the FiberHMM family, released together
