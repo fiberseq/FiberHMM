@@ -182,7 +182,8 @@ def _duplicate_bed_value(read) -> int:
     return int(bool(getattr(read, 'is_duplicate', False)))
 
 
-def _parse_all_ma_annotations(read, *, annotation_frame='molecular', molecular_layers=frozenset()):
+def _parse_all_ma_annotations(read, *, annotation_frame='molecular', molecular_layers=frozenset(),
+                              dot_groups_molecular=False):
     """Parse MA/AQ/AN once and return annotations grouped by type.
 
     Values retain the exact target-specific ordering and quality orientation
@@ -190,7 +191,9 @@ def _parse_all_ma_annotations(read, *, annotation_frame='molecular', molecular_l
     ``MA`` the fibertools (>= 0.13) ``Ma``/``Aq``/``An`` tags are read instead;
     those are always molecular frame, whatever ``annotation_frame`` says.
     Groups named in ``molecular_layers`` (consensus family layers, declared
-    molecular by their FIBERHMM-CONSENSUS-MA contract) are molecular too.
+    molecular by their FIBERHMM-CONSENSUS-MA contract) are molecular too, and
+    with ``dot_groups_molecular`` (a header without frame evidence) so is
+    every '.'-strand group (``annotation_frame.ma_group_is_molecular``).
     """
     if annotation_frame not in ('seq', 'molecular'):
         raise ValueError('Unknown MA annotation frame')
@@ -219,8 +222,9 @@ def _parse_all_ma_annotations(read, *, annotation_frame='molecular', molecular_l
     ann_idx = 0
     read_length = int(parsed['read_length'])
     read_reverse = bool(getattr(read, 'is_reverse', False))
-    for name, _strand, _qspec, intervals in parsed['raw_types']:
-        is_reverse = read_reverse and (annotation_frame == 'molecular' or name in molecular_layers)
+    for name, strand, _qspec, intervals in parsed['raw_types']:
+        is_reverse = read_reverse and (annotation_frame == 'molecular' or name in molecular_layers
+                                       or (dot_groups_molecular and strand == '.'))
         for s, length in intervals:
             quals = per_annotation[ann_idx] if ann_idx < len(per_annotation) else []
             ann_name = an_names[ann_idx] if ann_idx < len(an_names) else ''
@@ -244,9 +248,69 @@ def _parse_all_ma_annotations(read, *, annotation_frame='molecular', molecular_l
     return annotations
 
 
-def _parse_ma_annotations(read, target_name: str):
+def resolve_extract_frames(header, input_frame: str = 'auto') -> dict:
+    """Coordinate frames of a BAM's footprint tags, by the rule the rest of
+    FiberHMM reads them with (``fiberhmm.io.annotation_frame``;
+    docs/reference/footprint-tag-frame.md).
+
+    ``MA`` follows the header (SEQ unless ``coord=molecular`` is declared;
+    consensus family layers molecular; without any frame evidence, '.'
+    groups molecular). Legacy ``ns/nl/as/al`` follow the @PG provenance, or
+    ``input_frame`` (``molecular``/``query``) when given; ``legacy`` is
+    ``None`` when merged histories disagree. Picklable, for the workers.
+    """
+    from fiberhmm.io.annotation_frame import (
+        LegacyFrame,
+        consensus_molecular_layers,
+        header_has_frame_evidence,
+        ma_annotation_frame,
+    )
+    if input_frame not in _INPUT_FRAMES:
+        raise ValueError(f'input_frame must be one of {", ".join(_INPUT_FRAMES)}')
+    legacy = LegacyFrame(header, _INPUT_FRAMES[input_frame])
+    return {
+        'ma': ma_annotation_frame(header),
+        'ma_dot_molecular': not header_has_frame_evidence(header),
+        'molecular_layers': consensus_molecular_layers(header),
+        'legacy': legacy.frame,
+        'legacy_reason': legacy.reason,
+        'legacy_dot_molecular': legacy.assumed,
+        'legacy_warning': legacy.warning('fiberhmm-extract'),
+    }
+
+
+_INPUT_FRAMES = {'auto': None, 'molecular': True, 'query': False}
+
+
+def _ma_parse_options(frames) -> dict:
+    """Keyword options of :func:`_parse_all_ma_annotations` for ``frames``
+    (``None``: every MA group molecular, the reading of direct callers)."""
+    if frames is None:
+        return {}
+    return {'annotation_frame': frames['ma'],
+            'molecular_layers': frames['molecular_layers'],
+            'dot_groups_molecular': frames['ma_dot_molecular']}
+
+
+def _legacy_tags_to_seq(starts, lengths, read, frames):
+    """Legacy ``ns/nl`` (or ``as/al``) in SEQ frame: flipped when this read's
+    tags are molecular (always, for ``frames=None``)."""
+    if frames is not None:
+        from fiberhmm.io.annotation_frame import MOLECULAR, read_has_dot_footprint_group
+        frame = frames['legacy']
+        if frames['legacy_dot_molecular'] and read_has_dot_footprint_group(read):
+            frame = MOLECULAR
+        if frame is None:
+            raise ValueError(f"cannot tell the frame of read {read.query_name}'s "
+                             f"ns/nl/as/al: {frames['legacy_reason']}")
+        if frame != MOLECULAR:
+            return [int(x) for x in starts], [int(x) for x in lengths]
+    return flip_intervals_to_seq(starts, lengths, read)
+
+
+def _parse_ma_annotations(read, target_name: str, frames=None):
     """Return target annotations from MA/AQ/AN in positional annotation order."""
-    parsed = _parse_all_ma_annotations(read)
+    parsed = _parse_all_ma_annotations(read, **_ma_parse_options(frames))
     if parsed is None:
         return None
     return parsed.get(target_name, [])
@@ -331,8 +395,9 @@ def _extract_ma_interval_type(
     circular_groups: bool,
     min_tq: int = 0,
     haplotype_fields: bool = False,
+    frames=None,
 ) -> Optional[int]:
-    annotations = _parse_ma_annotations(read, target_name)
+    annotations = _parse_ma_annotations(read, target_name, frames)
     if annotations is None:
         return None
     if not annotations:
@@ -469,6 +534,7 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
         block_scores = bool(params.get('block_scores', False))
         circular_groups = bool(params.get('circular_groups', False))
         haplotype_fields = bool(params.get('haplotype_fields', False))
+        frames = params.get('frames')
 
         n_reads = 0
         n_features = {t: 0 for t in extract_types}
@@ -517,7 +583,8 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                             read, bed_outs['nucleosome'], with_scores, query_to_ref,
                             block_scores=block_scores,
                             circular_groups=circular_groups,
-                            haplotype_fields=haplotype_fields)
+                            haplotype_fields=haplotype_fields,
+                            frames=frames)
                     if 'msp' in extract_types:
                         if query_to_ref is None:
                             query_to_ref = _build_query_to_ref(read)
@@ -525,7 +592,8 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                             read, bed_outs['msp'], with_scores, query_to_ref,
                             block_scores=block_scores,
                             circular_groups=circular_groups,
-                            haplotype_fields=haplotype_fields)
+                            haplotype_fields=haplotype_fields,
+                            frames=frames)
                     if 'tf' in extract_types:
                         if query_to_ref is None:
                             query_to_ref = _build_query_to_ref(read)
@@ -533,7 +601,8 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                             read, bed_outs['tf'], with_scores, min_tq, query_to_ref,
                             block_scores=block_scores,
                             circular_groups=circular_groups,
-                            haplotype_fields=haplotype_fields)
+                            haplotype_fields=haplotype_fields,
+                            frames=frames)
                     if 'm6a' in extract_types:
                         if query_to_ref is None:
                             query_to_ref = _build_query_to_ref(read)
@@ -548,7 +617,8 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                             read, bed_outs['m5c'], prob_threshold, query_to_ref,
                             block_scores=block_scores,
                             circular_groups=circular_groups,
-                            haplotype_fields=haplotype_fields)
+                            haplotype_fields=haplotype_fields,
+                            frames=frames)
                     if 'deam' in extract_types:
                         if query_to_ref is None:
                             query_to_ref = _build_query_to_ref(read)
@@ -587,7 +657,8 @@ def _extract_footprints(read, bed_out, with_scores: bool,
                         query_to_ref: Optional[dict] = None,
                         block_scores: bool = False,
                         circular_groups: bool = False,
-                        haplotype_fields: bool = False) -> int:
+                        haplotype_fields: bool = False,
+                        frames=None) -> int:
     """Extract nucleosome intervals as BED12 (one line per read).
 
     Prefers the MA ``nuc`` annotation when present; falls back to the legacy
@@ -605,17 +676,18 @@ def _extract_footprints(read, bed_out, with_scores: bool,
         read, bed_out, 'nuc', with_scores, query_to_ref,
         block_scores, circular_groups,
         haplotype_fields=haplotype_fields,
+        frames=frames,
     )
     if ma_count is not None:
         return ma_count
 
     try:
-        ns_raw = read.get_tag('ns')  # molecular-frame starts
+        ns_raw = read.get_tag('ns')
         nl_raw = read.get_tag('nl')
     except KeyError:
         return 0
-    # Tags are molecular frame; flip back to SEQ (query) coords for ref mapping.
-    ns, nl = flip_intervals_to_seq(ns_raw, nl_raw, read)
+    # SEQ (query) coords for ref mapping: molecular-frame tags are flipped.
+    ns, nl = _legacy_tags_to_seq(ns_raw, nl_raw, read, frames)
 
     if len(ns) == 0:
         return 0
@@ -685,7 +757,8 @@ def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int,
                  query_to_ref: Optional[dict] = None,
                  block_scores: bool = False,
                  circular_groups: bool = False,
-                 haplotype_fields: bool = False) -> int:
+                 haplotype_fields: bool = False,
+                 frames=None) -> int:
     """Extract TF footprints from MA/AQ tags (tf.QQQ annotations) as BED12.
 
     Reads the spec-compliant MA/AQ tags written by ``fiberhmm-recall-tfs``
@@ -705,6 +778,7 @@ def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int,
         read, bed_out, 'tf', with_scores, query_to_ref,
         block_scores, circular_groups, min_tq=min_tq,
         haplotype_fields=haplotype_fields,
+        frames=frames,
     )
     if ma_count is not None:
         return ma_count
@@ -790,7 +864,8 @@ def _extract_msps(read, bed_out, with_scores: bool,
                   query_to_ref: Optional[dict] = None,
                   block_scores: bool = False,
                   circular_groups: bool = False,
-                  haplotype_fields: bool = False) -> int:
+                  haplotype_fields: bool = False,
+                  frames=None) -> int:
     """Extract MSP intervals from as/al tags as BED12 (one line per read).
 
     When ``block_scores=True``, appends a 13th column of comma-separated
@@ -802,16 +877,17 @@ def _extract_msps(read, bed_out, with_scores: bool,
         read, bed_out, 'msp', with_scores, query_to_ref,
         block_scores, circular_groups,
         haplotype_fields=haplotype_fields,
+        frames=frames,
     )
     if ma_count is not None:
         return ma_count
 
     try:
-        as_raw = read.get_tag('as')  # molecular-frame MSP starts
+        as_raw = read.get_tag('as')
         al_raw = read.get_tag('al')
     except KeyError:
         return 0
-    as_starts, al_lengths = flip_intervals_to_seq(as_raw, al_raw, read)
+    as_starts, al_lengths = _legacy_tags_to_seq(as_raw, al_raw, read, frames)
 
     if len(as_starts) == 0:
         return 0
@@ -985,7 +1061,8 @@ def _extract_m6a(read, bed_out, prob_threshold: int, query_to_ref=None,
 def _extract_m5c(read, bed_out, prob_threshold: int, query_to_ref=None,
                  block_scores: bool = False,
                  circular_groups: bool = False,
-                 haplotype_fields: bool = False) -> int:
+                 haplotype_fields: bool = False,
+                 frames=None) -> int:
     """Extract DddA ``MA:ddda_mcg.`` spans or native MM/ML 5mC as BED12.
 
     Molecule-specific DAF calls are intervals and take precedence when present.
@@ -998,12 +1075,13 @@ def _extract_m5c(read, bed_out, prob_threshold: int, query_to_ref=None,
     """
     if query_to_ref is None:
         query_to_ref = _build_query_to_ref(read)
-    ma_annotations = _parse_ma_annotations(read, DDDA_MCG_FEATURE)
+    ma_annotations = _parse_ma_annotations(read, DDDA_MCG_FEATURE, frames)
     if ma_annotations:
         return _extract_ma_interval_type(
             read, bed_out, DDDA_MCG_FEATURE, True, query_to_ref,
             block_scores, False,
             haplotype_fields=haplotype_fields,
+            frames=frames,
         ) or 0
 
     positions = _parse_mod_positions_safe(read, {'m'})
@@ -1385,6 +1463,10 @@ def _temporary_index_if_missing(input_bam: str, temp_dir: str) -> Optional[str]:
     return index_path
 
 
+class ExtractFrameError(ValueError):
+    """The header cannot decide the frame of the legacy footprint tags."""
+
+
 def extract_tags_parallel(input_bam: str, output_beds, extract_types,
                           n_cores: int = 1, region_size: int = 10_000_000,
                           min_mapq: int = 0, prob_threshold: int = 125,
@@ -1396,7 +1478,8 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
                           chroms: Optional[Set[str]] = None,
                           sort_mem: Optional[str] = None,
                           sort_parallel: int = 0,
-                          haplotype_fields: bool = False):
+                          haplotype_fields: bool = False,
+                          input_frame: str = 'auto'):
     """Extract one or more tag types from BAM in a single region-parallel pass.
 
     All requested extract types share a single BAM traversal + a single
@@ -1408,8 +1491,13 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
             signature (single str for one type) is also accepted for back
             compat — in that case extract_types is a string.
         extract_types: list of extract types to process, or a single string.
+        input_frame: frame of legacy ns/nl/as/al: ``auto`` (the @PG
+            provenance rule, as recall-tfs), ``molecular`` or ``query``.
 
     Returns: (n_reads_processed, {extract_type: n_features})
+
+    Raises :class:`ExtractFrameError` when nucleosome/MSP extraction needs
+    the legacy-tag frame and the header cannot decide it.
     """
     start_time = time.time()
 
@@ -1425,6 +1513,18 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
     extract_types = ['nucleosome' if t == 'footprint' else t for t in extract_types]
     output_beds = {('nucleosome' if k == 'footprint' else k): v
                    for k, v in output_beds.items()}
+
+    with pysam.AlignmentFile(input_bam, 'rb', check_sq=False) as bam:
+        frames = resolve_extract_frames(bam.header, input_frame)
+    if 'nucleosome' in extract_types or 'msp' in extract_types:
+        # Only these fall back to legacy ns/nl/as/al.
+        from fiberhmm.io.annotation_frame import ambiguous_frame_message
+        if frames['legacy'] is None:
+            raise ExtractFrameError(ambiguous_frame_message(frames['legacy_reason']))
+        if frames['legacy_warning']:
+            print(frames['legacy_warning'], file=sys.stderr)
+        elif input_frame == 'auto':
+            print(f"Legacy ns/nl/as/al frame: {frames['legacy']} ({frames['legacy_reason']})")
 
     # Get regions
     regions = _get_genome_regions(input_bam, region_size, skip_scaffolds, chroms)
@@ -1448,6 +1548,7 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
             'block_scores': block_scores,
             'circular_groups': circular_groups,
             'haplotype_fields': haplotype_fields,
+            'frames': frames,
         }
 
         # Work items: per region, a dict of {type: temp_bed_path}
@@ -1961,6 +2062,14 @@ Examples:
                              'a bigBed to its source without filename parsing.')
 
     # Region options
+    parser.add_argument('--input-frame', choices=['auto', 'molecular', 'query'], default='auto',
+                        help='Coordinate frame of legacy ns/nl/as/al tags (read when a read has no MA '
+                             'nuc/msp). "auto" (default) follows the @PG provenance, as '
+                             'fiberhmm-recall-tfs: the last footprint writer decides (fibertools, '
+                             'and FiberHMM declaring coord=molecular -> molecular; FiberHMM <= 2.12 '
+                             '-> query); a header with no evidence (stripped @PG) is read as query, '
+                             'except reads whose MA has a "." nuc/msp/tf group (molecular). Merged '
+                             'histories that disagree stop the run. MA follows its own header rule.')
     parser.add_argument('--region-size', type=int, default=10_000_000, help='Region size for parallel')
     parser.add_argument('--skip-scaffolds', action='store_true', help='Skip scaffold chromosomes')
     parser.add_argument('--chroms', type=str, help='Comma-separated chromosomes to process')
@@ -2098,7 +2207,11 @@ Examples:
             chroms=chroms,
             sort_mem=args.sort_mem,
             sort_parallel=args.sort_parallel or args.cores,
+            input_frame=args.input_frame,
         )
+    except ExtractFrameError as exc:
+        print(f"fiberhmm-extract: error: {exc}", file=sys.stderr)
+        sys.exit(2)
     except (RuntimeError, RegionPlanError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)

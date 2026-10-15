@@ -88,6 +88,17 @@ Each bigBed embeds its autoSQL schema, whose description starts with
 `Sample: <name>.` (the BAM stem, or `--sample-name`, with dots and spaces
 replaced). FiberBrowser uses it to group a sample's layers.
 
+## Coordinate frames
+
+On reverse-strand reads, footprint tags are read in the frame the BAM
+records, by the [shared rule](../reference/footprint-tag-frame.md) that
+recall, QC and consensus use: `MA` is SEQ frame unless the header declares
+`coord=molecular`, and legacy `ns`/`nl`/`as`/`al` follow the `@PG` history
+(SEQ for FiberHMM 2.12 and earlier, molecular for fibertools and 3.0).
+`--input-frame query|molecular` sets the legacy-tag frame instead. If merged
+`@PG` histories disagree and nothing declares `coord=molecular`, nucleosome
+and MSP extraction stops and asks for `--input-frame`.
+
 ## Performance
 
 `fiberhmm-extract` processes regions in parallel (`-c`, `--region-size`,

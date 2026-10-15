@@ -49,6 +49,7 @@ def test_parallel_extractor_preserves_legacy_positional_parameter_order():
         'sort_mem',
         'sort_parallel',
         'haplotype_fields',
+        'input_frame',
     ]
 
 

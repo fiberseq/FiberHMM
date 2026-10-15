@@ -4,8 +4,8 @@ This is the rule FiberBrowser (`browser/services/bam_tags.py`,
 `legacy_tag_frame_report`) and FiberHMM (`fiberhmm.io.annotation_frame`,
 `legacy_tag_frame_report`; used by `fiberhmm-recall-tfs` /
 `fiberhmm-recall-nucs --input-frame auto`, the pass-through tools' `@PG`
-records, `fiberhmm-tag-m5c` / `-call-m5c` auto frames, QC, strand rescue and
-consensus) use to
+records, `fiberhmm-tag-m5c` / `-call-m5c` auto frames, `fiberhmm-extract`,
+QC, strand rescue and consensus) use to
 decide how to read a BAM's footprint tags on reverse-strand reads. Both
 implementations must follow it; the same page is in both repositories.
 
@@ -143,7 +143,8 @@ single chain, with each record the child of the one before it.
 `legacy_tag_frame` returns no frame there: `fiberhmm-recall-tfs` /
 `-recall-nucs --input-frame auto` stop at the first read that carries
 `ns`/`nl`/`as`/`al` (reads whose only footprints are fibertools `Ma` tags need
-no frame) and ask for `--input-frame query` or `molecular`. Pass-through tools
+no frame) and ask for `--input-frame query` or `molecular`;
+`fiberhmm-extract` asks for it before extracting nucleosomes or MSPs. Pass-through tools
 record nothing and `fiberhmm-tag-m5c` / `-call-m5c` keep their historical
 fallback (the `coord=molecular` marker, else SEQ).
 
@@ -181,8 +182,8 @@ pipeline stripped `@PG`, or kept only unrelated programs) gets this extension:
   m5C layer (`ddda_mcg.`, `ddda_ucg.`) leaves historical `+` footprints alone.
 - **Legacy `ns/nl/as/al`.** A read whose `MA` has a `.` nuc/msp/tf group is
   molecular (the same writer wrote both); an m5C group does not count.
-  Otherwise SEQ is assumed. FiberHMM's recall, tag-m5c and call-m5c print a
-  warning when they use this extension, and QC applies it too. Strand rescue
+  Otherwise SEQ is assumed. FiberHMM's recall, tag-m5c, call-m5c and extract
+  print a warning when they use this extension, and QC applies it too. Strand rescue
   and consensus apply the `MA` part; their legacy tags follow consensus's
   `legacy_hia5_annotation_frame` rule (section 4).
 

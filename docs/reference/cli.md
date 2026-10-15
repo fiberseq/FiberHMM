@@ -350,6 +350,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--circular-groups` | off | Append circId/circPart/circParts/molStart/molLength columns and preserve MA/AN groups for circular wrapped nucleosome, MSP, and TF features. |
 | `--haplotype-fields` | off | Append scalar hp and ps columns copied from the source BAM HP/PS tags after every other optional BED field. Missing or non-integer tags are written as -1. Off by default to preserve the existing BED/bigBed schema byte-for-byte. |
 | `--sample-name` | — | Sample/dataset identifier to embed in the autoSQL description of every output bigBed ("Sample: &lt;name&gt;. ..."). Default: BAM basename stem. Lets downstream tools match a bigBed to its source without filename parsing. |
+| `--input-frame` | `auto` | Coordinate frame of legacy ns/nl/as/al tags (read when a read has no MA nuc/msp). "auto" (default) follows the @PG provenance, as fiberhmm-recall-tfs: the last footprint writer decides (fibertools, and FiberHMM declaring coord=molecular -&gt; molecular; FiberHMM &lt;= 2.12 -&gt; query); a header with no evidence (stripped @PG) is read as query, except reads whose MA has a "." nuc/msp/tf group (molecular). Merged histories that disagree stop the run. MA follows its own header rule. Choices: `auto`, `molecular`, `query`. |
 | `--region-size` | `10000000` | Region size for parallel |
 | `--skip-scaffolds` | off | Skip scaffold chromosomes |
 | `--chroms` | — | Comma-separated chromosomes to process |
