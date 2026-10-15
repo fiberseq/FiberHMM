@@ -367,8 +367,8 @@ def attach_footprint_tags(seg, fp, deam_ma_suffix: str) -> None:
     ms = [int(x) for x in fp['msp_starts']]
     ml = [int(x) for x in fp['msp_sizes']]
     from fiberhmm.inference.read_filters import HARMONIZED_LEGACY_TAG
-    if (fs or ms) and seg.has_tag(HARMONIZED_LEGACY_TAG):
-        seg.set_tag(HARMONIZED_LEGACY_TAG, None)   # legacy tags replaced below
+    if fs and seg.has_tag(HARMONIZED_LEGACY_TAG):
+        seg.set_tag(HARMONIZED_LEGACY_TAG, None)   # ns/nl are replaced below
     if fs:
         seg.set_tag('ns', array.array('I', fs))
         seg.set_tag('nl', array.array('I', fl))

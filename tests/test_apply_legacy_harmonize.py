@@ -197,3 +197,17 @@ def test_direct_footprint_writers_clear_hl_only_when_they_replace_legacy_tags():
     attach_footprint_tags(read, {'footprint_starts': [30], 'footprint_sizes': [150],
                                  'msp_starts': [200], 'msp_sizes': [100]}, '')
     assert list(read.get_tag('ns')) == [30] and not read.has_tag(HARMONIZED_LEGACY_TAG)
+
+
+def test_msp_only_footprint_update_keeps_hl():
+    """attach_footprint_tags without footprints leaves the harmonized ns/nl
+    (and so hl) in place."""
+    from fiberhmm.crossstrand.recall import attach_footprint_tags
+    from fiberhmm.inference.read_filters import HARMONIZED_LEGACY_TAG
+
+    read = _read()
+    set_legacy_apply_tags(read, RESULT, with_scores=True, harmonize=True)
+    attach_footprint_tags(read, {'footprint_starts': [], 'footprint_sizes': [],
+                                 'msp_starts': [200], 'msp_sizes': [100]}, '')
+    assert list(read.get_tag('ns')) == [10, 260]
+    assert read.has_tag(HARMONIZED_LEGACY_TAG)
