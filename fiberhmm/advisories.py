@@ -838,19 +838,20 @@ def _table_finding(index: _Index, rule: dict, run: _Run) -> Optional[_Finding]:
                 releases = entry.get("releases") or []
                 shipped = (f"shipped in {releases[0]}-{releases[-1]}" if len(releases) > 1
                            else f"shipped in {releases[0]}" if releases else "a development copy")
-                swapped.append(f"{where} {role} table sha256 {digest[:12]} is the "
-                               f"context-swapped {table} table ({shipped})")
+                swapped.append(f"{where} {role} table sha256 {digest[:12]} is an "
+                               f"earlier {table} emission table ({shipped})")
         if swapped:
             return _Finding(AFFECTED, "high", swapped)
-        return _Finding(_NOT, "high", [f"{where} table digests are not a swapped {table} table"])
+        return _Finding(_NOT, "high", [f"{where} table digests are not an earlier {table} emission table"])
     model = run.chemistry.get("model")
     bundled = set(rule["match"].get("bundled_models", ()))
     if model and model.endswith("_gt_swapped_legacy"):
-        return _Finding(AFFECTED, "high", [f"{where} used the legacy table {model}"])
+        return _Finding(AFFECTED, "high", [
+            f"{where} used the earlier {table} emission table kept in models/legacy"])
     if model and run.chemistry.get("custom_model") and model not in bundled:
         return _Finding(POSSIBLY, "low", [
-            f"{where} used a custom table ({model}) and records no table digest, so its "
-            "context order cannot be checked"])
+            f"{where} used a custom table ({model}) and records no table digest, so it "
+            "cannot be matched to a known table"])
     return _code_finding(index, rule, run)
 
 

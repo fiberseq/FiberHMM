@@ -20,10 +20,13 @@ ont_hia5.bam: RE-RUN REQUIRED
       @PG fiberhmm-call.3 command line runs code from a tree named after commit 1ca7d0a, which
       predates the fix (dc7abba)
     why:
-      The Nanopore Hia5 emission table has been updated in 3.0. ...
+      The Nanopore Hia5 emission table has been updated in 3.0. Calls made with the earlier table,
+      shipped in every 2.x release, differ: nucleosome, MSP and TF calls all used it. Against 3.0
+      calls, about 75-83% keep both edges within 5 bp; call totals are about unchanged.
     fix:
       Re-call from the aligned reads with FiberHMM >= 3.0: fiberhmm-call -i aligned.bam -o calls.bam
-      --enzyme hia5 --seq nanopore (or fiberhmm-pipeline). ...
+      --enzyme hia5 --seq nanopore (or fiberhmm-pipeline). fiberhmm-recall-tfs alone is not enough:
+      the footprint pass used the same table. Re-run QC and consensus made from the old calls.
 calls_v3.bam: clean
 ```
 
@@ -165,13 +168,16 @@ their FiberHMM version since 3.0; older ones without it are reported as
 {
   "schema": "fiberhmm.advisory_report.v1",
   "path": "ont_hia5.bam",
+  "checked_with": {
+    "fiberhmm_version": "3.0.1",
+    "advisories_revision": 3
+  },
   "kind": "bam",
   "status": "rerun-required",
   "needs_rerun": true,
   "confirmed": true,
   "unverifiable": false,
   "error": null,
-  "checked_with": {"fiberhmm_version": "3.0.0", "advisories_revision": 2},
   "advisories": [
     {
       "id": "hia5-nanopore-gt-table",
@@ -179,11 +185,13 @@ their FiberHMM version since 3.0; older ones without it are reported as
       "status": "affected",
       "confidence": "medium",
       "title": "Nanopore Hia5 calls made with the 2.x emission table",
-      "reason": "...",
+      "reason": "The Nanopore Hia5 emission table has been updated in 3.0. Calls made with the earlier table, shipped in every 2.x release, differ: nucleosome, MSP and TF calls all used it. Against 3.0 calls, about 75-83% keep both edges within 5 bp; call totals are about unchanged.",
       "artifact": "calls",
-      "fix": "Re-call from the aligned reads with FiberHMM >= 3.0: ...",
+      "fix": "Re-call from the aligned reads with FiberHMM >= 3.0: fiberhmm-call -i aligned.bam -o calls.bam --enzyme hia5 --seq nanopore (or fiberhmm-pipeline). fiberhmm-recall-tfs alone is not enough: the footprint pass used the same table. Re-run QC and consensus made from the old calls.",
       "fixed_in": "3.0.0",
-      "evidence": ["@PG fiberhmm-call.3 command line runs code from a tree named after commit 1ca7d0a, which predates the fix (dc7abba)"],
+      "evidence": [
+        "@PG fiberhmm-call.3 command line runs code from a tree named after commit 1ca7d0a, which predates the fix (dc7abba)"
+      ],
       "program": "fiberhmm-call.3",
       "path": "ont_hia5.bam",
       "needs_rerun": true

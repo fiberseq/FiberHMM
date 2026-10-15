@@ -198,6 +198,39 @@ def test_table_digest_decides_regardless_of_version():
     assert "hia5-nanopore-gt-table" not in _by_id(check_header(good))
 
 
+_INTERNAL_WORDING = ("swap", "acgt", "context order", "same error")
+
+
+def _user_text(advisory):
+    return " ".join([advisory.title, advisory.reason, advisory.fix, *advisory.evidence]).lower()
+
+
+def test_table_advisory_text_is_neutral():
+    """Titles, reasons and evidence describe an earlier table, not its
+    internals; status values and legacy file names stay internal."""
+    for rule in adv.load_index()["advisories"]:
+        text = " ".join(str(rule[key]) for key in ("title", "reason", "fix")).lower()
+        assert not any(word in text for word in _INTERNAL_WORDING), rule["id"]
+    legacy = _sha(MODELS / "legacy" / "hia5_nanopore_gt_swapped_legacy.json")
+    call = _hia5_call("3.0.0", "-m old.json --prob-threshold 248 --primary",
+                      pid="fiberhmm-call")
+    by_digest = _header([call], [_declaration("fiberhmm-call", apply_sha256=legacy,
+                                              recall_sha256=legacy)])
+    by_name = _header([_hia5_call("2.16.8", "--prob-threshold 248 --primary",
+                                  pid="fiberhmm-call")],
+                      [_declaration("fiberhmm-call", model="hia5_nanopore_gt_swapped_legacy")])
+    fixed = _sha(MODELS / "hia5_nanopore.json")
+    clean = _header([dict(call, VN="2.16.8")],
+                    [_declaration("fiberhmm-call", apply_sha256=fixed, recall_sha256=fixed)])
+    for header in (by_digest, by_name):
+        advisory = _by_id(check_header(header))["hia5-nanopore-gt-table"]
+        assert advisory.status == "affected"
+        assert "earlier hia5_nanopore emission table" in advisory.evidence[0]
+        assert not any(word in _user_text(advisory) for word in _INTERNAL_WORDING)
+    for advisory in check_header(clean):
+        assert not any(word in _user_text(advisory) for word in _INTERNAL_WORDING)
+
+
 def test_declared_commit_beats_the_shared_version_string():
     index = adv.load_index()
     pre = next(sha for sha in index["commits"] if sha.startswith(PRE_FIX))
