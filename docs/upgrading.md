@@ -6,7 +6,7 @@ lists what 2.x users need to act on. The full list of changes is in the
 [Changelog](changelog.md).
 
 ```bash
-pip install --upgrade fiberhmm      # needs Python >= 3.10
+pip install --upgrade fiberhmm      # Python 3.10 to 3.14
 ```
 
 ## Check which outputs need re-running
@@ -18,10 +18,11 @@ lists the fixes below that apply to it, with the exact command to re-run:
 fiberhmm-check data/*.bam qc/*.qc.json consensus_out/
 ```
 
-It exits 0 when nothing needs re-running, 3 when something does, and 4 when
-a file holds calls without FiberHMM provenance, which cannot be checked
-(re-run them if they came from FiberHMM < 3.0); `--json` gives the same
-result for scripts. BAMs record the digests of the
+It exits 0 when nothing needs re-running, 3 when something does, 4 when a
+file holds calls without FiberHMM provenance, which cannot be checked
+(re-run them if they came from FiberHMM < 3.0), and 2 when a path cannot be
+checked; `--json` gives the same result for scripts. `fiberhmm-check --list`
+prints every advisory it knows. BAMs record the digests of the
 tables they were called with since 3.0, so later releases can tell exactly;
 for 2.x BAMs the check uses the version and command line, and says so when
 that cannot decide (development builds reported 2.16.8 on both sides of some
@@ -65,11 +66,12 @@ accessible state. **Re-train models built this way with 2.x**;
 | DAF insertion / soft-clip / SNP-masked bases | counted as protected | **no evidence**; unaligned stretches >= 50 bp uncalled | `--no-daf-mask-unaligned` |
 | `fiberhmm-pipeline` DAF soft clips | hard-clipped | **kept on linear contigs** (hard-clipped on circular ones); supplementary records kept | `--hard-clip`, `--alignments primary` |
 | Bases trimmed at read ends by `posteriors` | 100 | **10** (as `call`/`apply`) | `--edge-trim 100` |
-| DddA CpG-aware calling: first-pass HMM and recall in `call`, HMM in `apply`/`posteriors`, joint HMM and recall in `pair`/`merge` | off | **on** (`ddda_ucg` islands exempt) | `--no-use-m5c` |
+| DddA CpG-aware calling: first-pass HMM and recall in `call` (and `pipeline`), recall in `recall-tfs`/`-nucs`, HMM in `apply`/`posteriors` and the `qc` light call, joint HMM and recall in `pair`/`merge` | off | **on** (`ddda_ucg` islands exempt) | `--no-use-m5c` |
 | DAF tools reading MM/ML dU (`dedup`, `pair`, `merge`) | ML 0 | **ML 128** | `--prob-threshold 0` |
 | DAF duplicate grouping | by alignment orientation | **by deamination flavour** (more duplicates found; for example 5.8% → 9.9% on one DddA data set) | none |
 | TF recall decoder (all chemistries) | one maximum per positive-score excursion | **exact best set of intervals**, `--min-llr` is the per-interval cost (`tf_decoder=multi_interval_v1` in `@PG`) | none |
 | TF `--min-llr` preset for DddB | 4.0 | **5.0** (as every preset) | `--min-llr 4` |
+| Nucleosome recall for Hia5 and DddB | periodicity prior (`--phase-nrl auto`); `topology` policy for Nanopore Hia5 | **conservative, no periodicity prior**; nucleosome calls change | none (`--phase-nrl` and `--nuc-recall-policy` are retired) |
 | DddA TF table and radial nucleosome recall | 2.x `ddda_TF.json`, radial template | **duplex-calibrated `ddda_TF.json`; phase-aware posterior edges** (`ddda_nuc_profile.json`, `ddda_nuc_refine.json`) | none |
 | DddA adjacent-target thinning (`call`, `apply`, `recall-tfs`/`-nucs`, `pair`/`merge`, consensus) | off | **runs of ≥ 2 CC/GG targets keep one** | `--daf-mask-runs 0` |
 | Looser consensus prevalence tiers (`prevalence_edge`, `prevalence_loose`) | could double-count and exceed 1 | coherent union; drops by up to about 0.14 (typically 0.002–0.04); core unchanged | none (the old value was an error) |
@@ -95,6 +97,20 @@ These now either work or stop with a clear message:
 - `fiberhmm-apply -c 1` no longer crashes on DAF strand-swap chimeras.
 - `fiberhmm-posteriors` decodes reverse reads in the right frame and handles
   DAF.
+- Re-deduplicating a BAM that already carries duplicate marks (a 2.x output,
+  or `fiberhmm-call` on one) recomputes them: `fiberhmm-dedup` clears the
+  earlier `0x400` flags and `di`/`ds` tags before marking.
+- `fiberhmm-recall-tfs`/`-recall-nucs` read `ns/nl/as/al` written by
+  fibertools in molecular frame (reverse-read nucleosomes and MSPs were
+  mirrored), and a merged header whose histories disagree stops the run. See
+  [Footprint-tag frame](reference/footprint-tag-frame.md).
+- `fiberhmm-recall-tfs` on a BAM called with `--no-legacy-tags` reads the
+  `MA` footprints instead of deleting every annotation.
+- `fiberhmm-extract` keeps intervals whose first or last base is soft-clipped
+  or inserted (on minimap2 ONT/DAF alignments it dropped 11–16% of MSPs and
+  about a quarter of TF calls); re-extract tracks made with 2.x.
+- `fiberhmm-apply --scores` writes MSP `aq` as mean P(accessible) ×255, as
+  documented (2.x wrote P(footprint), so confident MSPs scored near 0).
 - EcoGII and custom-enzyme BAMs are never scored with Hia5 emissions in
   consensus.
 
@@ -108,6 +124,7 @@ These now either work or stop with a clear message:
 | `fiberhmm-merge` (development builds only) | still installed but deprecated: `fiberhmm-pair --from-paired` |
 | `fiberhmm-call --ddda-mcg` (development builds only) | `fiberhmm-tag-m5c`, then `fiberhmm-call` on the tagged BAM ([DAF-seq](workflows/daf-seq.md#ddda-cpg-island-methylation)) |
 | `fiberhmm-apply --chroms`, `--skip-scaffolds`, `--region-size`, `--scores-db`, `-l` | rejected (they never had an effect); use `fiberhmm-call --region-parallel` |
+| `--phase-nrl`, `--nuc-recall-policy` (`call`, `recall-tfs`/`-nucs`) | retired; nucleosome recall is conservative without a periodicity prior |
 | `recaller.abutting` (development builds only) | removed; use the "+ edge" tier or `recaller.linker=either` |
 | `--engine staged_native_families` (consensus) | deprecated but available |
 | `fiberhmm[consensus]`, `fiberhmm[numba]` | still accepted; their packages are core dependencies now |
@@ -123,12 +140,22 @@ These now either work or stop with a clear message:
 - `fiberhmm-consensus` and `fiberhmm-transfer` work on a plain
   `pip install fiberhmm`.
 - `fiberhmm-recall-tfs`/`-recall-nucs` accept `--prob-threshold`;
-  `fiberhmm-call`, `-apply`, `-posteriors` and `-pair`/`-merge` accept
-  `--use-m5c`/`--no-use-m5c` and `--cpg-mask-policy`.
+  `fiberhmm-call`, `-apply`, `-posteriors`, `-recall-tfs`/`-recall-nucs`,
+  `-pair`/`-merge` and `-pipeline` accept `--use-m5c`/`--no-use-m5c` and
+  `--cpg-mask-policy`.
+- `fiberhmm-apply --harmonize-legacy-tags` (opt-in) writes `ns/nl` as the
+  nucleosomes of the `MA` view, so they tile with `as/al`. Each such read
+  carries `hl:i:1`, and `fiberhmm-recall-tfs`/`-recall-nucs` refuse it,
+  because recall needs every HMM footprint in `ns/nl`. Re-calling or
+  re-applying without the option removes the tag.
+- `fiberhmm-call` output carries `@CO fiberhmm:coord=molecular`, so its
+  footprint frame survives a pipeline that strips `@PG`
+  ([Coordinate frames](concepts/coordinates.md)).
 - This documentation site, with a generated
   [command-line reference](reference/cli.md).
 
 ## FiberBrowser
 
 FiberBrowser 3.0 requires FiberHMM 3.x. Reload BAMs called with 3.0 to get
-the corrected Nanopore Hia5 calls and the lattice-recaller class layers.
+the updated Nanopore Hia5 and DddB calls and the lattice-recaller class
+layers.

@@ -3,7 +3,7 @@
 ## Install
 
 ```bash
-pip install fiberhmm            # Python >= 3.10
+pip install fiberhmm            # Python 3.10 to 3.14
 pip install "fiberhmm[all]"     # plus matplotlib (QC figures) and h5py (HDF5 posteriors)
 ```
 
@@ -31,8 +31,10 @@ fiberhmm-call -i aligned.bam -o calls.bam --enzyme ddda -c 8 --region-parallel
 fiberhmm-call -i reads.bam -o - --enzyme hia5 --seq pacbio -c 8 | ft fire - fire.bam
 ```
 
-For DAF input, PCR-duplicate marking and SNP screening run automatically, and
-every file output gets a bounded QC report in `qc/` next to the BAM.
+For DAF file input, PCR-duplicate marking and SNP screening run
+automatically. For DddA, CpGs are left out of calling except inside
+unmethylated CpG islands (`--no-use-m5c` keeps them). Every file output gets
+a bounded QC report in `qc/` next to the BAM.
 
 ## Look at the calls
 

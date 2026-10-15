@@ -224,8 +224,9 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   `fiberhmm-utils ma-types` adds them to older BAMs in place (`--types` or
   `--scan`).
 - `fiberhmm-recall-tfs`/`-recall-nucs` accept `--prob-threshold`;
-  `fiberhmm-call`, `-apply`, `-posteriors` and `-pair`/`-merge` accept
-  `--use-m5c`/`--no-use-m5c` and `--cpg-mask-policy`;
+  `fiberhmm-call`, `-apply`, `-posteriors`, `-recall-tfs`/`-recall-nucs`,
+  `-pair`/`-merge` and `-pipeline` accept `--use-m5c`/`--no-use-m5c` and
+  `--cpg-mask-policy`;
   `fiberhmm-posteriors` accepts `--prob-threshold`, `--daf-snp-mask` and the
   chimera options (`--keep-chimeras`, `--chimera-*`).
 - Model files for development chemistries are shipped for method work only
@@ -285,7 +286,7 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   windows-done/ETA progress line; results do not depend on the schedule.
   `--resume` keeps its meaning (a new run from saved evidence). See
   [Long runs and resuming](https://fiberseq.github.io/FiberHMM/workflows/consensus/#long-runs-and-resuming).
-- GitHub Actions CI (Linux/macOS, Python 3.10/3.12) with a wheel smoke test.
+- GitHub Actions CI (Linux/macOS, Python 3.10/3.12/3.13) with a wheel smoke test.
 - Documentation site (MkDocs, published to GitHub Pages from `docs/`) with
   getting-started, concept, workflow and reference pages, a synthetic demo
   data generator (`docs/examples/make_demo_data.py`) and a command-line
@@ -306,17 +307,23 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   tags, so re-calling a BAM that already carried marks (a 2.x or earlier 3.0
   output) kept the old ones: the log reported the new duplicate count while
   the BAM held both sets. Earlier marks are now cleared on every record before
-  marking (`prior_marks=cleared` in `@PG`), and `fiberhmm-check` no longer
-  recommends re-running dedup when such a run follows the old one.
+  marking (`prior_marks=cleared` in `@PG`), also when no read can be
+  fingerprinted, and `fiberhmm-check` no longer recommends re-running dedup
+  when such a run follows the old one.
 - **`fiberhmm-tag-m5c` island inference on hg38 headers.** Without
   `--cpg-islands`, every `@SQ` contig had to be in the reference FASTA, so the
   command failed on BAMs listing `chrEBV` (absent from UCSC `hg38.fa`) even
   when no read mapped there. Islands are now inferred only for contigs that
   have reads (faster too); a read contig missing from the FASTA is skipped with
-  a note. Its BAM, `--calls-tsv` and `--write-cpg-islands` are published only
-  when the run succeeds (a failed rerun leaves the earlier outputs, and a stale
-  BAM index is removed), and no output may name the reference, the island
-  catalog, an input index or another output (also `fiberhmm-call-m5c`).
+  a note.
+- **`fiberhmm-tag-m5c` and `fiberhmm-call-m5c` outputs are atomic and
+  guarded.** Each command publishes all its outputs as one group only when
+  the run succeeds (tag-m5c: the BAM, `--calls-tsv` and `--write-cpg-islands`;
+  call-m5c: the BED, the `--tag-output` BAM in either `--tag-mode` and
+  `--write-cpg-islands`). If any publication step fails, every earlier output is
+  restored, and an index of an earlier BAM is removed. No output may name an
+  input BAM, the reference, the island catalog, any of their indexes or
+  another output.
 - **`fiberhmm-apply` keeps `ddda_ucg`/`ddda_mcg`.** Apply dropped every `MA`
   group, so recalling an applied tag-m5c BAM lost the island calls the CpG
   mask depends on; region-parallel apply also read them only after stripping.
@@ -330,18 +337,21 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   because recall reads the raw footprints from `ns/nl`: recalling harmonized
   arrays changed recall output on 147 of 3,202 NAPA DddA reads, 42 of 169 Hia5
   PacBio and 358 of 400 Hia5 Nanopore reads. `fiberhmm-recall-tfs`/`-nucs`
-  therefore refuse any read carrying `hl:i:1`, which every harmonized read
-  gets and every later writer of `ns/nl` (call, apply, recall) removes. The
-  default apply output is unchanged.
-  `fiberhmm.cli.export_posteriors.export_posteriors_from_bam` resolves the
-  DddA run thinning and CpG mask like the command line and now applies
+  therefore refuse (exit 2) any read carrying `hl:i:1`, which every harmonized
+  read gets. A later writer that replaces `ns/nl` (call, apply, recall)
+  removes the tag; one that rewrites only MSPs or `MA` keeps it. The
+  region-parallel apply API writes the same `@PG` record. The default apply
+  output is unchanged.
+- **Posteriors API.** `fiberhmm.cli.export_posteriors.export_posteriors_from_bam`
+  accepts `enzyme`, `use_m5c` and `cpg_mask_policy`, resolves the DddA run
+  thinning and CpG mask like `fiberhmm-posteriors`, and now applies
   `min_mapq` (default 0).
 - **Footprint frames of files whose `@PG` was stripped.** `fiberhmm-call`
   output now also carries `@CO fiberhmm:coord=molecular` (it was only in the
   `@PG DS`). Wherever the header has frame evidence (a footprint writer on a
   `@PG` chain, or `coord=molecular`), frames are resolved exactly as before.
   Only without evidence: each `MA` group's own strand decides that group's
-  frame (`.` molecular); legacy `ns/nl/as/al` follow a `.` nuc/msp/tf `MA`
+  frame (`.` molecular, `+`/`-` the header rule); legacy `ns/nl/as/al` follow a `.` nuc/msp/tf `MA`
   group on the same read, else SEQ with a warning (recall, tag-m5c, call-m5c
   and QC); a chemistry declaration decides nothing. On NAPA, scDAF and Hia5
   ONT call output with `@PG`/`@CO` stripped, recall-tfs now matches the
@@ -415,8 +425,8 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   now its prediction strength averaged over every split-half. It used to
   come from one split, because per-split values were keyed by rounded
   centroids that rarely matched.
-- **Nanopore Hia5 emission table updated.** 3.0 re-calibrates the bundled
-  table and replaces it with one rebuilt from matched controls (next entry),
+- **Nanopore Hia5 emission table updated.** 3.0 replaces the bundled table
+  with one rebuilt from matched controls (next entry),
   so ONT Hia5 calls from 2.x should be re-run with 3.0. The 2.x table is kept
   as `fiberhmm/models/legacy/hia5_nanopore_gt_swapped_legacy.json` to
   reproduce old calls. The model builder now always numbers contexts in the
@@ -431,8 +441,8 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   embryo reads the median nucleosome call moves from 166 to 151 bp and the
   fraction of bases in MSPs from 15% to 24%. The reindexed 2.9 values are
   kept as `legacy/hia5_nanopore_v2.9_reindexed_legacy.json`.
-- **DddB emission table updated.** The bundled DddB table is re-calibrated
-  to the encoder's context order; DddB calls from 2.x should be re-run. The
+- **DddB emission table updated.** The bundled DddB table is
+  re-calibrated; DddB calls from 2.x should be re-run. The
   old table is kept as `legacy/dddb_nanopore_gt_swapped_legacy.json`. 3.0
   also ships a new in-vivo DddB table: it keeps the re-calibrated naked
   table's protected state,
@@ -699,7 +709,8 @@ These change numbers relative to 2.x.
   left a step at that length in nucleosome call lengths and most one-base
   MSPs; `topology` kept the HMM's edges and an 85-bp floor, which left a
   pile-up just above 85 bp and the HMM's ~10-bp edge comb. Nucleosome calls
-  change for Hia5 and DddB; DddA radial recall is unchanged.
+  change for Hia5 and DddB; DddA radial recall is unchanged. The
+  `--phase-nrl` and `--nuc-recall-policy` options are retired.
 - **DddA models and nucleosome recall.** `ddda_TF.json` is recalibrated on
   physical scDAF duplexes (the TF-recall table only; the HMM table
   `ddda_nuc.json` is unchanged). Radial nucleosome recall infers each edge
@@ -728,15 +739,17 @@ These change numbers relative to 2.x.
   (per-read Jaccard 0.98-0.996 on NAPA, UBA1 and HG002 scDAF). Recorded in
   `@PG` as `hmm_cpg_mask=on`; `--no-use-m5c` turns both masks off and
   `--cpg-mask-policy methylated-only` masks only `ddda_mcg` spans.
-  `fiberhmm-check` flags DddA calls made before the first-pass mask
-  (`ddda-hmm-cpg-mask`).
+  `fiberhmm-pipeline` passes both options to its call, and the light call of
+  `fiberhmm-qc` on an uncalled DddA BAM applies the same first-pass mask.
+  `fiberhmm-check` flags DddA calls and posteriors made before the
+  first-pass mask (`ddda-hmm-cpg-mask`).
 - **DAF tools read MM/ML dU at ML ≥ 128** (`fiberhmm-dedup`, `-pair`, `-merge`;
   was 0). R/Y and MD input is binary and unaffected. `fiberhmm-call`'s
   integrated dedup follows the calling threshold.
 - **Duplicates by deamination flavour.** DAF dedup groups reads by C→T vs G→A
   flavour instead of alignment orientation (more duplicates are marked; e.g.
   about 5.8% → 9.9% on one DddA dataset).
-- **Python ≥ 3.10.** Numba, scikit-learn, joblib and threadpoolctl are core
+- **Python 3.10 to 3.14.** Numba, scikit-learn, joblib and threadpoolctl are core
   dependencies (`[consensus]` and `[numba]` remain as compatibility aliases
   that add nothing beyond the core install).
 - `fiberhmm-apply` rejects `--chroms`, `--skip-scaffolds`, `--region-size`,
@@ -787,9 +800,11 @@ fiberhmm-check data/*.bam qc/*.qc.json consensus_out/
   to use; it exits 3 when something needs re-running and 4 for calls it
   cannot verify (no FiberHMM provenance in the header).
 - Re-calling with 3.0 also applies the new defaults above (ML 248 for Hia5
-  Nanopore, primary-only, the TF decoder, DddA models, thinning and CpG-aware
+  Nanopore, primary and supplementary alignments, the TF decoder, nucleosome
+  recall without a periodicity prior, DddA models, thinning and CpG-aware
   calling), so numbers move even where no fix applies. Most have an option to
-  get the 2.x behaviour back (the TF decoder and the DddA tables do not); the
+  get the 2.x behaviour back (the TF decoder, nucleosome recall and the DddA
+  tables do not); the
   2.x Nanopore Hia5 and DddB tables are kept under `fiberhmm/models/legacy/`.
 - **Re-train** models built with 2.x `fiberhmm-train --base-model` on a base
   whose state 0 is the footprint, such as the Nanopore Hia5 model bundled in 2.x

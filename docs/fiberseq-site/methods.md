@@ -19,7 +19,9 @@ a mark in the protected and in the accessible state.
 1. **HMM.** A two-state HMM (protected, accessible) with these
    context-specific emissions is decoded with Viterbi. Protected runs are
    footprints; the accessible stretches between nucleosome-sized footprints
-   are MSPs.
+   are MSPs. For DddA, CpG observations are left out (5-methylcytosine slows
+   deamination, so a methylated CpG looks protected) except inside CpG
+   islands called unmethylated by `fiberhmm-tag-m5c`.
 2. **Nucleosome recall.** Nucleosome-sized footprints are re-examined for
    buried linkers (accessible evidence inside the footprint) and split there,
    and each piece gets conservative edges from its protected evidence. For

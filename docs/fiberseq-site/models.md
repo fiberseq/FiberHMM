@@ -8,15 +8,16 @@ them, and `-m` is only for custom models.
 | Hia5 Fiber-seq, PacBio | `hia5` | `pacbio` | `hia5_pacbio.json` | `pacbio-fiber` |
 | Hia5 Fiber-seq, Nanopore | `hia5` | `nanopore` | `hia5_nanopore.json` | `nanopore-fiber` |
 | DddB DAF-seq | `dddb` | any | `dddb_nanopore.json` | `daf` |
-| DddA DAF-seq | `ddda` | any | `ddda_nuc.json` (nucleosome HMM), `ddda_TF.json` (TF recall), `ddda_nuc_refine.json` (internal radial-nucleosome likelihoods) | `daf` |
+| DddA DAF-seq | `ddda` | any | `ddda_nuc.json` (nucleosome HMM), `ddda_TF.json` (TF recall), `ddda_nuc_profile.json` (rotational profile) and `ddda_nuc_refine.json` (internal radial-nucleosome likelihoods) | `daf` |
 
-`fiberhmm-call --enzyme ddda` uses all three DddA tables in one pass. Each
+`fiberhmm-call --enzyme ddda` uses all four DddA files in one pass. Each
 preset has its own defaults: for example Nanopore Hia5 reads m6A at ML ≥ 248,
-and DddA uses phase-aware radial nucleosome recall and CpG-aware TF recall.
+and DddA uses phase-aware radial nucleosome recall and CpG-aware calling
+(CpGs masked in the HMM and in recall outside unmethylated islands).
 See [Chemistries and platforms](https://fiberseq.github.io/FiberHMM/concepts/chemistries/).
 
-Older tables, including the 2.x Nanopore Hia5 table
-(`hia5_nanopore_gt_swapped_legacy.json`), are kept in
+Older tables, including the 2.x Nanopore Hia5 and DddB tables
+(`hia5_nanopore_gt_swapped_legacy.json`, `dddb_nanopore_gt_swapped_legacy.json`), are kept in
 `fiberhmm/models/legacy/` to reproduce earlier results.
 
 ```bash

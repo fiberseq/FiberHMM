@@ -51,7 +51,7 @@ tags, readable by `ft`, FIRE and FiberBrowser.
 ## Install
 
 ```bash
-pip install fiberhmm              # Python >= 3.10
+pip install fiberhmm              # Python 3.10 to 3.14
 pip install "fiberhmm[all]"       # plus QC figures (matplotlib) and HDF5 posteriors (h5py)
 ```
 
@@ -78,11 +78,13 @@ A synthetic demo data set and a walk-through of every chemistry are in the
 - [Concepts](https://fiberseq.github.io/FiberHMM/concepts/how-it-works/):
   how FiberHMM works, chemistries and platforms, coordinate frames, tags and scores
 - [Workflows](https://fiberseq.github.io/FiberHMM/workflows/calling/):
-  calling, re-calling, DAF-seq, duplex pairing, tracks, QC, footprint classes
-  (`fiberhmm-consensus`), transfer, strand rescue, training
+  calling, re-calling, DAF-seq, plasmids, duplex pairing, tracks, posteriors,
+  QC, footprint classes (`fiberhmm-consensus`), transfer, strand rescue,
+  training
 - [Reference](https://fiberseq.github.io/FiberHMM/reference/cli/):
-  every command and option, BAM tags, header declarations, bundled models,
-  consensus output files, Python API
+  every command and option, BAM tags, header declarations, footprint-tag
+  frames, checking outputs for re-runs (`fiberhmm-check`), bundled models,
+  consensus output files, Python API, environment variables
 - [Troubleshooting](https://fiberseq.github.io/FiberHMM/troubleshooting/)
 
 ## License
