@@ -19,7 +19,7 @@ implementations must follow it; the same page is in both repositories.
 | Tags | Frame |
 |---|---|
 | `Ma`/`Aq`/`An` (fibertools-rs ≥ 0.13) | Always molecular. |
-| `MA`/`AQ`/`AN` | Molecular when `coord=molecular` appears anywhere in `@PG` or `@CO`, otherwise SEQ. This is FiberHMM's `ma_annotation_frame`, and this rule does not change it. |
+| `MA`/`AQ`/`AN` | Molecular when `coord=molecular` appears anywhere in `@PG` or `@CO`, otherwise SEQ (FiberHMM's `ma_annotation_frame`). A read whose `MA` has a `.`-strand type (`nuc.Q:`, `msp.:`; FiberHMM ≥ 2.13.2 and fibertools write every type that way) is molecular whatever the header says, so it survives a stripped `@PG`; `+` types (FiberHMM ≤ 2.13.1) follow the header rule (`read_ma_frame`). |
 | Legacy `ns/nl`, `as/al` and the parallel `nq`, `aq`, `lq`, `rq` | Decided by the rule below. The quality arrays follow their intervals' order. |
 
 **Consensus family layers** in `MA` carry their own frame. The
@@ -126,6 +126,11 @@ single chain, with each record the child of the one before it.
 
 ## 4. Decision
 
+A `@CO FIBERHMM-CHEMISTRY:v1:` declaration decides first: only FiberHMM ≥ 2.16
+footprint writers write it, all of them write molecular tags, and `@CO` lines
+survive pipelines that strip or rewrite `@PG` (source `chemistry`, molecular;
+ambiguous if the chains disagree). Otherwise:
+
 | Votes | Frame | Source | Ambiguous |
 |---|---|---|---|
 | All agree | That frame | `provenance` | No |
@@ -141,6 +146,12 @@ single chain, with each record the child of the one before it.
 no frame) and ask for `--input-frame query` or `molecular`. Pass-through tools
 record nothing and `fiberhmm-tag-m5c` / `-call-m5c` keep their historical
 fallback (the `coord=molecular` marker, else SEQ).
+
+With no header evidence at all (`default`, for example a stripped header),
+SEQ is assumed and reported as an assumption (FiberHMM's recall, tag-m5c,
+call-m5c and QC warn), and a read whose `MA` has a `.`-strand type has
+molecular legacy tags too: FiberHMM ≥ 2.13.2 wrote both in molecular frame
+(`read_legacy_frame`; FiberBrowser's `read_legacy_tags_are_molecular`).
 
 FiberHMM consensus reads legacy tags only for Hia5 input without `MA`/`Ma`,
 under its `legacy_hia5_annotation_frame` option. When that is `disabled`, it

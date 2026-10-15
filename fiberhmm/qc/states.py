@@ -59,17 +59,27 @@ _PLATFORM_FOR_MODE = {"pacbio-fiber": "pacbio", "nanopore-fiber": "nanopore"}
 
 def tag_frames(header) -> dict:
     """Coordinate frames of the annotation tag families in ``header``."""
-    from fiberhmm.io.annotation_frame import legacy_tag_frame, ma_annotation_frame
+    from fiberhmm.io.annotation_frame import (
+        legacy_tag_frame,
+        legacy_tag_frame_report,
+        ma_annotation_frame,
+    )
 
+    assumed = False
     try:
         legacy_frame, legacy_reason = legacy_tag_frame(header)
+        assumed = legacy_tag_frame_report(header).get("source") == "default"
     except Exception as exc:  # malformed @PG chains: treat as unknown
         legacy_frame, legacy_reason = None, f"unreadable @PG history ({exc})"
     try:
         ma_frame = ma_annotation_frame(header)
     except Exception:
         ma_frame = "seq"
-    return {"MA": ma_frame, "legacy": legacy_frame, "legacy_reason": legacy_reason}
+    if assumed:
+        legacy_reason += ("; assumed (no header evidence): reads whose MA uses "
+                          "'.' types are taken as molecular")
+    return {"MA": ma_frame, "legacy": legacy_frame, "legacy_reason": legacy_reason,
+            "legacy_assumed": assumed}
 
 
 def _to_seq_frame(intervals, read, frame: Optional[str]):
@@ -119,9 +129,10 @@ def msp_intervals_from_tags(read, frames: dict) -> Optional[list]:
     ``None`` when the read carries no usable footprint annotation (or its
     frame cannot be decided); ``[]`` for a called read without MSPs.
     """
+    from fiberhmm.io.annotation_frame import read_legacy_frame, read_ma_frame
     from fiberhmm.io.ma_tags import parse_an_tag, parse_ma_tag
 
-    for tag, an_tag, frame in (("MA", "AN", frames.get("MA", "seq")),
+    for tag, an_tag, frame in (("MA", "AN", read_ma_frame(read, frames.get("MA", "seq"))),
                                ("Ma", "An", "molecular")):
         if not read.has_tag(tag):
             continue
@@ -134,14 +145,17 @@ def msp_intervals_from_tags(read, frames: dict) -> Optional[list]:
         if parsed["read_length"] and length and parsed["read_length"] != length:
             return None
         if not (parsed["msp"] or parsed["nuc"]):
-            return None  # e.g. an MA carrying only m5C/TF features
+            # e.g. an MA carrying only m5C/TF features: the read's legacy
+            # tags (if any) hold its footprints.
+            break
         return _to_seq_frame(_ma_msps(parsed, names), read, frame)
     # Legacy footprint tags come in start/length pairs. Other pipelines use
     # the same two-letter names for unrelated scalars (e.g. an integer ``ns``),
     # so only array-valued pairs count as calls.
     has_msps = _array_tag_pair(read, "as", "al")
     if has_msps or _array_tag_pair(read, "ns", "nl"):
-        frame = frames.get("legacy")
+        frame = read_legacy_frame(read, frames.get("legacy"),
+                                  bool(frames.get("legacy_assumed")))
         if frame is None:
             return None
         if not has_msps:

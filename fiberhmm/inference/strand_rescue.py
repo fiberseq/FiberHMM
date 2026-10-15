@@ -1315,9 +1315,11 @@ def load_region_evidence(
     annotation_overlap_excluded_count = 0
     read_name_excluded_count = 0
     with pysam.AlignmentFile(bam_path, "rb") as bam:
-        if ma_annotation_frame == 'auto':
+        ma_frame_auto = ma_annotation_frame == 'auto'
+        if ma_frame_auto:
             from fiberhmm.io.annotation_frame import ma_annotation_frame as resolve_ma_frame
             ma_annotation_frame = resolve_ma_frame(bam.header)
+        from fiberhmm.io.annotation_frame import read_ma_frame
         if load_diagnostics is not None:
             load_diagnostics['ma_annotation_frame'] = ma_annotation_frame
         from fiberhmm.io.annotation_frame import consensus_molecular_layers
@@ -1358,13 +1360,16 @@ def load_region_evidence(
             ):
                 read_name_excluded_count += 1
                 continue
+            # auto: a '.'-type MA is molecular whatever the header says.
+            read_ma_annotation_frame = (read_ma_frame(read, ma_annotation_frame)
+                                        if ma_frame_auto else ma_annotation_frame)
             if required_annotation_overlap is not None and not (
                 _has_mapped_annotation_overlap(
                     read,
                     str(required_annotation_overlap[0]),
                     int(required_annotation_overlap[1]),
                     int(required_annotation_overlap[2]),
-                    annotation_frame=ma_annotation_frame,
+                    annotation_frame=read_ma_annotation_frame,
                     molecular_layers=molecular_layers,
                 )
             ):
@@ -1447,7 +1452,7 @@ def load_region_evidence(
             )
             try:
                 parsed_annotations = _parse_all_ma_annotations(
-                    read, annotation_frame=ma_annotation_frame,
+                    read, annotation_frame=read_ma_annotation_frame,
                     molecular_layers=molecular_layers) or {}
             except (KeyError, TypeError, ValueError):
                 parsed_annotations = {}

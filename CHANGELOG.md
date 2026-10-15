@@ -309,6 +309,14 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   `fiberhmm.cli.export_posteriors.export_posteriors_from_bam` resolves the
   DddA run thinning and CpG mask like the command line and now applies
   `min_mapq` (default 0).
+- **Footprint frames survive a stripped `@PG`.** `fiberhmm-call` output now
+  also carries `@CO fiberhmm:coord=molecular` (it was only in the `@PG DS`).
+  Readers follow FiberBrowser's rules: an `MA` with `.`-strand types
+  (FiberHMM ≥ 2.13.2) is molecular whatever the header says; for legacy
+  `ns/nl/as/al` a `FIBERHMM-CHEMISTRY` declaration decides first, then the
+  `@PG` history, then SEQ, and with no header evidence a read with `.` MA
+  types has molecular legacy tags. recall, tag-m5c, call-m5c and QC say when
+  the frame is assumed.
 - `--cpg-mask-policy` given for a non-DddA run, or with `--no-use-m5c`, now
   warns instead of being ignored silently. Worker processes no longer reset
   `NUMBA_CACHE_DIR`, which made numba write its cache next to the installed

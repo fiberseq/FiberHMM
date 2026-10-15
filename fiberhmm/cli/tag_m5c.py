@@ -219,6 +219,11 @@ def main(argv=None):
         resolved = legacy_tag_frame(input_header)[0]
         if resolved is not None:
             input_molecular_frame = resolved == MOLECULAR
+        from fiberhmm.io.annotation_frame import (
+            frame_assumed_warning, legacy_tag_frame_report)
+        warning = frame_assumed_warning("fiberhmm-tag-m5c", legacy_tag_frame_report(input_header))
+        if warning:
+            print(warning, file=sys.stderr)
     if args.estimate_factors and args.five_prime_factors:
         raise SystemExit("use either --estimate-factors or --five-prime-factors, not both")
     if args.estimate_factors:

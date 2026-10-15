@@ -308,6 +308,11 @@ def _write_outputs(args, staged, domains, factors, total_observations,
                     resolved = legacy_tag_frame(source.header)[0]
                     if resolved is not None:
                         tag_input_frame = resolved == MOLECULAR
+                    from fiberhmm.io.annotation_frame import (
+                        frame_assumed_warning, legacy_tag_frame_report)
+                    warning = frame_assumed_warning("fiberhmm-call-m5c", legacy_tag_frame_report(source.header))
+                    if warning:
+                        print(warning, file=sys.stderr)
                 carried_frame = pass_through_frame(
                     source.header,
                     tag_input_frame if args.tag_mode != "locus" else None)

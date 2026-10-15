@@ -90,8 +90,11 @@ from fiberhmm.inference.worker_results import (
 from fiberhmm.io.annotation_frame import (
     MOLECULAR,
     ambiguous_frame_message,
+    frame_assumed_warning,
     legacy_tag_frame,
+    legacy_tag_frame_report,
     ma_annotation_frame,
+    ma_string_is_molecular,
 )
 from fiberhmm.io.bam_header import append_coord_marker
 from fiberhmm.io.ma_tags import (
@@ -336,7 +339,9 @@ def _annotation_footprints_as_legacy_tags(read, input_molecular_frame=True) -> d
     ma_molecular = True
     if ma is None:
         ma = _fiberhmm_ma_footprints(read)
-        ma_molecular = bool(_MA_FRAME['molecular'])
+        # A '.'-type MA (FiberHMM >= 2.13.2) is molecular whatever the header.
+        ma_molecular = bool(_MA_FRAME['molecular']) or ma_string_is_molecular(
+            read.get_tag('MA') if read.has_tag('MA') else None)
     if not ma or not (ma['nuc'] or ma['msp']):
         return {}
     want_molecular = bool(input_molecular_frame)
@@ -375,6 +380,12 @@ def _make_payload(read, mode=None, input_molecular_frame=True) -> dict:
             read.has_tag(t) for t in ('ns', 'nl', 'as', 'al')):
         raise SystemExit("error: " + ambiguous_frame_message(
             _UNDECIDED_FRAME['reason'] or 'the header does not decide it'))
+    read_frame = input_molecular_frame
+    if (_UNDECIDED_FRAME.get('assumed') and not input_molecular_frame
+            and read.has_tag('MA') and ma_string_is_molecular(read.get_tag('MA'))):
+        # No header evidence: a '.'-type MA marks FiberHMM >= 2.13.2, whose
+        # legacy tags are molecular too.
+        read_frame = True
     tags = {}
     for t in ('MM', 'Mm', 'ML', 'Ml', 'ns', 'nl', 'as', 'al', 'nq', 'st', 'MA'):
         if read.has_tag(t):
@@ -386,13 +397,15 @@ def _make_payload(read, mode=None, input_molecular_frame=True) -> dict:
                 except TypeError:
                     pass  # scalar or already bytes
             tags[t] = val
-    tags.update(_annotation_footprints_as_legacy_tags(read, input_molecular_frame))
+    tags.update(_annotation_footprints_as_legacy_tags(read, read_frame))
 
     payload = {
         'name': getattr(read, 'query_name', None),
         'seq': read.query_sequence,
         'is_reverse': read.is_reverse,
         'tags': tags,
+        **({'_input_molecular_frame': bool(read_frame)}
+           if read_frame != input_molecular_frame else {}),
     }
     from fiberhmm.inference.engine import read_no_call_blocks
     blocks = read_no_call_blocks(read, mode)
@@ -463,7 +476,8 @@ def _process_payload_record(payload) -> tuple:
         min_llr=_WORKER['min_llr'],
         min_opps=_WORKER['min_opps'],
         unify_threshold=unify_threshold,
-        input_molecular_frame=_WORKER.get('input_molecular_frame', True),
+        input_molecular_frame=payload.get(
+            '_input_molecular_frame', _WORKER.get('input_molecular_frame', True)),
         m5c_llr_hit=_WORKER.get('m5c_llr_hit'),
         m5c_llr_miss=_WORKER.get('m5c_llr_miss'),
         cpg_mask_policy=_WORKER.get('cpg_mask_policy', 'unmethylated-only'),
@@ -482,7 +496,8 @@ def _process_payload_record(payload) -> tuple:
             # before building the lookup -- otherwise reverse-read nucs miss their
             # original score and get 0.
             from fiberhmm.io.ma_tags import flip_intervals_to_seq
-            if _WORKER.get('input_molecular_frame', True):
+            if payload.get('_input_molecular_frame',
+                           _WORKER.get('input_molecular_frame', True)):
                 ns_seq, nl_seq = flip_intervals_to_seq(tags['ns'], tags['nl'], read)
             else:
                 # Legacy seq/query-frame input: kept_nucs come back unflipped,
@@ -558,7 +573,7 @@ def _process_nuc_payload_record(read, payload, nuc_cfg) -> tuple:
     # Current FiberHMM stores tags molecular frame; recall works in SEQ (query)
     # frame. Legacy/v1.0 BAMs already store them seq-frame -- flipping those
     # again mis-places reverse-strand calls, so use as-is when not molecular.
-    if _WORKER.get('input_molecular_frame', True):
+    if payload.get('_input_molecular_frame', _WORKER.get('input_molecular_frame', True)):
         ns_seq, nl_seq = flip_intervals_to_seq(ns_raw, nl_raw, read)
         as_seq, al_seq = flip_intervals_to_seq(as_raw, al_raw, read)
     else:
@@ -1108,6 +1123,7 @@ def _resolve_input_molecular_frame(args, header) -> bool:
     None when undecided (then any read with ns/nl/as/al stops the run; reads
     whose only footprints are fibertools ``Ma``, always molecular, proceed).
     """
+    _UNDECIDED_FRAME['assumed'] = False
     choice = str(getattr(args, 'input_frame', 'auto')).lower()
     if choice == 'molecular':
         return True
@@ -1116,6 +1132,10 @@ def _resolve_input_molecular_frame(args, header) -> bool:
               "SEQ-frame tags (no molecular flip).", file=sys.stderr)
         return False
     frame, reason = legacy_tag_frame(header)
+    warning = frame_assumed_warning('fiberhmm-recall-tfs', legacy_tag_frame_report(header))
+    _UNDECIDED_FRAME['assumed'] = warning is not None
+    if warning:
+        print(warning, file=sys.stderr)
     if frame is None:
         # Only reads with ns/nl/as/al need the frame (fibertools Ma is always
         # molecular), so the run stops at the first such read (_make_payload).
@@ -1127,7 +1147,7 @@ def _resolve_input_molecular_frame(args, header) -> bool:
     return frame == MOLECULAR
 
 
-_UNDECIDED_FRAME = {'reason': ''}
+_UNDECIDED_FRAME = {'reason': '', 'assumed': False}
 
 
 def _header_declared_mode(header):
