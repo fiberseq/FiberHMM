@@ -18,10 +18,15 @@ pip install -e ".[all,dev]"
 ## Tests
 
 ```bash
-OPENBLAS_NUM_THREADS=1 FIBERHMM_NO_UPDATE_CHECK=1 python -m pytest tests -q -p no:cacheprovider
+OPENBLAS_NUM_THREADS=1 FIBERHMM_NO_UPDATE_CHECK=1 \
+PYTHONPYCACHEPREFIX=/tmp/fiberhmm-pycache NUMBA_CACHE_DIR=/tmp/fiberhmm-numba \
+python -m pytest tests -q -p no:cacheprovider
 ```
 
-Single-threaded BLAS keeps the consensus reference tests exact. Tests that
+Single-threaded BLAS keeps the consensus reference tests exact. The fresh
+bytecode and numba cache directories keep stale caches out of the run: a
+`__pycache__` copied or synced from another machine makes numba fail at
+collection with `cannot cache function ... no locator available`. Tests that
 need private data sets skip when the data are absent. Benchmarks are
 excluded by default (`-m benchmark tests/benchmarks` runs them). The
 `fiberhmm-pipeline` end-to-end tests need `minimap2` and some tests need

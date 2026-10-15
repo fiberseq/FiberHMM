@@ -27,7 +27,7 @@ bam_export: Writing MA family annotations to source BAM copies
 ```text
 class_id   channel            start    end      status     molecules  prevalence  prevalence_edge  prevalence_loose
 class_001  dataset_1::pooled  10041.0  10064.5  supported  176        0.5555      0.6776           0.7912
-class_002  dataset_1::pooled  10110.0  10126.0  supported  176        0.4807      0.5386           0.5386
+class_002  dataset_1::pooled  10110.0  10126.0  supported  176        0.4108      0.4745           0.4915
 ```
 
 (selected columns of `out/classes/classes.tsv`; the demo planted a 24 bp
@@ -62,7 +62,14 @@ site at 10,040 with occupancy 0.7 and a 16 bp site at 10,110 with occupancy
 - `--evidence evidence.json.gz` or `--resume RUN_DIR` replays saved evidence
   (below).
 
-No reads are sampled and there is no cap on the number of classes. MAPQ
+By default every molecule is used, and there is no cap on the number of
+classes. For deep data (thousands of reads per site),
+`--max-discovery-molecules N` and `--max-quantification-molecules N`
+(`recaller.max_discovery_molecules` / `max_quantification_molecules`; 0 = all,
+the default; 2000 is a good cap) take a stable hash sample per dataset and
+chemical channel, in each discovery tile and each scoring window, after the
+evidence filters and duplicate collapse. Prevalence then uses the selected
+molecules. `--sample-seed` (`recaller.sample_seed`, 1) sets the hash seed. MAPQ
 (`input.minimum_mapq`, 20), native-opportunity and DAF molecule-collapse
 filters apply and are recorded in the manifest. Empty evidence gives an empty
 result, not an invented class. Source BAMs are never modified; output
@@ -213,6 +220,7 @@ The `recaller` group:
 
 | Control | Default | Effect |
 |---|---|---|
+| `max_discovery_molecules`, `max_quantification_molecules`, `sample_seed` | 0, 0, 1 | optional depth caps per dataset and channel (0 = all molecules) and their hash seed; also `--max-discovery-molecules`, `--max-quantification-molecules`, `--sample-seed` |
 | `stringency` | 0.9 | prediction strength needed for k and for class stability; lower (0.6–0.7) finds more, finer classes |
 | `kmax`, `prediction_splits`, `seed`, `minimum_candidate_calls` | 40, 6, 1, 5 | k-means search |
 | `call_min_llr`, `call_max_bp` | 5.0, 100 | which native calls drive discovery (and can carry labels) |

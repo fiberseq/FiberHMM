@@ -49,7 +49,9 @@ calls.bam: CANNOT VERIFY: calls without FiberHMM provenance; re-run recommended 
 never as clean: nothing in it shows which version or tables made the calls.
 
 `--json` prints one document for scripts and GUIs (see
-[JSON](#json-output)); `--list` lists every known advisory;
+[JSON](#json-output)); `--list` lists every known advisory (with `--json`,
+as a JSON array of each advisory's `id`, `severity`, `artifact`, `title`,
+`reason`, `fix`, `fixed_in` and `changelog`);
 `--scan-records N` sets how many BAM records are scanned for read-level
 evidence (default 5000; `0` reads only the header); `--no-sidecars` skips the
 QC report beside a BAM. The full option table is in the
@@ -61,7 +63,7 @@ Each advisory has a **severity**, fixed per advisory:
 
 | Severity | Meaning |
 |---|---|
-| `rerun-required` | made by code or tables with a known error (for example the 2.x Nanopore Hia5 table); re-run it |
+| `rerun-required` | made by code or tables that 3.0 replaces (for example the 2.x Nanopore Hia5 table); re-run it |
 | `rerun-recommended` | made under rules 3.0 corrects (for example DAF dedup by orientation); re-run where those rules matter |
 | `unverifiable` | FiberHMM results without FiberHMM provenance: no fix can be ruled out; re-run if made by FiberHMM < 3.0 (exit 4) |
 | `info` | a default changed; the output is not wrong, but a 3.0 run with defaults would differ |
@@ -142,11 +144,11 @@ of its region files is recognised and does not count.)
 | `qc-nanopore-opportunities` | rerun-recommended | QC | Nanopore `fiberhmm-qc` reports before 3.0 |
 | `qc-assay-misdetected` | rerun-required | QC | QC reports graded under an assay mode that is not one (`mode=flag`/`collapse` taken from `fiberhmm-dedup`'s `@PG`) |
 | `recaller-tier-double-count` | rerun-recommended | consensus tiers | lattice-recaller results with edge/loose tiers before the fix |
-| `hia5-nanopore-ml-threshold` | info | calls | ONT Hia5 called at the 2.x default ML threshold |
 | `daf-unaligned-evidence` | rerun-recommended | calls | DAF calls before 3.0 counted insertion, soft-clip and SNP-masked bases as protected |
+| `hia5-nanopore-ml-threshold` | info | calls | ONT Hia5 called at the 2.x default ML threshold |
 | `primary-only-default` | info | calls | secondary alignments called (2.x default) |
 | `ddda-cpg-mask-default` | info | calls | DddA recall with CpG observations (2.x default) |
-| `ddda-hmm-cpg-mask` | rerun-recommended | calls, posteriors | DddA calls whose first-pass HMM (call, apply, pair/merge joint HMM) decoded CpG observations, before 3.0; a run without `hmm_cpg_mask=` in its `@PG DS` and no indexed commit predates the mask. DddA posteriors files without `cpg_mask_policy` in their metadata likewise |
+| `ddda-hmm-cpg-mask` | rerun-recommended | calls | DddA calls whose first-pass HMM (call, apply, or the pair/merge joint HMM, which records a `fiberhmm-merge` `@PG`) decoded CpG observations, before 3.0; a run without `hmm_cpg_mask=` in its `@PG DS` and no indexed commit predates the mask. DddA posteriors files without `cpg_mask_policy` in their metadata likewise (reported with artifact `posteriors`) |
 | `untracked-calls` | unverifiable | calls | calls without any FiberHMM `@PG` (cannot be checked) |
 
 QC reports, posteriors files and `fiberhmm-dedup`/`fiberhmm-merge` BAMs record
@@ -169,14 +171,13 @@ their FiberHMM version since 3.0; older ones without it are reported as
   "confirmed": true,
   "unverifiable": false,
   "error": null,
-  "checked_with": {"fiberhmm_version": "3.0.0", "advisories_revision": 1},
+  "checked_with": {"fiberhmm_version": "3.0.0", "advisories_revision": 2},
   "advisories": [
     {
       "id": "hia5-nanopore-gt-table",
       "severity": "rerun-required",
       "status": "affected",
       "confidence": "medium",
-      "needs_rerun": true,
       "title": "Nanopore Hia5 calls made with the 2.x emission table",
       "reason": "...",
       "artifact": "calls",
@@ -184,7 +185,8 @@ their FiberHMM version since 3.0; older ones without it are reported as
       "fixed_in": "3.0.0",
       "evidence": ["@PG fiberhmm-call.3 command line runs code from a tree named after commit 1ca7d0a, which predates the fix (dc7abba)"],
       "program": "fiberhmm-call.3",
-      "path": "ont_hia5.bam"
+      "path": "ont_hia5.bam",
+      "needs_rerun": true
     }
   ]
 }

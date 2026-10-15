@@ -2,7 +2,8 @@
 
 FiberHMM is mainly used through its commands, but the functions below are
 the documented Python entry points. Everything else under `fiberhmm.` is
-internal and may change between releases.
+internal and may change between releases, and so are keyword arguments a
+function takes beyond those shown here.
 
 ## Package top level
 

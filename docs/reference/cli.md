@@ -30,8 +30,8 @@ Every command also accepts `-h`/`--help` and `--version` (prints
 | [`fiberhmm-posteriors`](#fiberhmm-posteriors) | Per-position HMM posteriors | [Posteriors](../workflows/posteriors.md) |
 | [`fiberhmm-probs`](#fiberhmm-probs), [`fiberhmm-train`](#fiberhmm-train) | Build a custom model | [Training](../workflows/training.md) |
 | [`fiberhmm-utils`](#fiberhmm-utils) | Model, header and bigBed utilities | [Training](../workflows/training.md#model-utilities), [Extracting](../workflows/extracting.md#repairing-bigbed-sample-names) |
-
-Every command also accepts `-h`/`--help`.
+| [`fiberhmm-check`](#fiberhmm-check) | Whether existing outputs need re-running with this version | [Checking outputs](advisories.md) |
+| [`fiberhmm-nfr`](#fiberhmm-nfr) | NFR variants and co-accessibility (experimental preview) | [NFR detection](#nfr-detection-and-diagnostics) |
 
 <!-- BEGIN GENERATED CLI REFERENCE (tools/gen_cli_reference.py) -->
 

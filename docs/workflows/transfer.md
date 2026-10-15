@@ -81,8 +81,12 @@ each molecule goes through the same code path as in a normal run.
   per-channel efficiency.
 
 A transfer may change only the `input`, `families` and `compute` parameter
-groups (`--parameters`, `--cores`); these control molecule preparation and
-execution. Any other group, such as `recaller`, is an error.
+groups (`--parameters`, `--cores`), which control molecule preparation and
+execution, and the recaller's molecule budgets
+(`recaller.max_discovery_molecules`, `max_quantification_molecules` and
+`sample_seed`; see [Consensus output files](../reference/consensus-outputs.md#molecule-depth-budgets)).
+Any other group or `recaller` setting is an error. A source run's
+`--robust` setting does not carry over, because a transfer discovers nothing.
 
 ### Channel mapping
 
@@ -142,6 +146,7 @@ excluded training molecules, code identity).
 
 At the top level:
 
+- `report.html`: an index linking each window's report;
 - `transfer_summary.tsv`: one row per window × class × channel, with the
   window coordinates and strand, the source channel and every `classes.tsv`
   column;

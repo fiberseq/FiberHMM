@@ -80,7 +80,12 @@ Saving to out/model
 - `-p` takes the accessible and the inaccessible table, in that order (TSV,
   or the `.probs.pkl` counts). The combined `*_probs.tsv` is not accepted
   here.
-- `-k` must match the context size of the tables.
+- `-k` must match the context size of the tables, and `--mode` (default
+  `pacbio-fiber`) the mode they were built with: pass `--mode nanopore-fiber`
+  or `--mode daf` for those tables.
+- `-q/--min-mapq` (20), `--prob-threshold` (125), `--min-read-length` (1000)
+  and `-e/--edge-trim` (10) filter the training reads; `--daf-mask-runs` /
+  `--daf-run-policy` thin DAF targets as in `fiberhmm-call`.
 - `-r/--read-count` (500) reads are sampled from `-i`; `-c/--iterations` (10)
   random initializations are run and the best log-likelihood kept. `--seed`
   (42) makes it reproducible.
@@ -124,8 +129,8 @@ mode, the custom model inherits that enzyme's defaults instead
   [QC](qc.md) periodicity are quick checks.
 - For a chemistry with a bundled table, the table's per-context rates should
   correlate with rates observed on your data under the encoder numbering
-  above; a strong correlation only under a base relabelling points to an
-  indexing error.
+  above; a strong correlation only under a base relabelling means the table was
+  numbered in another base order.
 
 ## Model utilities
 

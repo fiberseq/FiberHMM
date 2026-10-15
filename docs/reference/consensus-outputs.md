@@ -29,7 +29,8 @@ writes `consensus_run.json` (the run contract `--continue` checks, with one
 entry per attempt), `logs/window_NNNNNN.log` (one log per window) and, in each
 window directory (the output directory itself for a single window),
 `unit_complete.json`: the completion marker written last, with the unit
-digest, window, status, seconds and the size of every file the window wrote.
+digest, window, status, seconds and the size and SHA-256 of every file the
+window wrote.
 See [Long runs and resuming](../workflows/consensus.md#long-runs-and-resuming). `bams/` holds
 `NNN_<dataset>.families.bam` (CSI-indexed) and `bam_exports.json` (per-output
 counts of annotations, matched and written alignments, scope and source
@@ -143,7 +144,7 @@ wider-protection stretch. A transfer adds a `transfer` block.
 | `frozen_classes.json.gz` | lattice-recaller catalog, schema `fiberhmm.frozen_classes.lattice_recaller.v1`: `frame`, `parameters`, `tiles`, `classes`, `datasets`, `channels` (per-channel boxes and spots), `spot_precision`, `training_molecule_hashes`, `provenance`, `score_semantics`, `content_sha256` |
 | `frozen_models.json.gz` | staged-engine bundle, schema `fiberhmm.frozen_families.v1` |
 | `transfer_summary.tsv` | one row per window × class × channel: `window`, `chrom`, `window_start`, `window_end`, `window_strand`, `source_channel`, then every `classes.tsv` column |
-| `transfer_manifest.json` | schema `fiberhmm.transfer_run.lattice_recaller.v1`: `catalog`, `catalog_sha256`, `catalog_schema`, `source_provenance`, `frame`, `refitted` (false), `rediscovered` (false), `preparation_parameters`, `dataset_map`, `include_training_molecules`, `windows`, `bams`, `apply_code` |
+| `transfer_manifest.json` | schema `fiberhmm.transfer_run.lattice_recaller.v1`: `catalog`, `catalog_sha256`, `catalog_schema`, `source_provenance`, `frame`, `refitted` (false), `rediscovered` (false), `preparation_parameters`, `dataset_map`, `include_training_molecules`, `windows`, `bams`, `chip_label`, `apply_code` |
 | `transfer_exclusions.json` | training molecules excluded from scoring |
 | `chip_evaluation.json` | with `--chip-bed`: AUROC and average precision per class and channel |
 
