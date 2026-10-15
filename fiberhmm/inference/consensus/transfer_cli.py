@@ -200,6 +200,8 @@ def _apply_recaller(args,parser,out,progress,model_path):
     if args.evidence and args.chip_bed:parser.error('ChIP evaluation requires explicit target BED windows')
     catalog=F.load_catalog(model_path);frame=catalog['frame']['region'];width=frame['end']-frame['start']
     overrides=read_json(args.parameters) if args.parameters else None
+    try:F.transfer_options(catalog,[],overrides,1)   # a group the catalog fixes, or a bad value: a usage error
+    except ValueError as error:parser.error(f'--parameters {args.parameters}: {error}')
     dataset_map={}
     for item in args.dataset_map:
         target,sep,source=item.partition('=')

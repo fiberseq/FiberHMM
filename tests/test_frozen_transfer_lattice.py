@@ -177,6 +177,19 @@ def test_cli_freeze_and_apply_end_to_end(source, tmp_path):
     assert bad.returncode != 0 and 'omit --bed' in bad.stderr
 
 
+
+def test_cli_fixed_parameter_group_is_a_usage_error(source, tmp_path):
+    """--parameters naming a group the catalog fixes exits 2 with one line, not a traceback."""
+    tmp, _result, _catalog = source
+    write_json(tmp_path/'params.json', {'recaller': {'bf_threshold': 10.}})
+    done = _cli('fiberhmm.inference.consensus.transfer_cli', '--models', str(tmp/'frozen_classes.json.gz'),
+                '--evidence', str(tmp/'run/evidence.json.gz'), '--parameters', str(tmp_path/'params.json'),
+                '--no-bam', '--cores', '1', '--output', str(tmp_path/'out'))
+    assert done.returncode == 2, done.stderr
+    assert "fiberhmm-transfer: error: --parameters" in done.stderr and "'recaller' is fixed" in done.stderr
+    assert 'Traceback' not in done.stderr
+
+
 def test_bam_windows_map_into_a_genomic_frame_and_export(source, tmp_path, monkeypatch):
     """BAM + oriented BED6 into a catalog whose frame starts at 1050 (a non-pooled run): both orientations load,
     are scored in the frozen frame, and the family BAM export maps them back to the reads."""
