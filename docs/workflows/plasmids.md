@@ -22,7 +22,7 @@ when you load it, so the BAM and the map line up without renaming:
 | SnapGene `.dna` | file name without extension, cut at the first space, characters outside `A–Z a–z 0–9 _ . -` replaced by `_`, leading/trailing `_` removed | `L-HH (v2).dna` → `L-HH` |
 | GenBank | the `LOCUS` name (same character rule, not stripped) | `LOCUS  pUC19 ...` → `pUC19` |
 | EMBL | the `ID` name | `ID  pX1; ...` → `pX1` |
-| FASTA (as a map) | the first header word | `>pRef plasmid` → `pRef` |
+| FASTA (as a map) | the first header word (SnapGene character rule) | `>pRef plasmid` → `pRef` |
 
 The rule is `fiberhmm.pipeline.reference.fiberbrowser_contig_name`.
 
@@ -60,7 +60,8 @@ keeps the primary's flags and MAPQ; the supplementary record is dropped.
 Other supplementary records on a circular contig (concatemer copies of the
 same plasmid sequence) are dropped too, and DAF reads there are hard-clipped,
 so one molecule is not annotated twice; on linear contigs the pipeline keeps
-supplementary records and soft clips.
+supplementary records and soft clips. `--keep-soft-clips` keeps soft clips on
+circular contigs too, and `--hard-clip` hard-clips on every contig.
 
 `fiberhmm-call` then calls the whole molecule. FiberBrowser draws it
 continuously across the origin in a circular view (a view that runs past the
@@ -71,7 +72,7 @@ origin, so bigBed files stay valid.
 
 ### What it changes, on real data
 
-Two DddB runs of the Tohn collaboration, against their earlier processing
+Two DddB plasmid runs, against their earlier processing
 (minimap2, primary MAPQ ≥ 20, hard clip, `fiberhmm-call`, on a reference
 rotated to cut in the middle of `ori`):
 

@@ -20,8 +20,10 @@ the target records. The JSON records the strategy, seed (`--seed`, default
 20260824), records examined and `whole_bam_scanned: false`. QC never
 deduplicates.
 
-Because the sample uses aligned reads, QC of an unaligned call set reports
-`INSUFFICIENT`; align the reads first.
+A BAM with no aligned records (calls made on an unaligned BAM) is sampled
+the same bounded way from its unmapped primary reads, without the MAPQ
+filter; the labelling, periodicity and footprint metrics work in read
+coordinates. The strategy line then ends with `unaligned reads`.
 
 ## Outputs
 
@@ -41,8 +43,8 @@ installed:
 ```text
 out/qc_compare/combined.qc.html
 out/qc_compare/combined.qc.json   combined.qc.pdf   combined.qc.png   combined.qc.tsv
-out/qc_compare/pacbio.calls.qc.json   ... .pdf ... .png ... .tsv
-out/qc_compare/dddb.calls.qc.json     ... .pdf ... .png ... .tsv
+out/qc_compare/pacbio.calls.qc.json   .qc.curves.json   .qc.pdf   .qc.png   .qc.tsv
+out/qc_compare/dddb.calls.qc.json     .qc.curves.json   .qc.pdf   .qc.png   .qc.tsv
 ```
 
 ## The curves file
@@ -52,6 +54,7 @@ plot draws, so another program (FiberBrowser, a notebook) can redraw it:
 
 | Key | Contents |
 |---|---|
+| `input`, `assay` | the BAM, and its `enzyme`, `mode`, `probability_threshold` and the reference profile used |
 | `verdicts` | `overall`, `signal`, `periodicity`, `efficiency`, `background` status (PASS/WARN/FAIL/INSUFFICIENT) and scores, and `verdict_basis` |
 | `state_rates` | `source`, `min_msp_bp`, the sorted per-read `msp_per_read_rates` and `outside_msp_per_read_rates`, and the reference quantiles (`null` when unavailable) |
 | `signal_rate` | `per_read_rates` (sorted fractions, one per sampled read), their `ecdf`, the bundled `reference_ecdf` (`rates`, `probabilities`), `warn_interval`, `reference_iqr` |
@@ -67,16 +70,25 @@ has no bundled reference.
 The DddB demo call (`out/dddb.calls.bam`):
 
 ```text
-  FiberHMM QC: WARN  score=64/100
+  FiberHMM QC: FAIL  score=46/100
   sample: 300 reads via indexed random windows (168 x 20,000 bp) + bounded fill
   deamination: 8.24% median  [PASS 92/100]
   nucleosome periodicity: NRL=193 bp, AC=0.680  [WARN 37/100]
   reference phasogram agreement: r=0.609, matched amplitude=1.91x
-  footprint tags: nuc n=6,254, median=147 bp; TF n=1,597, median=51 bp
-  nuc-tagged long spans: 0.9% >300 bp; 0.0% >1 kb
+  states from the BAM's FiberHMM calls; MSP >= 85 bp
+  in-MSP rate (efficiency): 39.84% median, 39.63% pooled  [PASS 100/100]
+  outside-MSP rate (background): 10.50% median, 10.54% pooled  [FAIL 0/100]
+  in-MSP/outside-MSP = 3.8x; MSP = 21.5% of read length; all-state rate 16.49%
+  verdict uses in-MSP efficiency + outside-MSP background + periodicity (the signal-rate grade is reported but excluded from the verdict)
+  footprint tags: nuc n=6,277, median=149 bp; TF n=2,399, median=28 bp
+  nuc-tagged long spans: 4.6% >300 bp; 0.0% >1 kb
   PCR deduplication: flagged, duplicates=0.0% (full run)
   DAF SNP mask: 0 sites applied; MD preserved
 ```
+
+The demo reads are synthetic, so their grades say nothing about a real
+library; the example shows the layout. Without matplotlib the report ends
+with `plot: not written (install matplotlib)`.
 
 - **Signal rate** (m6A labelling or deamination): the median per-read rate
   (reads with at least `--min-opportunities`, 200, targets). Inside the
@@ -102,8 +114,9 @@ The DddB demo call (`out/dddb.calls.bam`):
 
 If the run's ML threshold differs by more than 5 from the reference's
 calibration threshold, the rate score is capped at WARN and the mismatch is
-reported. The defaults match the references (248 for Hia5 Nanopore, 125
-otherwise).
+reported. The `fiberhmm-qc` defaults match the references (248 for Hia5
+Nanopore, 125 otherwise); the QC inside `fiberhmm-call` uses the call's
+`--prob-threshold` (128 by default, within 5 of 125).
 
 The figure shows the sample against the reference: rate ECDF and median,
 phasogram, nucleosome and TF size distributions, duplication, a mismatch
@@ -145,7 +158,10 @@ as `fiberhmm-call`, without nucleosome or TF recall, on at most
 a `--light-call-seconds` (60 s) budget checked between reads (a soft limit:
 one read in progress finishes; a time-stopped subset depends on machine
 speed) (`source: light_call`, with model, SHA-256, reads called and what
-stopped it). fibertools' own calls (`Ma` without `MA`) are reported as
+stopped it). For DddA the light call's HMM uses the same first-pass CpG
+mask as `fiberhmm-call` at its defaults (CpGs excluded except inside
+`ddda_ucg` islands; see [DAF-seq](daf-seq.md#ddda-cpg-island-methylation));
+`fiberhmm-qc` has no option to change it. fibertools' own calls (`Ma` without `MA`) are reported as
 `fibertools_tags` and not graded, since the references are FiberHMM calls.
 Calls from any FiberHMM version are graded against references called by this
 release (`state_rates.tag_producer` records the writer); tagged reads are

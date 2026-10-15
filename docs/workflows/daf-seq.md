@@ -88,7 +88,14 @@ can bridge two families whose representatives do not directly match. The
 similarity and endpoint limits apply to each connecting pair, not every pair
 in the final family. Hash-based candidate retrieval is approximate.
 Within a cluster, the representative is the read with the highest MAPQ, then
-the most complete alignment.
+the most complete alignment. Supplementary and secondary records of a
+duplicate read are flagged with it.
+
+Marks from an earlier run are recomputed, not accumulated: before marking,
+both the integrated and the standalone dedup clear `0x400`, `di` and `ds` on
+every input record (including marks set by another tool) and report how many
+records they cleared. Re-deduplicating a called or deduplicated BAM, or
+re-calling it, therefore gives the marks of the current settings.
 
 **Integrated (automatic).** `fiberhmm-call --enzyme ddda|dddb` on a file
 input marks duplicates before SNP screening and calling. It is
@@ -99,11 +106,15 @@ size). Pooled SNP, periodicity and QC statistics ignore flagged copies. A
 `--no-dedup` (off), `--dedup` (force), `--dedup-collapse` (remove the
 non-representatives instead), and `--dedup-min-jaccard`,
 `--dedup-max-end-diff`, `--dedup-min-deam`, `--dedup-prob-threshold`,
-`--dedup-ignore-strand`, `--dedup-stats-tsv`. Integrated dedup needs a file
+`--dedup-ignore-strand`, `--dedup-stats-tsv`. `--dedup-prob-threshold`
+defaults to the call's `--prob-threshold` (128). Integrated dedup needs a file
 input (not stdin) and does not use `--reference`.
 
 **Standalone.** `fiberhmm-dedup` **collapses** by default, keeping one read
-per cluster; `--flag-only` marks instead:
+per cluster; `--flag-only` marks instead. Its options drop the `dedup-`
+prefix (`--min-jaccard`, `--max-end-diff`, `--min-deam`, `--ignore-strand`,
+`--stats-tsv`, `-p/--prob-threshold`, default 128). The output is published
+atomically:
 
 ```bash
 fiberhmm-dedup -i demo/ddda.bam -o out/ddda.dedup.bam
@@ -119,8 +130,8 @@ fiberhmm-call -i aligned.bam -o calls.j90.bam --enzyme dddb --dedup-min-jaccard 
 fiberhmm-dedup -i aligned.bam -o marked.j90.bam --flag-only --min-jaccard 0.90
 ```
 
-Use the original aligned BAM so previously collapsed reads and old duplicate
-annotations do not constrain the comparison. Lower thresholds merge more
+Use the original aligned BAM, since reads removed by an earlier collapse
+cannot come back (earlier marks are cleared and recomputed). Lower thresholds merge more
 families and may merge distinct molecules; choose based on fingerprint
 separation and controls, rather than the desired accessibility distribution.
 
@@ -238,10 +249,21 @@ On the demo data:
 [tag_m5c] defined_islands=2, reads=377, eligible_reads=74, overlapped_islands=86, methylated_islands=0, unmethylated_islands=50, uninformative_islands=36, tagged_reads=50
 ```
 
-The last step, `fiberhmm-recall-tfs`, re-derives deaminations from each read
-and does not re-apply the SNP mask the first `fiberhmm-call` used; it prints
-a `WARNING` saying so, and masked sites count as deaminations again in the
-final calls (see [Recalling](recalling.md)).
+The second `fiberhmm-call` is a complete call: it clears and re-marks the
+duplicates (`cleared earlier duplicate marks (0x400/di/ds) on 78 input
+records before marking` on the demo data), re-runs the SNP screen and masks
+the sites it finds, and writes its own QC.
+
+`fiberhmm-tag-m5c` writes the BAM, `--calls-tsv` and `--write-cpg-islands`
+under hidden names and publishes them together only when the run succeeds,
+so a failed run keeps the previous files. The output is not indexed (the
+index of an earlier output at that path is removed). No output may be an
+input, an input's index, another output, or the index an output's
+publication would replace; such a run stops before writing anything:
+
+```text
+fiberhmm-tag-m5c: error: ... --output out/m/calls.initial.bam is the same file as --input out/m/calls.initial.bam; writing it would destroy the input. Choose a different output path
+```
 
 Given an `MD`-only BAM, `fiberhmm-tag-m5c` stops:
 
@@ -266,10 +288,13 @@ How it works:
 - **Calling.** CpG-aware calling (on for DddA) excludes every CpG
   observation except those inside `ddda_ucg` islands the read carries. The
   mask applies to the first-pass HMM and to nucleosome and TF recall in
-  `fiberhmm-call`, to the HMM of `fiberhmm-apply` and `fiberhmm-posteriors`,
-  to the joint HMM and recall of `fiberhmm-pair`/`-merge`, and to
-  `fiberhmm-recall-tfs`/`-recall-nucs`, so every tool segments a read the
-  same way. A first `fiberhmm-call` on fresh data therefore neutralizes all
+  `fiberhmm-call` (and so in `fiberhmm-pipeline`), to the HMM of
+  `fiberhmm-apply` and `fiberhmm-posteriors`, to the joint HMM and recall of
+  `fiberhmm-pair`/`-merge`, to `fiberhmm-recall-tfs`/`-recall-nucs`, and to
+  the light call of `fiberhmm-qc`, so every tool segments a read the same
+  way. Each of these except `fiberhmm-qc` takes `--use-m5c`/`--no-use-m5c`
+  and `--cpg-mask-policy`; `fiberhmm-call` records `cpg_mask=` and
+  `hmm_cpg_mask=` in its `@PG`. A first `fiberhmm-call` on fresh data therefore neutralizes all
   CpGs; re-calling after `fiberhmm-tag-m5c` restores the CpGs of confidently
   unmethylated islands. `--cpg-mask-policy methylated-only` reproduces the
   older policy of masking only `ddda_mcg` spans; `--no-use-m5c` turns
@@ -291,11 +316,14 @@ fiberhmm-call-m5c -i calls.initial.bam -r reference.fa --region chr1 -o domains.
 ```
 
 ```text
-chrDemo	1000	28000	m5c_unmethylated	999	.
+chrDemo	0	29000	m5c_unmethylated	999	.
 ```
 
 `--region` uses 1-based display syntax (`chr1`, `chr1:1-5000000`); a whole
 contig is fine, observations are collected in `--chunk-bp` (5 Mb) chunks and
 the HMM still runs once over the region. `--tag-bam` / `--tag-output` also
 write island annotations into a BAM (`--tag-mode island`, or `locus` to copy
-the aggregate domains).
+the aggregate domains). The BED, the tagged BAM and the island catalog are
+published together only when the run succeeds, and an output path that
+matches an input BAM, another output or the reference stops the run before
+anything is written.

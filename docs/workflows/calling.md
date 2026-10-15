@@ -58,7 +58,7 @@ unsorted, not indexed). A file output is sorted if needed, then indexed.
 fiberhmm-call -i aligned.bam -o - --enzyme hia5 --seq pacbio -c 8 | ft fire - fire.bam
 ```
 
-`-c 0` uses every CPU. `--io-threads` (8) sets the htslib compression threads
+`-c/--cores` sets the worker processes (default 4); `-c 0` uses every CPU. `--io-threads` (8) sets the htslib compression threads
 per stage. `--max-reads N` (streaming only) stops after *N* reads, for a quick
 look.
 
@@ -98,8 +98,7 @@ fiberhmm-call -i sorted.bam -o calls.bam --enzyme hia5 --seq pacbio \
   publishes the output
   atomically, exactly as an uninterrupted run would: the records are
   identical. The header's `@PG` keeps the original command line. Integrated
-  dedup, the DAF SNP screen and the NRL estimate are recomputed (they are
-  deterministic).
+  dedup and the DAF SNP screen are recomputed (they are deterministic).
 - A change to the input BAM or to any parameter is refused, naming the
   fields that differ; nothing is mixed. `--cores` and `--io-threads` may
   change.
@@ -228,8 +227,11 @@ automatically; each has its own section in [DAF-seq](daf-seq.md):
    marking, when coverage allows (`--daf-call-snps`/`--no-daf-call-snps`,
    `--daf-snp-mask BED`);
 3. calling, with the [strand-swap chimera filter](daf-seq.md#strand-swap-chimeras)
-   (`--keep-chimeras`) and [adjacent-target thinning](daf-seq.md#adjacent-target-thinning)
-   (`--daf-mask-runs`).
+   (on; `--keep-chimeras` turns it off, `--chimera-min-seg` 5 and
+   `--chimera-purity` 0.8 tune it) and
+   [adjacent-target thinning](daf-seq.md#adjacent-target-thinning)
+   (`--daf-mask-runs`, default 2 with `--daf-run-policy keep-one` for DddA,
+   off for DddB).
 
 `--reference ref.fa` supplies the reference when reads carry neither R/Y
 codes nor a usable `MD` tag. `--ddda-mcg` was retired; it prints the
@@ -249,7 +251,7 @@ set from the resolved enzyme and platform. `--no-qc` skips it,
 | Content | Where |
 |---|---|
 | Calls | `ns`/`nl`, `as`/`al`, `nq`, and `MA`/`AQ` (`nuc`, `msp`, `tf`); see [Annotations](../concepts/annotations.md) |
-| Provenance | `@PG` with the resolved settings in `DS` (for example `mode=`, `enzyme=`, `prob_threshold=`, `primary_only=`, `recall_nucs=`, `phase_nrl=`, `dedup=`, `daf_snp_mask=`, `daf_run_mask=`, `cpg_mask=`, `coord=molecular`) |
+| Provenance | `@PG` with the resolved settings in `DS` (for example `mode=`, `enzyme=`, `prob_threshold=`, `primary_only=`, `recall_nucs=`, `dedup=`, `daf_snp_mask=`, `daf_run_mask=`, `cpg_mask=`, `hmm_cpg_mask=`), and `@CO fiberhmm:coord=molecular` (calls are in the molecular frame; see [Coordinates](../concepts/coordinates.md)) |
 | Chemistry | [`@CO FIBERHMM-CHEMISTRY:v1:`](../reference/headers.md#fiberhmm-chemistry) |
 | Layer list | [`@CO MA-TYPES:v1:nuc,msp,tf`](../reference/headers.md#ma-types) |
 | QC and DAF side outputs | `qc/` next to the output BAM |
@@ -294,6 +296,15 @@ BAM index: out/apply/hia5_pacbio_footprints.bam.bai
   `-o -` writes the BAM to stdout.
 - `--streaming` processes unaligned, unindexed or stdin input in a pipeline;
   `-c 0` uses every CPU; `-c 1` (default) runs in one process.
+- DAF and DddA options match `fiberhmm-call`: `--daf-mask-runs`,
+  `--daf-run-policy`, `--daf-mask-unaligned`, and the first-pass CpG mask
+  (`--use-m5c`/`--no-use-m5c`, `--cpg-mask-policy`; on for DddA).
+- By default `ns`/`nl` list every HMM footprint, which the recall tools
+  need. `--harmonize-legacy-tags` writes `ns`/`nl` as the nucleosomes `MA`
+  would hold (footprints outside MSPs), so the legacy tags tile with
+  `as`/`al` like `fiberhmm-call` output; each such read carries `hl:i:1`,
+  and `fiberhmm-recall-tfs`/`-recall-nucs` refuse it
+  ([Re-calling](recalling.md)).
 - `--scores` writes posterior-mean `nq`/`aq`; `--no-msps` omits `as`/`al`/`aq`;
   `--stats` samples reads for summary plots (needs `fiberhmm[plots]`);
   `--output-posteriors FILE` also exports HMM posteriors; `-t` excludes the

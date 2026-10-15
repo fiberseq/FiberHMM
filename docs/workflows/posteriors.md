@@ -13,11 +13,10 @@ fiberhmm-posteriors -i demo/hia5_pacbio.bam --enzyme hia5 --seq pacbio \
 
 ```text
 Using bundled model: .../fiberhmm/models/hia5_pacbio.json
-Loaded model: mode=pacbio-fiber, context_size=3
-Processing 1 regions from demo/hia5_pacbio.bam
-Using 2 cores, output format: TSV
 Wrote out/pacbio.posteriors.tsv.gz (0.5 MB, 300 fibers)
 ```
+
+`-v` also prints the model, region and core details and a progress bar.
 
 ## Output formats
 
@@ -27,7 +26,7 @@ The format follows the extension (`--format` overrides it).
 then one line per read:
 
 ```text
-#metadata:{"mode": "pacbio-fiber", "context_size": 3, "edge_trim": 10, "source_bam": "hia5_pacbio.bam", "format_version": 1}
+#metadata:{"mode": "pacbio-fiber", "context_size": 3, "edge_trim": 10, "source_bam": "hia5_pacbio.bam", "format_version": 1, "fiberhmm_version": "3.0.0", "model": "hia5_pacbio.json", "model_sha256": "13342f5f...", "prob_threshold": 128, "filter_chimeras": true, "chimera_min_seg": 5, "chimera_purity": 0.8, "daf_mask_runs": 0, "daf_run_policy": "keep-one", "cpg_mask_policy": "off", "fiberhmm_commit": "...", "enzyme": "hia5", "platform": "pacbio", "fiberhmm_mode": "pacbio-fiber"}
 #read_id	chrom	start	end	strand	posteriors_b64	fp_starts	fp_sizes
 ```
 
@@ -70,9 +69,17 @@ processes unindexed input in one pass.
 
 The DAF options (`--keep-chimeras`, `--chimera-*`, `--daf-snp-mask`,
 `--daf-mask-runs`, `--daf-run-policy`) behave as in `fiberhmm-call`, so the
-posteriors describe the observations `fiberhmm-call` decodes. As in
-`fiberhmm-call`, a missing `--seq` is detected from the input, and
-`--prob-threshold` defaults to the chemistry preset (248 for Hia5 Nanopore,
-128 otherwise).
+posteriors describe the observations `fiberhmm-call` decodes. For DddA the
+HMM sees `fiberhmm-call`'s first-pass CpG mask: CpGs are hidden except inside
+the `ddda_ucg` islands the input carries (`--use-m5c`/`--no-use-m5c`,
+`--cpg-mask-policy`; on for `--enzyme ddda`). `--daf-snp-mask` is not applied
+automatically; pass the BED that `fiberhmm-call` wrote
+(`qc/<stem>.daf_snps.bed`) to match its calls. As in `fiberhmm-call`, a
+missing `--seq` is detected from the input, and `--prob-threshold` defaults
+to the chemistry preset (248 for Hia5 Nanopore, 128 otherwise).
+
+`-c/--cores` (4) workers process `--region-size` (5 Mb) regions; `-c 0` uses
+every CPU. The model, ML threshold, chimera, SNP-mask, run-mask and CpG-mask
+settings are recorded in the file's metadata, which `fiberhmm-check` reads.
 
 Every option: [`fiberhmm-posteriors`](../reference/cli.md#fiberhmm-posteriors).

@@ -25,9 +25,11 @@ fiberhmm-pair -i out/ddda.calls.bam -r demo/ref.fa -o out/ddda.duplex.bam \
 ```text
 fiberhmm-pair: stages pair -> merge -> recall (use --stop-after pair to write tagged pairs only)
 merge-recall: loaded ddda apply+recall models (k=3); re-calling footprints (HMM + nuc + TF recallers) on both-strand consensus reads; CpG-aware calling (HMM + recall) unmethylated-only
-resolved pairs seen: 28  | consensus reads built: 28  | build failures (MD/coverage): 0
+=== fiberhmm-merge ===
+resolved pairs seen: 25  | consensus reads built: 25  | build failures (MD/coverage): 0
+reads passed through (unmerged): 327
 ...
-fiberhmm-pair: 28 pairs [sequence 0; sequence-free 28] (52 marked PCR duplicates excluded) in 4.2s
+fiberhmm-pair: 25 pairs [sequence 0; sequence-free 25] (52 marked PCR duplicates excluded) in 2.7s
 ```
 
 The output holds one joint molecule per pair (replacing its two source
@@ -41,6 +43,8 @@ reads) and every other read unchanged, sorted and indexed.
 | `--pairs-only` | write only paired records (joint molecules, or pair members with `--stop-after pair`) |
 | `--sequence-only` | accept only sequence-supported pairs (below); the FASTA becomes optional if reads have `MD` |
 | `--pairs-tsv`, `--receipt-json` | evidence for every selected pair, and a machine-readable run receipt |
+| `--no-index` | do not index a paired-source output (`--stop-after pair`) |
+| `--max-component` | safety ceiling on the reads in one overlap group (10000) |
 
 ```bash
 fiberhmm-pair -i out/ddda.calls.bam -r demo/ref.fa -o out/ddda.paired.bam --stop-after pair
@@ -50,7 +54,8 @@ fiberhmm-pair -i out/ddda.paired.bam -o out/ddda.duplex2.bam --from-paired
 Reads flagged as PCR duplicates (`0x400`) are never pairing candidates. The
 MM/ML dU threshold `-p/--prob-threshold` is 128. `fiberhmm-merge` is the
 older standalone merge step, still installed but deprecated: use
-`fiberhmm-pair --from-paired`. `fiberhmm-crossstrand` no longer exists.
+`fiberhmm-pair --from-paired`. It re-calls only with `--recall` (then with
+the same CpG mask and run mask as `fiberhmm-pair`). `fiberhmm-crossstrand` no longer exists.
 
 ## How pairs are chosen
 

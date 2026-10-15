@@ -50,7 +50,8 @@ One BED12 row per read and feature type (one row per feature with
 is a block, `name` is the read name, `strand` the alignment strand, and
 `score` the mean quality byte of the read's features (for `tf`, the mean
 `tq`). Every schema ends with `isDuplicate` (1 when the read carried
-flag `0x400`); FiberBrowser hides those rows by default.
+flag `0x400`); FiberBrowser hides those rows by default. A `tf` row from the
+demo call:
 
 ```text
 chrDemo  186  5125  pacbio_0277  137  -  186  5125  0  9  34,7,7,5,8,6,83,61,30  0,464,1415,2015,2592,2643,3958,4044,4909  0

@@ -5,8 +5,8 @@ HMM calls, without running the HMM again. Use them to:
 
 - add TF calls to the output of `fiberhmm-apply`;
 - re-call with a refit or custom emission table;
-- change recall settings (`--min-llr`, nucleosome policy, CpG policy) on an
-  existing call set.
+- change recall settings (`--min-llr`, the nucleosome split thresholds, the
+  CpG policy) on an existing call set.
 
 For DddA output of `fiberhmm-call`, use `fiberhmm-call` again instead (see
 [DddA call output](#ddda-call-output)); that includes re-calling after
@@ -41,6 +41,18 @@ fiberhmm-recall-nucs -i out/apply/hia5_pacbio_footprints.bam -o out/apply.recall
 [recall_tfs] processed 300 reads; 300 carried v2 tags; ... TF calls emitted; ... v2 short nucs demoted to tf+
 ```
 
+The input needs `ns`/`nl` that list every HMM footprint, which is the
+`fiberhmm-apply` default. Output of `fiberhmm-apply --harmonize-legacy-tags`
+holds only the `MA`-view nucleosomes in `ns`/`nl` and marks each such read
+with `hl:i:1`; both recallers stop at the first read with that tag:
+
+```text
+error: read 'pacbio_0275' carries hl: the input is fiberhmm-apply --harmonize-legacy-tags output, whose ns/nl no longer list every HMM footprint that recall needs; re-run fiberhmm-apply without --harmonize-legacy-tags (or use fiberhmm-call)
+```
+
+A writer that replaces `ns`/`nl` (the recallers, `fiberhmm-call`) removes
+`hl`; tools that pass the tags through keep it.
+
 `fiberhmm-apply` output declares its chemistry like `fiberhmm-call` output,
 so a refit table given with `-m` alone inherits it (see below). The recall
 output declares its chemistry and `MA-TYPES`, keeps the input order, and is
@@ -60,7 +72,7 @@ NOTE: fiberhmm-recall-tfs: custom model on an input declaring [assay=daf enzyme=
 
 The custom model inherits the declared enzyme and platform because its
 observation mode (`daf`) matches, and the run uses that enzyme's defaults
-(ML threshold, CpG masking, keep-one, nucleosome policy, TF presets) with
+(ML threshold, CpG masking, keep-one, TF presets) with
 your table. The output keeps the input's chemistry declaration.
 
 If the table's mode does not match, or you pass a conflicting
@@ -116,7 +128,7 @@ PacBio pass `--prob-threshold 128`, since the recallers default to 125 where
 | Option | Default | Notes |
 |---|---|---|
 | `--prob-threshold` | 125; 248 for Hia5 Nanopore | `fiberhmm-call` uses 128 for non-Nanopore data |
-| `--input-frame` | `auto` | frame of the input's legacy tags. `auto` applies the [shared frame rule](../reference/footprint-tag-frame.md): the last footprint writer on each `@PG` PP chain decides (fibertools: molecular; FiberHMM call/apply/recall: molecular when it declares `coord=molecular`, else query); with no writer, a `coord=molecular` declaration means molecular, otherwise query (FiberHMM 2.12 output). Merged histories that disagree with nothing declared stop the run at the first read with these tags. fibertools `Ma` tags are always molecular. |
+| `--input-frame` | `auto` | frame of the input's legacy tags. `auto` applies the [shared frame rule](../reference/footprint-tag-frame.md): the last footprint writer on each `@PG` PP chain decides (fibertools: molecular; FiberHMM call/apply/recall: molecular when it declares `coord=molecular`, else query); with no writer, a `coord=molecular` declaration means molecular, otherwise query (FiberHMM 2.12 output). When the header has no evidence at all (no footprint writer, no declaration, for example a stripped `@PG`), the tags are taken as query frame with a warning, except on reads whose `MA` has a `.` `nuc`/`msp`/`tf` group, which are molecular. Merged histories that disagree with nothing declared stop the run at the first read with these tags. fibertools `Ma` tags are always molecular. |
 | `-c/--cores` | 1 | `0` = all CPUs |
 | `--chunk-size` | 1024 | reads per worker chunk |
 | `--recall-nucs` | off (`recall-tfs`), on (`recall-nucs`) | |
