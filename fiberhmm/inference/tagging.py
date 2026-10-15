@@ -85,15 +85,14 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
     result writes only the tag groups that have calls, and skipped/empty reads
     are passed through by callers.
     """
-    # Apply recomputes the read structure, so any pre-existing MA/AN/AQ from a
-    # prior fiberhmm-call/recall pass now refers to stale ns/nl coordinates.
-    # Strip them so the BAM never carries an inconsistent annotation view.
-    for stale_tag in ("MA", "AN", "AQ"):
-        if read.has_tag(stale_tag):
-            try:
-                read.set_tag(stale_tag, None)
-            except Exception:
-                pass
+    # Apply recomputes the read structure, so the footprint groups of any
+    # pre-existing MA/AN/AQ from a prior call/recall pass are stale. They are
+    # dropped; DddA CpG-island groups (ddda_ucg/ddda_mcg from tag-m5c) are
+    # read-intrinsic and kept, so a later recall applies the same CpG policy.
+    from fiberhmm.inference.read_filters import strip_stale_call_tags
+
+    strip_stale_call_tags(read, legacy_tags=(), keep_m5c_groups=True)
+    keeps_m5c = read.has_tag("MA")
 
     # FiberHMM works in SEQ (query_sequence) coordinates; ns/nl/as/al must be
     # written in molecular (original-fiber) frame for fibertools. Flip + re-sort
@@ -126,6 +125,20 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
                 read.set_tag("aq", None)
             except Exception:
                 pass
+
+    if keeps_m5c:
+        # The kept CpG-island groups make MA present, and MA is authoritative
+        # for readers, so it also carries this run's nucleosomes and MSPs.
+        from fiberhmm.inference.tf_recaller import write_ma_tags
+
+        nucs = [(int(s), int(n)) for s, n in zip(result["ns"], result["nl"]) if int(n) > 0]
+        msps = ([(int(s), int(n)) for s, n in zip(result["as"], result["al"]) if int(n) > 0]
+                if write_msps else [])
+        nq = scores_to_u8(result.get("ns_scores")) if with_scores else None
+        if nq is not None and len(nq) != len(nucs):
+            nq = None
+        write_ma_tags(read, len(read.query_sequence or "") or int(read.query_length or 0),
+                      [], nucs, msps, nq_for_kept_nucs=nq, also_write_legacy=False)
 
 
 def unify_nucs_with_tf_calls(

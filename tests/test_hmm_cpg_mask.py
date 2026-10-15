@@ -1,4 +1,6 @@
 """First-pass HMM CpG masking for DddA CpG-aware calling."""
+import array
+
 import numpy as np
 
 import fiberhmm.inference.engine as engine
@@ -340,3 +342,77 @@ def test_posteriors_api_takes_the_cli_cpg_options(monkeypatch, tmp_path):
     with pytest.raises(ValueError):
         ep.export_posteriors_from_bam('in.bam', get_model_path('hia5', tool='apply', seq='pacbio'),
                                       str(tmp_path / 'p.tsv.gz'), use_m5c=True)
+
+
+def _tagged_ddda_read():
+    """_ddda_read after a call and tag-m5c: footprints plus a ddda_ucg island."""
+    read = _ddda_read()
+    n = read.query_length
+    read.set_tag('MA', f'{n};nuc.Q:1-150;msp.:151-100;ddda_ucg.:101-100', value_type='Z')
+    read.set_tag('AQ', array.array('B', [200]))
+    return read
+
+
+def test_apply_keeps_cpg_island_groups_and_rewrites_footprints():
+    from fiberhmm.inference.streaming_drain import strip_for_apply
+    from fiberhmm.inference.tagging import set_legacy_apply_tags
+    from fiberhmm.io.ma_tags import parse_ma_tag
+
+    read = _tagged_ddda_read()
+    strip_for_apply(read)
+    assert read.get_tag('MA') == f'{read.query_length};ddda_ucg.:101-100'
+    assert not read.has_tag('AQ')
+    result = {'ns': np.array([10, 260]), 'nl': np.array([140, 120]),
+              'as': np.array([150]), 'al': np.array([110])}
+    set_legacy_apply_tags(read, result, with_scores=False)
+    parsed = parse_ma_tag(read.get_tag('MA'))
+    assert [tuple(map(int, iv)) for iv in parsed['ddda_ucg']] == [(100, 100)]
+    assert sorted(map(tuple, parsed['nuc'])) == [(10, 140), (260, 120)]
+    assert list(map(tuple, parsed['msp'])) == [(150, 110)]
+    assert list(read.get_tag('ns')) == [10, 260]
+    # The kept island still exempts its CpGs in a later recall.
+    assert engine.read_cpg_ma_intervals(read)['ucg'] == [(100, 200)]
+
+    # Reads without CpG-island groups keep the legacy-only apply output.
+    plain = _ddda_read()
+    plain.set_tag('MA', f'{plain.query_length};nuc.Q:1-150', value_type='Z')
+    plain.set_tag('AQ', array.array('B', [200]))
+    strip_for_apply(plain)
+    set_legacy_apply_tags(plain, result, with_scores=False)
+    assert not plain.has_tag('MA') and not plain.has_tag('AQ')
+
+
+def test_region_apply_worker_reads_the_island_mask_before_stripping(monkeypatch, tmp_path):
+    """Region-parallel apply sees the same first-pass mask as fiberhmm-call on
+    a tag-m5c BAM (the island groups used to be stripped first)."""
+    import pysam
+
+    from fiberhmm.inference import region_workers
+    from fiberhmm.inference.region_types import RegionBamWorkItem
+    from fiberhmm.models import get_model_path
+
+    read = _tagged_ddda_read()
+    model, k = _model()
+    seen = _recording(monkeypatch)
+    _call_first_pass(read, model, k)
+    reference = seen[-1]
+
+    bam = tmp_path / 'in.bam'
+    with pysam.AlignmentFile(str(bam), 'wb', header=read.header) as out:
+        out.write(read)
+    pysam.index(str(bam))
+    params = {'edge_trim': EDGE_TRIM, 'circular': False, 'mode': 'daf',
+              'context_size': k, 'msp_min_size': 0, 'nuc_min_size': 85,
+              'min_mapq': 0, 'prob_threshold': 128, 'min_read_length': 0,
+              'with_scores': False, 'train_rids': set(), 'primary_only': False,
+              'return_posteriors': False, 'write_msps': True, 'io_threads': 1,
+              'cpg_mask_policy': POLICY}
+    monkeypatch.setattr(region_workers, '_worker_model', model)
+    monkeypatch.setattr(region_workers, '_worker_region_params', params)
+    item = RegionBamWorkItem(('chr1', 0, 10_000), str(bam), str(tmp_path / 'out.bam'))
+    result = region_workers._process_region_to_bam(item)
+    assert result.total_reads == 1
+    assert np.array_equal(seen[-1], reference)
+    with pysam.AlignmentFile(str(tmp_path / 'out.bam'), check_sq=False) as out:
+        written = next(out)
+    assert 'ddda_ucg.:101-100' in written.get_tag('MA')

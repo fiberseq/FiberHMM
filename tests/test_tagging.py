@@ -27,6 +27,9 @@ class RecordingRead:
     def has_tag(self, tag):
         return tag in self.tags
 
+    def get_tag(self, tag):
+        return self.tags[tag]
+
 
 def test_scores_to_u8_clips_and_returns_python_ints():
     values = scores_to_u8(np.asarray([-1.0, 0.0, 0.5, 1.0, 2.0]))

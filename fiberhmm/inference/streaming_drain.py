@@ -24,9 +24,10 @@ def apply_legacy_tags(write_msps: bool):
 
 
 def strip_for_apply(read, write_msps: bool = True) -> None:
-    """Remove stale call tags the apply writer would otherwise leave behind."""
+    """Remove stale call tags the apply writer would otherwise leave behind
+    (DddA CpG-island MA groups are kept, as by the fused call writer)."""
     strip_stale_call_tags(
-        read, legacy_tags=apply_legacy_tags(write_msps), keep_m5c_groups=False,
+        read, legacy_tags=apply_legacy_tags(write_msps), keep_m5c_groups=True,
     )
 
 

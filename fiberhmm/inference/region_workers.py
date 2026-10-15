@@ -228,6 +228,10 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
                         # fetched by every region it overlaps.
                         if not _region_read_owned(read, start, end):
                             continue
+                        # The CpG mask inputs (tag-m5c island groups) are
+                        # read before the stale call tags are stripped.
+                        cpg_intervals = (read_cpg_ma_intervals(read)
+                                         if cpg_mask_policy else None)
                         strip(read)
 
                         skip_reason = streaming_skip_reason(read, filter_config)
@@ -264,7 +268,7 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
                         total_reads += 1
                         if cpg_mask_policy:
                             attach_hmm_cpg_mask(fiber_read, cpg_mask_policy,
-                                                read_cpg_ma_intervals(read))
+                                                cpg_intervals)
 
                         result = _process_single_read(
                             fiber_read, model, edge_trim, circular,
