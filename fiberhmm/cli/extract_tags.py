@@ -60,6 +60,8 @@ from fiberhmm.inference.parallel import _get_genome_regions
 from fiberhmm.inference.region_planning import RegionPlanError
 from fiberhmm.io.ma_tags import (
     DDDA_MCG_FEATURE,
+    DDDA_MCG_HEMI_FEATURE,
+    DDDA_UCG_FEATURE,
     annotation_tags,
     flip_interval_frame,
     flip_intervals_to_seq,
@@ -268,10 +270,17 @@ def resolve_extract_frames(header, input_frame: str = 'auto') -> dict:
     if input_frame not in _INPUT_FRAMES:
         raise ValueError(f'input_frame must be one of {", ".join(_INPUT_FRAMES)}')
     legacy = LegacyFrame(header, _INPUT_FRAMES[input_frame])
+    evidence = header_has_frame_evidence(header)
+    layers = consensus_molecular_layers(header)
+    if evidence:
+        # m5C groups (tag-m5c/call-m5c/pair: ddda_mcg_frame=molecular) are
+        # molecular, as fiberhmm.daf.m5c.ma_strand_intervals reads them;
+        # without evidence their own strand decides, like any group.
+        layers = layers | M5C_MA_FEATURES
     return {
         'ma': ma_annotation_frame(header),
-        'ma_dot_molecular': not header_has_frame_evidence(header),
-        'molecular_layers': consensus_molecular_layers(header),
+        'ma_dot_molecular': not evidence,
+        'molecular_layers': frozenset(layers),
         'legacy': legacy.frame,
         'legacy_reason': legacy.reason,
         'legacy_dot_molecular': legacy.assumed,
@@ -280,6 +289,7 @@ def resolve_extract_frames(header, input_frame: str = 'auto') -> dict:
 
 
 _INPUT_FRAMES = {'auto': None, 'molecular': True, 'query': False}
+M5C_MA_FEATURES = frozenset({DDDA_MCG_FEATURE, DDDA_UCG_FEATURE, DDDA_MCG_HEMI_FEATURE})
 
 
 def _ma_parse_options(frames) -> dict:
@@ -632,7 +642,8 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                             query_to_ref = _build_query_to_ref(read)
                         n_features['bothstrand'] += _extract_both_strand(
                             read, bed_outs['bothstrand'], query_to_ref,
-                            haplotype_fields=haplotype_fields)
+                            haplotype_fields=haplotype_fields,
+                            frames=frames)
 
         return (temp_bed_paths, n_reads, n_features)
 
@@ -1345,11 +1356,16 @@ def _interval_intersection(a_ivals, b_ivals):
 
 
 def _extract_both_strand(read, bed_out, query_to_ref=None,
-                         haplotype_fields: bool = False) -> int:
+                         haplotype_fields: bool = False,
+                         frames=None) -> int:
     """Write the ``deam+``/``deam-`` intersection of a duplex consensus.
 
     The BED12 blocks mark query spans for which both physical strands supply
     deamination evidence. Ordinary single-strand reads contribute nothing.
+    The groups' frame follows the MA header rule (``frames``; ``None``:
+    molecular); without frame evidence ``+``/``-`` groups are SEQ frame.
+    Duplex consensus reads (fiberhmm-pair/-merge) are forward, so their
+    frames coincide.
     """
     if query_to_ref is None:
         query_to_ref = _build_query_to_ref(read)
@@ -1363,8 +1379,11 @@ def _extract_both_strand(read, bed_out, query_to_ref=None,
     for name, strand, _qspec, intervals in parsed['raw_types']:
         if name != 'deam':
             continue
+        molecular = frames is None or (
+            frames['ma'] == 'molecular' or name in frames['molecular_layers']
+            or (frames['ma_dot_molecular'] and strand == '.'))
         for start, length in intervals:
-            if is_reverse:
+            if is_reverse and molecular:
                 start, length = flip_interval_frame(
                     int(start), int(length), read_length,
                 )

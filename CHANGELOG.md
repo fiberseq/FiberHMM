@@ -11,6 +11,10 @@
   with 3.0 are unchanged. New `--input-frame auto|molecular|query` sets the
   frame of legacy `ns`/`nl`/`as`/`al`; a merged BAM whose histories
   disagree now stops nucleosome and MSP extraction and asks for it.
+- `fiberhmm-extract --both-strand` reads `deam+`/`deam-` groups by the same
+  rule. On reverse-strand reads of BAMs without `coord=molecular` the
+  both-strand region was mirrored; `fiberhmm-pair` output (forward
+  consensus reads) is unchanged.
 - The QC that `fiberhmm-call` runs after calling follows `--no-use-m5c` and
   `--cpg-mask-policy` for the sampled reads it calls itself.
 - Writing apply tags without footprints keeps the `hl:i:1` marker on reads
