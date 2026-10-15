@@ -1275,3 +1275,49 @@ def test_tag_m5c_refuses_outputs_that_alias_its_inputs(tmp_path, capsys):
     assert reference.read_text() == ">chr1\nACGT\n"
     assert islands.read_text() == "chr1\t0\t4\n"
 
+
+def test_island_annotation_publishes_atomically(tmp_path, monkeypatch):
+    """A failed rerun leaves the previous BAM and sidecars as they were and
+    writes nothing new; a successful rerun removes the stale BAM index."""
+    import pysam
+
+    import fiberhmm.daf.m5c as m5c
+
+    reference, reference_sequence, sequence = _methylated_island_reference(tmp_path)
+    input_bam = _island_bam(tmp_path, [("chr1", len(reference_sequence))],
+                            [("chr1", sequence), ("chr1", sequence)])
+    output = tmp_path / "out.bam"
+    tsv = tmp_path / "calls.tsv"
+    bed = tmp_path / "islands.bed.gz"
+
+    def run():
+        return annotate_bam_per_read_islands(
+            str(input_bam), str(output), str(reference), None,
+            DDDA_FIVE_PRIME_FACTORS, threads=1, calls_tsv=str(tsv),
+            used_islands_bed=str(bed))
+
+    run()
+    pysam.index(str(output))
+    before = {p: p.read_bytes() for p in (output, tsv, bed)}
+    import gzip
+    assert gzip.decompress(before[bed]).startswith(b"chr1\t")
+
+    calls = {"n": 0}
+    real = m5c._initial_msp_intervals_seq
+
+    def fail_second(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("injected write failure")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(m5c, "_initial_msp_intervals_seq", fail_second)
+    with pytest.raises(RuntimeError, match="injected"):
+        run()
+    assert {p: p.read_bytes() for p in (output, tsv, bed)} == before
+    assert (tmp_path / "out.bam.bai").exists()
+    assert not [p for p in tmp_path.iterdir() if p.name.startswith(".")]
+
+    monkeypatch.setattr(m5c, "_initial_msp_intervals_seq", real)
+    run()
+    assert not (tmp_path / "out.bam.bai").exists()   # described the old file

@@ -1817,11 +1817,15 @@ def infer_cpg_islands(
 
 def write_cpg_island_bed(
     islands: dict[str, Sequence[tuple[int, int]]], path: str,
+    compress: bool | None = None,
 ) -> None:
-    """Write the exact normalized CpG-island catalog used for calling."""
+    """Write the exact normalized CpG-island catalog used for calling
+    (gzip-compressed when ``compress``; default: when ``path`` ends .gz)."""
     import gzip
 
-    opener = gzip.open if str(path).endswith(".gz") else open
+    if compress is None:
+        compress = str(path).endswith(".gz")
+    opener = gzip.open if compress else open
     with opener(path, "wt") as handle:
         for chrom, intervals in islands.items():
             for start, end in intervals:
@@ -1922,6 +1926,57 @@ def annotate_bam_per_read_islands(
 ) -> dict[str, int]:
     """Call whole CpG islands from observations inside initial MSPs.
 
+    See :func:`_annotate_bam_per_read_islands`. The BAM, the audit table and
+    the island BED are written to hidden siblings and published only when
+    the whole run succeeds (``atomic_output``: a failed run leaves earlier
+    outputs untouched, and indexes of an earlier BAM are removed).
+    """
+    from contextlib import ExitStack
+
+    from fiberhmm.inference.bam_output import atomic_output
+
+    with ExitStack() as publish:
+        bed_path = (publish.enter_context(atomic_output(used_islands_bed))
+                    if used_islands_bed else None)
+        tsv_path = (publish.enter_context(atomic_output(calls_tsv))
+                    if calls_tsv else None)
+        bam_path = publish.enter_context(atomic_output(output_bam))
+        return _annotate_bam_per_read_islands(
+            input_bam, bam_path, reference, island_bed, five_prime_factors,
+            posterior_threshold=posterior_threshold, min_other=min_other,
+            min_cpg=min_cpg, input_molecular_frame=input_molecular_frame,
+            threads=threads, header_record=header_record, calls_tsv=tsv_path,
+            used_islands_bed=bed_path,
+            used_islands_gzip=bool(used_islands_bed
+                                   and str(used_islands_bed).endswith(".gz")),
+            island_window=island_window, island_step=island_step,
+            island_min_gc=island_min_gc,
+            island_min_observed_expected=island_min_observed_expected,
+        )
+
+
+def _annotate_bam_per_read_islands(
+    input_bam: str,
+    output_bam: str,
+    reference: str,
+    island_bed: str | None,
+    five_prime_factors: Sequence[float],
+    posterior_threshold: float = 0.99,
+    min_other: int = 10,
+    min_cpg: int = 15,
+    input_molecular_frame: bool | None = None,
+    threads: int = 4,
+    header_record: dict | None = None,
+    calls_tsv: str | None = None,
+    used_islands_bed: str | None = None,
+    used_islands_gzip: bool | None = None,
+    island_window: int = 200,
+    island_step: int = 10,
+    island_min_gc: float = 0.50,
+    island_min_observed_expected: float = 0.60,
+) -> dict[str, int]:
+    """Call whole CpG islands from observations inside initial MSPs.
+
     Confident methylated and unmethylated islands are written as
     ``MA:ddda_mcg.`` and ``MA:ddda_ucg.`` spans, respectively.  CpG-aware TF
     recall uses the unmethylated layer as a whitelist: CpGs outside those
@@ -1946,7 +2001,7 @@ def annotate_bam_per_read_islands(
             min_observed_expected=island_min_observed_expected,
         ) if contigs else {}
     if used_islands_bed:
-        write_cpg_island_bed(islands, used_islands_bed)
+        write_cpg_island_bed(islands, used_islands_bed, compress=used_islands_gzip)
     starts = {
         chrom: np.asarray([start for start, _ in values], dtype=np.int64)
         for chrom, values in islands.items()
