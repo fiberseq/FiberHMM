@@ -1150,9 +1150,6 @@ def _resolve_input_molecular_frame(args, header) -> bool:
         return False
     frame, reason = legacy_tag_frame(header)
     resolver = LegacyFrame(header)
-    if resolver.chemistry:
-        print(f"  [recall] input frame: molecular ({resolver.reason}).", file=sys.stderr)
-        return True
     if resolver.assumed:
         _UNDECIDED_FRAME['assumed'] = True
         print(resolver.warning('fiberhmm-recall-tfs'), file=sys.stderr)

@@ -5,7 +5,9 @@ Whenever the header gives frame evidence (a footprint writer on a @PG
 chain, or coord=molecular), every reader must resolve exactly what the
 pre-extension code resolved; ``fixtures/frames/pre_c1ede9e_frames.json``
 holds those results (QC MSPs, recall-tfs payload frame and tags, m5C
-MSP/nucleosome intervals) for historical header variants x read shapes.
+MSP/nucleosome intervals) for historical header variants x read shapes,
+computed by the pre-c1ede9e code with one intended change applied: QC uses
+a read's legacy tags when its MA holds no nuc/msp (as at 88cecd0).
 """
 import array
 import json
@@ -197,19 +199,21 @@ def test_without_evidence_each_ma_group_decides_its_own_frame():
                              "tags": {"ns": [100], "nl": [50], "as": [300], "al": [200]}}
 
 
-def test_without_evidence_legacy_tags_follow_chemistry_then_dot_footprints():
-    # Chemistry declaration (FiberHMM >= 2.16 writers): molecular legacy tags.
+def test_without_evidence_legacy_tags_follow_dot_footprints_only():
+    # A chemistry declaration decides nothing: merge/pair add it while
+    # carrying historical tags unchanged.
     got = _no_evidence("chemistry", "legacy_only")
-    assert got["qc_msps"] == [[500, 200, 200]]
-    assert got["recall"]["frame"] is True
-    assert got["m5c_msps"] == [[500, 700]] and got["m5c_nucs"] == [[850, 900]]
-    # No chemistry: a '.' footprint group on the same read makes them molecular...
+    assert got["qc_msps"] == [[300, 200, 200]]
+    assert got["recall"]["frame"] is False
+    assert got["m5c_msps"] == [[300, 500]] and got["m5c_nucs"] == [[100, 150]]
+    # A '.' footprint group on the same read makes them molecular...
     got = _no_evidence("stripped", "legacy_and_ma_dot")
     assert got["recall"]["frame"] is True
     # ...but a '.' m5C group alone does not.
     got = _no_evidence("samtools", "legacy_plus_m5c_dot")
     assert got["recall"]["frame"] is False
     assert got["m5c_msps"] == [[300, 500]]
+    assert got["qc_msps"] == [[300, 200, 200]]   # QC keeps the legacy calls
     got = _no_evidence("stripped", "legacy_only")
     assert got["qc_msps"] == [[300, 200, 200]] and got["recall"]["frame"] is False
 
@@ -230,3 +234,17 @@ def test_no_evidence_warns(capsys):
     assert auto_legacy_frame(with_chain, "fiberhmm-tag-m5c") is False
     recall_tfs._resolve_input_molecular_frame(SimpleNamespace(input_frame="auto"), with_chain)
     assert "warning" not in capsys.readouterr().err
+
+
+def test_qc_keeps_legacy_calls_after_an_m5c_only_layer():
+    """The real add_m5c_ma_tag on a called read without MA footprints."""
+    from fiberhmm.daf.m5c import add_m5c_ma_tag
+    from fiberhmm.qc.states import msp_intervals_from_tags, tag_frames
+
+    header = {"HD": {"VN": "1.6"}, "SQ": SQ, "PG": [APPLY_2x]}
+    read = make_read(header, READS["legacy_only"], False)
+    frames = tag_frames(header)
+    before = msp_intervals_from_tags(read, frames)
+    add_m5c_ma_tag(read, [(350, 400)])
+    assert read.get_tag("MA").endswith("ddda_mcg.:351-50")
+    assert msp_intervals_from_tags(read, frames) == before == [(300, 200, 200)]

@@ -374,13 +374,12 @@ def ambiguous_frame_message(reason: str, *, query_flag: str = '--input-frame que
 #   (FiberHMM >= 2.13.2 and fibertools write every type that way); '+'/'-'
 #   groups follow the header rule (SEQ). A group never decides another
 #   group's frame.
-# * legacy ns/nl/as/al: a FIBERHMM-CHEMISTRY declaration (written only by
-#   FiberHMM >= 2.16 footprint writers, molecular) decides; else a read whose
-#   MA has a '.' *footprint* group (nuc/msp/tf, not an m5C layer) has
-#   molecular legacy tags (the same writer wrote both); else SEQ is assumed,
-#   with a warning.
+# * legacy ns/nl/as/al: a read whose MA has a '.' *footprint* group
+#   (nuc/msp/tf, not an m5C layer) has molecular legacy tags (the same writer
+#   wrote both); else SEQ is assumed, with a warning. A FIBERHMM-CHEMISTRY
+#   declaration decides nothing: pass-through producers (merge, pair) add it
+#   while carrying historical tags unchanged.
 
-CHEMISTRY_DECLARATION_PREFIX = 'FIBERHMM-CHEMISTRY:v1:'
 FOOTPRINT_GROUPS = frozenset({'nuc', 'msp', 'tf'})
 _MA_GROUP_HEAD_RE = re.compile(r'^([A-Za-z0-9_]+?)([.+-])([A-Za-z]*)$')
 
@@ -414,12 +413,6 @@ def header_has_frame_evidence(header) -> bool:
     return legacy_tag_frame_report(header)['source'] != 'default'
 
 
-def header_chemistry_declared(header) -> bool:
-    hdr = _header_dict(header) or {}
-    return any(str(c).startswith(CHEMISTRY_DECLARATION_PREFIX)
-               for c in (hdr.get('CO', []) or []))
-
-
 def ma_group_is_molecular(strand: str, header_ma_frame: str, header_evidence: bool) -> bool:
     """One MA group's frame: the header rule, except that without header
     evidence a '.'-strand group is molecular."""
@@ -434,25 +427,19 @@ class LegacyFrame:
     ``explicit`` (True/False) is a user's choice and always wins. Otherwise
     the header rule (:func:`legacy_tag_frame`) decides whenever the header has
     evidence (``frame`` may then be ``None``: undecided merged histories).
-    Without evidence: a FIBERHMM-CHEMISTRY declaration means molecular; else
-    a read with a '.' footprint MA group is molecular; else SEQ, assumed.
+    Without evidence: a read with a '.' footprint MA group is molecular; else
+    SEQ, assumed.
     """
 
     def __init__(self, header, explicit: Optional[bool] = None):
         self.explicit = explicit
         self.evidence = header_has_frame_evidence(header)
-        self.chemistry = (not self.evidence) and header_chemistry_declared(header)
         frame, reason = legacy_tag_frame(header)
         if explicit is not None:
             self.frame, self.reason = (MOLECULAR if explicit else SEQ), 'explicit'
-        elif self.chemistry:
-            self.frame = MOLECULAR
-            self.reason = ('no footprint writer or coord=molecular in the header; a '
-                           'FIBERHMM-CHEMISTRY declaration (FiberHMM >= 2.16 writes '
-                           'molecular tags) decides')
         else:
             self.frame, self.reason = frame, reason
-        self.assumed = explicit is None and not self.evidence and not self.chemistry
+        self.assumed = explicit is None and not self.evidence
 
     def for_read(self, read) -> Optional[str]:
         if self.assumed and read_has_dot_footprint_group(read):
@@ -466,7 +453,7 @@ class LegacyFrame:
         if not self.assumed:
             return None
         return (f"{tool}: warning: the header records no footprint writer, "
-                "coord=molecular or chemistry declaration (stripped @PG?); legacy "
+                "or coord=molecular declaration (stripped @PG?); legacy "
                 "ns/nl/as/al are assumed SEQ frame, except on reads whose MA has a "
                 "'.' nuc/msp/tf group (FiberHMM >= 2.13.2), taken as molecular. "
                 "Pass --input-frame to decide it.")

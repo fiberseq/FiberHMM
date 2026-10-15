@@ -302,10 +302,9 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   because recall reads the raw footprints from `ns/nl`: recalling harmonized
   arrays changed recall output on 147 of 3,202 NAPA DddA reads, 42 of 169 Hia5
   PacBio and 358 of 400 Hia5 Nanopore reads. `fiberhmm-recall-tfs`/`-nucs`
-  therefore refuse harmonized input: each harmonized read carries `hl:i:1`
-  (removed by any later writer of `ns/nl`), and a header whose harmonized
-  apply no exact `fiberhmm-call` on its `@PG` branch replaced is refused too.
-  The default apply output is unchanged.
+  therefore refuse any read carrying `hl:i:1`, which every harmonized read
+  gets and every later writer of `ns/nl` (call, apply, recall) removes. The
+  default apply output is unchanged.
   `fiberhmm.cli.export_posteriors.export_posteriors_from_bam` resolves the
   DddA run thinning and CpG mask like the command line and now applies
   `min_mapq` (default 0).
@@ -314,9 +313,9 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   `@PG DS`). Wherever the header has frame evidence (a footprint writer on a
   `@PG` chain, or `coord=molecular`), frames are resolved exactly as before.
   Only without evidence: each `MA` group's own strand decides that group's
-  frame (`.` molecular); legacy `ns/nl/as/al` follow a `FIBERHMM-CHEMISTRY`
-  declaration, else a `.` nuc/msp/tf `MA` group on the same read, else SEQ
-  with a warning (recall, tag-m5c, call-m5c and QC). On NAPA, scDAF and Hia5
+  frame (`.` molecular); legacy `ns/nl/as/al` follow a `.` nuc/msp/tf `MA`
+  group on the same read, else SEQ with a warning (recall, tag-m5c, call-m5c
+  and QC); a chemistry declaration decides nothing. On NAPA, scDAF and Hia5
   ONT call output with `@PG`/`@CO` stripped, recall-tfs now matches the
   unstripped run on every read (before: 1,601, 53 and 195 reads differed).
 - `--cpg-mask-policy` given for a non-DddA run, or with `--no-use-m5c`, now

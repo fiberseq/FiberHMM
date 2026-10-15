@@ -156,7 +156,9 @@ def msp_intervals_from_tags(read, frames: dict) -> Optional[list]:
         if parsed["read_length"] and length and parsed["read_length"] != length:
             return None
         if not (parsed["msp"] or parsed["nuc"]):
-            return None  # e.g. an MA carrying only m5C/TF features
+            # e.g. an MA carrying only an m5C or TF layer: the read's other
+            # footprint tags (Ma, or legacy ns/nl/as/al) hold its calls.
+            continue
         if tag == "MA" and not frames.get("evidence", True):
             # No header evidence: each msp group's own strand decides its frame.
             return _ma_msps_per_group_seq(parsed, names, read, frame)

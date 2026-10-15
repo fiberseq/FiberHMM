@@ -1468,3 +1468,43 @@ def test_failed_rollback_keeps_backups_and_never_pairs_an_old_index(tmp_path, mo
     assert kept, err
     backups = [p.rstrip(",") for p in " ".join(kept).split()]
     assert any(open(p, "rb").read() == old_bam for p in backups)
+
+
+def test_m5c_observations_resolve_stripped_headers_per_read(tmp_path):
+    """collect_bam_observations (call-m5c's BED stage) uses the shared per-read
+    resolver when the header gives no frame evidence; headers with evidence
+    keep the coord=molecular fallback."""
+    import array
+
+    import pysam
+
+    import fiberhmm.daf.m5c as m5c
+    from fiberhmm.io.annotation_frame import LegacyFrame
+
+    stripped = {"HD": {"VN": "1.6"}, "SQ": [{"SN": "chr1", "LN": 10_000}]}
+    assert isinstance(m5c._default_input_frame(stripped), LegacyFrame)
+    with_chain = dict(stripped, PG=[{"ID": "fiberhmm-call", "PN": "fiberhmm-call",
+                                     "DS": "FiberHMM fused apply+recall; mode=daf"}])
+    assert m5c._default_input_frame(with_chain) is False
+    marked = dict(with_chain, CO=["fiberhmm:coord=molecular"])
+    assert m5c._default_input_frame(marked) is True
+
+    header = pysam.AlignmentHeader.from_dict(stripped)
+    read = pysam.AlignedSegment(header)
+    read.query_name = "r"
+    read.flag = 16
+    read.reference_id = 0
+    read.reference_start = 0
+    read.query_sequence = "A" * 1000
+    read.cigarstring = "1000M"
+    read.set_tag("ns", array.array("I", [100]))
+    read.set_tag("nl", array.array("I", [50]))
+    resolver = m5c._default_input_frame(stripped)
+    # Legacy tags only: SEQ assumed.
+    assert m5c._nucleosome_intervals_seq(read, resolver) == [(100, 150)]
+    # A '.' msp group from the same writer: the legacy tags are molecular.
+    read.set_tag("MA", "1000;msp.:301-200", value_type="Z")
+    assert m5c._nucleosome_intervals_seq(read, resolver) == [(850, 900)]
+    # An m5C layer alone decides nothing.
+    read.set_tag("MA", "1000;ddda_mcg.:301-200", value_type="Z")
+    assert m5c._nucleosome_intervals_seq(read, resolver) == [(100, 150)]

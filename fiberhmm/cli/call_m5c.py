@@ -139,8 +139,16 @@ def main(argv=None):
     args = parse_args(argv)
     _check_paths(args)
     from fiberhmm.cli.tag_m5c import _preflight_input
+    from fiberhmm.io.annotation_frame import LegacyFrame
     for input_path in args.input:
         _preflight_input(input_path)
+        # Observations take each input's frame per read (daf.m5c); say so
+        # when an input's header gives no frame evidence.
+        with pysam.AlignmentFile(input_path, "rb", check_sq=False) as source:
+            warning = LegacyFrame(source.header).warning(
+                f"fiberhmm-call-m5c ({input_path})")
+        if warning:
+            print(warning, file=sys.stderr)
     if (args.window <= 0 or args.chunk_bp <= 0 or
             args.min_other < 1 or args.min_cpg < 1):
         raise SystemExit(

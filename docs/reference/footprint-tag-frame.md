@@ -174,16 +174,14 @@ pipeline stripped `@PG`, or kept only unrelated programs) gets this extension:
   way) is molecular; a `+`/`-` group (FiberHMM ≤ 2.13.1) follows the header
   rule (SEQ). A group never decides another group's frame, so an appended `.`
   m5C layer (`ddda_mcg.`, `ddda_ucg.`) leaves historical `+` footprints alone.
-- **Legacy `ns/nl/as/al`.** A `FIBERHMM-CHEMISTRY` declaration (written only
-  by FiberHMM ≥ 2.16 footprint writers, which write molecular tags) means
-  molecular. Otherwise a read whose `MA` has a `.` nuc/msp/tf group is
-  molecular (the same writer wrote both); an m5C group does not count. Otherwise
-  SEQ is assumed, and FiberHMM's recall, tag-m5c, call-m5c and QC say so.
+- **Legacy `ns/nl/as/al`.** A read whose `MA` has a `.` nuc/msp/tf group is
+  molecular (the same writer wrote both); an m5C group does not count.
+  Otherwise SEQ is assumed, and FiberHMM's recall, tag-m5c, call-m5c and QC
+  say so.
 
-The chemistry declaration is not used when the header has evidence: a
-`fiberhmm-merge --recall` (or `fiberhmm-pair`) output declares chemistry but
-passes historical reads through unchanged, and their frame comes from their
-`@PG` chain.
+A `FIBERHMM-CHEMISTRY` declaration never decides a frame: pass-through
+producers such as `fiberhmm-merge --recall` and `fiberhmm-pair` add it while
+carrying historical reads unchanged.
 
 ## Examples
 

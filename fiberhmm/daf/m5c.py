@@ -198,8 +198,7 @@ def estimate_bam_five_prime_factors(input_bam: str, reference: str,
     with pysam.FastaFile(reference) as fasta:
         with pysam.AlignmentFile(input_bam, "rb", threads=threads) as bam:
             if input_molecular_frame is None:
-                from fiberhmm.io.bam_header import header_has_coord_marker
-                input_molecular_frame = header_has_coord_marker(bam.header)
+                input_molecular_frame = _default_input_frame(bam.header)
             for read in bam:
                 c_observations, g_observations, _is_cross_strand = (
                     collect_read_m5c_channels(
@@ -886,6 +885,20 @@ def ma_group_strand(group: str) -> str:
     return ""
 
 
+def _default_input_frame(header):
+    """The frame used when no ``--input-frame`` is given (the long-standing
+    fallback: the ``coord=molecular`` marker). A header without any frame
+    evidence (stripped @PG) gets the shared per-read resolver instead
+    (``annotation_frame.LegacyFrame``): a '.' footprint MA group marks a
+    read's legacy tags molecular, else SEQ."""
+    from fiberhmm.io.annotation_frame import LegacyFrame, header_has_frame_evidence
+    from fiberhmm.io.bam_header import header_has_coord_marker
+
+    if not header_has_frame_evidence(header):
+        return LegacyFrame(header)
+    return header_has_coord_marker(header)
+
+
 def _legacy_molecular(read, input_molecular_frame) -> bool:
     """Whether this read's legacy ns/nl/as/al are molecular: ``input_molecular_frame``
     is a bool, or a per-read resolver (``annotation_frame.LegacyFrame``) for
@@ -948,8 +961,7 @@ def collect_bam_observations(bam, fasta, chrom: str, start: int, end: int,
     observations: list[M5CObservation] = []
     next_molecule = int(molecule_offset)
     if input_molecular_frame is None:
-        from fiberhmm.io.bam_header import header_has_coord_marker
-        input_molecular_frame = header_has_coord_marker(bam.header)
+        input_molecular_frame = _default_input_frame(bam.header)
     for read in bam.fetch(chrom, start, end):
         c_observations, g_observations, _is_cross_strand = collect_read_m5c_channels(
             read, fasta, chrom=chrom, start=start, end=end,
@@ -1626,8 +1638,7 @@ def annotate_bam_per_read(input_bam: str, output_bam: str, reference: str,
     with pysam.FastaFile(reference) as fasta:
         with pysam.AlignmentFile(input_bam, "rb", threads=threads) as source:
             if input_molecular_frame is None:
-                from fiberhmm.io.bam_header import header_has_coord_marker
-                input_molecular_frame = header_has_coord_marker(source.header)
+                input_molecular_frame = _default_input_frame(source.header)
             from fiberhmm.io.bam_header import append_ma_types, maybe_append_pg
             output_header = append_ma_types(
                 maybe_append_pg(source.header, header_record),
@@ -2053,8 +2064,7 @@ def _annotate_bam_per_read_islands(
         with pysam.FastaFile(reference) as fasta:
             with pysam.AlignmentFile(input_bam, "rb", threads=threads) as source:
                 if input_molecular_frame is None:
-                    from fiberhmm.io.bam_header import header_has_coord_marker
-                    input_molecular_frame = header_has_coord_marker(source.header)
+                    input_molecular_frame = _default_input_frame(source.header)
                 from fiberhmm.io.bam_header import append_ma_types, maybe_append_pg
                 output_header = append_ma_types(
                     maybe_append_pg(source.header, header_record),

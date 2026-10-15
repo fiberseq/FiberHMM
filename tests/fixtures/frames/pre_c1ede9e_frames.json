@@ -164,7 +164,13 @@
     150
    ]
   ],
-  "qc_msps": null,
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
   "recall": {
    "frame": true,
    "tags": {
@@ -196,7 +202,13 @@
     900
    ]
   ],
-  "qc_msps": null,
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
   "recall": {
    "frame": true,
    "tags": {
@@ -608,7 +620,13 @@
     150
    ]
   ],
-  "qc_msps": null,
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
   "recall": {
    "frame": true,
    "tags": {
@@ -640,7 +658,13 @@
     900
    ]
   ],
-  "qc_msps": null,
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
   "recall": {
    "frame": true,
    "tags": {
@@ -1052,7 +1076,13 @@
     150
    ]
   ],
-  "qc_msps": null,
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
   "recall": {
    "frame": false,
    "tags": {
@@ -1084,7 +1114,13 @@
     150
    ]
   ],
-  "qc_msps": null,
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
   "recall": {
    "frame": false,
    "tags": {
@@ -1496,7 +1532,13 @@
     150
    ]
   ],
-  "qc_msps": null,
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
   "recall": {
    "frame": true,
    "tags": {
@@ -1528,7 +1570,13 @@
     900
    ]
   ],
-  "qc_msps": null,
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
   "recall": {
    "frame": true,
    "tags": {
@@ -1940,7 +1988,13 @@
     150
    ]
   ],
-  "qc_msps": null,
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
   "recall": {
    "frame": false,
    "tags": {
@@ -1972,7 +2026,13 @@
     150
    ]
   ],
-  "qc_msps": null,
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
   "recall": {
    "frame": false,
    "tags": {
@@ -2384,7 +2444,13 @@
     150
    ]
   ],
-  "qc_msps": null,
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
   "recall": {
    "frame": true,
    "tags": {
@@ -2416,7 +2482,13 @@
     900
    ]
   ],
-  "qc_msps": null,
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
   "recall": {
    "frame": true,
    "tags": {
@@ -2828,7 +2900,13 @@
     150
    ]
   ],
-  "qc_msps": null,
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
   "recall": {
    "frame": false,
    "tags": {
@@ -2860,7 +2938,13 @@
     150
    ]
   ],
-  "qc_msps": null,
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
   "recall": {
    "frame": false,
    "tags": {
@@ -3272,7 +3356,13 @@
     150
    ]
   ],
-  "qc_msps": null,
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
   "recall": {
    "frame": false,
    "tags": {
@@ -3304,7 +3394,13 @@
     150
    ]
   ],
-  "qc_msps": null,
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
   "recall": {
    "frame": false,
    "tags": {
@@ -3716,7 +3812,13 @@
     150
    ]
   ],
-  "qc_msps": null,
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
   "recall": {
    "frame": true,
    "tags": {
@@ -3748,7 +3850,13 @@
     900
    ]
   ],
-  "qc_msps": null,
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
   "recall": {
    "frame": true,
    "tags": {
@@ -4160,7 +4268,13 @@
     150
    ]
   ],
-  "qc_msps": null,
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
   "recall": {
    "frame": true,
    "tags": {
@@ -4192,7 +4306,13 @@
     900
    ]
   ],
-  "qc_msps": null,
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
   "recall": {
    "frame": true,
    "tags": {
@@ -4604,7 +4724,13 @@
     150
    ]
   ],
-  "qc_msps": null,
+  "qc_msps": [
+   [
+    300,
+    200,
+    200
+   ]
+  ],
   "recall": {
    "frame": true,
    "tags": {
@@ -4636,7 +4762,13 @@
     900
    ]
   ],
-  "qc_msps": null,
+  "qc_msps": [
+   [
+    500,
+    200,
+    200
+   ]
+  ],
   "recall": {
    "frame": true,
    "tags": {
