@@ -147,7 +147,7 @@ of its region files is recognised and does not count.)
 | `daf-unaligned-evidence` | rerun-recommended | calls | DAF calls before 3.0 counted insertion, soft-clip and SNP-masked bases as protected |
 | `primary-only-default` | info | calls | secondary alignments called (2.x default) |
 | `ddda-cpg-mask-default` | info | calls | DddA recall with CpG observations (2.x default) |
-| `ddda-hmm-cpg-mask` | rerun-recommended | calls | DddA calls whose first-pass HMM (call, apply, pair/merge joint HMM) decoded CpG observations, before 3.0; a run without `hmm_cpg_mask=` in its `@PG DS` and no indexed commit predates the mask |
+| `ddda-hmm-cpg-mask` | rerun-recommended | calls, posteriors | DddA calls whose first-pass HMM (call, apply, pair/merge joint HMM) decoded CpG observations, before 3.0; a run without `hmm_cpg_mask=` in its `@PG DS` and no indexed commit predates the mask. DddA posteriors files without `cpg_mask_policy` in their metadata likewise |
 | `untracked-calls` | unverifiable | calls | calls without any FiberHMM `@PG` (cannot be checked) |
 
 QC reports, posteriors files and `fiberhmm-dedup`/`fiberhmm-merge` BAMs record

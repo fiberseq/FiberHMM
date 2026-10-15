@@ -1351,7 +1351,42 @@ def check_posteriors(path, *, index: Optional[dict] = None) -> list[Advisory]:
     finding = _file_finding(
         idx, rule, metadata.get("fiberhmm_version"), "posteriors file",
         "the posteriors file records no fiberhmm_version (written since 3.0)")
-    return [_make(rule, finding, path=path)] if finding else []
+    found = [_make(rule, finding, path=path)] if finding else []
+    mask_rule = idx.rules.get("ddda-hmm-cpg-mask")
+    if mask_rule is not None:
+        mask = _posteriors_cpg_mask_finding(idx, mask_rule, metadata)
+        if mask is not None:
+            found.append(_make(mask_rule, mask, program="fiberhmm-posteriors", path=path))
+    return found
+
+
+def _posteriors_cpg_mask_finding(idx, rule, metadata: dict) -> Optional[_Finding]:
+    """DddA posteriors decoded without the first-pass CpG mask?
+
+    Exports record ``cpg_mask_policy`` since the mask reached
+    fiberhmm-posteriors (``off`` when it was not applied by choice or
+    chemistry), so a DddA DAF export without the key predates it, unless it
+    declares an indexed commit that decides.
+    """
+    if str(metadata.get("mode", "")).lower() != "daf":
+        return None
+    if str(metadata.get("enzyme") or "").lower() != "ddda":
+        return None
+    if "cpg_mask_policy" in metadata:
+        return None
+    run = _Run(position=0, id="posteriors file", program="fiberhmm-posteriors",
+               version=str(metadata.get("fiberhmm_version") or "") or None, cl="", ds="")
+    run.chemistry = {"fiberhmm_commit": metadata.get("fiberhmm_commit")} \
+        if metadata.get("fiberhmm_commit") else {}
+    declared = run.chemistry.get("fiberhmm_commit")
+    if declared and idx.commit(str(declared).split("+")[0])[1] is not None:
+        finding = _code_finding(idx, rule, run)
+        finding.evidence = [line.replace("@PG posteriors file", "posteriors file")
+                            for line in finding.evidence]
+        return None if finding.status == _NOT else finding
+    return _Finding(AFFECTED, "high", [
+        "the DddA posteriors file records no cpg_mask_policy (written by every "
+        f"export since the change, {_short(_fix_commit(rule, 'fiberhmm-posteriors') or '')})"])
 
 
 def _posteriors_metadata(path: str) -> dict:

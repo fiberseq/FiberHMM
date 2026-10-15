@@ -889,3 +889,26 @@ def test_ddda_hmm_cpg_mask_trusts_a_declared_commit():
         "fiberhmm_commit=6d94c0f77838537b35750e657c43653d211c234d;"
         "fiberhmm_version=3.0.0;model=ddda_TF;pg=fiberhmm-call"])
     assert "ddda-hmm-cpg-mask" not in _by_id(check_header(header))
+
+
+def test_ddda_posteriors_before_the_cpg_mask_are_flagged(tmp_path):
+    rule = next(r for r in adv.load_index()["advisories"] if r["id"] == "ddda-hmm-cpg-mask")
+    fix = rule["fixed_in"]["by_program"]["fiberhmm-posteriors"]
+
+    def export(name, **fields):
+        path = tmp_path / name
+        meta = {"mode": "daf", "format_version": 1, "fiberhmm_version": "3.0.0",
+                "enzyme": "ddda", **fields}
+        path.write_text("#metadata:" + json.dumps(meta) + "\n")
+        return _by_id(check_path(path))
+
+    # A 3.0.0 development build before the mask (commit 1978eb0 is indexed).
+    found = export("pre.tsv", fiberhmm_commit="1978eb0")
+    assert found["ddda-hmm-cpg-mask"].status == "affected"
+    assert "predates" in " ".join(found["ddda-hmm-cpg-mask"].evidence)
+    # No commit and no cpg_mask_policy: the key is written by every later export.
+    assert export("bare.tsv")["ddda-hmm-cpg-mask"].status == "affected"
+    assert "ddda-hmm-cpg-mask" not in export("fixed.tsv", fiberhmm_commit=fix)
+    assert "ddda-hmm-cpg-mask" not in export("masked.tsv", cpg_mask_policy="unmethylated-only")
+    assert "ddda-hmm-cpg-mask" not in export("off.tsv", cpg_mask_policy="off")
+    assert "ddda-hmm-cpg-mask" not in export("hia5.tsv", enzyme="hia5", mode="pacbio-fiber")
