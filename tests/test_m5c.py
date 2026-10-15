@@ -1321,3 +1321,43 @@ def test_island_annotation_publishes_atomically(tmp_path, monkeypatch):
     monkeypatch.setattr(m5c, "_initial_msp_intervals_seq", real)
     run()
     assert not (tmp_path / "out.bam.bai").exists()   # described the old file
+
+
+def test_locus_domain_tagging_publishes_atomically(tmp_path, monkeypatch):
+    """call-m5c --tag-mode locus: a failed rerun keeps the earlier BAM (and its
+    index); a successful one replaces it and removes the stale index."""
+    import pysam
+
+    import fiberhmm.daf.m5c as m5c
+
+    reference, reference_sequence, sequence = _methylated_island_reference(tmp_path)
+    input_bam = _island_bam(tmp_path, [("chr1", len(reference_sequence))],
+                            [("chr1", sequence), ("chr1", sequence)])
+    output = tmp_path / "locus.bam"
+    domains = [m5c.M5CDomain("chr1", 250, 650, True, 0.999)]
+    assert m5c.annotate_bam_from_domains(str(input_bam), str(output), domains,
+                                         threads=1) == (2, 2)
+    pysam.index(str(output))
+    before = output.read_bytes()
+
+    calls = {"n": 0}
+    real = m5c.add_m5c_ma_tag
+
+    def fail_second(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("injected write failure")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(m5c, "add_m5c_ma_tag", fail_second)
+    with pytest.raises(RuntimeError, match="injected"):
+        m5c.annotate_bam_from_domains(str(input_bam), str(output), domains, threads=1)
+    assert output.read_bytes() == before
+    assert (tmp_path / "locus.bam.bai").exists()
+    assert not [p for p in tmp_path.iterdir() if p.name.startswith(".")]
+
+    monkeypatch.setattr(m5c, "add_m5c_ma_tag", real)
+    m5c.annotate_bam_from_domains(str(input_bam), str(output), domains, threads=1)
+    assert not (tmp_path / "locus.bam.bai").exists()
+    with pysam.AlignmentFile(str(output), check_sq=False) as tagged:
+        assert all("ddda_mcg" in read.get_tag("MA") for read in tagged)

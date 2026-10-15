@@ -1536,8 +1536,15 @@ def annotate_bam_from_domains(input_bam: str, output_bam: str,
                               threads: int = 4,
                               header_record: dict | None = None
                               ) -> tuple[int, int]:
-    """Write locus-level methylated domains as per-read ``ddda_mcg.`` spans."""
+    """Write locus-level methylated domains as per-read ``ddda_mcg.`` spans.
+
+    The BAM is written to a hidden sibling and published only when the run
+    succeeds (``atomic_output``): a failed run leaves an earlier output
+    untouched, and indexes describing an earlier BAM are removed.
+    """
     import pysam
+
+    from fiberhmm.inference.bam_output import atomic_output
 
     by_chrom: dict[str, list[M5CDomain]] = {}
     for domain in domains:
@@ -1550,13 +1557,14 @@ def annotate_bam_from_domains(input_bam: str, output_bam: str,
             values, np.asarray([value.start for value in values], dtype=np.int64),
         )
     total = tagged = 0
-    with pysam.AlignmentFile(input_bam, "rb", threads=threads) as source:
+    with atomic_output(output_bam) as output_path, \
+            pysam.AlignmentFile(input_bam, "rb", threads=threads) as source:
         from fiberhmm.io.bam_header import append_ma_types, maybe_append_pg
         output_header = append_ma_types(
             maybe_append_pg(source.header, header_record),
             (DDDA_MCG_FEATURE,),
         )
-        with pysam.AlignmentFile(output_bam, "wb", header=output_header,
+        with pysam.AlignmentFile(output_path, "wb", header=output_header,
                                  threads=threads) as sink:
             for read in source:
                 spans = []

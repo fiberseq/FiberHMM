@@ -269,12 +269,13 @@ def main(argv=None):
     for path in (args.output, args.tag_output):
         if path and path != "-":
             ensure_parent_dir(path)
-    handle = sys.stdout if args.output == "-" else open(args.output, "w")
-    try:
-        write_bed(domains, handle)
-    finally:
-        if handle is not sys.stdout:
-            handle.close()
+    if args.output == "-":
+        write_bed(domains, sys.stdout)
+    else:
+        # Published only once written in full (no partial BED on failure).
+        from fiberhmm.inference.bam_output import atomic_output
+        with atomic_output(args.output) as bed_path, open(bed_path, "w") as handle:
+            write_bed(domains, handle)
     print(f"m5C: {total_observations:,} cytosine observations; "
           f"{observed_windows:,}/{total_windows:,} informative windows; "
           f"{len(domains):,} domains; U={U_UNMETH:.3f}, F={F_METH:.3f}; "
