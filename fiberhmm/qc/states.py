@@ -355,7 +355,13 @@ class LightCaller:
         self.model_sha256 = hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
     def call(self, fiber_read: dict, mode: str, edge_trim: int):
-        """``(msp_intervals, encoded)`` in SEQ frame, or ``None``."""
+        """``(msp_intervals, encoded)`` in SEQ frame, or ``None``.
+
+        A ``fiber_read`` carrying ``_hmm_cpg_mask`` (DddA CpG-aware calling,
+        see :func:`fiberhmm.inference.engine.attach_hmm_cpg_mask`) is
+        segmented with the first-pass CpG mask of ``fiberhmm-call``;
+        ``encoded`` stays the full observation.
+        """
         from fiberhmm.inference.engine import _process_single_read
 
         result = _process_single_read(
@@ -442,11 +448,15 @@ def compute_state_rates(
     terminal_policy: str = DEFAULT_TERMINAL_POLICY,
     clock=time.monotonic,
     seed: int = 20260824,
+    use_m5c: Optional[bool] = None,
+    cpg_mask_policy: Optional[str] = None,
 ) -> tuple[dict, dict]:
     """In-MSP / outside-MSP modification rates of the sampled molecules.
 
     ``state_source``: ``auto`` (calls when the sample carries them, else a
     light call), ``tags`` (calls only) or ``light-call`` (always re-call).
+    ``use_m5c``/``cpg_mask_policy`` resolve as in ``fiberhmm-call`` (on for
+    DddA): the light call's HMM sees the same first-pass CpG mask.
     Returns ``(report block, per-read arrays)``.
     """
     if terminal_policy not in TERMINAL_POLICIES:
@@ -510,6 +520,10 @@ def compute_state_rates(
             return block, {}
         source = "light_call"
         context_size = caller.context_size
+        from fiberhmm.inference.tf_recaller import resolve_cpg_mask_policy
+        light_cpg_policy = resolve_cpg_mask_policy(
+            use_m5c, cpg_mask_policy, enzyme, mode, tool="fiberhmm-qc")
+        block["definition"]["hmm_cpg_mask"] = light_cpg_policy or "off"
         order = _sample_order(eligible, seed)
         eligible = [eligible[index] for index in order]
         tagged = [tagged[index] for index in order]
@@ -574,6 +588,9 @@ def compute_state_rates(
                     set(fiber_read["m6a_query_positions"]) - masked)
             if caller is not None:
                 light["reads_called"] += 1
+                if light_cpg_policy:
+                    engine.attach_hmm_cpg_mask(fiber_read, light_cpg_policy,
+                                               engine.read_cpg_ma_intervals(read))
                 called = caller.call(fiber_read, mode, edge_trim)
                 if called is None:
                     counts["reads_without_calls"] += 1

@@ -282,3 +282,35 @@ def test_posteriors_record_the_cpg_policy(tmp_path):
     model = get_model_path('ddda', tool='apply')
     assert _export_provenance(model, 128, {'cpg_mask_policy': POLICY})['cpg_mask_policy'] == POLICY
     assert _export_provenance(model, 128, {})['cpg_mask_policy'] == 'off'
+
+
+def test_qc_light_call_masks_the_first_pass_like_call(monkeypatch):
+    """fiberhmm-qc's light call on an uncalled DddA BAM segments with the same
+    first-pass CpG mask as fiberhmm-call (and can turn it off the same way)."""
+    from fiberhmm.core.bam_reader import daf_run_mask_scope, default_daf_run_mask
+    from fiberhmm.qc.states import compute_state_rates
+
+    read = _ddda_read()
+    read.set_tag('MA', None)                    # uncalled: no footprints
+    read.set_tag('MA', f'{read.query_length};ddda_ucg.:101-100', value_type='Z')
+    model, k = _model()
+    seen = _recording(monkeypatch)
+    with daf_run_mask_scope(*default_daf_run_mask('ddda')):
+        _call_first_pass(read, model, k)
+        unmasked = engine._extract_fiber_read_from_pysam(read, 'daf', 128)
+        engine._process_single_read(unmasked, model, EDGE_TRIM, False, 'daf', k, 0, False)
+    reference, plain = seen[-2], seen[-1]
+    assert not np.array_equal(reference, plain)
+
+    block, _ = compute_state_rates([read], 'daf', 'ddda', state_source='light-call',
+                                   edge_trim=EDGE_TRIM, prob_threshold=128)
+    assert block['source'] == 'light_call'
+    assert block['definition']['hmm_cpg_mask'] == POLICY
+    assert np.array_equal(seen[-1], reference)
+
+    block, _ = compute_state_rates([read], 'daf', 'ddda', state_source='light-call',
+                                   edge_trim=EDGE_TRIM, prob_threshold=128,
+                                   use_m5c=False)
+    assert block['definition']['hmm_cpg_mask'] == 'off'
+    assert np.array_equal(seen[-1], plain)
+
