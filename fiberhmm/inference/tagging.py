@@ -130,8 +130,6 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
 
     strip_stale_call_tags(read, legacy_tags=(), keep_m5c_groups=True)
     keeps_m5c = read.has_tag("MA")
-    if read.has_tag(HARMONIZED_LEGACY_TAG):
-        read.set_tag(HARMONIZED_LEGACY_TAG, None)
     if harmonize:
         result = _harmonized_result(result, write_msps)
         # Marks the read so recall refuses it whatever happens to the header.
@@ -148,6 +146,9 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
         read, with_scores)
 
     if len(ns_s) > 0:
+        if not harmonize and read.has_tag(HARMONIZED_LEGACY_TAG):
+            # hl marks the read's ns/nl as harmonized; these replace them.
+            read.set_tag(HARMONIZED_LEGACY_TAG, None)
         read.set_tag("ns", _u32_bam_array(ns_s))
         read.set_tag("nl", _u32_bam_array(ns_l))
         if with_scores and ns_sc is not None:

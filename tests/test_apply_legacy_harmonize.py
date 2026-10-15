@@ -211,3 +211,30 @@ def test_msp_only_footprint_update_keeps_hl():
                                  'msp_starts': [200], 'msp_sizes': [100]}, '')
     assert list(read.get_tag('ns')) == [10, 260]
     assert read.has_tag(HARMONIZED_LEGACY_TAG)
+
+
+def test_apply_without_footprints_keeps_hl_on_harmonized_ns():
+    """set_legacy_apply_tags clears hl only when it replaces ns/nl: a result
+    without footprints leaves the harmonized ns/nl, and so hl, in place."""
+    from fiberhmm.inference.read_filters import HARMONIZED_LEGACY_TAG
+
+    read = _read()
+    set_legacy_apply_tags(read, RESULT, with_scores=True, harmonize=True)
+    no_footprints = {'ns': np.array([], dtype=np.int64), 'nl': np.array([], dtype=np.int64),
+                     'as': np.array([150]), 'al': np.array([110]), 'as_scores': np.array([0.7])}
+    set_legacy_apply_tags(read, no_footprints, with_scores=True)
+    assert list(read.get_tag('ns')) == [10, 260]
+    assert read.has_tag(HARMONIZED_LEGACY_TAG)
+
+    # Replacing ns/nl without harmonizing drops the marker.
+    set_legacy_apply_tags(read, RESULT, with_scores=True)
+    assert list(read.get_tag('ns')) == [10, 180, 260]
+    assert not read.has_tag(HARMONIZED_LEGACY_TAG)
+
+    # A harmonized run keeps marking the read, even when its MA view has no
+    # nucleosomes to write.
+    read = _read()
+    set_legacy_apply_tags(read, {**RESULT, 'ns': np.array([180]), 'nl': np.array([40]),
+                                 'ns_scores': np.array([0.5])},
+                          with_scores=True, harmonize=True)
+    assert not read.has_tag('ns') and read.has_tag(HARMONIZED_LEGACY_TAG)
