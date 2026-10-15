@@ -462,3 +462,28 @@ def test_call_dedup_on_a_marked_bam_reports_what_it_writes(daf_bam, tmp_path):
         description = marked.header.to_dict()["PG"][-1]["DS"]
     assert sum(r.is_duplicate for r in records) == stats["n_duplicates"] == 6
     assert "prior_marks=cleared" in description
+
+
+@pytest.mark.parametrize("collapse", [False, True])
+def test_marks_are_cleared_when_nothing_is_fingerprintable(tmp_path, collapse):
+    """With no read to fingerprint there are no duplicates: earlier marks go."""
+    source = tmp_path / "low.bam"
+    _make_bam(source, [(f"low{i}", [2, 4, 6], False, 60) for i in range(3)])
+    stale = tmp_path / "stale.bam"
+    with pysam.AlignmentFile(str(source), check_sq=False) as src, \
+            pysam.AlignmentFile(str(stale), "wb", header=src.header) as sink:
+        for read in src:
+            read.is_duplicate = True
+            read.set_tag("di", 999999, value_type="i")
+            read.set_tag("ds", 3, value_type="i")
+            sink.write(read)
+    output = tmp_path / "out.bam"
+    stats = run_dedup(str(stale), str(output), min_deam=10, collapse=collapse)
+    assert stats is not None
+    assert stats["n_fingerprintable"] == 0 and stats["n_duplicates"] == 0
+    assert stats["n_prior_marks_cleared"] == 3
+    records = list(pysam.AlignmentFile(str(output), check_sq=False))
+    assert len(records) == 3
+    assert not any(r.is_duplicate or r.has_tag("di") or r.has_tag("ds") for r in records)
+    # Unmarked input with nothing to fingerprint is still "nothing to do".
+    assert run_dedup(str(source), str(tmp_path / "none.bam"), min_deam=10) is None

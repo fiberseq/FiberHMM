@@ -245,11 +245,14 @@ def run_dedup(in_bam, out_bam, min_jaccard=0.95, min_deam=10, ignore_strand=Fals
     endpoints: List[Optional[tuple[int, int]]] = []
     quals: List[tuple] = []
     names: dict = {}   # record index -> query name, for fingerprinted records
-    n_total = n_fingerprintable = n_lowdeam = n_unmapped = 0
+    n_total = n_fingerprintable = n_lowdeam = n_unmapped = n_marked = 0
 
     with pysam.AlignmentFile(in_bam, "rb", check_sq=False) as bam:
         for read in bam.fetch(until_eof=True):
             n_total += 1
+            if (read.is_duplicate or read.has_tag(_TAG_CLUSTER)
+                    or read.has_tag(_TAG_CLUSTER_SIZE)):
+                n_marked += 1
             clusterable = (
                 not read.is_unmapped and not read.is_secondary
                 and not read.is_supplementary and read.query_sequence is not None
@@ -279,31 +282,39 @@ def run_dedup(in_bam, out_bam, min_jaccard=0.95, min_deam=10, ignore_strand=Fals
             names[len(pos_sets) - 1] = read.query_name
             n_fingerprintable += 1
 
-    if n_fingerprintable == 0:
+    if n_fingerprintable == 0 and not n_marked:
         print("No fingerprintable reads (no deamination calls found). Nothing to do.\n"
               "  Is this a DAF-seq BAM with R/Y, MM/ML dU, or MD-encoded deaminations?",
               file=sys.stderr)
         return None
+    if n_fingerprintable == 0:
+        # Nothing to cluster, but earlier duplicate marks must still go: the
+        # output then carries no duplicates, as this run computed.
+        print("No fingerprintable reads (no deamination calls found); clearing "
+              f"earlier duplicate marks on {n_marked:,} records.", file=sys.stderr)
 
     print(f"Pass 1: {n_total:,} records  "
           f"({n_fingerprintable:,} fingerprintable, {n_lowdeam:,} below --min-deam, "
           f"{n_unmapped:,} unmapped) [{time.time()-t0:.0f}s]", file=sys.stderr)
 
     # ---- Cluster ----
-    labels = cluster_reads(
-        pos_sets,
-        group_keys,
-        min_jaccard,
-        k,
-        bands,
-        seed,
-        endpoints=endpoints,
-        max_end_diff=max_end_diff,
-    )
+    if n_fingerprintable:
+        labels = cluster_reads(
+            pos_sets,
+            group_keys,
+            min_jaccard,
+            k,
+            bands,
+            seed,
+            endpoints=endpoints,
+            max_end_diff=max_end_diff,
+        )
+    else:
+        labels = np.full(len(pos_sets), -1, dtype=np.int64)
     cluster_sizes = Counter(int(c) for c in labels if c >= 0)
     n_clusters = len(cluster_sizes)
     n_dups = n_fingerprintable - n_clusters
-    dup_pct = 100.0 * n_dups / n_fingerprintable
+    dup_pct = 100.0 * n_dups / n_fingerprintable if n_fingerprintable else 0.0
 
     # Pick one representative (best quality) per cluster.
     best_in_cluster = {}
@@ -322,16 +333,18 @@ def run_dedup(in_bam, out_bam, min_jaccard=0.95, min_deam=10, ignore_strand=Fals
         if c >= 0 and idx not in representatives
     }
 
-    print(f"Clustering (Jaccard >= {min_jaccard}; ends ±{max_end_diff} bp): "
-          f"{n_fingerprintable:,} reads -> "
-          f"{n_clusters:,} molecules | {n_dups:,} duplicates ({dup_pct:.1f}%) | "
-          f"mean {n_fingerprintable / n_clusters:.2f} copies/molecule "
-          f"[{time.time()-t0:.0f}s]", file=sys.stderr)
     size_hist = Counter(cluster_sizes.values())
     singletons = size_hist.get(1, 0)
-    print(f"  molecules with 1 copy (singletons): {singletons:,} "
-          f"({100.0*singletons/n_clusters:.1f}% of molecules); "
-          f"largest cluster: {max(cluster_sizes.values())} reads", file=sys.stderr)
+    largest = max(cluster_sizes.values()) if cluster_sizes else 0
+    if n_clusters:
+        print(f"Clustering (Jaccard >= {min_jaccard}; ends ±{max_end_diff} bp): "
+              f"{n_fingerprintable:,} reads -> "
+              f"{n_clusters:,} molecules | {n_dups:,} duplicates ({dup_pct:.1f}%) | "
+              f"mean {n_fingerprintable / n_clusters:.2f} copies/molecule "
+              f"[{time.time()-t0:.0f}s]", file=sys.stderr)
+        print(f"  molecules with 1 copy (singletons): {singletons:,} "
+              f"({100.0*singletons/n_clusters:.1f}% of molecules); "
+              f"largest cluster: {largest} reads", file=sys.stderr)
 
     if stats_tsv:
         with open(stats_tsv, 'w') as fh:
@@ -398,7 +411,7 @@ def run_dedup(in_bam, out_bam, min_jaccard=0.95, min_deam=10, ignore_strand=Fals
         'duplication_pct': dup_pct, 'n_written': n_written,
         'n_below_min_deam': n_lowdeam, 'n_unmapped': n_unmapped,
         'n_singleton_molecules': singletons,
-        'largest_cluster': max(cluster_sizes.values()),
+        'largest_cluster': largest,
         'max_end_diff_bp': int(max_end_diff),
         'mode': mode,
         'cluster_size_histogram': {
