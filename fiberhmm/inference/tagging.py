@@ -131,12 +131,19 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
         # for readers, so it also carries this run's nucleosomes and MSPs.
         from fiberhmm.inference.tf_recaller import write_ma_tags
 
-        nucs = [(int(s), int(n)) for s, n in zip(result["ns"], result["nl"]) if int(n) > 0]
+        footprints = [(int(s), int(n)) for s, n in zip(result["ns"], result["nl"])]
         msps = ([(int(s), int(n)) for s, n in zip(result["as"], result["al"]) if int(n) > 0]
                 if write_msps else [])
-        nq = scores_to_u8(result.get("ns_scores")) if with_scores else None
-        if nq is not None and len(nq) != len(nucs):
-            nq = None
+        scores = scores_to_u8(result.get("ns_scores")) if with_scores else None
+        if scores is not None and len(scores) != len(footprints):
+            scores = None
+        # Legacy ns also lists sub-nucleosomal footprints inside MSPs; in MA
+        # (where nuc and msp tile the read) only footprints outside MSPs are
+        # nucleosomes. TF-sized footprints are left to recall, as in call.
+        keep = [i for i, (s, n) in enumerate(footprints)
+                if n > 0 and not any(s < ms + ml and ms < s + n for ms, ml in msps)]
+        nucs = [footprints[i] for i in keep]
+        nq = [scores[i] for i in keep] if scores is not None else None
         write_ma_tags(read, len(read.query_sequence or "") or int(read.query_length or 0),
                       [], nucs, msps, nq_for_kept_nucs=nq, also_write_legacy=False)
 

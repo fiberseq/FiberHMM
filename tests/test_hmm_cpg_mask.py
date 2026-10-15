@@ -368,14 +368,16 @@ def test_apply_keeps_cpg_island_groups_and_rewrites_footprints():
     strip_for_apply(read)
     assert read.get_tag('MA') == f'{read.query_length};ddda_ucg.:101-100'
     assert not read.has_tag('AQ')
-    result = {'ns': np.array([10, 260]), 'nl': np.array([140, 120]),
+    # 180-219 is a TF-sized footprint inside the MSP: legacy ns keeps it, MA
+    # (where nuc and msp tile the read) does not call it a nucleosome.
+    result = {'ns': np.array([10, 180, 260]), 'nl': np.array([140, 40, 120]),
               'as': np.array([150]), 'al': np.array([110])}
     set_legacy_apply_tags(read, result, with_scores=False)
     parsed = parse_ma_tag(read.get_tag('MA'))
     assert [tuple(map(int, iv)) for iv in parsed['ddda_ucg']] == [(100, 100)]
     assert sorted(map(tuple, parsed['nuc'])) == [(10, 140), (260, 120)]
     assert list(map(tuple, parsed['msp'])) == [(150, 110)]
-    assert list(read.get_tag('ns')) == [10, 260]
+    assert list(read.get_tag('ns')) == [10, 180, 260]
     # The kept island still exempts its CpGs in a later recall.
     assert engine.read_cpg_ma_intervals(read)['ucg'] == [(100, 200)]
 
