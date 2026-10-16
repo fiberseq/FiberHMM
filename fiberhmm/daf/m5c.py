@@ -899,6 +899,15 @@ def _default_input_frame(header):
     return header_has_coord_marker(header)
 
 
+def _carry_pass_through_legacy(read, input_molecular_frame, output_legacy) -> None:
+    """The legacy tags this tool read in ``input_molecular_frame`` (possibly
+    an explicit --input-frame) are written in the frame the output header
+    resolves (``frame_carry.carry_legacy_into``)."""
+    from fiberhmm.io.frame_carry import carry_legacy_into
+
+    carry_legacy_into(read, _legacy_molecular(read, input_molecular_frame), output_legacy)
+
+
 def _legacy_molecular(read, input_molecular_frame) -> bool:
     """Whether this read's legacy ns/nl/as/al are molecular: ``input_molecular_frame``
     is a bool, or a per-read resolver (``annotation_frame.LegacyFrame``) for
@@ -1667,6 +1676,8 @@ def annotate_bam_per_read(input_bam: str, output_bam: str, reference: str,
             )
             with pysam.AlignmentFile(output_bam, "wb", header=output_header,
                                      threads=threads) as sink:
+                from fiberhmm.io.annotation_frame import LegacyFrame
+                output_legacy = LegacyFrame(output_header)
                 for read in source:
                     stats["reads"] += 1
                     c_observations, g_observations, is_cross_strand = (
@@ -1739,6 +1750,7 @@ def annotate_bam_per_read(input_bam: str, output_bam: str, reference: str,
                         spans = []
                         add_m5c_ma_tag(read, spans)
                     stats["tagged_reads"] += int(bool(spans))
+                    _carry_pass_through_legacy(read, input_molecular_frame, output_legacy)
                     sink.write(read)
     return stats
 
@@ -2095,6 +2107,8 @@ def _annotate_bam_per_read_islands(
                 with pysam.AlignmentFile(
                     output_bam, "wb", header=output_header, threads=threads,
                 ) as sink:
+                    from fiberhmm.io.annotation_frame import LegacyFrame
+                    output_legacy = LegacyFrame(output_header)
                     for read in source:
                         stats["reads"] += 1
                         candidate_islands = []
@@ -2173,6 +2187,7 @@ def _annotate_bam_per_read_islands(
                         stats["tagged_reads"] += int(bool(
                             methylated_spans or unmethylated_spans
                         ))
+                        _carry_pass_through_legacy(read, input_molecular_frame, output_legacy)
                         sink.write(read)
     finally:
         if table_handle:

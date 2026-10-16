@@ -333,17 +333,22 @@ def append_coord_to_ds(ds: str, frame: Optional[str]) -> str:
 
 
 def pass_through_frame(header, explicit=None) -> Optional[str]:
-    """Frame of the footprint tags a tool copies from ``header``'s BAM.
+    """The frame a pass-through tool may record in its own @PG for the
+    footprint tags it copies from ``header``'s BAM: ``'molecular'`` only when
+    the header already declares ``coord=molecular``, else ``None``.
 
-    ``explicit`` is the tool's own frame choice when it has one (``True`` /
-    ``'molecular'``, ``False`` / ``'query'`` / ``'seq'``); ``None`` or
-    ``'auto'`` uses the provenance rule (:func:`legacy_tag_frame`).
+    A pass-through record must not change how any annotation it carries is
+    read. Recording ``coord=molecular`` on a header without the declaration
+    would turn its SEQ-frame MA groups (and, without other evidence, its
+    '+'/'-' groups) molecular, so it is not recorded; the provenance rule
+    looks through the record and resolves the carried tags as before.
+    ``explicit`` (a tool's own legacy-frame choice) does not change this:
+    such a tool expresses its legacy tags in the frame the output resolves
+    (``frame_carry.carry_legacy_into``).
     """
-    if explicit in (True, MOLECULAR):
+    if ma_annotation_frame(header) == MOLECULAR:
         return MOLECULAR
-    if explicit in (False, SEQ, 'query'):
-        return SEQ
-    return legacy_tag_frame(header)[0]
+    return None
 
 
 AMBIGUOUS_FRAME_HELP = (

@@ -28,9 +28,16 @@
   `fiberhmm-strand-rescue`, `-strand-rescue-annotate`, `-strand-rescue-audit`,
   `fiberhmm-tag-consensus` and the native TF quality that consensus export
   copies onto a family.
-- `fiberhmm-apply --no-msps` keeps the input's MSP tags in the molecular
-  frame its output declares; SEQ-frame MSPs of FiberHMM 2.12 BAMs were kept
-  unconverted.
+- Writers keep the annotations they carry through at their original
+  positions. `fiberhmm-apply` (`--no-msps` MSPs), `-call`
+  (`--no-legacy-tags`) and `-recall-tfs`/`-nucs` (preserved `MA` groups such
+  as `tf_sr` and `deam`, kept legacy tags, uncalled reads) declare molecular
+  output and now convert what they carry from the input's frame; on reverse
+  reads of FiberHMM 2.12 or `@PG`-stripped BAMs these were mirrored.
+  Pass-through tools (`dedup`, `pair`, `merge`, `tag-m5c`, `call-m5c`,
+  `tag-consensus`, `strand-rescue-annotate`) no longer add a
+  `coord=molecular` declaration the input lacks, which changed the meaning of
+  its `MA` (for example consensus-exported fibertools footprints).
 - The QC that `fiberhmm-call` runs after calling follows `--no-use-m5c` and
   `--cpg-mask-policy` for the sampled reads it calls itself.
 - Writing apply tags without footprints keeps the `hl:i:1` marker on reads

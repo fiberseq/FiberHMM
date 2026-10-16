@@ -64,7 +64,7 @@ The token is `coord=molecular`, matched case-insensitively. It has two scopes:
 
 - **Record level:** the token appears in a FiberHMM `@PG` record, in its `DS`
   field for `fiberhmm-call`, `-apply` and `-recall-*`, and for pass-through
-  tools that carried molecular tags (below).
+  tools whose input header already declares it (below).
 - **Header level:** an `@CO` line contains it. `fiberhmm-call`, `-apply` and
   `-recall-*` write `@CO fiberhmm:coord=molecular` as well as the `DS` token;
   `fiberhmm-call` adds it before its `FIBERHMM-CHEMISTRY` and `MA-TYPES`
@@ -158,9 +158,9 @@ single chain, with each record the child of the one before it.
 `-recall-nucs --input-frame auto` stop at the first read that carries
 `ns`/`nl`/`as`/`al` (reads whose only footprints are fibertools `Ma` tags need
 no frame) and ask for `--input-frame query` or `molecular`;
-`fiberhmm-extract` asks for it before extracting nucleosomes or MSPs. Pass-through tools
-record nothing and `fiberhmm-tag-m5c` / `-call-m5c` keep their historical
-fallback (the `coord=molecular` marker, else SEQ).
+`fiberhmm-extract` asks for it before extracting nucleosomes or MSPs.
+Pass-through tools record nothing, and `fiberhmm-tag-m5c` / `-call-m5c` keep
+their historical fallback (the `coord=molecular` marker, else SEQ).
 
 FiberHMM consensus reads legacy tags only for Hia5 input without `MA`/`Ma`,
 under its `legacy_hia5_annotation_frame` option. When that is `disabled`, it
@@ -171,11 +171,30 @@ without `MA` are ones it skipped, and they keep whatever tags they had before
 (for example SEQ-frame tags from FiberHMM ≤ 2.12). Otherwise consensus stops
 and asks for the option.
 
-FiberHMM pass-through tools that carried molecular-frame tags add
-`coord=molecular (footprint tags carried over from the input)` to their own
-`@PG` `DS`. By this rule that makes them writers of the frame they carried,
-so it gives the same answer as looking through them. Consensus's stricter
-check does look through them.
+## Writers keep carried annotations in place
+
+A writer whose output declares a frame expresses every annotation it carries
+through unchanged in that frame. This covers `MA` groups (including `tf_sr`,
+`deam` and consensus layers), legacy `ns/nl/as/al` with `nq/aq`, and `Ma`. Each
+annotation's input frame is resolved from the input header and the read's
+original tags, before anything is stripped, by the rules above. An annotation
+whose input frame cannot be decided is dropped.
+
+- `fiberhmm-apply`, `-call` and `-recall-tfs`/`-nucs` declare
+  `coord=molecular`. Apply `--no-msps` MSPs, call/recall `--no-legacy-tags`
+  legacy tags, recall's preserved `MA` groups and the reads they leave
+  uncalled are converted to molecular frame (`fiberhmm.io.frame_carry`).
+- Pass-through tools (`dedup`, `pair`, `merge`, `tag-m5c`, `call-m5c`,
+  `tag-consensus`, `strand-rescue-annotate`, consensus export) add no
+  declaration that would change how a carried annotation is read. They add
+  `coord=molecular (footprint tags carried over from the input)` to their
+  `@PG` `DS` only when the input header already declares `coord=molecular`.
+  On any other header the token would turn SEQ-frame `MA` groups molecular,
+  so it is left out. The provenance rule looks through their record and
+  resolves the carried tags as before. `tag-m5c`/`call-m5c` given an explicit
+  `--input-frame` write the legacy tags in the frame their output resolves.
+
+Consensus's stricter check looks through pass-through records.
 
 FiberBrowser reports this in `diagnose_bam_tags(...)["legacy_tag_frame"]`
 (fields `frame`, `source`, `ambiguous`, `votes`, `writers`, `chains`). When the

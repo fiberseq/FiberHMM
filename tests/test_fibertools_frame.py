@@ -447,7 +447,10 @@ _INPUT_HEADERS = {
     # a previous pass-through tool that resolved SEQ frame
     'seq': dict(_BASE, PG=[_pg(ID='fiberhmm-dedup', PN='fiberhmm-dedup', DS='x; coord=seq')]),
 }
-_RECORDED = {'fibertools': 'molecular', 'unknown': None, 'seq': None}
+# 3.0.1: a pass-through record never adds coord=molecular to a header that
+# lacks it (it would turn the carried SEQ-frame MA molecular); the provenance
+# rule looks through it instead.
+_RECORDED = {'fibertools': None, 'unknown': None, 'seq': None}
 
 
 def _pass_through_headers(header):
@@ -489,11 +492,20 @@ def test_pass_through_tools_record_the_input_frame(kind):
         else:
             assert f'coord={expected}' in ds, program
             assert 'coord=molecular' not in ds or expected == 'molecular', program
-        # a reader sees the same frame after the tool as before it
+        # a reader sees the same frames after the tool as before it
         assert legacy_tag_frame(output)[0] == legacy_tag_frame(_INPUT_HEADERS[kind])[0]
+        from fiberhmm.io.annotation_frame import MAGroupFrame
+        before, after = MAGroupFrame(_INPUT_HEADERS[kind]), MAGroupFrame(output)
+        for name in ('nuc', 'msp', 'tf', 'tf_sr', 'deam', 'ddda_mcg', 'fire'):
+            for strand in '.+-':
+                assert before.is_molecular(name, strand) == after.is_molecular(name, strand), (
+                    program, name, strand)
 
 
-def test_dedup_run_records_molecular_for_fibertools_input(tmp_path):
+def test_dedup_run_keeps_the_fibertools_frames(tmp_path):
+    """fiberhmm-dedup over fibertools input: legacy tags stay molecular by
+    provenance, and the header gains no declaration that would turn its
+    uppercase MA (SEQ frame) molecular."""
     from test_dedup import A_SITES, _make_bam
     from fiberhmm.cli.dedup import run_dedup
 
@@ -511,14 +523,19 @@ def test_dedup_run_records_molecular_for_fibertools_input(tmp_path):
     with pysam.AlignmentFile(str(output), check_sq=False) as bam:
         program = bam.header.to_dict()['PG'][-1]
         assert program['PN'] == 'fiberhmm-dedup'
-        assert 'coord=molecular' in program['DS']
+        assert 'coord=' not in program['DS']
         assert legacy_tag_frame(bam.header)[0] == 'molecular'
+        from fiberhmm.io.annotation_frame import ma_annotation_frame
+        assert ma_annotation_frame(bam.header) == 'seq'
 
 
 @pytest.mark.parametrize('frame_arg, expected, used', [
-    ('auto', 'coord=molecular', True),     # the fixture's fibertools provenance
-    ('molecular', 'coord=molecular', True),
-    ('query', None, False),                # the user's explicit SEQ choice: nothing declared
+    # 3.0.1: the fixture declares no coord=molecular, so the record adds none
+    # (it would change its MA's meaning); legacy tags are carried into the
+    # frame the output resolves (frame_carry.carry_legacy_into).
+    ('auto', None, True),                  # the fixture's fibertools provenance
+    ('molecular', None, True),
+    ('query', None, False),
 ])
 def test_tag_m5c_records_the_frame_it_carried(monkeypatch, tmp_path, frame_arg, expected, used):
     """The recorded frame is the one the tool actually used on the tags."""

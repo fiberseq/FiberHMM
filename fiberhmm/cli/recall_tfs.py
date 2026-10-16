@@ -690,6 +690,22 @@ def _process_payload_chunk(payloads):
     return out, total
 
 
+def _carry_to_output_frame(read, input_molecular_frame):
+    """The output declares coord=molecular: every annotation the run carries
+    through (preserved MA groups, legacy tags it does not rewrite, reads it
+    leaves uncalled) is first expressed in molecular frame, from the input
+    header and the read's original tags (``frame_carry``). The payload has
+    already been built from the original read."""
+    from fiberhmm.io.frame_carry import carry_to_molecular
+
+    # Without header evidence the per-read rule (MA '.' groups) decides, as
+    # for the payload; otherwise the run's resolved (or explicit) frame.
+    source = (input_molecular_frame
+              if isinstance(input_molecular_frame, bool) and not _UNDECIDED_FRAME.get('assumed')
+              else None)
+    carry_to_molecular(read, legacy_source=source)
+
+
 def _apply_result(read, result, also_write_legacy, downstream_compat):
     """Apply compact worker result to a pysam read in place (main process)."""
     read_length = len(read.query_sequence) if read.query_sequence else 0
@@ -755,6 +771,7 @@ def _single_thread_loop(bam_in, bam_out, _header_text,
             stats['failed'] = 1
             record_failure_message(failure_messages,
                                    getattr(read, 'query_name', None))
+        _carry_to_output_frame(read, input_molecular_frame)
         if result is not None:
             _apply_result(read, result, also_write_legacy, downstream_compat)
         bam_out.write(read)
@@ -803,6 +820,7 @@ def _parallel_loop(bam_in, bam_out, _header_text,
             extend_failure_messages(failure_messages,
                                     getattr(stats, 'failure_messages', ()))
         for read, result in zip(reads_chunk, out_results):
+            _carry_to_output_frame(read, input_molecular_frame)
             if result is not None:
                 _apply_result(read, result, also_write_legacy, downstream_compat)
             bam_out.write(read)
