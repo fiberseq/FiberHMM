@@ -58,8 +58,8 @@ sample sizes, bounded records examined, and sampling strategy.
 All curves use seed `20260824`, primary alignments with MAPQ ≥20, and the same
 bounded sampler used by `fiberhmm-qc`. Indexed BAMs are sampled through 168
 seeded 20-kb genomic windows, with a capped reservoir fill only when a sparse
-index does not yield 2,000 reads. No reference dataset is scanned in full by
-this procedure.
+index does not yield 2,000 reads. The scan is bounded; a small control (the
+DddA amplicon BAMs) can be read to its end within that bound.
 
 Per-read rates require at least 200 assay opportunities. Raw/aligned DAF rates
 use MD- or FASTA-derived aligned reference C/G positions and C→T/G→A events;

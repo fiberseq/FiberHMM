@@ -18,7 +18,8 @@ replaced in
   (``tools/build_qc_state_references.py``).
 
 Inputs should be called by this release's ``fiberhmm-call`` defaults, so
-the footprint sizes are those a user's call produces.
+the footprint sizes are those a user's call produces; the SNP mask that call
+wrote to its ``qc/`` sidecar is applied as ``fiberhmm-qc`` applies it.
 
     python tools/build_qc_control_curves.py --profile ddda \\
         --input "NAPA amplicon=napa.called.bam" \\
@@ -79,6 +80,19 @@ def _size_histogram(values, step: int, stop: int, label: str):
     }
 
 
+def _snp_mask(path: str):
+    """The SNP mask ``fiberhmm-qc`` would apply: the call's qc/ sidecar."""
+    report = Path(path).resolve().parent / "qc" / f"{Path(path).with_suffix('').name}.daf_snps.json"
+    if not report.exists():
+        return None
+    bed = json.loads(report.read_text()).get("outputs", {}).get("bed")
+    if not bed or not Path(bed).exists():
+        return None
+    from fiberhmm.daf.snps import load_snp_mask
+
+    return load_snp_mask(bed)
+
+
 def _exemplar(example: dict) -> dict:
     start = int(example["span_start"])
     return {
@@ -98,7 +112,7 @@ def build(profile: str, inputs: list[tuple[str, str]], label: str,
         sampled = sample_bam_reads(path, DEFAULT_SAMPLE_READS, DEFAULT_SEED, MIN_MAPQ)
         result, arrays = analyze_sample(
             sampled.reads, mode, None, prob_threshold=threshold,
-            min_opportunities=MIN_OPPORTUNITIES)
+            min_opportunities=MIN_OPPORTUNITIES, snp_mask=_snp_mask(path))
         rates.append(arrays["rates"])
         nuc.append(arrays["nuc_lengths"])
         tf.append(arrays["tf_lengths"])

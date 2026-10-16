@@ -124,31 +124,31 @@
         "thresholds": "efficiency (median per-read in-MSP rate): PASS while less than 20% below the reference median, WARN 20-30% below, FAIL more than 30% below; background (median per-read outside-MSP rate): PASS while less than 20% above the reference median, WARN 20-30% above, FAIL more than 30% above; medians of the reference's per-read rates under the sample's own state source (tags or light_call)"
       },
       "periodicity": {
-        "pass_strength": 0.014,
+        "pass_strength": 0.0143,
         "pass_curve_correlation": 0.75,
         "pass_reference_projection": 0.6,
         "nrl_tolerance_bp": 15,
         "reference_nrl_bp": 202,
-        "reference_strength": 0.040098369207030485,
+        "reference_strength": 0.04082222510894925,
         "search_interval_bp": [
           160,
           220
         ],
-        "warn_strength": 0.0052,
+        "warn_strength": 0.0053,
         "warn_curve_correlation": 0.6,
         "warn_reference_projection": 0.5
       },
       "rate": {
         "metric": "median_per_read",
         "pass_interval": [
-          0.12307730026063163,
-          0.16844760433804518
+          0.12262711766001436,
+          0.16823487646813123
         ],
         "reference_iqr": [
-          0.12307730026063163,
-          0.16844760433804518
+          0.12262711766001436,
+          0.16823487646813123
         ],
-        "reference_median": 0.1468913589732383,
+        "reference_median": 0.14636258791200085,
         "reference_quantile_probabilities": [
           0.05,
           0.25,
@@ -157,15 +157,15 @@
           0.95
         ],
         "reference_quantiles": [
-          0.08459153371971574,
-          0.12307730026063163,
-          0.1468913589732383,
-          0.16844760433804518,
-          0.19585849870578084
+          0.08400030643496592,
+          0.12262711766001436,
+          0.14636258791200085,
+          0.16823487646813123,
+          0.1958041958041958
         ],
         "warn_interval": [
-          0.08459153371971574,
-          0.19585849870578084
+          0.08400030643496592,
+          0.1958041958041958
         ]
       },
       "scoring_enabled": true,
