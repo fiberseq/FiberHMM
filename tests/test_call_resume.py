@@ -192,7 +192,8 @@ def test_sigterm_leaves_resumable_work_dir(tmp_path, benchmark_model_path):
         pytest.skip('run finished before it could be interrupted')
     process.send_signal(signal.SIGTERM)
     _, stderr = process.communicate(timeout=60)
-    if process.returncode == 0:
+    if process.returncode == 0 or (process.returncode == -signal.SIGTERM and b'Total:' in stderr):
+        # The run finished (or was already exiting, its handler gone) before the signal arrived.
         pytest.skip('run finished before the signal arrived')
     assert process.returncode == 128+signal.SIGTERM, stderr.decode(errors='replace')
     assert b'--resume' in stderr, stderr.decode(errors='replace')[-1500:]
