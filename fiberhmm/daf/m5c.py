@@ -1468,18 +1468,21 @@ def project_domains_to_query(read, domains: Sequence[M5CDomain],
     return [(lo, hi) for lo, hi in merged]
 
 
-def _seed_ma_from_fibertools(read) -> None:
+def _seed_ma_from_fibertools(read, output_frame=None) -> None:
     """A read with fibertools ``Ma`` and no ``MA`` would lose its native
     footprints once an m5C group creates ``MA`` (``MA`` wins over ``Ma``):
-    copy them into ``MA``/``AQ``/``AN`` first, in the frame the header gives
-    each group, as consensus export does."""
+    copy them into ``MA``/``AQ``/``AN`` first, as consensus export does, in
+    the frame the OUTPUT header gives each group (``output_frame``, an
+    ``annotation_frame.MAGroupFrame``; default the read's own header)."""
     if read.has_tag("MA") or not read.has_tag("Ma"):
         return
     from fiberhmm.inference.consensus.bam_export import _fibertools_ma_in_frame
     from fiberhmm.io.annotation_frame import ma_group_frame_of
 
-    header = getattr(read, "header", None)
-    frame = ma_group_frame_of(header) if header is not None else "molecular"
+    frame = output_frame
+    if frame is None:
+        header = getattr(read, "header", None)
+        frame = ma_group_frame_of(header) if header is not None else "molecular"
     aq = read.get_tag("Aq") if read.has_tag("Aq") else None
     an = read.get_tag("An") if read.has_tag("An") else None
     ma, aq, an = _fibertools_ma_in_frame(str(read.get_tag("Ma")), aq, an, read, frame)
@@ -1494,6 +1497,7 @@ def _seed_ma_from_fibertools(read) -> None:
 def _replace_m5c_ma_groups(
     read,
     groups: Sequence[tuple[str, str, Sequence[tuple[int, int]]]],
+    output_frame=None,
 ) -> None:
     """Replace mCG/hemi MA groups while preserving all other MA/AN entries."""
     from fiberhmm.io.ma_tags import flip_interval_frame, parse_an_tag
@@ -1516,7 +1520,7 @@ def _replace_m5c_ma_groups(
             encoded_groups.append((feature, strand, molecular))
 
     if encoded_groups:
-        _seed_ma_from_fibertools(read)
+        _seed_ma_from_fibertools(read, output_frame)
     old_groups = []
     preserved_names = []
     existing_names = (
@@ -1563,23 +1567,27 @@ def _replace_m5c_ma_groups(
             read.set_tag("AN", None)
 
 
-def add_m5c_ma_tag(read, query_spans: Sequence[tuple[int, int]]) -> None:
-    """Add/replace the unqualified ``ddda_mcg.`` MA group on one read."""
+def add_m5c_ma_tag(read, query_spans: Sequence[tuple[int, int]],
+                   output_frame=None) -> None:
+    """Add/replace the unqualified ``ddda_mcg.`` MA group on one read
+    (``output_frame``: the output header's ``MAGroupFrame``, for native
+    fibertools groups copied into a new MA)."""
     _replace_m5c_ma_groups(read, [
         (DDDA_MCG_FEATURE, ".", query_spans),
-    ])
+    ], output_frame)
 
 
 def add_island_m5c_ma_tags(
     read,
     methylated_spans: Sequence[tuple[int, int]],
     unmethylated_spans: Sequence[tuple[int, int]],
+    output_frame=None,
 ) -> None:
     """Write confident whole-island mCpG and uCpG states on one molecule."""
     _replace_m5c_ma_groups(read, [
         (DDDA_MCG_FEATURE, ".", methylated_spans),
         (DDDA_UCG_FEATURE, ".", unmethylated_spans),
-    ])
+    ], output_frame)
 
 
 def add_paired_m5c_ma_tags(
@@ -1588,6 +1596,7 @@ def add_paired_m5c_ma_tags(
     g_spans: Sequence[tuple[int, int]],
     hemi_c_spans: Sequence[tuple[int, int]],
     hemi_g_spans: Sequence[tuple[int, int]],
+    output_frame=None,
 ) -> None:
     """Write strand-resolved mCG and explicit hemi groups on a merged read."""
     _replace_m5c_ma_groups(read, [
@@ -1595,7 +1604,7 @@ def add_paired_m5c_ma_tags(
         (DDDA_MCG_FEATURE, "-", g_spans),
         (DDDA_MCG_HEMI_FEATURE, "+", hemi_c_spans),
         (DDDA_MCG_HEMI_FEATURE, "-", hemi_g_spans),
-    ])
+    ], output_frame)
 
 
 def annotate_bam_from_domains(input_bam: str, output_bam: str,
@@ -1641,6 +1650,8 @@ def _annotate_bam_from_domains(input_bam: str, output_bam: str,
             maybe_append_pg(source.header, header_record),
             (DDDA_MCG_FEATURE,),
         )
+        from fiberhmm.io.annotation_frame import MAGroupFrame
+        output_frame = MAGroupFrame(output_header)
         with pysam.AlignmentFile(output_bam, "wb", header=output_header,
                                  threads=threads) as sink:
             for read in source:
@@ -1654,7 +1665,7 @@ def _annotate_bam_from_domains(input_bam: str, output_bam: str,
                         starts, read.reference_end, side="left",
                     ))
                     spans = project_domains_to_query(read, values[left:right])
-                add_m5c_ma_tag(read, spans)
+                add_m5c_ma_tag(read, spans, output_frame)
                 tagged += int(bool(spans))
                 total += 1
                 sink.write(read)
@@ -1690,6 +1701,8 @@ def annotate_bam_per_read(input_bam: str, output_bam: str, reference: str,
                 maybe_append_pg(source.header, header_record),
                 (DDDA_MCG_FEATURE, DDDA_MCG_HEMI_FEATURE),
             )
+            from fiberhmm.io.annotation_frame import MAGroupFrame
+            output_frame = MAGroupFrame(output_header)
             with pysam.AlignmentFile(output_bam, "wb", header=output_header,
                                      threads=threads) as sink:
                 for read in source:
@@ -1742,6 +1755,7 @@ def annotate_bam_per_read(input_bam: str, output_bam: str, reference: str,
                         )
                         add_paired_m5c_ma_tags(
                             read, c_spans, g_spans, hemi_c_spans, hemi_g_spans,
+                            output_frame=output_frame,
                         )
                         spans = [*c_spans, *g_spans]
                     elif c_observations or g_observations:
@@ -1759,10 +1773,10 @@ def annotate_bam_per_read(input_bam: str, output_bam: str, reference: str,
                         spans = [(call.start, call.end) for call in result.calls]
                         stats["calls"] += len(result.calls)
                         stats["called_cpgs"] += sum(call.n_cpg for call in result.calls)
-                        add_m5c_ma_tag(read, spans)
+                        add_m5c_ma_tag(read, spans, output_frame)
                     else:
                         spans = []
-                        add_m5c_ma_tag(read, spans)
+                        add_m5c_ma_tag(read, spans, output_frame)
                     stats["tagged_reads"] += int(bool(spans))
                     sink.write(read)
     return stats
@@ -2117,6 +2131,8 @@ def _annotate_bam_per_read_islands(
                     maybe_append_pg(source.header, header_record),
                     (DDDA_MCG_FEATURE, DDDA_UCG_FEATURE),
                 )
+                from fiberhmm.io.annotation_frame import MAGroupFrame
+                output_frame = MAGroupFrame(output_header)
                 with pysam.AlignmentFile(
                     output_bam, "wb", header=output_header, threads=threads,
                 ) as sink:
@@ -2193,7 +2209,7 @@ def _annotate_bam_per_read_islands(
                             read, unmethylated, methylated=False,
                         )
                         add_island_m5c_ma_tags(
-                            read, methylated_spans, unmethylated_spans,
+                            read, methylated_spans, unmethylated_spans, output_frame=output_frame,
                         )
                         stats["tagged_reads"] += int(bool(
                             methylated_spans or unmethylated_spans

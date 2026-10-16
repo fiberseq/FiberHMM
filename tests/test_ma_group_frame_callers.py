@@ -376,20 +376,69 @@ def test_strand_rescue_report_loads_ma_by_the_header_rule(tmp_path, monkeypatch)
     assert seen['ma_annotation_frame'] == 'auto'
 
 
-def test_m5c_group_on_a_fibertools_read_keeps_its_native_footprints():
-    """call-m5c --tag-mode locus / tag-m5c on fibertools output: the new MA
-    (which wins over Ma) carries the native groups in place."""
+def _extract_spans(path, tmp, label):
+    from fiberhmm.cli.extract_tags import extract_tags_parallel
+
+    out = {}
+    for kind in ('nucleosome', 'msp'):
+        bed = tmp / f'{label}_{kind}.bed'
+        extract_tags_parallel(str(path), {kind: str(bed)}, [kind], with_scores=True,
+                              block_scores=True)
+        for line in bed.read_text().splitlines():
+            f = line.split('\t')
+            starts = [int(f[1]) + int(x) for x in f[11].split(',') if x]
+            sizes = [int(x) for x in f[10].split(',') if x]
+            out[(f[3], kind)] = (list(zip(starts, sizes)), f[12])
+    return out
+
+
+def test_call_m5c_locus_tagging_keeps_native_fibertools_footprints(tmp_path):
+    """call-m5c --tag-mode locus on fibertools output, through the CLI's
+    writer (its output header declares the carried frame): extracted with
+    the actual output header, every native nucleosome/MSP keeps its position
+    and quality, and the m5C span is added."""
+    from types import SimpleNamespace
+
+    from fiberhmm.cli.call_m5c import _write_outputs
+    from fiberhmm.daf.m5c import M5CDomain
+
+    source = FX / 'ft0.13_addnuc_fire.bam'
+    output = tmp_path / 'locus.bam'
+    args = SimpleNamespace(output=str(tmp_path / 'd.bed'), tag_bam=str(source),
+                           tag_output=str(output), tag_mode='locus', tag_input_frame='auto',
+                           io_threads=1, reference=None, cpg_islands=None,
+                           write_cpg_islands=None, read_posterior=0.99, min_other=0,
+                           read_min_island_cpg=1)
+    staged = {args.output: args.output, args.tag_output: args.tag_output}
+    _write_outputs(args, staged, [M5CDomain('chrT', 100, 200, True, 0.99)],
+                   np.ones(4), 0, 0, 0)
+    pysam.index(str(output))
+    with pysam.AlignmentFile(str(output)) as bam:
+        reads = {r.query_name: r for r in bam}
+        assert all(r.has_tag('MA') and 'ddda_mcg' in r.get_tag('MA') for r in reads.values())
+    before = _extract_spans(source, tmp_path, 'before')
+    after = _extract_spans(output, tmp_path, 'after')
+    assert before and before == after
+
+
+def test_tag_m5c_island_writer_seeds_native_groups_in_the_output_frame():
+    """The island writer (tag-m5c, call-m5c island mode) passes its output
+    header's frame the same way."""
+    from fiberhmm.daf.m5c import add_island_m5c_ma_tags
+    from fiberhmm.io.annotation_frame import MAGroupFrame, append_coord_to_ds, pass_through_frame
+    from fiberhmm.io.bam_header import maybe_append_pg
     from fiberhmm.cli.extract_tags import _ma_parse_options, _parse_all_ma_annotations, resolve_extract_frames
-    from fiberhmm.daf.m5c import add_m5c_ma_tag
 
     with pysam.AlignmentFile(str(FX / 'ft0.13_addnuc_fire.bam')) as bam:
-        header = bam.header
-        frames = resolve_extract_frames(header)
+        out_header = maybe_append_pg(bam.header, {
+            'PN': 'fiberhmm-tag-m5c', 'VN': 'x', 'CL': 'x',
+            'DS': append_coord_to_ds('DddA mCG', pass_through_frame(bam.header, None))})
+        in_frames, out_frames = resolve_extract_frames(bam.header), resolve_extract_frames(out_header)
         for read in bam:
-            before = _parse_all_ma_annotations(read, **_ma_parse_options(frames))
-            add_m5c_ma_tag(read, [(100, 200)])
-            after = _parse_all_ma_annotations(read, **_ma_parse_options(frames))
+            before = _parse_all_ma_annotations(read, **_ma_parse_options(in_frames))
+            add_island_m5c_ma_tags(read, [(100, 200)], [], output_frame=MAGroupFrame(out_header))
+            after = _parse_all_ma_annotations(read, **_ma_parse_options(out_frames))
             for name in ('nuc', 'msp', 'fire'):
                 key = lambda a: (a['start'], a['length'], tuple(a['quals']))
                 assert sorted(map(key, after[name])) == sorted(map(key, before[name])), (read.query_name, name)
-            assert [(a['start'], a['length']) for a in after['ddda_mcg']] == [(100, 100)]
+
