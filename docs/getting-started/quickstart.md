@@ -23,7 +23,7 @@ python docs/examples/make_demo_data.py demo
 or, after `pip install fiberhmm`:
 
 ```bash
-curl -O https://raw.githubusercontent.com/fiberseq/FiberHMM/v3.0.1/docs/examples/make_demo_data.py
+curl -O https://raw.githubusercontent.com/fiberseq/FiberHMM/v3.0.2/docs/examples/make_demo_data.py
 python make_demo_data.py demo
 ```
 
@@ -92,7 +92,7 @@ which chemistry (abridged):
 
 ```text
 @CO	fiberhmm:coord=molecular
-@CO	FIBERHMM-CHEMISTRY:v1:assay=fiber-seq;enzyme=hia5;platform=pacbio;mode=pacbio-fiber;apply_sha256=13342f5f...;fiberhmm_version=3.0.1;model=hia5_pacbio;pg=fiberhmm-call;...
+@CO	FIBERHMM-CHEMISTRY:v1:assay=fiber-seq;enzyme=hia5;platform=pacbio;mode=pacbio-fiber;apply_sha256=13342f5f...;fiberhmm_version=3.0.2;model=hia5_pacbio;pg=fiberhmm-call;...
 @CO	MA-TYPES:v1:nuc,msp,tf
 ```
 

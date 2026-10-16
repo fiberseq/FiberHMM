@@ -132,7 +132,7 @@ of its region files is recognised and does not count.)
 
 ## Advisories
 
-`fiberhmm-check --list` prints the current list. For 3.0.1:
+`fiberhmm-check --list` prints the current list. For 3.0.2:
 
 | ID | Severity | Output | Applies to |
 |---|---|---|---|
@@ -169,7 +169,7 @@ their FiberHMM version since 3.0; older ones without it are reported as
   "schema": "fiberhmm.advisory_report.v1",
   "path": "ont_hia5.bam",
   "checked_with": {
-    "fiberhmm_version": "3.0.1",
+    "fiberhmm_version": "3.0.2",
     "advisories_revision": 3
   },
   "kind": "bam",

@@ -9,7 +9,7 @@ cff-version: 1.2.0
 message: "If you use FiberHMM in published work, please cite it as below."
 type: software
 title: "FiberHMM: chromatin footprint calling from single-molecule Fiber-seq and DAF-seq data"
-version: 3.0.1
+version: 3.0.2
 authors:
   - name: "FiberHMM Authors"
 license: MIT

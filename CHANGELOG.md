@@ -1,5 +1,20 @@
 # Changelog
 
+## 3.0.2
+
+### Fixed
+
+- **`fiberhmm-qc` grades DddA against a somatic DddA control.** The packaged
+  DddA reference was built from a sperm DAF-seq sample (0.7% median
+  deamination, no nucleosome phasing), so normal DddA libraries failed the
+  signal rate and the periodicity grade compared them with a flat curve. The
+  rate, phasogram, footprint-size and example-molecule references now come
+  from the NAPA and UBA1 DddA amplicons (14.6% median deamination, NRL 202
+  bp). DddA periodicity allows 15 bp around the reference NRL, since amplicon
+  loci differ in repeat length. Re-run `fiberhmm-qc` on DddA BAMs; calls are
+  unchanged, and DddB and Hia5 grades are unchanged.
+- The nucleosome-size legend no longer covers the long-span note in QC plots.
+
 ## 3.0.1
 
 ### Fixed
