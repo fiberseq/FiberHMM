@@ -381,7 +381,10 @@ def collect_stats_from_bam(bam_path: str, n_samples: int = 10000,
     # Second pass: collect stats from sampled reads
     sampled = 0
 
+    from fiberhmm.io.annotation_frame import LegacyFrame
+
     with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
+        legacy_frame = LegacyFrame(getattr(bam, "header", None))
         for read in bam:
             if read.is_unmapped or read.is_secondary or read.is_supplementary:
                 continue
@@ -393,10 +396,17 @@ def collect_stats_from_bam(bam_path: str, n_samples: int = 10000,
             if sampled >= n_samples:
                 break
 
-            # Get footprint tags (molecular frame -> flip to SEQ/query coords)
+            # Footprint tags in SEQ/query coords: molecular tags (by the
+            # BAM's provenance rule) are flipped.
+            molecular = legacy_frame.is_molecular(read)
+
+            def to_seq(starts, lengths):
+                if molecular:
+                    return flip_intervals_to_seq(starts, lengths, read)
+                return [int(x) for x in starts], [int(x) for x in lengths]
+
             try:
-                _ns, _nl = flip_intervals_to_seq(
-                    read.get_tag('ns'), read.get_tag('nl'), read)
+                _ns, _nl = to_seq(read.get_tag('ns'), read.get_tag('nl'))
                 ns = np.array(_ns)
                 nl = np.array(_nl)
             except KeyError:
@@ -405,8 +415,7 @@ def collect_stats_from_bam(bam_path: str, n_samples: int = 10000,
 
             # Get MSP tags
             try:
-                _as, _al = flip_intervals_to_seq(
-                    read.get_tag('as'), read.get_tag('al'), read)
+                _as, _al = to_seq(read.get_tag('as'), read.get_tag('al'))
                 as_starts = np.array(_as)
                 al_lengths = np.array(_al)
             except KeyError:

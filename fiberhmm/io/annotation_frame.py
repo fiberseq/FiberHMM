@@ -446,18 +446,28 @@ class MAGroupFrame:
 _GROUP_FRAMES: Dict[int, tuple] = {}
 
 
-def ma_group_frame_of(header) -> MAGroupFrame:
-    """:class:`MAGroupFrame` of ``header``, cached per header object (pysam
-    hands every record of one file the same header)."""
-    key = id(header)
+def _cached(kind, header, build):
+    key = (kind, id(header))
     cached = _GROUP_FRAMES.get(key)
     if cached is not None and cached[0] is header:
         return cached[1]
-    resolver = MAGroupFrame(header)
-    if len(_GROUP_FRAMES) > 16:
+    resolver = build(header)
+    if len(_GROUP_FRAMES) > 32:
         _GROUP_FRAMES.clear()
     _GROUP_FRAMES[key] = (header, resolver)
     return resolver
+
+
+def ma_group_frame_of(header) -> MAGroupFrame:
+    """:class:`MAGroupFrame` of ``header``, cached per header object (pysam
+    hands every record of one file the same header)."""
+    return _cached('ma', header, MAGroupFrame)
+
+
+def legacy_frame_of(header) -> "LegacyFrame":
+    """:class:`LegacyFrame` (auto) of ``header``, cached like
+    :func:`ma_group_frame_of`."""
+    return _cached('legacy', header, LegacyFrame)
 
 
 class LegacyFrame:

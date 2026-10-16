@@ -215,13 +215,20 @@ def _project_to_molecule(read, interval, molecule_length, tolerant=False):
     if not tolerant and (not positions or refs[positions[0]]!=a or refs[positions[-1]]!=b-1):
         raise ValueError('Family span does not map completely to this alignment: '+str(interval))
     if read.has_tag('MA'):
+        # Native TF groups in the frame the file's rule gives each one
+        # (annotation_frame.MAGroupFrame); a match is returned in molecular frame.
+        from ...io.annotation_frame import ma_group_frame_of
+        header=getattr(read,'header',None);group_frame=ma_group_frame_of(header) if header is not None else None
         matches=[]
-        for name,_,_,spans in parse_ma_tag(read.get_tag('MA'))['raw_types']:
+        for name,strand,_,spans in parse_ma_tag(read.get_tag('MA'))['raw_types']:
             if name!='tf': continue
+            molecular=group_frame is None or group_frame.is_molecular(name,strand)
             for start,length in spans:
-                lo=molecule_length-start-length if read.is_reverse else start
+                lo=molecule_length-start-length if (read.is_reverse and molecular) else start
                 mapped=[p for p in refs[lo:lo+length] if p is not None]
-                if mapped and (min(mapped),max(mapped)+1)==(a,b): matches.append((start,length))
+                if mapped and (min(mapped),max(mapped)+1)==(a,b):
+                    matches.append((start,length) if (molecular or not read.is_reverse)
+                                   else (molecule_length-start-length,length))
         if len(set(matches))==1: return matches[0]
         if len(set(matches))>1: raise ValueError('Ambiguous native molecular projection')
     lo,hi=positions[0],positions[-1]+1
@@ -289,12 +296,17 @@ def _append_annotations(read, rows, ma_frame='molecular'):
     count=sum(len(iv) for _,_,_,iv in types)
     names=parse_an_tag(str(old_an)) if old_an is not None else ['']*count
     if len(names)!=count: raise ValueError('Source MA/AN length mismatch')
-    # Preserve an existing native TQ when no replay score was available.
+    # Preserve an existing native TQ when no replay score was available. The
+    # lookup is by molecular interval (as _project_to_molecule gives): groups
+    # the file's rule (``ma_frame``) reads in SEQ frame are mirrored first.
+    def molecular_of(name,strand,start,length):
+        seq=(not ma_frame.is_molecular(name,strand)) if hasattr(ma_frame,'is_molecular') else ma_frame=='seq'
+        return (int(parsed['read_length'])-start-length,length) if (read.is_reverse and seq) else (start,length)
     native_tq={};cursor=0
-    for name,_,q,intervals in types:
-        for molecular_start,length in intervals:
+    for name,strand,q,intervals in types:
+        for stored_start,length in intervals:
             if name=='tf' and q:
-                native_tq[(molecular_start,length)]=aq[cursor]
+                native_tq[molecular_of(name,strand,stored_start,length)]=aq[cursor]
             cursor+=len(q)
     groups=defaultdict(dict)
     for row in rows:

@@ -1590,6 +1590,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             min_mapq=args.min_mapq,
             max_reads=remaining,
             input_index=bam_index,
+            # Each MA group in the frame the BAM's header gives it.
+            ma_annotation_frame="auto",
             load_diagnostics=diagnostics,
             load_reads=load_reads,
         )

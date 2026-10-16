@@ -183,3 +183,25 @@ def test_tag_tf_families_rejects_uncontracted_qqqqq_legacy_bytes(tmp_path):
 
     with pytest.raises(ValueError, match="cannot be overwritten as fi/fq"):
         tag_tf_families(source, output, assignments)
+
+
+def test_tag_tf_families_projects_sr_groups_in_the_header_frame(tmp_path):
+    """Under an unmarked FiberHMM header the '.' tf_sr groups are SEQ frame
+    (MAGroupFrame), as strand-rescue-annotate writes them for that header: a
+    reverse read's tf_sr 51-10 is query 50-60, reference 150-160."""
+    source = tmp_path / "unmarked.bam"
+    output = tmp_path / "unmarked.family.bam"
+    assignments = tmp_path / "unmarked.assignments.tsv"
+    _make_input(source, reverse=True)
+    with pysam.AlignmentFile(str(source), "rb") as bam:
+        hd = bam.header.to_dict()
+        reads = [r.to_dict() for r in bam]
+    hd["PG"] = [{"ID": "fiberhmm-call", "PN": "fiberhmm-call", "VN": "2.12.0"}]
+    header = pysam.AlignmentHeader.from_dict(hd)
+    with pysam.AlignmentFile(str(source), "wb", header=header) as bam:
+        for read in reads:
+            bam.write(pysam.AlignedSegment.from_dict(read, header))
+    pysam.index(str(source))
+    _write_assignments(assignments, call_start=150, call_end=160)
+    summary = tag_tf_families(source, output, assignments)
+    assert summary["assigned_tf_sr"] == 1

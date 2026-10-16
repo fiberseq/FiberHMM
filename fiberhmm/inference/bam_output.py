@@ -842,23 +842,36 @@ def extract_bed_from_tagged_bam(input_bam: str, output_bed: str,
 
     Returns:
         Number of reads with footprints written
+
+    The ns/nl frame follows the BAM's @PG provenance
+    (``annotation_frame.LegacyFrame``); a merged BAM whose histories disagree
+    raises ``ValueError``.
     """
     import pysam
+
+    from fiberhmm.io.annotation_frame import LegacyFrame
 
     count = 0
 
     with pysam.AlignmentFile(input_bam, "rb", check_sq=False) as bam, open(output_bed, 'w') as out:
+        legacy_frame = LegacyFrame(bam.header)
+        if legacy_frame.frame is None and not legacy_frame.assumed:
+            raise ValueError(f"cannot tell the coordinate frame of {input_bam}'s ns/nl: "
+                             f"{legacy_frame.reason}")
         for read in bam:
             # Skip unmapped and secondary/supplementary (BED should have one row per molecule)
             if read.is_unmapped or read.is_secondary or read.is_supplementary:
                 continue
 
-            # Get footprint tags (molecular frame -> flip to SEQ/query coords)
+            # Footprint tags in SEQ/query coords (molecular tags are flipped)
             try:
-                ns, nl = flip_intervals_to_seq(
-                    read.get_tag('ns'), read.get_tag('nl'), read)
+                ns, nl = read.get_tag('ns'), read.get_tag('nl')
             except KeyError:
                 continue  # No footprint tags
+            if legacy_frame.is_molecular(read):
+                ns, nl = flip_intervals_to_seq(ns, nl, read)
+            else:
+                ns, nl = [int(x) for x in ns], [int(x) for x in nl]
 
             if len(ns) == 0:
                 continue

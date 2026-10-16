@@ -172,8 +172,13 @@ def _ma_interval_to_query(
     length: int,
     ma_read_length: int,
     read,
+    molecular: bool = True,
 ) -> Tuple[int, int, bool]:
-    """Return stored-query bounds and whether the full interval was retained."""
+    """Return stored-query bounds and whether the full interval was retained.
+
+    ``molecular``: the MA group is in molecular frame (by the header's rule,
+    ``annotation_frame.MAGroupFrame``), so a reverse read's interval is
+    mirrored; otherwise it is already SEQ frame."""
 
     if start < 0 or length <= 0 or start + length > ma_read_length:
         raise BamFootprintInputError(
@@ -193,7 +198,7 @@ def _ma_interval_to_query(
             f"{query_length} (plus {leading_hard}+{trailing_hard} hard-clipped bases)"
         )
 
-    seq_start = ma_read_length - (start + length) if read.is_reverse else start
+    seq_start = ma_read_length - (start + length) if (read.is_reverse and molecular) else start
     seq_end = seq_start + length
     clipped_start = max(seq_start, stored_start)
     clipped_end = min(seq_end, stored_end)
@@ -335,6 +340,8 @@ def load_footprint_molecules_from_bam(
         )
         reference_lengths = dict(references)
         reference_order = {contig: index for index, (contig, _length) in enumerate(references)}
+        from fiberhmm.io.annotation_frame import MAGroupFrame
+        group_frame = MAGroupFrame(bam.header)
         parsed_regions = _merge_regions(
             (parse_reference_region(value, reference_lengths) for value in regions),
             reference_order,
@@ -432,9 +439,10 @@ def load_footprint_molecules_from_bam(
             tf_observations: List[TFObservation] = []
             msp_intervals: List[Tuple[int, int]] = []
             tf_ordinal = 0
-            for name, _strand, _quality_spec, intervals in parsed_ma["raw_types"]:
+            for name, strand, _quality_spec, intervals in parsed_ma["raw_types"]:
                 if name not in {"tf", "msp"}:
                     continue
+                molecular = group_frame.is_molecular(name, strand)
                 for raw_start, raw_length in intervals:
                     start, length = int(raw_start), int(raw_length)
                     try:
@@ -443,6 +451,7 @@ def load_footprint_molecules_from_bam(
                             length=length,
                             ma_read_length=ma_read_length,
                             read=read,
+                            molecular=molecular,
                         )
                     except BamFootprintInputError as error:
                         raise BamFootprintInputError(

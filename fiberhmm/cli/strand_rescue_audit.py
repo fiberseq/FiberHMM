@@ -120,12 +120,18 @@ def _reference_interval(read, annotation: Mapping[str, object], ma_read_length: 
     from fiberhmm.core.bam_reader import cigar_to_query_ref
     from fiberhmm.io.footprint_bam import _ma_interval_to_query, _project_query_interval
 
+    from fiberhmm.io.annotation_frame import ma_group_frame_of
+
     start, length = annotation["interval"]
+    header = getattr(read, "header", None)
+    molecular = (ma_group_frame_of(header).is_molecular(
+        str(annotation["type"]), str(annotation["strand"])) if header is not None else True)
     query_start, query_end, complete = _ma_interval_to_query(
         start=int(start),
         length=int(length),
         ma_read_length=ma_read_length,
         read=read,
+        molecular=molecular,
     )
     projected, _mapped_fraction, _endpoints = _project_query_interval(
         cigar_to_query_ref(read), query_start, query_end, int(length), complete

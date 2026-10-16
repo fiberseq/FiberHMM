@@ -386,11 +386,14 @@ def tag_tf_families(
                                     if query_to_ref is None:
                                         query_to_ref = cigar_to_query_ref(read)
                                     molecular_start, molecular_length = intervals[ordinal]
+                                    from fiberhmm.io.annotation_frame import ma_group_frame_of
                                     query_start, query_end, complete = _ma_interval_to_query(
                                         start=int(molecular_start),
                                         length=int(molecular_length),
                                         ma_read_length=int(parsed["read_length"]),
                                         read=read,
+                                        molecular=ma_group_frame_of(read.header).is_molecular(
+                                            name, strand),
                                     )
                                     projected, _mapped_fraction, _endpoints_mapped = _project_query_interval(
                                         query_to_ref,

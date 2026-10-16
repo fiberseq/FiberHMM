@@ -1221,8 +1221,15 @@ def add_strand_rescue_groups(
     diagnostics: Optional[DefaultDict[str, int]] = None,
     applied_decision_ids: Optional[set] = None,
     applied_harmonization_ids: Optional[set] = None,
+    output_group_frame=None,
 ) -> Dict[str, int]:
-    """Replace stale SR groups and add complete normalized nuc/TF layers."""
+    """Replace stale SR groups and add complete normalized nuc/TF layers.
+
+    Ordinary groups are read in the frame the read's header gives each one
+    (``annotation_frame.MAGroupFrame``) and handled in molecular frame; the
+    ``.`` SR layers are written in the frame ``output_group_frame`` (the
+    output header's resolver; default the read's own) gives them, so they
+    read back at the same positions."""
     if not read.has_tag("MA"):
         if stream_rescues or stream_edges:
             raise ValueError("streamed action targets a BAM record with no MA tag")
@@ -1257,6 +1264,24 @@ def add_strand_rescue_groups(
             f"MA has {annotation_count} annotations"
         )
 
+    from fiberhmm.io.annotation_frame import ma_group_frame_of
+
+    header = getattr(read, "header", None)
+    input_frame = ma_group_frame_of(header) if header is not None else None
+    if output_group_frame is None:
+        output_group_frame = input_frame
+    reverse = bool(read.is_reverse)
+
+    def to_molecular(name, strand, interval, row):
+        """A stored group interval (and its QQQ row) in molecular frame."""
+        if not reverse or input_frame is None or input_frame.is_molecular(name, strand):
+            return tuple(interval), row
+        start, length = flip_interval_frame(int(interval[0]), int(interval[1]), read_length)
+        row = list(row)
+        if len(row) >= 3:
+            row[1], row[2] = row[2], row[1]
+        return (start, length), tuple(row)
+
     preserved_groups = []
     preserved_names: List[str] = []
     original: Dict[str, List[Tuple[Tuple[int, int], Sequence[int]]]] = {
@@ -1271,7 +1296,9 @@ def add_strand_rescue_groups(
         names = old_names[cursor : cursor + count]
         cursor += count
         if name in original:
-            original[name].extend(zip(intervals, rows))
+            original[name].extend(
+                to_molecular(name, strand, interval, row)
+                for interval, row in zip(intervals, rows))
         if name in REPLACED_LAYER_NAMES:
             continue
         preserved_groups.append((name, strand, specification, list(intervals), rows))
@@ -1552,6 +1579,17 @@ def add_strand_rescue_groups(
         )
         if not records:
             continue
+        if (reverse and output_group_frame is not None
+                and not output_group_frame.is_molecular(layer_name, ".")):
+            # The output header reads '.' SR groups in SEQ frame: write them so.
+            converted = []
+            for key, (interval, row, name_value, kind) in records:
+                start, length = flip_interval_frame(int(interval[0]), int(interval[1]), read_length)
+                row = list(row)
+                if len(row) >= 3:
+                    row[1], row[2] = row[2], row[1]
+                converted.append((key, ((start, length), tuple(row), name_value, kind)))
+            records = sorted(converted, key=lambda item: (item[1][0], str(item[0])))
         intervals = [value[0] for _key, value in records]
         rows = [list(value[1]) for _key, value in records]
         preserved_groups.append((layer_name, ".", QUALITY_SPEC, intervals, rows))
@@ -2134,6 +2172,8 @@ def write_overlay_bam(
                 command_line=command_line,
                 quality_contract_version=quality_contract_version,
             )
+            from fiberhmm.io.annotation_frame import MAGroupFrame
+            output_group_frame = MAGroupFrame(header)
             with pysam.AlignmentFile(
                 str(temporary), "wb", header=header, threads=io_threads
             ) as destination:
@@ -2178,6 +2218,7 @@ def write_overlay_bam(
                         diagnostics=diagnostics,
                         applied_decision_ids=applied,
                         applied_harmonization_ids=applied_harmonizations,
+                        output_group_frame=output_group_frame,
                     )
                     if layer_counts:
                         reads_with_layers += 1
@@ -2248,10 +2289,20 @@ def _validate_stream_action_against_read(
         raise ValueError(
             f"read {read.query_name!r}: MA/query length mismatch"
         )
+    # Compared in molecular frame, as add_strand_rescue_groups compares them.
+    from fiberhmm.io.annotation_frame import ma_group_frame_of
+
+    header = getattr(read, "header", None)
+    group_frame = ma_group_frame_of(header) if header is not None else None
     originals = {"msp": [], "tf": [], "nuc": []}
-    for name, _strand, _specification, intervals in parsed["raw_types"]:
+    for name, strand, _specification, intervals in parsed["raw_types"]:
         if name in originals:
-            originals[name].extend(tuple(interval) for interval in intervals)
+            seq = (read.is_reverse and group_frame is not None
+                   and not group_frame.is_molecular(name, strand))
+            originals[name].extend(
+                tuple(flip_interval_frame(int(a), int(b), read_length)) if seq
+                else tuple(interval)
+                for interval in intervals for a, b in [interval])
     for action in action_record.rescues:
         if not 0 <= action.source_ordinal < len(originals["msp"]):
             raise ValueError("streamed rescue source MSP ordinal is out of range")
@@ -2342,6 +2393,8 @@ def write_streaming_overlay_bam(
                 action_input_index=action_stream.input_index,
                 quality_contract_version=quality_contract_version,
             )
+            from fiberhmm.io.annotation_frame import MAGroupFrame
+            output_group_frame = MAGroupFrame(header)
             with pysam.AlignmentFile(
                 str(temporary), "wb", header=header, threads=io_threads
             ) as destination:
@@ -2369,6 +2422,7 @@ def write_streaming_overlay_bam(
                         stream_rescues=stream_rescues,
                         stream_edges=stream_edges,
                         diagnostics=diagnostics,
+                        output_group_frame=output_group_frame,
                     )
                     if layer_counts:
                         reads_with_layers += 1

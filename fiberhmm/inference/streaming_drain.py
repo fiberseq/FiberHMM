@@ -25,10 +25,53 @@ def apply_legacy_tags(write_msps: bool):
 
 def strip_for_apply(read, write_msps: bool = True) -> None:
     """Remove stale call tags the apply writer would otherwise leave behind
-    (DddA CpG-island MA groups are kept, as by the fused call writer)."""
+    (DddA CpG-island MA groups are kept, as by the fused call writer).
+
+    Without MSP writing (``--no-msps``) the input's ``as/al/aq`` are kept,
+    and the output declares ``coord=molecular``: kept SEQ-frame MSPs (by the
+    input's provenance rule) are converted to molecular frame, and MSPs whose
+    frame the header cannot decide are dropped."""
     strip_stale_call_tags(
         read, legacy_tags=apply_legacy_tags(write_msps), keep_m5c_groups=True,
     )
+    if not write_msps:
+        retained_msps_to_molecular(read)
+
+
+def retained_msps_to_molecular(read) -> None:
+    """Express a read's kept ``as/al/aq`` in molecular frame (see
+    :func:`strip_for_apply`)."""
+    import array
+
+    if not (hasattr(read, "has_tag") and read.has_tag("as") and read.has_tag("al")):
+        return
+    header = getattr(read, "header", None)
+    if header is None:
+        return
+    from fiberhmm.io.annotation_frame import MOLECULAR, legacy_frame_of
+    from fiberhmm.io.ma_tags import flip_interval_frame
+
+    frame = legacy_frame_of(header).for_read(read)
+    if frame == MOLECULAR or not read.is_reverse:
+        return
+    if frame is None:
+        for tag in ("as", "al", "aq"):
+            if read.has_tag(tag):
+                read.set_tag(tag, None)
+        return
+    starts, lengths = list(read.get_tag("as")), list(read.get_tag("al"))
+    scores = list(read.get_tag("aq")) if read.has_tag("aq") else None
+    read_length = read.query_length or len(read.query_sequence or "")
+    rows = []
+    for index, (start, length) in enumerate(zip(starts, lengths)):
+        mol_start, mol_length = flip_interval_frame(int(start), int(length), read_length)
+        score = scores[index] if scores is not None and index < len(scores) else None
+        rows.append((mol_start, mol_length, score))
+    rows.sort(key=lambda row: row[0])
+    read.set_tag("as", array.array("I", [row[0] for row in rows]))
+    read.set_tag("al", array.array("I", [row[1] for row in rows]))
+    if scores is not None and len(scores) == len(starts):
+        read.set_tag("aq", array.array("B", [int(row[2]) for row in rows]))
 
 
 def strip_for_fused_call(read, also_write_legacy: bool = True) -> None:

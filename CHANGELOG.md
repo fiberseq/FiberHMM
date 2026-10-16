@@ -24,7 +24,13 @@
   evidence; `fiberhmm-pair` placed nucleosome dyads mirrored; and
   `fiberhmm-utils transfer --reference-bam` read SEQ-frame `ns`/`nl` as
   molecular. Re-run those steps on such BAMs; BAMs called with 3.0 are
-  unchanged.
+  unchanged. The same applies to `fiberhmm-footprint-model` input loading,
+  `fiberhmm-strand-rescue`, `-strand-rescue-annotate`, `-strand-rescue-audit`,
+  `fiberhmm-tag-consensus` and the native TF quality that consensus export
+  copies onto a family.
+- `fiberhmm-apply --no-msps` keeps the input's MSP tags in the molecular
+  frame its output declares; SEQ-frame MSPs of FiberHMM 2.12 BAMs were kept
+  unconverted.
 - The QC that `fiberhmm-call` runs after calling follows `--no-use-m5c` and
   `--cpg-mask-policy` for the sampled reads it calls itself.
 - Writing apply tags without footprints keeps the `hl:i:1` marker on reads

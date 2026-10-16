@@ -197,3 +197,180 @@ def test_utils_reference_bam_reads_ns_in_its_frame(tmp_path, monkeypatch, pg, st
         min_mapq=0, edge_trim=0, max_reads=0))
     got = seen[0]
     assert (got[0], got[-1] + 1) == (start, start + 100)
+
+
+# --- round 4 ------------------------------------------------------------------
+
+NEW_APPLY = {'ID': 'fiberhmm-apply', 'PN': 'fiberhmm-apply', 'VN': '3.0.1',
+             'DS': 'FiberHMM apply; coord=molecular'}
+
+
+def test_apply_no_msps_keeps_retained_msps_in_the_declared_frame(tmp_path):
+    """apply --no-msps keeps the input's as/al/aq, while its output declares
+    coord=molecular: SEQ-frame MSPs are converted, so they stay in place."""
+    from fiberhmm.cli.extract_tags import extract_tags_parallel
+    from fiberhmm.inference.streaming_drain import strip_for_apply
+
+    read = _read(_header([OLD_CALL]), {'as': array.array('I', [120, 300]),
+                                       'al': array.array('I', [70, 20]),
+                                       'aq': array.array('B', [5, 9]),
+                                       'ns': array.array('I', [10]), 'nl': array.array('I', [50])})
+    strip_for_apply(read, write_msps=False)
+    assert not read.has_tag('ns')
+    # Molecular: SEQ 300-320 -> 80-100, SEQ 120-190 -> 210-280 (sorted, aq follows).
+    assert list(read.get_tag('as')) == [80, 210] and list(read.get_tag('al')) == [20, 70]
+    assert list(read.get_tag('aq')) == [9, 5]
+    path = tmp_path / 'apply_out.bam'
+    with pysam.AlignmentFile(str(path), 'wb', header=_header([OLD_CALL, dict(NEW_APPLY, PP='fiberhmm-call')])) as out:
+        out.write(pysam.AlignedSegment.from_dict(read.to_dict(), out.header))
+    pysam.index(str(path))
+    bed = tmp_path / 'msp.bed'
+    extract_tags_parallel(str(path), {'msp': str(bed)}, ['msp'], with_scores=False)
+    fields = bed.read_text().split('\t')
+    starts = [int(fields[1]) + int(x) for x in fields[11].split(',') if x]
+    sizes = [int(x) for x in fields[10].split(',') if x]
+    assert list(zip(starts, sizes)) == [(1120, 70), (1300, 20)]
+    # Molecular input MSPs are kept as they are; undecidable ones are dropped.
+    kept = _read(_header([NEW_APPLY]), {'as': array.array('I', [120]), 'al': array.array('I', [70])})
+    strip_for_apply(kept, write_msps=False)
+    assert list(kept.get_tag('as')) == [120]
+
+
+@pytest.mark.parametrize('pg, flipped', [([OLD_CALL], False), ([NEW_APPLY], True)])
+def test_apply_stats_read_legacy_tags_in_their_frame(tmp_path, pg, flipped):
+    from fiberhmm.inference.stats import collect_stats_from_bam
+
+    path = tmp_path / 'in.bam'
+    with pysam.AlignmentFile(str(path), 'wb', header=_header(pg)) as out:
+        out.write(_read(out.header, {'ns': array.array('I', [10]), 'nl': array.array('I', [100])}))
+    import fiberhmm.inference.stats as stats_module
+    seen = []
+    original = stats_module.flip_intervals_to_seq
+    stats_module.flip_intervals_to_seq = lambda *a, **k: seen.append(a) or original(*a, **k)
+    try:
+        collect_stats_from_bam(str(path), n_samples=10)
+    finally:
+        stats_module.flip_intervals_to_seq = original
+    assert bool(seen) == flipped          # only molecular tags are mirrored
+
+
+@pytest.mark.parametrize('pg, tf, msp', [
+    ([OLD_CALL], (1010, 1030), (1050, 1150)),
+    ([NEW_APPLY], (1370, 1390), (1250, 1350)),
+])
+def test_footprint_model_loader_follows_the_group_frame(tmp_path, pg, tf, msp):
+    from fiberhmm.io.footprint_bam import load_footprint_molecules_from_bam
+
+    path = tmp_path / 'fp.bam'
+    with pysam.AlignmentFile(str(path), 'wb', header=_header(pg)) as out:
+        out.write(_read(out.header, {'MA': '400;tf+:11-20;msp+:51-100'}))
+    pysam.index(str(path))
+    molecule, = load_footprint_molecules_from_bam(str(path)).molecules
+    assert [(t.start, t.end) for t in molecule.tfs] == [tf]
+    assert [tuple(m) for m in molecule.msps] == [msp]
+
+
+@pytest.mark.parametrize('pg', [(), [OLD_CALL]])
+def test_strand_rescue_baseline_layers_stay_in_place(pg):
+    from fiberhmm.cli.extract_tags import _parse_all_ma_annotations
+    from fiberhmm.cli.strand_rescue_annotate import add_strand_rescue_groups
+    from fiberhmm.io.annotation_frame import MAGroupFrame
+
+    header = _header(pg)
+    read = _read(header, {'MA': '400;tf+QQQ:11-20;nuc+QQQ:101-100',
+                          'AQ': array.array('B', [100, 1, 2, 50, 3, 4])})
+    add_strand_rescue_groups(read, [])
+    frame = MAGroupFrame(header)
+    parsed = _parse_all_ma_annotations(read, annotation_frame=frame.header_frame,
+                                       group_frame=frame)
+
+    def spans(layer):
+        return [(1000 + a['start'], 1000 + a['start'] + a['length']) for a in parsed[layer]]
+
+    assert spans('tf') == spans('tf_sr') == [(1010, 1030)]
+    assert spans('nuc') == spans('nuc_sr') == [(1100, 1200)]
+
+
+def test_export_native_tq_comes_from_the_tf_at_the_family_position():
+    from fiberhmm.inference.consensus.bam_export import _append_annotations
+    from fiberhmm.io.annotation_frame import MAGroupFrame
+
+    for ma, aq, expected in (('400;tf+Q:11-20,371-20', [80, 190], 80),
+                             ('400;tf+Q:11-20', [80], 80)):
+        header = _header([OLD_CALL])
+        read = _read(header, {'MA': ma, 'AQ': array.array('B', aq)})
+        rows = [dict(chrom='chr1', interval=[1010, 1030], layer='fam', token='t1',
+                     tq=None, fi=1, op=2)]
+        assert _append_annotations(read, rows, MAGroupFrame(header)) == 1
+        assert list(read.get_tag('AQ'))[len(aq)] == expected
+
+
+@pytest.mark.parametrize('pg, span', [([OLD_CALL], (1010, 1110)), ([NEW_APPLY], (1290, 1390))])
+def test_legacy_bed_helper_reads_ns_in_its_frame(tmp_path, pg, span):
+    from fiberhmm.inference.bam_output import extract_bed_from_tagged_bam
+
+    path = tmp_path / 'in.bam'
+    with pysam.AlignmentFile(str(path), 'wb', header=_header(pg)) as out:
+        out.write(_read(out.header, {'ns': array.array('I', [10]), 'nl': array.array('I', [100])}))
+    bed = tmp_path / 'out.bed'
+    assert extract_bed_from_tagged_bam(str(path), str(bed), with_scores=False) == 1
+    fields = bed.read_text().split('\t')
+    assert (int(fields[1]), int(fields[2])) == span
+
+
+@pytest.mark.parametrize('pg, strand, span', [
+    ([OLD_CALL], '.', (1010, 1030)),    # unmarked: '.' groups SEQ
+    ((), '.', (1370, 1390)),            # no evidence: '.' molecular
+    ((), '+', (1010, 1030)),
+])
+def test_strand_rescue_audit_projects_groups_in_their_frame(pg, strand, span):
+    from fiberhmm.cli.strand_rescue_audit import _reference_interval
+
+    read = _read(_header(pg), {'MA': f'400;tf_sr{strand}QQQ:11-20'})
+    assert _reference_interval(read, {'type': 'tf_sr', 'strand': strand,
+                                      'interval': (10, 20)}, 400) == span
+
+
+def test_stream_action_validation_compares_molecular_intervals():
+    import hashlib
+
+    from fiberhmm.cli.strand_rescue_annotate import (
+        StreamActionRecord,
+        StreamEdgeAction,
+        _validate_stream_action_against_read,
+    )
+
+    read = _read(_header([OLD_CALL]), {'MA': '400;tf+QQQ:11-20',
+                                       'AQ': array.array('B', [100, 1, 2])})
+    sha = hashlib.sha256(read.to_string().encode('utf-8')).hexdigest()
+
+    def record(source):
+        return StreamActionRecord(0, 'rev', sha, (), (StreamEdgeAction(
+            'tok', 'tf', 0, source, (368, 24), (1, 2, 3)),))
+
+    _validate_stream_action_against_read(read, record((370, 20)))   # molecular: accepted
+    with pytest.raises(ValueError, match='differs from MA'):
+        _validate_stream_action_against_read(read, record((10, 20)))
+
+
+def test_strand_rescue_report_loads_ma_by_the_header_rule(tmp_path, monkeypatch):
+    import fiberhmm.cli.strand_rescue as cli
+
+    path = tmp_path / 'in.bam'
+    with pysam.AlignmentFile(str(path), 'wb', header=_header([OLD_CALL])) as out:
+        out.write(_read(out.header, {'MA': '400;tf+:11-20'}))
+    pysam.index(str(path))
+    seen = {}
+
+    class Stop(Exception):
+        pass
+
+    def fake_load(*args, **kwargs):
+        seen.update(kwargs)
+        raise Stop
+
+    monkeypatch.setattr(cli, 'load_region_evidence', fake_load)
+    with pytest.raises(Stop):
+        cli.main(['-i', str(path), '--preset', 'dddb', '--region', 'chr1:1000-1400',
+                  '-o', str(tmp_path / 'sr.json')])
+    assert seen['ma_annotation_frame'] == 'auto'
