@@ -441,4 +441,3 @@ def test_tag_m5c_island_writer_seeds_native_groups_in_the_output_frame():
             for name in ('nuc', 'msp', 'fire'):
                 key = lambda a: (a['start'], a['length'], tuple(a['quals']))
                 assert sorted(map(key, after[name])) == sorted(map(key, before[name])), (read.query_name, name)
-

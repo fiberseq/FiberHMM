@@ -12,7 +12,7 @@ tags, readable by `ft`, FIRE and FiberBrowser.
 **Documentation: [fiberseq.github.io/FiberHMM](https://fiberseq.github.io/FiberHMM/)**
 (source in [`docs/`](https://github.com/fiberseq/FiberHMM/tree/main/docs)).
 
-> **FiberHMM 3.0.0** is the third generation of the FiberHMM family, released
+> **FiberHMM 3.0** is the third generation of the FiberHMM family, released
 > with FiberBrowser 3.0.0. The emission tables have been updated, so re-run
 > calls made with earlier versions. `fiberhmm-check <your outputs>` lists which
 > files need re-running. See [Upgrading from 2.x](https://fiberseq.github.io/FiberHMM/upgrading/)
