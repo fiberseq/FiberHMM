@@ -925,7 +925,11 @@ def _periodicity_score(
         pass_strength,
         ref_strength,
     )
-    nrl_score = max(0.0, 100.0 - 2.0 * abs(nrl - float(reference["reference_nrl_bp"])))
+    # A targeted-locus reference carries the spread of its loci's repeat
+    # lengths as a tolerance; genome-wide references have none.
+    nrl_offset = max(0.0, abs(nrl - float(reference["reference_nrl_bp"]))
+                     - float(reference.get("nrl_tolerance_bp", 0)))
+    nrl_score = max(0.0, 100.0 - 2.0 * nrl_offset)
     components = [strength_score, nrl_score]
     if curve_correlation is not None:
         components.append(
@@ -1646,7 +1650,11 @@ def _plot_footprint_distribution(
         ylabel=f"fraction of calls / {step} bp",
         title=title,
     )
-    if len(sample_values) or control:
+    if footprint_key == "nucleosome" and len(sample_values):
+        # Below the long-span note in the upper right, which "best" ignores.
+        axis.legend(frameon=False, fontsize=7.2, loc="upper right",
+                    bbox_to_anchor=(1.0, 0.84))
+    elif len(sample_values) or control:
         axis.legend(frameon=False, fontsize=7.2)
 
 

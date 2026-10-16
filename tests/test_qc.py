@@ -131,6 +131,33 @@ def test_reference_pattern_amplitude_prevents_flat_false_pass():
     ) < 35
 
 
+def test_ddda_control_is_accessible_nucleosomal_chromatin():
+    # The DddA control is somatic NAPA/UBA1 chromatin: deaminated at a
+    # DddA-like rate, nucleosome-phased, with nucleosome-sized footprints.
+    reference = load_references()["profiles"]["ddda"]
+    controls = load_control_curves()["profiles"]["ddda"]
+    assert 0.08 < reference["rate"]["reference_median"] < 0.25
+    period = reference["periodicity"]
+    assert 180 <= period["reference_nrl_bp"] <= 215
+    assert period["reference_strength"] > 0.02
+    assert period["warn_strength"] < period["pass_strength"] < period["reference_strength"]
+    sizes = controls["footprint_sizes"]
+    assert 120 <= sizes["nucleosome"]["median_bp"] <= 170
+    assert sizes["tf"] is not None
+    examples = load_control_examples()["profiles"]["ddda"]["groups"]
+    rates = [read["signal_rate"] for group in examples for read in group["reads"]]
+    assert np.median(rates) > 0.08
+
+
+def test_nrl_tolerance_widens_only_the_profile_that_sets_it():
+    reference = dict(load_references()["profiles"]["dddb"]["periodicity"])
+    strength = reference["reference_strength"]
+    off_by_20 = reference["reference_nrl_bp"] + 20
+    assert _periodicity_score(off_by_20, strength, reference) == pytest.approx(60)
+    reference["nrl_tolerance_bp"] = 15
+    assert _periodicity_score(off_by_20, strength, reference) == pytest.approx(90)
+
+
 @pytest.mark.parametrize(
     ("mode", "enzyme", "expected"),
     [

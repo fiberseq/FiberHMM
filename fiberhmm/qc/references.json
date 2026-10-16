@@ -124,30 +124,31 @@
         "thresholds": "efficiency (median per-read in-MSP rate): PASS while less than 20% below the reference median, WARN 20-30% below, FAIL more than 30% below; background (median per-read outside-MSP rate): PASS while less than 20% above the reference median, WARN 20-30% above, FAIL more than 30% above; medians of the reference's per-read rates under the sample's own state source (tags or light_call)"
       },
       "periodicity": {
-        "pass_strength": 0.008,
+        "pass_strength": 0.014,
         "pass_curve_correlation": 0.75,
-        "pass_reference_projection": 0.60,
-        "reference_nrl_bp": 212,
-        "reference_strength": 0.0089470449840736,
+        "pass_reference_projection": 0.6,
+        "nrl_tolerance_bp": 15,
+        "reference_nrl_bp": 202,
+        "reference_strength": 0.040098369207030485,
         "search_interval_bp": [
           160,
           220
         ],
-        "warn_strength": 0.004,
-        "warn_curve_correlation": 0.60,
-        "warn_reference_projection": 0.50
+        "warn_strength": 0.0052,
+        "warn_curve_correlation": 0.6,
+        "warn_reference_projection": 0.5
       },
       "rate": {
         "metric": "median_per_read",
         "pass_interval": [
-          0.0038944180008654264,
-          0.017245098330903572
+          0.12307730026063163,
+          0.16844760433804518
         ],
         "reference_iqr": [
-          0.0038944180008654264,
-          0.017245098330903572
+          0.12307730026063163,
+          0.16844760433804518
         ],
-        "reference_median": 0.006956521739130435,
+        "reference_median": 0.1468913589732383,
         "reference_quantile_probabilities": [
           0.05,
           0.25,
@@ -156,15 +157,15 @@
           0.95
         ],
         "reference_quantiles": [
-          0.0017899227652516214,
-          0.0038944180008654264,
-          0.006956521739130435,
-          0.017245098330903572,
-          0.07937748373065172
+          0.08459153371971574,
+          0.12307730026063163,
+          0.1468913589732383,
+          0.16844760433804518,
+          0.19585849870578084
         ],
         "warn_interval": [
-          0.0017899227652516214,
-          0.07937748373065172
+          0.08459153371971574,
+          0.19585849870578084
         ]
       },
       "scoring_enabled": true,
@@ -297,7 +298,7 @@
       "periodicity": {
         "pass_strength": 0.04,
         "pass_curve_correlation": 0.75,
-        "pass_reference_projection": 0.60,
+        "pass_reference_projection": 0.6,
         "reference_nrl_bp": 194,
         "reference_strength": 0.11671930489101963,
         "search_interval_bp": [
@@ -305,8 +306,8 @@
           220
         ],
         "warn_strength": 0.015,
-        "warn_curve_correlation": 0.60,
-        "warn_reference_projection": 0.50
+        "warn_curve_correlation": 0.6,
+        "warn_reference_projection": 0.5
       },
       "rate": {
         "metric": "median_per_read",
@@ -353,7 +354,7 @@
       "periodicity": {
         "pass_strength": 0.04,
         "pass_curve_correlation": 0.75,
-        "pass_reference_projection": 0.60,
+        "pass_reference_projection": 0.6,
         "reference_nrl_bp": 192,
         "reference_strength": 0.18409564876245782,
         "search_interval_bp": [
@@ -361,8 +362,8 @@
           220
         ],
         "warn_strength": 0.015,
-        "warn_curve_correlation": 0.60,
-        "warn_reference_projection": 0.50
+        "warn_curve_correlation": 0.6,
+        "warn_reference_projection": 0.5
       },
       "rate": {
         "metric": "median_per_read",
@@ -525,7 +526,7 @@
       "periodicity": {
         "pass_strength": 0.08,
         "pass_curve_correlation": 0.75,
-        "pass_reference_projection": 0.60,
+        "pass_reference_projection": 0.6,
         "reference_nrl_bp": 191,
         "reference_strength": 0.4751856504911486,
         "search_interval_bp": [
@@ -533,8 +534,8 @@
           220
         ],
         "warn_strength": 0.03,
-        "warn_curve_correlation": 0.60,
-        "warn_reference_projection": 0.50
+        "warn_curve_correlation": 0.6,
+        "warn_reference_projection": 0.5
       },
       "rate": {
         "metric": "median_per_read",

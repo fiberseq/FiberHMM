@@ -23,7 +23,7 @@ a substitute for, or redistribution of, the source datasets.
 | Profile | Control | Packaged sample | Signal threshold |
 |---|---|---:|---:|
 | `dddb` | Drosophila Spacetime WT 2–4 h DddB, `yw_2-4.sorted.bam` | 2,000 reads | encoded/raw DAF calls; ML 125 when applicable |
-| `ddda` | Human NAPA and UBA1 DddA DAF-seq, `206_NAPA` + `206_UBA1` | 2,000 reads each | encoded/raw DAF calls; ML 125 when applicable |
+| `ddda` | Human somatic NAPA and UBA1 DddA DAF-seq amplicons, the FiberBrowser demo BAMs `napa_ddda.bam` + `uba1_ddda.bam` | 2,000 reads each | encoded/raw DAF calls; ML 125 when applicable |
 | `hia5_pacbio` | Drosophila embryo PacBio Fiber-seq 2–4 h, `2-4hr_14` chr2R | 2,000 reads | ML ≥125 |
 | `hia5_nanopore` | Drosophila embryo ONT Fiber-seq zld 1.5–3 h | 2,000 reads | ML ≥248 |
 
@@ -32,11 +32,21 @@ necessarily use footprint-called controls. The DddB footprint distribution is
 from the latest high-quality single-embryo DddB call
 `SE_DAF_20260823_O95_I2.fiberhmm.bam`; its rate and phasogram references remain
 the independent Spacetime WT control above. DddA sizes come from the
-footprint-called `206_NAPA` and `206_UBA1` controls. PacBio sizes come from
+NAPA and UBA1 demo BAMs re-called with this release's `fiberhmm-call`
+defaults. PacBio sizes come from
 `2-4hr_14.aligned_footprints.chr2R.bam`, and Nanopore sizes from
-`zld_1.5-3hr.fiberhmm.thr248.bam`. The legacy DddA and PacBio files carry
-nucleosome tags but no distinct TF tags, so those two profiles deliberately do
+`zld_1.5-3hr.fiberhmm.thr248.bam`. The legacy PacBio file carries
+nucleosome tags but no distinct TF tags, so that profile deliberately does
 not claim a TF-size reference.
+
+The DddA control was rebuilt in 3.0.2. Earlier releases packaged DddA curves
+from a sperm DAF-seq sample of the same loci, whose protamine-packed chromatin
+is barely deaminated and has no nucleosome phasing; graded against it, normal
+DddA libraries failed the signal rate and passed periodicity too easily. The
+DddA rate, phasogram, footprint-size and exemplar entries are built by
+`tools/build_qc_control_curves.py`; amplicon loci differ in repeat length, so
+the profile's periodicity grade allows `nrl_tolerance_bp` (15 bp) around the
+pooled NRL before the NRL score drops.
 
 These datasets remain external controls and are not redistributed with
 FiberHMM. The identifiers above document biological and technical provenance;
@@ -114,7 +124,7 @@ quantiles (5/25/50/75/95%) and pooled counts are packaged.
 | Profile | State-aware source |
 |---|---|
 | `dddb` | Spacetime WT 2–4 h DddB, `yw_2-4.sorted.bam` sample (calls: the 726 reads ≥ 1 kb that `fiberhmm-call` calls by default; light call: 1,611 reads) |
-| `ddda` | NAPA and UBA1 DddA. The `206_NAPA`/`206_UBA1` source BAMs are not available locally, so the FiberBrowser demo BAMs of the same loci (`napa_ddda.bam`, `uba1_ddda.bam`) were sampled and re-called |
+| `ddda` | NAPA and UBA1 DddA: the FiberBrowser demo BAMs (`napa_ddda.bam`, `uba1_ddda.bam`) sampled and re-called |
 | `hia5_pacbio` | `2-4hr_14.aligned_footprints.chr2R.bam` sample, re-called (its stored 1.x-era tags are not used) |
 | `hia5_nanopore` | none: `zld_1.5-3hr.fiberhmm.thr248.bam` is not available locally; `scoring_enabled: false`, the verdict uses the overall rate |
 

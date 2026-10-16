@@ -218,7 +218,7 @@ without any change in the enzyme.
 | Profile | Source |
 |---|---|
 | `dddb` | Drosophila embryo DddB DAF-seq |
-| `ddda` | human DddA DAF-seq (NAPA and UBA1 amplicons) |
+| `ddda` | human DddA DAF-seq, NAPA and UBA1 amplicons (the FiberBrowser demo loci) |
 | `hia5_pacbio` | Drosophila embryo PacBio Fiber-seq |
 | `hia5_nanopore` | Drosophila embryo Nanopore Fiber-seq (ML ≥ 248) |
 
