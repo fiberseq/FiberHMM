@@ -791,8 +791,11 @@ def test_real_samtools_cat_spellings_are_all_concatenation(tmp_path, spelling):
     Path(paths["list"]).write_text(f"{paths['good']}\n{paths['bad']}\n")
     out = tmp_path / "joined.bam"
     args = [a.format(**paths) for a in spelling]
-    subprocess.run([_SAMTOOLS, "cat", "-o", str(out), *args], check=True,
-                   capture_output=True)
+    joined = subprocess.run([_SAMTOOLS, "cat", "-o", str(out), *args], capture_output=True)
+    if joined.returncode != 0:
+        # Older samtools (e.g. Ubuntu's 1.13) lack some of these spellings.
+        pytest.skip(f"this samtools does not accept {spelling}: "
+                    f"{joined.stderr.decode(errors='replace').strip()[:200]}")
     with pysam.AlignmentFile(str(out)) as handle:
         assert sorted(r.query_name for r in handle) == ["bad", "good"]
     payload = report(out, sidecars=False)
