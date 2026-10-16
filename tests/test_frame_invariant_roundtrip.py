@@ -1,10 +1,11 @@
-"""Frame invariant of every BAM writer (docs/reference/footprint-tag-frame.md).
+"""Frame invariant of the calling writers (docs/reference/footprint-tag-frame.md).
 
-A writer carries annotations it does not rewrite into the frame its output
-header declares, resolved from the input header and the read's original
-tags; a pass-through writer adds no declaration that changes their meaning.
-So, read with fiberhmm-extract's parser, every annotation present both
-before and after a writer sits at the same reference positions.
+fiberhmm-apply, -call and -recall-tfs/-nucs declare coord=molecular and
+carry the annotations they do not rewrite into that frame, resolved from the
+input header and the read's original tags. So, read with fiberhmm-extract's
+parser, every annotation present both before and after sits at the same
+reference positions. (Pass-through tools keep the 3.0.0 header behaviour and
+are supported on 3.0 output; they are covered by the 3.0-dataset check.)
 
 Each case is one writer x one input header state; the BAM holds one read per
 annotation type x orientation (400M at chr1:1000, so query position q is
@@ -140,57 +141,6 @@ def _call_no_legacy(source, out, monkeypatch):
               '--force-seq'])
 
 
-def _header_only(builder):
-    """A pass-through tool's output: its header over the unchanged records."""
-    def run(source, out, monkeypatch):
-        with pysam.AlignmentFile(source) as bam:
-            header = builder(bam.header)
-            with pysam.AlignmentFile(out, 'wb', header=header) as dest:
-                for read in bam:
-                    dest.write(pysam.AlignedSegment.from_dict(read.to_dict(), header))
-    return run
-
-
-def _pass_through_builders():
-    from fiberhmm.cli.dedup import _dedup_output_header
-    from fiberhmm.cli.duplex import _header_with_program
-    from fiberhmm.cli.merge import _merge_output_header
-    from fiberhmm.cli.strand_rescue_annotate import _header_with_provenance
-    from fiberhmm.cli.tag_families import _family_header
-    return {
-        # fiberhmm-dedup flags/collapses records and copies their tags.
-        'dedup': lambda h: _dedup_output_header(
-            h, min_jaccard=0.95, min_deam=10, ignore_strand=False, collapse=False,
-            prob_threshold=0, max_end_diff=50),
-        'pair': lambda h: _header_with_program(h, None, 'hybrid'),
-        'merge': lambda h: _merge_output_header(
-            h, recall=False, enzyme='ddda', prob_threshold=128, pairs_only=False,
-            nuc_recall_policy='conservative', phase_nrl=0, cpg_mask_policy=None),
-        'strand-rescue-annotate': lambda h: _header_with_provenance(
-            h, report_sha256='0' * 64, minimum_posterior=0.9, command_line='x'),
-        'tag-consensus': lambda h: _family_header(h, assignment_sha256='0' * 64, command_line='x'),
-    }
-
-
-def _tag_m5c(explicit):
-    """tag-m5c's header and legacy carry, given --input-frame ``explicit``."""
-    def run(source, out, monkeypatch):
-        from fiberhmm.daf.m5c import _carry_pass_through_legacy
-        from fiberhmm.io.annotation_frame import LegacyFrame, append_coord_to_ds, pass_through_frame
-        from fiberhmm.io.bam_header import maybe_append_pg
-        with pysam.AlignmentFile(source) as bam:
-            record = {'PN': 'fiberhmm-tag-m5c', 'VN': '3.0.1', 'CL': 'x',
-                      'DS': append_coord_to_ds('DddA mCG; ddda_mcg_frame=molecular',
-                                               pass_through_frame(bam.header, explicit))}
-            header = maybe_append_pg(bam.header, record)
-            output_legacy = LegacyFrame(header)
-            with pysam.AlignmentFile(out, 'wb', header=header) as dest:
-                for read in bam:
-                    _carry_pass_through_legacy(read, explicit, output_legacy)
-                    dest.write(pysam.AlignedSegment.from_dict(read.to_dict(), header))
-    return run
-
-
 WRITERS = {
     'apply-no-msps-streaming': lambda s, o, m: _apply(s, o, m, region_parallel=False),
     'apply-no-msps-region': lambda s, o, m: _apply(s, o, m, region_parallel=True),
@@ -198,9 +148,6 @@ WRITERS = {
     'recall-tfs': lambda s, o, m: _recall(s, o, m, nucs=False),
     'recall-nucs': lambda s, o, m: _recall(s, o, m, nucs=True),
     'recall-tfs-no-legacy-tags': lambda s, o, m: _recall(s, o, m, nucs=False, legacy=False),
-    **{name: None for name in ('dedup', 'pair', 'merge', 'strand-rescue-annotate', 'tag-consensus')},
-    'tag-m5c-input-frame-molecular': _tag_m5c(True),
-    'tag-m5c-input-frame-query': _tag_m5c(False),
 }
 
 
@@ -222,12 +169,8 @@ REGENERATED = {
 def test_writer_keeps_carried_annotations_in_place(tmp_path, monkeypatch, writer, state):
     source = _write_input(tmp_path / 'in.bam', state)
     out = str(tmp_path / 'out.bam')
-    run = WRITERS[writer] or _header_only(_pass_through_builders()[writer])
-    run(source, out, monkeypatch)
-    explicit = {'tag-m5c-input-frame-molecular': 'molecular',
-                'tag-m5c-input-frame-query': 'query'}.get(writer, 'auto')
-    # An explicit --input-frame is the truth for the legacy tags it covers.
-    before = _positions(source, explicit)
+    WRITERS[writer](source, out, monkeypatch)
+    before = _positions(source)
     after = _positions(out)
     compared, moved = 0, []
     for read, spans in before.items():

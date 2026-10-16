@@ -2127,6 +2127,8 @@ def write_overlay_bam(
     defer_publish: bool = False,
     quality_contract_version: int = 4,
 ) -> dict:
+    from fiberhmm.io.annotation_frame import warn_if_frames_unverifiable
+    warn_if_frames_unverifiable(str(input_path) if input_path is not None else None)
     if output_path.suffix != ".bam":
         raise ValueError(f"output must end in .bam: {output_path}")
     forbidden = {_canonical_path(input_path)}
@@ -2339,6 +2341,8 @@ def write_streaming_overlay_bam(
     quality_contract_version: int = 4,
 ) -> dict:
     """Materialize one v5 action stream by an ordinal, bounded-memory join."""
+    from fiberhmm.io.annotation_frame import warn_if_frames_unverifiable
+    warn_if_frames_unverifiable(str(input_path) if input_path is not None else None)
     if output_path.suffix != ".bam":
         raise ValueError(f"output must end in .bam: {output_path}")
     if _canonical_path(input_path) != action_stream.input_path:

@@ -238,6 +238,8 @@ def _dedup_output_header(header, *, min_jaccard, min_deam, ignore_strand,
 def run_dedup(in_bam, out_bam, min_jaccard=0.95, min_deam=10, ignore_strand=False,
               k=32, bands=8, seed=7, collapse=True, prob_threshold=0,
               stats_tsv=None, io_threads=4, max_end_diff=50):
+    from fiberhmm.io.annotation_frame import warn_if_frames_unverifiable
+    warn_if_frames_unverifiable(str(in_bam) if in_bam is not None else None)
     t0 = time.time()
     # ---- Pass 1: fingerprint every record (order = until_eof iteration) ----
     pos_sets: List[Optional[frozenset]] = []

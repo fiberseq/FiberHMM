@@ -276,6 +276,8 @@ def tag_tf_families(
     command_line: str = "fiberhmm-tag-consensus",
 ) -> Mapping[str, object]:
     """Materialize assignment rows into ``tf_sr`` while preserving geometry."""
+    from fiberhmm.io.annotation_frame import warn_if_frames_unverifiable
+    warn_if_frames_unverifiable(str(input_bam) if input_bam is not None else None)
 
     source = Path(input_bam).expanduser().resolve()
     output = Path(output_bam).expanduser().resolve()

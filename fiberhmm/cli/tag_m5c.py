@@ -219,11 +219,13 @@ def main(argv=None):
     from fiberhmm.io.annotation_frame import append_coord_to_ds, pass_through_frame
     with pysam.AlignmentFile(args.input, check_sq=False) as source:
         input_header = source.header.to_dict()
+    from fiberhmm.io.annotation_frame import warn_if_frames_unverifiable
+    warn_if_frames_unverifiable(args.input)
     if input_molecular_frame is None:
         # auto: the shared provenance rule; an undecided header keeps the
         # historical fallback (the coord=molecular marker, else query frame).
         from fiberhmm.io.annotation_frame import auto_legacy_frame
-        resolved = auto_legacy_frame(input_header, "fiberhmm-tag-m5c")
+        resolved = auto_legacy_frame(input_header)
         if resolved is not None:
             input_molecular_frame = resolved
     if args.estimate_factors and args.five_prime_factors:

@@ -899,15 +899,6 @@ def _default_input_frame(header):
     return header_has_coord_marker(header)
 
 
-def _carry_pass_through_legacy(read, input_molecular_frame, output_legacy) -> None:
-    """The legacy tags this tool read in ``input_molecular_frame`` (possibly
-    an explicit --input-frame) are written in the frame the output header
-    resolves (``frame_carry.carry_legacy_into``)."""
-    from fiberhmm.io.frame_carry import carry_legacy_into
-
-    carry_legacy_into(read, _legacy_molecular(read, input_molecular_frame), output_legacy)
-
-
 def _legacy_molecular(read, input_molecular_frame) -> bool:
     """Whether this read's legacy ns/nl/as/al are molecular: ``input_molecular_frame``
     is a bool, or a per-read resolver (``annotation_frame.LegacyFrame``) for
@@ -1477,6 +1468,29 @@ def project_domains_to_query(read, domains: Sequence[M5CDomain],
     return [(lo, hi) for lo, hi in merged]
 
 
+def _seed_ma_from_fibertools(read) -> None:
+    """A read with fibertools ``Ma`` and no ``MA`` would lose its native
+    footprints once an m5C group creates ``MA`` (``MA`` wins over ``Ma``):
+    copy them into ``MA``/``AQ``/``AN`` first, in the frame the header gives
+    each group, as consensus export does."""
+    if read.has_tag("MA") or not read.has_tag("Ma"):
+        return
+    from fiberhmm.inference.consensus.bam_export import _fibertools_ma_in_frame
+    from fiberhmm.io.annotation_frame import ma_group_frame_of
+
+    header = getattr(read, "header", None)
+    frame = ma_group_frame_of(header) if header is not None else "molecular"
+    aq = read.get_tag("Aq") if read.has_tag("Aq") else None
+    an = read.get_tag("An") if read.has_tag("An") else None
+    ma, aq, an = _fibertools_ma_in_frame(str(read.get_tag("Ma")), aq, an, read, frame)
+    read.set_tag("MA", ma, value_type="Z")
+    if aq is not None and len(aq):
+        import array as _array
+        read.set_tag("AQ", _array.array("B", [int(v) for v in aq]))
+    if an is not None:
+        read.set_tag("AN", str(an), value_type="Z")
+
+
 def _replace_m5c_ma_groups(
     read,
     groups: Sequence[tuple[str, str, Sequence[tuple[int, int]]]],
@@ -1501,6 +1515,8 @@ def _replace_m5c_ma_groups(
         if molecular:
             encoded_groups.append((feature, strand, molecular))
 
+    if encoded_groups:
+        _seed_ma_from_fibertools(read)
     old_groups = []
     preserved_names = []
     existing_names = (
@@ -1676,8 +1692,6 @@ def annotate_bam_per_read(input_bam: str, output_bam: str, reference: str,
             )
             with pysam.AlignmentFile(output_bam, "wb", header=output_header,
                                      threads=threads) as sink:
-                from fiberhmm.io.annotation_frame import LegacyFrame
-                output_legacy = LegacyFrame(output_header)
                 for read in source:
                     stats["reads"] += 1
                     c_observations, g_observations, is_cross_strand = (
@@ -1750,7 +1764,6 @@ def annotate_bam_per_read(input_bam: str, output_bam: str, reference: str,
                         spans = []
                         add_m5c_ma_tag(read, spans)
                     stats["tagged_reads"] += int(bool(spans))
-                    _carry_pass_through_legacy(read, input_molecular_frame, output_legacy)
                     sink.write(read)
     return stats
 
@@ -2107,8 +2120,6 @@ def _annotate_bam_per_read_islands(
                 with pysam.AlignmentFile(
                     output_bam, "wb", header=output_header, threads=threads,
                 ) as sink:
-                    from fiberhmm.io.annotation_frame import LegacyFrame
-                    output_legacy = LegacyFrame(output_header)
                     for read in source:
                         stats["reads"] += 1
                         candidate_islands = []
@@ -2187,7 +2198,6 @@ def _annotate_bam_per_read_islands(
                         stats["tagged_reads"] += int(bool(
                             methylated_spans or unmethylated_spans
                         ))
-                        _carry_pass_through_legacy(read, input_molecular_frame, output_legacy)
                         sink.write(read)
     finally:
         if table_handle:

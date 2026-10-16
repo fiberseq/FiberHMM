@@ -10,10 +10,9 @@ annotation whose input frame cannot be decided is dropped.
 
 fiberhmm-apply, -call and -recall-tfs/-nucs declare ``coord=molecular``, so
 :func:`carry_to_molecular` is their carrier. Pass-through tools (dedup,
-merge, pair, tag-m5c, ...) add no declaration that would change a group's
-meaning (``annotation_frame.pass_through_frame``); tag-m5c/call-m5c given an
-explicit legacy frame use :func:`convert_legacy_tags` to express the legacy
-tags in the frame their output header resolves.
+merge, pair, tag-m5c, ...) keep the 3.0.0 header behaviour
+(``annotation_frame.pass_through_frame``); they are supported on 3.0
+output, whose header declares the frame.
 """
 from __future__ import annotations
 
@@ -137,16 +136,3 @@ def carry_to_molecular(read, legacy_source=None) -> None:
     if any(read.has_tag(tag) for tag in ("ns", "as")):
         convert_legacy_tags(read, source, MOLECULAR)
 
-
-def carry_legacy_into(read, source_molecular: bool, output_frame) -> None:
-    """For pass-through writers that read the legacy tags in a frame of
-    their own (an explicit ``--input-frame``): express them in the frame the
-    output header resolves (``output_frame``, an ``annotation_frame.LegacyFrame``)
-    when the two differ; an output that cannot decide leaves them as they are
-    (their meaning is unchanged: still undecided)."""
-    if not getattr(read, "is_reverse", False) or not any(read.has_tag(t) for t in ("ns", "as")):
-        return
-    target = output_frame.for_read(read)
-    source = MOLECULAR if source_molecular else "seq"
-    if target is not None and target != source:
-        convert_legacy_tags(read, source, target)

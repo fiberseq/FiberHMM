@@ -101,6 +101,8 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
     Returns:
         (total_reads_processed, reads_with_footprints)
     """
+    from fiberhmm.io.annotation_frame import warn_if_frames_unverifiable
+    warn_if_frames_unverifiable(str(input_bam) if input_bam is not None else None)
     # Suppress htslib warnings
     pysam.set_verbosity(0)
 

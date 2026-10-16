@@ -88,7 +88,7 @@ def test_header_without_evidence_reads_dot_groups_as_molecular(tmp_path, capsys)
     assert _span(plus, tmp_path) == SEQ_SPAN
     bare = _bam(tmp_path / 'bare.bam')
     assert _span(bare, tmp_path) == SEQ_SPAN
-    assert 'fiberhmm-extract: warning: the header records no footprint writer' in capsys.readouterr().err
+    assert "header has no FiberHMM/fibertools provenance" in capsys.readouterr().err
 
 
 def test_explicit_input_frame_overrides_provenance(tmp_path):

@@ -64,7 +64,7 @@ The token is `coord=molecular`, matched case-insensitively. It has two scopes:
 
 - **Record level:** the token appears in a FiberHMM `@PG` record, in its `DS`
   field for `fiberhmm-call`, `-apply` and `-recall-*`, and for pass-through
-  tools whose input header already declares it (below).
+  tools that carried molecular tags (below).
 - **Header level:** an `@CO` line contains it. `fiberhmm-call`, `-apply` and
   `-recall-*` write `@CO fiberhmm:coord=molecular` as well as the `DS` token;
   `fiberhmm-call` adds it before its `FIBERHMM-CHEMISTRY` and `MA-TYPES`
@@ -184,15 +184,14 @@ whose input frame cannot be decided is dropped.
   `coord=molecular`. Apply `--no-msps` MSPs, call/recall `--no-legacy-tags`
   legacy tags, recall's preserved `MA` groups and the reads they leave
   uncalled are converted to molecular frame (`fiberhmm.io.frame_carry`).
-- Pass-through tools (`dedup`, `pair`, `merge`, `tag-m5c`, `call-m5c`,
-  `tag-consensus`, `strand-rescue-annotate`, consensus export) add no
-  declaration that would change how a carried annotation is read. They add
-  `coord=molecular (footprint tags carried over from the input)` to their
-  `@PG` `DS` only when the input header already declares `coord=molecular`.
-  On any other header the token would turn SEQ-frame `MA` groups molecular,
-  so it is left out. The provenance rule looks through their record and
-  resolves the carried tags as before. `tag-m5c`/`call-m5c` given an explicit
-  `--input-frame` write the legacy tags in the frame their output resolves.
+Pass-through tools (`dedup`, `pair`, `merge`, `tag-m5c`, `call-m5c`,
+`tag-consensus`, `strand-rescue-annotate`) copy annotations unchanged and
+add `coord=molecular (footprint tags carried over from the input)` to their
+own `@PG` `DS` when the tags they carried are molecular by this rule. They
+are supported on FiberHMM 3.0 output, whose header declares the frame. On
+pre-3.0 or header-stripped BAMs, re-call with 3.0 first. Every command that
+reads or carries footprint annotations prints one warning per input file
+whose header gives no frame evidence (`warn_if_frames_unverifiable`).
 
 Consensus's stricter check looks through pass-through records.
 

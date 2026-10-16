@@ -162,6 +162,8 @@ def run_merge(in_bam, out_bam, prob_threshold=0, pairs_only=False, io_threads=4,
               nuc_recall_policy='conservative',
               derived_tf_max_edge_ambiguity=12, use_m5c=None,
               cpg_mask_policy=None, tool='fiberhmm-merge'):
+    from fiberhmm.io.annotation_frame import warn_if_frames_unverifiable
+    warn_if_frames_unverifiable(str(in_bam) if in_bam is not None else None)
     t0 = time.time()
     ctx = None
     if recall:

@@ -2661,6 +2661,8 @@ def run_qc(
     ``use_m5c``/``cpg_mask_policy`` set the light call's DddA CpG mask as in
     ``fiberhmm-call`` (default: on for DddA).
     """
+    from fiberhmm.io.annotation_frame import warn_if_frames_unverifiable
+    warn_if_frames_unverifiable(str(input_path) if input_path is not None else None)
     sampled = sample_bam_reads(
         input_path,
         sample_reads=sample_reads,

@@ -374,3 +374,22 @@ def test_strand_rescue_report_loads_ma_by_the_header_rule(tmp_path, monkeypatch)
         cli.main(['-i', str(path), '--preset', 'dddb', '--region', 'chr1:1000-1400',
                   '-o', str(tmp_path / 'sr.json')])
     assert seen['ma_annotation_frame'] == 'auto'
+
+
+def test_m5c_group_on_a_fibertools_read_keeps_its_native_footprints():
+    """call-m5c --tag-mode locus / tag-m5c on fibertools output: the new MA
+    (which wins over Ma) carries the native groups in place."""
+    from fiberhmm.cli.extract_tags import _ma_parse_options, _parse_all_ma_annotations, resolve_extract_frames
+    from fiberhmm.daf.m5c import add_m5c_ma_tag
+
+    with pysam.AlignmentFile(str(FX / 'ft0.13_addnuc_fire.bam')) as bam:
+        header = bam.header
+        frames = resolve_extract_frames(header)
+        for read in bam:
+            before = _parse_all_ma_annotations(read, **_ma_parse_options(frames))
+            add_m5c_ma_tag(read, [(100, 200)])
+            after = _parse_all_ma_annotations(read, **_ma_parse_options(frames))
+            for name in ('nuc', 'msp', 'fire'):
+                key = lambda a: (a['start'], a['length'], tuple(a['quals']))
+                assert sorted(map(key, after[name])) == sorted(map(key, before[name])), (read.query_name, name)
+            assert [(a['start'], a['length']) for a in after['ddda_mcg']] == [(100, 100)]

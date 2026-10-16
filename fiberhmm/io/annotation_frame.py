@@ -333,22 +333,17 @@ def append_coord_to_ds(ds: str, frame: Optional[str]) -> str:
 
 
 def pass_through_frame(header, explicit=None) -> Optional[str]:
-    """The frame a pass-through tool may record in its own @PG for the
-    footprint tags it copies from ``header``'s BAM: ``'molecular'`` only when
-    the header already declares ``coord=molecular``, else ``None``.
+    """Frame of the footprint tags a tool copies from ``header``'s BAM.
 
-    A pass-through record must not change how any annotation it carries is
-    read. Recording ``coord=molecular`` on a header without the declaration
-    would turn its SEQ-frame MA groups (and, without other evidence, its
-    '+'/'-' groups) molecular, so it is not recorded; the provenance rule
-    looks through the record and resolves the carried tags as before.
-    ``explicit`` (a tool's own legacy-frame choice) does not change this:
-    such a tool expresses its legacy tags in the frame the output resolves
-    (``frame_carry.carry_legacy_into``).
+    ``explicit`` is the tool's own frame choice when it has one (``True`` /
+    ``'molecular'``, ``False`` / ``'query'`` / ``'seq'``); ``None`` or
+    ``'auto'`` uses the provenance rule (:func:`legacy_tag_frame`).
     """
-    if ma_annotation_frame(header) == MOLECULAR:
+    if explicit in (True, MOLECULAR):
         return MOLECULAR
-    return None
+    if explicit in (False, SEQ, 'query'):
+        return SEQ
+    return legacy_tag_frame(header)[0]
 
 
 AMBIGUOUS_FRAME_HELP = (
@@ -517,14 +512,89 @@ def auto_legacy_frame(header, tool: Optional[str] = None):
     """``--input-frame auto`` for tools taking a per-read frame (tag-m5c,
     call-m5c): ``True``/``False`` when the header decides (exactly
     :func:`legacy_tag_frame`), ``None`` when it is undecided, or a per-read
-    :class:`LegacyFrame` when the header has no evidence (warns on stderr
-    when ``tool`` is given)."""
+    :class:`LegacyFrame` when the header has no evidence (the caller warns
+    once per input file: :func:`warn_if_frames_unverifiable`)."""
     resolver = LegacyFrame(header)
     if resolver.assumed:
-        if tool:
-            import sys
-            print(resolver.warning(tool), file=sys.stderr)
         return resolver
     if resolver.frame is None:
         return None
     return resolver.frame == MOLECULAR
+
+
+# ---------------------------------------------------------------------------
+# One warning per input file whose header gives no frame evidence
+# ---------------------------------------------------------------------------
+
+UNVERIFIABLE_FRAME_WARNING = (
+    "warning: {path}: header has no FiberHMM/fibertools provenance, so "
+    "footprint coordinates on reverse reads can't be confirmed; re-call with "
+    "FiberHMM 3.0 (or pass --input-frame where available)")
+_WARNED_PATHS: set = set()
+_CHECKED_PATHS: set = set()
+
+
+def read_has_frame_dependent_annotations(read) -> bool:
+    """Whether ``read`` carries footprint annotations whose frame depends on
+    the header: legacy ns/nl or as/al arrays, or MA groups other than m5C
+    (always molecular). fibertools ``Ma`` is always molecular."""
+    try:
+        for start_tag, length_tag in (("ns", "nl"), ("as", "al")):
+            if read.has_tag(start_tag) and read.has_tag(length_tag):
+                value = read.get_tag(start_tag)
+                if hasattr(value, "__len__") and len(value):
+                    return True
+        if read.has_tag("MA"):
+            for group in str(read.get_tag("MA")).split(";")[1:]:
+                head, _, body = group.partition(":")
+                match = _MA_GROUP_HEAD_RE.match(head)
+                if match and match.group(1) not in M5C_GROUPS and body.strip(","):
+                    return True
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return False
+    return False
+
+
+def warn_if_frames_unverifiable(path, header=None, *, scan_records: int = 5000,
+                                stream=None) -> bool:
+    """Print :data:`UNVERIFIABLE_FRAME_WARNING` once per input file (per
+    process) when its header gives no frame evidence and its first
+    ``scan_records`` records carry frame-dependent footprint annotations.
+
+    Only a warning: nothing is changed. A header with any frame evidence, a
+    file without such annotations (raw aligned reads), stdin (``'-'``, which
+    cannot be peeked) and unreadable paths are silent. Returns whether it
+    warned."""
+    import os
+    import sys
+
+    if path in (None, "-") or not isinstance(path, (str, os.PathLike)):
+        return False
+    try:
+        key = os.path.realpath(os.fspath(path))
+    except (TypeError, ValueError):
+        return False
+    if key in _WARNED_PATHS or key in _CHECKED_PATHS or not os.path.isfile(key):
+        return False
+    _CHECKED_PATHS.add(key)       # each file is scanned at most once per process
+    try:
+        from pysam.libcalignmentfile import AlignmentFile
+
+        with AlignmentFile(key, check_sq=False) as bam:
+            if header_has_frame_evidence(header if header is not None else bam.header):
+                return False
+            found = False
+            for index, read in enumerate(bam.fetch(until_eof=True)):
+                if index >= scan_records:
+                    break
+                if read_has_frame_dependent_annotations(read):
+                    found = True
+                    break
+    except (OSError, ValueError):
+        return False
+    if not found:
+        return False
+    _WARNED_PATHS.add(key)
+    print(UNVERIFIABLE_FRAME_WARNING.format(path=os.fspath(path)),
+          file=stream if stream is not None else sys.stderr)
+    return True

@@ -1172,7 +1172,8 @@ def _resolve_input_molecular_frame(args, header) -> bool:
     resolver = LegacyFrame(header)
     if resolver.assumed:
         _UNDECIDED_FRAME['assumed'] = True
-        print(resolver.warning('fiberhmm-recall-tfs'), file=sys.stderr)
+        from fiberhmm.io.annotation_frame import warn_if_frames_unverifiable
+        warn_if_frames_unverifiable(getattr(args, 'in_bam', None), header)
     if frame is None:
         # Only reads with ns/nl/as/al need the frame (fibertools Ma is always
         # molecular), so the run stops at the first such read (_make_payload).

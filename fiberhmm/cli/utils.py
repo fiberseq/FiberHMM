@@ -425,9 +425,8 @@ def _process_reference_bam(bam_path, max_context, args):
         if legacy_frame.frame is None and not legacy_frame.assumed:
             raise ValueError(f"cannot tell the coordinate frame of {bam_path}'s ns/nl "
                              f"tags: {legacy_frame.reason}; split a merged BAM by input")
-        if legacy_frame.assumed:
-            print(legacy_frame.warning('fiberhmm-utils transfer').replace(
-                ' Pass --input-frame to decide it.', ''), file=sys.stderr)
+        from fiberhmm.io.annotation_frame import warn_if_frames_unverifiable
+        warn_if_frames_unverifiable(bam_path, bam.header)
         pbar = tqdm(bam.fetch(), desc="Processing reference BAM")
 
         for read in pbar:

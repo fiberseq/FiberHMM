@@ -140,6 +140,8 @@ def _reference_interval(read, annotation: Mapping[str, object], ma_read_length: 
 
 
 def audit_bam(path: str, *, max_errors: int = 100) -> dict:
+    from fiberhmm.io.annotation_frame import warn_if_frames_unverifiable
+    warn_if_frames_unverifiable(str(path) if path is not None else None)
     candidate = Path(path).expanduser().resolve()
     if not candidate.is_file():
         raise ValueError(f"missing BAM: {candidate}")

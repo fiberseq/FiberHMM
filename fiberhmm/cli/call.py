@@ -964,6 +964,8 @@ def _refuse_call_path_aliases(args, apply_model_path=None, recall_model_path=Non
 
 
 def _main(args):
+    from fiberhmm.io.annotation_frame import warn_if_frames_unverifiable
+    warn_if_frames_unverifiable(str(args.input) if args.input is not None else None)
     stdout_mode = (args.output == '-')
     using_bundled_model = args.model is None
 

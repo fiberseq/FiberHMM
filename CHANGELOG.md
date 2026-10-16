@@ -33,11 +33,15 @@
   (`--no-legacy-tags`) and `-recall-tfs`/`-nucs` (preserved `MA` groups such
   as `tf_sr` and `deam`, kept legacy tags, uncalled reads) declare molecular
   output and now convert what they carry from the input's frame; on reverse
-  reads of FiberHMM 2.12 or `@PG`-stripped BAMs these were mirrored.
-  Pass-through tools (`dedup`, `pair`, `merge`, `tag-m5c`, `call-m5c`,
-  `tag-consensus`, `strand-rescue-annotate`) no longer add a
-  `coord=molecular` declaration the input lacks, which changed the meaning of
-  its `MA` (for example consensus-exported fibertools footprints).
+  reads of FiberHMM 2.12 or `@PG`-stripped BAMs these were mirrored. On
+  3.0 output their results are unchanged.
+- `fiberhmm-tag-m5c` and `fiberhmm-call-m5c --tag-mode locus` on fibertools
+  output keep its native `Ma` footprints: the `MA` they create (which wins
+  over `Ma`) now carries them.
+- Every command that reads or carries footprint annotations prints one
+  warning per input file whose header has no FiberHMM/fibertools provenance
+  (stripped `@PG`, no `coord=molecular` marker): its reverse-read coordinates
+  cannot be confirmed. Results are unchanged.
 - The QC that `fiberhmm-call` runs after calling follows `--no-use-m5c` and
   `--cpg-mask-policy` for the sampled reads it calls itself.
 - Writing apply tags without footprints keeps the `hl:i:1` marker on reads
@@ -49,6 +53,13 @@
   `fiberhmm-call-m5c: error:` line, as `fiberhmm-tag-m5c` does.
 - `fiberhmm-check` describes the 2.x Nanopore Hia5 and pre-3.0 DddB tables
   as earlier emission tables. Its findings are unchanged.
+
+### Supported inputs
+
+- Standalone pass-through tools (`fiberhmm-dedup`, `-pair`, `-merge`,
+  `-tag-m5c`, `-call-m5c`, `-tag-consensus`, `-strand-rescue-annotate`) are
+  supported on FiberHMM 3.0 output. On pre-3.0 or header-stripped BAMs,
+  re-call with FiberHMM 3.0 first.
 
 ### Documentation
 

@@ -1525,14 +1525,15 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
 
     with pysam.AlignmentFile(input_bam, 'rb', check_sq=False) as bam:
         frames = resolve_extract_frames(bam.header, input_frame)
+    if set(extract_types) & {'nucleosome', 'msp', 'tf', 'm5c', 'bothstrand'}:
+        from fiberhmm.io.annotation_frame import warn_if_frames_unverifiable
+        warn_if_frames_unverifiable(input_bam)
     if 'nucleosome' in extract_types or 'msp' in extract_types:
         # Only these fall back to legacy ns/nl/as/al.
         from fiberhmm.io.annotation_frame import ambiguous_frame_message
         if frames['legacy'] is None:
             raise ExtractFrameError(ambiguous_frame_message(frames['legacy_reason']))
-        if frames['legacy_warning']:
-            print(frames['legacy_warning'], file=sys.stderr)
-        elif input_frame == 'auto':
+        if input_frame == 'auto' and not frames['legacy_dot_molecular']:
             print(f"Legacy ns/nl/as/al frame: {frames['legacy']} ({frames['legacy_reason']})")
 
     # Get regions

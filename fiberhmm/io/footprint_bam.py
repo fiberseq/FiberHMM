@@ -316,6 +316,8 @@ def load_footprint_molecules_from_bam(
     error.  DAF callers using the escape hatch should subsequently replace the
     provisional alignment stratum with one inferred from assay evidence.
     """
+    from fiberhmm.io.annotation_frame import warn_if_frames_unverifiable
+    warn_if_frames_unverifiable(str(input_bam) if input_bam is not None else None)
 
     if isinstance(min_mapq, bool) or not isinstance(min_mapq, int) or min_mapq < 0:
         raise BamFootprintInputError("min_mapq must be a non-negative integer")

@@ -221,17 +221,26 @@ def test_without_evidence_legacy_tags_follow_dot_footprints_only():
     assert got["qc_msps"] == [[300, 200, 200]] and got["recall"]["frame"] is False
 
 
-def test_no_evidence_warns(capsys):
+def test_no_evidence_warns(capsys, tmp_path, monkeypatch):
+    """Without header evidence the per-read rule applies, and the shared
+    per-file warning (annotation_frame.warn_if_frames_unverifiable) is
+    printed once for an input that carries footprints."""
     from types import SimpleNamespace
 
     from fiberhmm.cli import recall_tfs
+    from fiberhmm.io import annotation_frame as af
     from fiberhmm.io.annotation_frame import LegacyFrame, auto_legacy_frame
 
+    monkeypatch.setattr(af, "_WARNED_PATHS", set())
+    monkeypatch.setattr(af, "_CHECKED_PATHS", set())
     hd = {"HD": {"VN": "1.6"}, "SQ": SQ}
-    recall_tfs._resolve_input_molecular_frame(SimpleNamespace(input_frame="auto"), hd)
-    assert "assumed SEQ" in capsys.readouterr().err
+    path = tmp_path / "stripped.bam"
+    with pysam.AlignmentFile(str(path), "wb", header=hd) as out:
+        out.write(make_read(hd, READS["legacy_only"], True))
+    recall_tfs._resolve_input_molecular_frame(
+        SimpleNamespace(input_frame="auto", in_bam=str(path)), hd)
+    assert "header has no FiberHMM/fibertools provenance" in capsys.readouterr().err
     assert isinstance(auto_legacy_frame(hd, "fiberhmm-tag-m5c"), LegacyFrame)
-    assert "fiberhmm-tag-m5c: warning" in capsys.readouterr().err
     # Evidence: no warning, and m5C readers keep a plain bool.
     with_chain = dict(hd, PG=[HIST_CALL_212])
     assert auto_legacy_frame(with_chain, "fiberhmm-tag-m5c") is False

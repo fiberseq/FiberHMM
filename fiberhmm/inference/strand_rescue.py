@@ -1282,6 +1282,8 @@ def load_region_evidence(
     recaller can select ``nuc_sr`` to test the current consensus-shadow block
     without mutating or silently substituting the ordinary call layer.
     """
+    from fiberhmm.io.annotation_frame import warn_if_frames_unverifiable
+    warn_if_frames_unverifiable(str(bam_path) if bam_path is not None else None)
     if ma_annotation_frame not in ('auto', 'seq', 'molecular'):
         raise ValueError('Unknown MA annotation frame')
     if not tf_layer or "," in tf_layer or ":" in tf_layer:

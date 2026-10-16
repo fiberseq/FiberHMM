@@ -113,6 +113,8 @@ def run_pairing(in_bam: str, out_bam: str, reference_path: Optional[str],
     provided for analyses that require every accepted pair to have direct A/T
     support. ``sequence-free`` is retained internally for validation replay.
     """
+    from fiberhmm.io.annotation_frame import warn_if_frames_unverifiable
+    warn_if_frames_unverifiable(str(in_bam) if in_bam is not None else None)
     started = time.time()
     if pairing_mode not in {"hybrid", "sequence-only", "sequence-free"}:
         raise ValueError(f"unsupported pairing mode: {pairing_mode!r}")

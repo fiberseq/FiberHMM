@@ -146,16 +146,14 @@ def main(argv=None):
     args = parse_args(argv)
     _check_paths(args)
     from fiberhmm.cli.tag_m5c import _preflight_input
-    from fiberhmm.io.annotation_frame import LegacyFrame
+    from fiberhmm.io.annotation_frame import warn_if_frames_unverifiable
     for input_path in args.input:
         _preflight_input(input_path)
         # Observations take each input's frame per read (daf.m5c); say so
         # when an input's header gives no frame evidence.
-        with pysam.AlignmentFile(input_path, "rb", check_sq=False) as source:
-            warning = LegacyFrame(source.header).warning(
-                f"fiberhmm-call-m5c ({input_path})")
-        if warning:
-            print(warning, file=sys.stderr)
+        warn_if_frames_unverifiable(input_path)
+    if args.tag_bam:
+        warn_if_frames_unverifiable(args.tag_bam)
     if (args.window <= 0 or args.chunk_bp <= 0 or
             args.min_other < 1 or args.min_cpg < 1):
         raise SystemExit(
@@ -320,7 +318,7 @@ def _write_outputs(args, staged, domains, factors, total_observations,
                     # auto: the shared provenance rule; an undecided header
                     # keeps the coord=molecular-marker fallback in daf.m5c.
                     from fiberhmm.io.annotation_frame import auto_legacy_frame
-                    resolved = auto_legacy_frame(source.header, "fiberhmm-call-m5c")
+                    resolved = auto_legacy_frame(source.header)
                     if resolved is not None:
                         tag_input_frame = resolved
                 carried_frame = pass_through_frame(
