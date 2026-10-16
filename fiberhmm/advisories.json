@@ -437,7 +437,7 @@
     "models/dddb_nanopore.json"
    ],
    "first_commit": "497618320a54c559b73b3b0312674d5433b63dc1",
-   "last_commit": "b68c9cba087c7db0e90836e70674274e5ebd0ca6",
+   "last_commit": "b7bebecda3e2a63254a5b2869e6f4bc46523cd2b",
    "releases": [
     "3.0.0"
    ]
@@ -465,7 +465,7 @@
     "models/legacy/dddb_nanopore_gt_swapped_legacy.json"
    ],
    "first_commit": "d047c4df9ced4c49b2ebe10184f337cb48fff613",
-   "last_commit": "b68c9cba087c7db0e90836e70674274e5ebd0ca6",
+   "last_commit": "b7bebecda3e2a63254a5b2869e6f4bc46523cd2b",
    "releases": [
     "2.0.0",
     "2.1.0",
@@ -533,7 +533,7 @@
     "models/hia5_nanopore.json"
    ],
    "first_commit": "2397fcf8d300ae77b655cdf94bb2e36b7dd7f602",
-   "last_commit": "b68c9cba087c7db0e90836e70674274e5ebd0ca6",
+   "last_commit": "b7bebecda3e2a63254a5b2869e6f4bc46523cd2b",
    "releases": [
     "3.0.0"
    ]
@@ -561,7 +561,7 @@
     "models/legacy/hia5_nanopore_gt_swapped_legacy.json"
    ],
    "first_commit": "0d53ea62bb085dbcb8d498985ed22ed8fdbdba53",
-   "last_commit": "b68c9cba087c7db0e90836e70674274e5ebd0ca6",
+   "last_commit": "b7bebecda3e2a63254a5b2869e6f4bc46523cd2b",
    "releases": [
     "2.9.1",
     "2.9.2",
@@ -6219,7 +6219,41 @@
     "cecdbf146bf8cb79930cbb9131112de1d7dfead0",
     "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
    ]
+  },
+  "00682d3464ad5b3662aaa842b9644fd4f6e1214d": {
+   "version": "3.0.1",
+   "contains": [
+    "011d6924060ddba5de8a51642e96a0d3f7bb9305",
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "6d94c0f77838537b35750e657c43653d211c234d",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "cecdbf146bf8cb79930cbb9131112de1d7dfead0",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "b7bebecda3e2a63254a5b2869e6f4bc46523cd2b": {
+   "version": "3.0.1",
+   "contains": [
+    "011d6924060ddba5de8a51642e96a0d3f7bb9305",
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "6d94c0f77838537b35750e657c43653d211c234d",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "cecdbf146bf8cb79930cbb9131112de1d7dfead0",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
   }
  },
- "commits_through": "b68c9cba087c7db0e90836e70674274e5ebd0ca6"
+ "commits_through": "b7bebecda3e2a63254a5b2869e6f4bc46523cd2b"
 }
