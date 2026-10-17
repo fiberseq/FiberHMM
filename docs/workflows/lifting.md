@@ -28,7 +28,7 @@ Everything that depends on the source alignment is repaired:
 | Lifted as | Repaired |
 |---|---|
 | supplementary alignments lose `0x800` and become extra primaries | `FLAG` restored from the source (one primary per read) |
-| hard clips are dropped (`649M1845H` → `649M`) | hard-clipped supplementaries get the clipped bases from their primary before the lift, as soft clips; one whose primary is not in the input is left out and counted |
+| hard clips are dropped (`649M1845H` → `649M`) | hard-clipped supplementaries get the clipped bases from their primary before the lift, as soft clips, with `MM`/`ML` re-encoded on the filled sequence and footprint coordinates moved onto the whole molecule; one whose primary is not in the input, or whose footprint coordinates cannot be told apart as partial or whole-molecule, is left out and counted |
 | `st` keeps its value on reads that change strand | `st` switched `CT` ↔ `GA` (DAF readers otherwise see no deamination) |
 | footprint tags in SEQ frame (FiberHMM ≤ 2.12) end up mirrored on those reads | converted to molecular frame before the lift |
 | `MD`, `NM`, `SA` describe the source alignment | recomputed against `--target-fasta` (`samtools calmd`; `SA` rebuilt from the lifted parts); without it they are removed |
@@ -60,7 +60,8 @@ fiberhmm-lift --repair-only -i lifted.bam --source calls.hg002_mat.bam \
 Each lifted record is matched one-to-one with its source record (same read
 name and sequence; the aligned part of the molecule decides between
 supplementaries). Records that match no source record, or several equally
-well, are dropped and counted.
+well (checked again each time a source record is taken), are dropped and
+counted.
 Hard clips the lift dropped are added back as hard clips.
 
 ## BED12 tracks

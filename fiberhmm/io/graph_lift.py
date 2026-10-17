@@ -70,7 +70,7 @@ from __future__ import annotations
 import array
 import os
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field, asdict
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -146,6 +146,8 @@ class StashStats:
     dropped_unmapped: int = 0
     filled_supplementary: int = 0
     excluded_supplementary: int = 0
+    excluded_undecidable_annotations: int = 0
+    mods_unverified: int = 0
     hard_clipped_kept: int = 0
     frame_converted: int = 0
 
@@ -176,63 +178,18 @@ def _require_legacy_frame(read) -> None:
 
 
 # --- base modifications (MM/ML) ----------------------------------------------------
+#
+# Decoding is pysam's (htslib's), which accepts the whole SAMtags grammar:
+# multi-letter, upper-case and ChEBI codes, N+ groups, and MM without ML.
+# The modes ('.', '?') and the group order come from the MM heads.
 
-_MM_HEAD = re.compile(r"^([ACGTUN])([+-])([a-z]+|\d+)([.?]?)$")
+_MM_HEAD = re.compile(r"^([ACGTUN])([+-])([A-Za-z]+|\d+)([.?]?)$")
 
 
 def _mod_candidates(seq: str, base: str) -> List[int]:
     if base == "N":
         return list(range(len(seq)))
     return [i for i, b in enumerate(seq) if b.upper() == base]
-
-
-def decode_mods(mm: str, ml, seq: str) -> Optional[list]:
-    """MM/ML against ``seq`` (original read orientation) as
-    ``[(base, strand, codes, mode, [(pos, [ml per code]), ...]), ...]``, or
-    None when they do not fit ``seq``."""
-    groups, ml = [], list(ml or [])
-    cursor = 0
-    for chunk in str(mm).split(";"):
-        if not chunk:
-            continue
-        head, *deltas = chunk.split(",")
-        match = _MM_HEAD.match(head)
-        if not match:
-            return None
-        base, strand, codes, mode = match.groups()
-        n_codes = 1 if codes.isdigit() else len(codes)
-        cands = _mod_candidates(seq, base)
-        calls, index = [], -1
-        for delta in deltas:
-            index += int(delta) + 1
-            if index >= len(cands):
-                return None
-            calls.append((cands[index], ml[cursor:cursor + n_codes]))
-            cursor += n_codes
-        groups.append((base, strand, codes, mode, calls))
-    if cursor > len(ml):
-        return None
-    return groups
-
-
-def encode_mods(groups: list, seq: str) -> Tuple[str, array.array, int]:
-    """``(MM, ML, dropped)`` of decoded ``groups`` on ``seq``; calls whose
-    base in ``seq`` is no longer the group's base are dropped."""
-    mm_parts, ml, dropped = [], array.array("B"), 0
-    for base, strand, codes, mode, calls in groups:
-        cands = _mod_candidates(seq, base)
-        rank = {pos: k for k, pos in enumerate(cands)}
-        deltas, previous = [], -1
-        for pos, values in sorted(calls):
-            k = rank.get(pos)
-            if k is None:
-                dropped += 1
-                continue
-            deltas.append(str(k - previous - 1))
-            previous = k
-            ml.extend(int(v) for v in values)
-        mm_parts.append(f"{base}{strand}{codes}{mode}" + "".join("," + d for d in deltas) + ";")
-    return "".join(mm_parts), ml, dropped
 
 
 def _mod_tags(read) -> Optional[Tuple[str, str]]:
@@ -242,6 +199,76 @@ def _mod_tags(read) -> Optional[Tuple[str, str]]:
     return None
 
 
+def decode_mods(read) -> Optional[dict]:
+    """The record's base modifications in original read orientation, or None
+    when it has none.
+
+    ``{'names': (MM, ML), 'has_ml': bool, 'groups': [(base, strand, code,
+    mode, [(pos, ml), ...]), ...]}`` (one group per code, in MM order), or
+    ``{'names': ..., 'groups': None}`` when htslib cannot decode them against
+    this record's SEQ."""
+    names = _mod_tags(read)
+    if names is None:
+        return None
+    info = {"names": names, "has_ml": read.has_tag(names[1]), "groups": None}
+    heads = []
+    for chunk in str(read.get_tag(names[0])).split(";"):
+        if not chunk:
+            continue
+        match = _MM_HEAD.match(chunk.split(",", 1)[0])
+        if not match:
+            return info
+        base, strand, codes, mode = match.groups()
+        for code in ([int(codes)] if codes.isdigit() else list(codes)):
+            heads.append((base, strand, code, mode or "."))
+    try:
+        decoded = read.modified_bases_forward
+    except (ValueError, KeyError):
+        decoded = None
+    if decoded is None:
+        return info
+    groups = []
+    for base, strand, code, mode in heads:
+        calls = decoded.get((base, 0 if strand == "+" else 1, code), [])
+        groups.append((base, strand, code, mode, [(int(p), int(q)) for p, q in calls]))
+    info["groups"] = groups
+    return info
+
+
+def encode_mods(groups: list, seq: str, has_ml: bool = True) -> Tuple[str, array.array, int]:
+    """``(MM, ML, dropped)`` of decoded ``groups`` on ``seq`` (original
+    orientation); calls whose base in ``seq`` is no longer the group's base
+    are dropped."""
+    mm_parts, ml, dropped = [], array.array("B"), 0
+    for base, strand, code, mode, calls in groups:
+        rank = {pos: k for k, pos in enumerate(_mod_candidates(seq, base))}
+        deltas, previous = [], -1
+        for pos, value in sorted(calls):
+            k = rank.get(pos)
+            if k is None:
+                dropped += 1
+                continue
+            deltas.append(str(k - previous - 1))
+            previous = k
+            if has_ml:
+                ml.append(max(0, min(255, int(value))))
+        mm_parts.append(f"{base}{strand}{code}{mode}" + "".join("," + d for d in deltas) + ";")
+    return "".join(mm_parts), ml, dropped
+
+
+def _candidate_sets(groups, seq):
+    return [tuple(_mod_candidates(seq, g[0])) for g in groups]
+
+
+def _legacy_values(read) -> dict:
+    out = {}
+    for start_tag, length_tag in (("ns", "nl"), ("as", "al")):
+        if read.has_tag(start_tag) and read.has_tag(length_tag):
+            out[start_tag] = (tuple(int(v) for v in read.get_tag(start_tag)),
+                              tuple(int(v) for v in read.get_tag(length_tag)))
+    return out
+
+
 def _primary_info(read) -> dict:
     seq = read.query_sequence or ""
     quals = read.query_qualities
@@ -249,12 +276,8 @@ def _primary_info(read) -> dict:
     mol_qual = None
     if quals is not None:
         mol_qual = list(quals)[::-1] if read.is_reverse else list(quals)
-    mods = None
-    names = _mod_tags(read)
-    if names and not (read.has_tag("MN") and int(read.get_tag("MN")) != len(seq)):
-        ml = read.get_tag(names[1]) if read.has_tag(names[1]) else []
-        mods = (names, decode_mods(read.get_tag(names[0]), ml, mol_seq))
-    return {"seq": mol_seq, "qual": mol_qual, "mods": mods}
+    return {"seq": mol_seq, "qual": mol_qual, "mods": decode_mods(read),
+            "legacy": _legacy_values(read)}
 
 
 def _shift_ma(value: str, offset: int, total: int) -> str:
@@ -272,44 +295,78 @@ def _shift_ma(value: str, offset: int, total: int) -> str:
     return ";".join(out)
 
 
-def _shift_annotations(read, offset: int, partial: int, total: int) -> None:
-    """Move molecular-frame annotations of a partial (hard-clipped) record
-    onto the whole molecule: MA/Ma intervals whose stated length is the
-    partial one, and legacy ns/as (unless an MA says the record already
-    used whole-molecule coordinates)."""
-    whole = False
+def _annotation_plan(read, primary: dict, partial: int, total: int) -> Optional[dict]:
+    """Which annotation families of a hard-clipped record use its own
+    (partial) coordinates and must move, decided per family from its own
+    evidence; None when one cannot be decided.
+
+    ``MA``/``Ma``: the read length each states (partial: move; whole: keep;
+    anything else: undecidable). Legacy ``ns``/``as``: whole when an
+    interval ends beyond the partial SEQ or the values equal the primary's
+    (copied from it); otherwise they follow the read length of ``MA``, which
+    FiberHMM writes with them, else of fibertools' ``Ma``, which fibertools
+    writes with them; with neither, undecidable."""
+    plan = {}
     for tag in ("MA", "Ma"):
-        if not read.has_tag(tag):
-            continue
-        value = str(read.get_tag(tag))
-        try:
-            length = int(value.split(";", 1)[0])
-        except ValueError:
-            continue
-        if length == partial and partial != total:
-            read.set_tag(tag, _shift_ma(value, offset, total), value_type="Z")
-        elif length == total:
-            whole = True
-    if whole or not offset:
-        return
-    for tag in ("ns", "as"):
         if read.has_tag(tag):
+            try:
+                length = int(str(read.get_tag(tag)).split(";", 1)[0])
+            except ValueError:
+                return None
+            if length == partial:
+                plan[tag] = True
+            elif length == total:
+                plan[tag] = False
+            else:
+                return None
+    for start_tag, (starts, sizes) in _legacy_values(read).items():
+        if not starts:
+            continue
+        if max(s + n for s, n in zip(starts, sizes)) > partial:
+            plan[start_tag] = False
+        elif primary.get("legacy", {}).get(start_tag) == (starts, sizes):
+            plan[start_tag] = False
+        elif "MA" in plan:
+            plan[start_tag] = plan["MA"]
+        elif "Ma" in plan:
+            plan[start_tag] = plan["Ma"]
+        else:
+            return None
+    return plan
+
+
+def _apply_annotation_plan(read, plan: dict, offset: int, total: int) -> None:
+    for tag, move in plan.items():
+        if not move:
+            continue
+        if tag in ("MA", "Ma"):
+            read.set_tag(tag, _shift_ma(str(read.get_tag(tag)), offset, total), value_type="Z")
+        else:
             read.set_tag(tag, array.array("I", [int(v) + offset for v in read.get_tag(tag)]))
 
 
-def fill_hard_clips(read, primary: dict) -> Optional[str]:
+ANNOTATION_UNDECIDABLE = "annotation coordinates undecidable"
+
+
+def fill_hard_clips(read, primary: dict, notes: Optional[Dict[str, int]] = None) -> Optional[str]:
     """Fill a hard-clipped record's clipped bases from its primary, as soft clips.
 
     ``primary`` is :func:`_primary_info` of the primary record (molecular
     orientation). The record keeps its own aligned SEQ: DAF R/Y encoding is
     per record, and the primary's copy of those bases (soft-clipped or aligned
     elsewhere) does not carry this alignment's deaminations. Only the clipped
-    flanks come from the primary. Base modifications are re-encoded on the
-    final SEQ from decoded positions (the primary's when it has them, else the
-    record's own, shifted, with unlisted bases unknown), so a call stays on its
-    base; calls on bases that are no longer the modified base (C -> Y) are
-    dropped. Footprint annotations move with the molecule offset. Returns None
-    on success, else why it could not be filled (the record is unchanged)."""
+    flanks come from the primary.
+
+    Base modifications are re-encoded on the final SEQ from decoded
+    positions: the primary's when it has them, else the record's own --
+    kept as they are when its MN says they already describe the whole
+    molecule, else moved by the molecule offset with mode '?' (the filled
+    bases are not known to be unmodified). Calls on bases that are no longer
+    the modified base (C -> Y) are dropped. Tags htslib cannot decode are
+    kept unchanged and counted in ``notes['mods_unverified']``.
+
+    Footprint annotations move per :func:`_annotation_plan`. Returns None on
+    success, else why the record could not be filled (it is unchanged)."""
     left, right = _hard_clips(read)
     if not (left or right):
         return None
@@ -321,14 +378,13 @@ def fill_hard_clips(read, primary: dict) -> Optional[str]:
     full = revcomp(mol) if read.is_reverse else mol
     if not _bases_agree(full[left:left + len(seq)], seq):
         return "primary SEQ does not match the supplementary"
+    plan = _annotation_plan(read, primary, len(seq), total)
+    if plan is None:
+        return ANNOTATION_UNDECIDABLE
     # Molecule offset of this record's own bases.
     offset = right if read.is_reverse else left
-    own_mol = revcomp(seq) if read.is_reverse else seq
-    own_names = _mod_tags(read)
-    own_mods = None
-    if own_names and not (read.has_tag("MN") and int(read.get_tag("MN")) == total):
-        ml = read.get_tag(own_names[1]) if read.has_tag(own_names[1]) else []
-        own_mods = decode_mods(read.get_tag(own_names[0]), ml, own_mol)
+    own_whole = read.has_tag("MN") and int(read.get_tag("MN")) == total
+    own = None if own_whole else decode_mods(read)
 
     quals = read.query_qualities
     new_qual = None
@@ -348,29 +404,35 @@ def fill_hard_clips(read, primary: dict) -> Optional[str]:
         read.query_qualities = new_qual
     new_mol = revcomp(new_seq) if read.is_reverse else new_seq
 
-    groups, names = None, None
-    if primary["mods"] is not None and primary["mods"][1] is not None:
-        names, groups = primary["mods"]
+    source = primary["mods"]
+    if source is not None and source["groups"] is not None:
+        groups = source["groups"]
         if _candidate_sets(groups, mol) != _candidate_sets(groups, new_mol):
             groups = [(b, s, c, "?", calls) for b, s, c, _m, calls in groups]
-    elif own_mods is not None:
-        names = own_names
+    elif source is not None or (own is not None and own["groups"] is None):
+        if notes is not None:
+            notes["mods_unverified"] = notes.get("mods_unverified", 0) + 1
+        source, groups = None, None        # keep the record's own tags as they are
+    elif own is not None:
+        source = own
         groups = [(b, s, c, "?", [(p + offset, v) for p, v in calls])
-                  for b, s, c, _m, calls in own_mods]
-    for tag in ("MM", "ML", "Mm", "Ml", "MN"):
-        if read.has_tag(tag):
-            read.set_tag(tag, None)
+                  for b, s, c, _m, calls in own["groups"]]
+    else:
+        source, groups = None, None
     if groups is not None:
-        mm, ml, _dropped = encode_mods(groups, new_mol)
+        for tag in ("MM", "ML", "Mm", "Ml", "MN"):
+            if read.has_tag(tag):
+                read.set_tag(tag, None)
+        mm, ml, _dropped = encode_mods(groups, new_mol, source["has_ml"])
+        names = source["names"]
         read.set_tag(names[0], mm, value_type="Z")
-        read.set_tag(names[1], ml)
+        if source["has_ml"]:
+            read.set_tag(names[1], ml)
         read.set_tag("MN", len(new_seq), value_type="i")
-    _shift_annotations(read, offset, len(seq), total)
+    elif own_whole:
+        pass                               # MM/ML/MN describe the filled molecule
+    _apply_annotation_plan(read, plan, offset, total)
     return None
-
-
-def _candidate_sets(groups, seq):
-    return [tuple(_mod_candidates(seq, b)) for b, *_rest in groups]
 
 
 def _stash_tags(read, hard: Optional[str]) -> None:
@@ -421,9 +483,15 @@ def stash_bam(in_path: str, out_path: str, *, threads: int = 1) -> StashStats:
     with pysam.AlignmentFile(in_path, "rb", check_sq=False, threads=threads) as bam, \
             pysam.AlignmentFile(out_path, "wb", header=bam.header, threads=threads) as out:
 
+        notes: Dict[str, int] = {}
+
         def emit_supplementary(read, clips, primary):
-            if fill_hard_clips(read, primary) is not None:
+            reason = fill_hard_clips(read, primary, notes)
+            stats.mods_unverified = notes.get("mods_unverified", 0)
+            if reason is not None:
                 stats.excluded_supplementary += 1
+                if reason == ANNOTATION_UNDECIDABLE:
+                    stats.excluded_undecidable_annotations += 1
                 return
             stats.filled_supplementary += 1
             _stash_tags(read, "S:{},{}".format(*clips))
@@ -491,28 +559,45 @@ def _assign(lifted: list, sources: list) -> Dict[int, Optional[int]]:
     ``lifted``: ``[(index, length, seq_key, span)]``; ``sources``:
     ``[(length, seq_key, span, identity)]``. A pair needs the same SEQ (in
     molecular orientation) and is scored by the overlap of the aligned part of
-    that SEQ. A lifted record whose best score is shared by source records of
-    different identity is ambiguous (None). Returns ``{index: source or None}``
+    that SEQ. Pairs are taken best first, and the ties are re-checked against
+    the sources still free at every step: a lifted record whose best free
+    score is shared by sources of different identity, or whose best source is
+    equally the best of another unassigned lifted record, is ambiguous (None)
+    rather than resolved by input order. Returns ``{index: source or None}``
     for the records that had a candidate at all."""
-    result: Dict[int, Optional[int]] = {}
-    pairs = []
+    options = {}
     for index, length, key, span in lifted:
         scored = [(min(span[1], s[2][1]) - max(span[0], s[2][0]), j)
                   for j, s in enumerate(sources) if s[0] == length and s[1] == key]
-        if not scored:
-            continue
-        best = max(score for score, _j in scored)
-        top = {sources[j][3] for score, j in scored if score == best}
-        if len(top) > 1:
+        if scored:
+            options[index] = scored
+    result: Dict[int, Optional[int]] = {}
+    used = set()
+    while True:
+        best = {}
+        for index, scored in options.items():
+            if index in result:
+                continue
+            free = [(score, j) for score, j in scored if j not in used]
+            if not free:
+                continue
+            top = max(score for score, _j in free)
+            best[index] = (top, [j for score, j in free if score == top])
+        if not best:
+            break
+        index = max(best, key=lambda i: (best[i][0], -i))
+        top, js = best[index]
+        if len({sources[j][3] for j in js}) > 1:
             result[index] = None
             continue
-        pairs.extend((score, index, j) for score, j in scored)
-    used = set()
-    for score, index, j in sorted(pairs, key=lambda p: -p[0]):
-        if index in result or j in used:
+        rivals = [i for i, (score, others) in best.items()
+                  if i != index and score == top and set(others) & set(js)]
+        if rivals and len(js) == 1:
+            for i in [index, *rivals]:
+                result[i] = None
             continue
-        result[index] = j
-        used.add(j)
+        result[index] = js[0]
+        used.add(js[0])
     return result
 
 
@@ -617,26 +702,42 @@ def is_repair_pg(pg: dict) -> bool:
     return pn == LIFT_PROGRAM or re.match(rf"^{LIFT_PROGRAM}(?:\.\d+)?$", ident) is not None
 
 
+def _pg_key(pg: dict) -> tuple:
+    return tuple(sorted((str(k), str(v)) for k, v in pg.items()))
+
+
 def pending_lift_indices(pgs: List[dict], source_pgs: Optional[List[dict]] = None) -> List[int]:
     """Indices of the @PG lines of a lift that no fiberhmm-lift has repaired.
 
-    With ``source_pgs`` (the @PG lines of the BAM that was lifted), every
-    lift-like line (:func:`is_lift_pg`, or ``PN:vg``) not among them is the
-    new lift's. Without it: lines of a lift are :func:`is_lift_pg` lines,
-    plus bare ``PN:vg`` lines when the header has any. vg writes its line
-    without PP and the repair always gives it one, so a bare vg line without
-    PP is pending; any other lift line is pending unless a fiberhmm-lift @PG
-    descends from it through PP."""
+    With ``source_pgs`` (the @PG lines of the BAM that was lifted), the lift's
+    lines are the lift-like lines (:func:`is_lift_pg`, or ``PN:vg``) that are
+    not copies of a source line, matched as a multiset of whole records
+    (latest copies first: vg puts its own line first), so a native
+    ``ID:0 PN:vg`` root of the source stays history even when the lift adds
+    an identical line.
+
+    Without it: an :func:`is_lift_pg` line is pending unless a fiberhmm-lift
+    @PG descends from it through PP. A bare ``PN:vg`` line (no CL; vg
+    giraffe writes the same) belongs to a pending lift only when one exists,
+    has no PP (the repair always gives the lift's one), and is not the root
+    of other history: of identical-ID bare lines the first is the lift's
+    (vg writes its line at the top), and a single one some other line names
+    as its PP is a native alignment's."""
     if source_pgs is not None:
-        known = [dict(pg) for pg in source_pgs]
-        return [i for i, pg in enumerate(pgs)
-                if (is_lift_pg(pg) or _is_vg(pg)) and dict(pg) not in known]
-    has_lift = any(is_lift_pg(pg) for pg in pgs)
-    lift = {i for i, pg in enumerate(pgs) if is_lift_pg(pg) or (has_lift and _is_vg(pg))}
-    pending = {i for i in lift if _is_vg(pgs[i]) and not pgs[i].get("PP")}
+        remaining = Counter(_pg_key(pg) for pg in source_pgs)
+        new = set()
+        for i in range(len(pgs) - 1, -1, -1):
+            key = _pg_key(pgs[i])
+            if remaining[key] > 0:
+                remaining[key] -= 1
+            else:
+                new.add(i)
+        return [i for i in sorted(new) if is_lift_pg(pgs[i]) or _is_vg(pgs[i])]
+    bare = {i for i, pg in enumerate(pgs)
+            if _is_vg(pg) and not is_lift_pg(pg) and not pg.get("PP")}
     by_id = {}
     for i, pg in enumerate(pgs):
-        if i not in pending:
+        if i not in bare:
             by_id.setdefault(pg.get("ID"), i)
     repaired = set()
     for pg in pgs:
@@ -648,7 +749,17 @@ def pending_lift_indices(pgs: List[dict], source_pgs: Optional[List[dict]] = Non
             seen.add(j)
             parent = pgs[j].get("PP")
         repaired |= seen
-    pending |= {i for i in lift if i not in repaired}
+    pending = {i for i, pg in enumerate(pgs) if is_lift_pg(pg) and i not in repaired}
+    if not pending:
+        return []
+    referenced = {pg.get("PP") for i, pg in enumerate(pgs)
+                  if i not in bare and not is_lift_pg(pg) and not is_repair_pg(pg)}
+    by_bare_id = defaultdict(list)
+    for i in sorted(bare):
+        by_bare_id[pgs[i].get("ID")].append(i)
+    for ident, indices in by_bare_id.items():
+        if len(indices) > 1 or ident not in referenced:
+            pending.add(indices[0])
     return sorted(pending)
 
 
@@ -899,6 +1010,9 @@ def lift_pg_record(*, repair: RepairStats, calmd: bool, mode: str = "lift",
     stash = stash or {}
     parts.append(f"excluded_supplementary={stash.get('excluded_supplementary', 0)}")
     parts.append(f"filled_supplementary={stash.get('filled_supplementary', 0)}")
+    for key in ("excluded_undecidable_annotations", "mods_unverified"):
+        if stash.get(key):
+            parts.append(f"{key}={stash[key]}")
     parts.append(f"dropped_secondary={stash.get('dropped_secondary', 0)}")
     parts.append(f"dropped_unmapped={stash.get('dropped_unmapped', 0)}")
     for key in ("unlifted", "unmatched", "ambiguous"):
@@ -916,20 +1030,33 @@ def lift_pg_record(*, repair: RepairStats, calmd: bool, mode: str = "lift",
 
 
 def _finalize(path: str, out_path: str, *, index: bool) -> None:
-    """Move ``path`` to ``out_path`` (any file system) and index it there.
+    """Publish ``path`` (any file system) at ``out_path`` with its index.
 
-    The BAM is copied next to ``out_path`` under a temporary name and
-    renamed, so a reader never sees a partial output and a failed copy
-    leaves ``path`` in place."""
+    The BAM is moved next to ``out_path`` under a temporary name and indexed
+    there, then published by :func:`fiberhmm.inference.bam_output.
+    commit_output`: stale indexes (``.bai``/``.csi``) are removed, the BAM
+    and its new index never pair with the other's previous generation, and a
+    failure restores the previous output. A failure before publication
+    leaves ``path`` or the staged copy, never a half-published output."""
     import shutil
 
+    from fiberhmm.inference.bam_output import commit_output
+
     final_dir = os.path.dirname(os.path.abspath(out_path))
-    staging = os.path.join(final_dir, f".{os.path.basename(out_path)}.{os.getpid()}.tmp")
+    staging = os.path.join(final_dir, f".{os.path.basename(out_path)}.{os.getpid()}.tmp.bam")
     shutil.move(path, staging)
-    if index:
-        pysam.index(staging, staging + ".bai")
-        os.replace(staging + ".bai", out_path + ".bai")
-    os.replace(staging, out_path)
+    try:
+        if index:
+            pysam.index(staging, staging + ".bai")
+        commit_output(staging, out_path)
+    except BaseException:
+        # Keep the finished BAM where the caller's work dir can be found.
+        if os.path.exists(staging):
+            shutil.move(staging, path)
+        for suffix in (".bai", ".csi"):
+            if os.path.exists(staging + suffix):
+                os.remove(staging + suffix)
+        raise
 
 
 def repair_bam(lifted_path: str, out_path: str, *, work_dir: str,

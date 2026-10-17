@@ -10,6 +10,7 @@ pg-pansn @PG lines.
 from __future__ import annotations
 
 import array
+from pathlib import Path
 
 import pysam
 import pytest
@@ -686,3 +687,160 @@ def test_bed12_single_block_row_takes_the_lifted_strand():
     assert stats.rows_flipped == 1 and out[0].split("\t")[5] == "-"
     out, stats = gl.reassemble_bed12(["tgt\t900\t960\t0|0\t0\t+"], parsed)
     assert stats.rows_flipped == 0 and out[0].split("\t")[5] == "+"
+
+
+# --- audit round 2 -------------------------------------------------------------------
+
+def test_assignment_rechecks_ties_after_a_source_is_taken():
+    lifted = [(0, 300, "k", (0, 100)), (1, 300, "k", (20, 150))]
+    a, b, c = (300, "k", (0, 100), "A"), (300, "k", (100, 200), "B"), (300, "k", (100, 200), "C")
+    for sources in ([a, b, c], [c, b, a]):
+        result = gl._assign(lifted, sources)
+        assert sources[result[0]][3] == "A" and result[1] is None
+
+
+def _hc_supp(tmp_path, name, molecule, supp_tags, primary_tags=(), cigar="4H6M"):
+    src = _write(tmp_path / f"{name}.bam", _source_header(), [
+        lambda h: _read(h, name, seq=molecule, cigar=f"{len(molecule)}M", tags=list(primary_tags)),
+        lambda h: _read(h, name, flag=0x800, pos=500, cigar=cigar, seq=molecule[4:],
+                        tags=list(supp_tags))])
+    stats = gl.stash_bam(src, str(tmp_path / f"{name}.stash.bam"))
+    records, _ = _records(tmp_path / f"{name}.stash.bam")
+    return stats, next((r for r in records if r.is_supplementary), None)
+
+
+def test_each_annotation_family_shifts_on_its_own_evidence(tmp_path):
+    molecule = "ACGTACGTAC"
+    # Whole-molecule legacy tags (they end beyond the 6 stored bases): kept.
+    _s, rec = _hc_supp(tmp_path, "w", molecule, [("ns", array.array("I", [5])),
+                                                 ("nl", array.array("I", [2]))])
+    assert list(rec.get_tag("ns")) == [5]
+    # Partial MA moves, a whole-length Ma stays, ns follows MA (same writer).
+    _s, rec = _hc_supp(tmp_path, "m", molecule, [
+        ("MA", "6;nuc.:2-2", "Z"), ("Ma", "10;nuc.:3-2", "Z"),
+        ("ns", array.array("I", [1])), ("nl", array.array("I", [2]))])
+    assert rec.get_tag("MA") == "10;nuc.:6-2" and rec.get_tag("Ma") == "10;nuc.:3-2"
+    assert list(rec.get_tag("ns")) == [5]
+    # Copied from the primary (same values): whole-molecule, kept.
+    legacy = [("ns", array.array("I", [1])), ("nl", array.array("I", [2]))]
+    _s, rec = _hc_supp(tmp_path, "c", molecule, legacy, primary_tags=legacy)
+    assert list(rec.get_tag("ns")) == [1]
+    # No evidence either way: refused, not guessed.
+    stats, rec = _hc_supp(tmp_path, "u", molecule, legacy)
+    assert rec is None and stats.excluded_undecidable_annotations == 1
+
+
+def test_modification_grammar_survives_filling(tmp_path):
+    def fill(name, primary_tags, supp_tags=()):
+        src = _write(tmp_path / f"{name}.bam", _source_header(), [
+            lambda h: _read(h, name, seq="ACCC", cigar="4M", tags=list(primary_tags)),
+            lambda h: _read(h, name, flag=0x800, pos=500, cigar="1H3M", seq="CCC",
+                            tags=list(supp_tags))])
+        gl.stash_bam(src, str(tmp_path / f"{name}.stash.bam"))
+        records, _ = _records(tmp_path / f"{name}.stash.bam")
+        return next(r for r in records if r.is_supplementary)
+
+    # Upper-case code.
+    rec = fill("u", [("MM", "C+C?,0;", "Z"), ("ML", array.array("B", [200]))])
+    assert rec.modified_bases_forward == {("C", 0, "C"): [(1, 200)]}
+    # ChEBI code, second C.
+    rec = fill("n", [("MM", "C+17596?,1;", "Z"), ("ML", array.array("B", [9]))])
+    assert rec.modified_bases_forward == {("C", 0, 17596): [(2, 9)]}
+    # MM without ML stays without ML.
+    rec = fill("l", [("MM", "C+m?,0;", "Z")])
+    assert rec.get_tag("MM") == "C+m?,0;" and not rec.has_tag("ML")
+    # Whole-molecule supplementary MM (MN = 4), primary without MM: kept.
+    rec = fill("w", [], [("MM", "C+m?,0;", "Z"), ("ML", array.array("B", [200])), ("MN", 4)])
+    assert rec.modified_bases_forward == {("C", 0, "m"): [(1, 200)]} and rec.get_tag("MN") == 4
+    # Undecodable primary MM: the supplementary's own tags are kept, and counted.
+    src = _write(tmp_path / "bad.bam", _source_header(), [
+        lambda h: _read(h, "b", seq="ACCC", cigar="4M",
+                        tags=[("MM", "C+m?,9;", "Z"), ("ML", array.array("B", [1]))]),
+        lambda h: _read(h, "b", flag=0x800, pos=500, cigar="1H3M", seq="CCC",
+                        tags=[("MM", "C+m?,0;", "Z"), ("ML", array.array("B", [7]))])])
+    stats = gl.stash_bam(src, str(tmp_path / "bad.stash.bam"))
+    records, _ = _records(tmp_path / "bad.stash.bam")
+    rec = next(r for r in records if r.is_supplementary)
+    assert stats.mods_unverified == 1 and rec.get_tag("MM") == "C+m?,0;"
+
+
+def test_native_vg_root_survives_lift_repair_and_relift(tmp_path):
+    from fiberhmm.advisories import check_header
+
+    native = {"ID": "0", "PN": "vg"}
+    header = _source_header()
+    header["PG"] = [native, {"ID": "fiberhmm-call", "PN": "fiberhmm-call", "PP": "0",
+                             "VN": "3.0.2", "CL": "fiberhmm-call -i g.bam",
+                             "DS": "coord=molecular"}]
+    src = _write(tmp_path / "v.bam", header, [lambda h: _read(h, "r", seq=_seq(50))])
+    source_pgs = _records(src)[1]["PG"]
+    assert gl.header_lift_state(source_pgs and {"PG": source_pgs}) == {"lift": [],
+                                                                         "repaired": False}
+    current = src
+    for round_ in (1, 2):
+        stashed = tmp_path / f"v{round_}.stash.bam"
+        gl.stash_bam(str(current), str(stashed))
+        pgs_before = _records(current)[1]["PG"]
+        lifted = _fake_lift(stashed, tmp_path / f"v{round_}.lifted.bam")
+        lifted_pgs = _records(lifted)[1]["PG"]
+        for known in (pgs_before, None):
+            state = gl.header_lift_state({"PG": lifted_pgs}, known)
+            assert state["lift"] == ["0", "ft.1", "ft.2"] and not state["repaired"]
+        out = tmp_path / f"v{round_}.out.bam"
+        gl.repair_bam(lifted, str(out), work_dir=str(tmp_path / f"vw{round_}"),
+                      pg_args={"mode": "lift"}, source_pgs=pgs_before)
+        _recs, hdr = _records(out)
+        ids = [pg["ID"] for pg in hdr["PG"]]
+        assert len(ids) == len(set(ids))
+        assert gl.header_lift_state(hdr) == {"lift": [], "repaired": True}
+        assert not [a for a in check_header(hdr) if a.id == "graph-lift-unrepaired"]
+        chain = _walk(hdr["PG"], hdr["PG"][-1]["ID"])
+        assert chain[-2:] == ["fiberhmm-call", "0"] and len(chain) == 2 + 4 * round_
+        current = out
+
+
+def test_finalize_publishes_bam_and_index_together(tmp_path, monkeypatch):
+    from fiberhmm.inference import bam_output
+
+    def bam(name, n):
+        return _write(tmp_path / name, _source_header(),
+                      [lambda h, k=k: _read(h, f"r{k}", pos=10 + k, seq=_seq(50)) for k in range(n)])
+
+    final = tmp_path / "out" / "final.bam"
+    final.parent.mkdir()
+    old = bam("old.bam", 2)
+    import shutil
+    shutil.copy(old, final)
+    pysam.index(str(final))
+    (tmp_path / "out" / "final.bam.csi").write_bytes(b"stale")
+    old_bai = (tmp_path / "out" / "final.bam.bai").read_bytes()
+    old_bam = final.read_bytes()
+
+    # Failure at the BAM's own publication step: the previous pair is restored.
+    real_replace = bam_output.os.replace
+
+    calls = []
+
+    def failing(a, b, *args, **kwargs):
+        if str(b) == str(final) and not calls:      # the publication step only
+            calls.append(b)
+            raise OSError("injected")
+        return real_replace(a, b, *args, **kwargs)
+
+    work = tmp_path / "work"
+    work.mkdir()
+    new = bam("work/new.bam", 3)
+    monkeypatch.setattr(bam_output.os, "replace", failing)
+    with pytest.raises(OSError, match="injected"):
+        gl._finalize(new, str(final), index=True)
+    monkeypatch.setattr(bam_output.os, "replace", real_replace)
+    assert final.read_bytes() == old_bam
+    assert (tmp_path / "out" / "final.bam.bai").read_bytes() == old_bai
+    assert Path(new).exists()                         # the finished BAM is kept
+    assert not list((tmp_path / "out").glob(".final.bam.*tmp*"))
+
+    gl._finalize(new, str(final), index=True)
+    assert len(_records(final)[0]) == 3
+    assert not (tmp_path / "out" / "final.bam.csi").exists()
+    with pysam.AlignmentFile(str(final)) as handle:
+        assert handle.count() == 3                    # the index matches the new BAM
