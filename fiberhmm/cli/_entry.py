@@ -163,6 +163,12 @@ def qc_main():
     return run_reporting_input_errors('fiberhmm-qc', main)
 
 
+def lift_main():
+    _notify()
+    from fiberhmm.cli.lift import main
+    return run_reporting_input_errors('fiberhmm-lift', main)
+
+
 def check_main():
     _notify()
     from fiberhmm.cli.check import main

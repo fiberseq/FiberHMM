@@ -105,6 +105,7 @@ fiberhmm-transfer = "fiberhmm.inference.consensus.transfer_cli:main"
 fiberhmm-nfr = "fiberhmm.inference.accessibility.cli:main"  # EXPERIMENTAL preview
 fiberhmm-qc = "fiberhmm.cli._entry:qc_main"
 fiberhmm-check = "fiberhmm.cli._entry:check_main"
+fiberhmm-lift = "fiberhmm.cli._entry:lift_main"
 
 [tool.setuptools.packages.find]
 include = ["fiberhmm*"]
