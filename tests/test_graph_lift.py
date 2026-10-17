@@ -147,13 +147,14 @@ def test_forward_lift_keeps_flags_mapq_and_drops_stale_alignment_tags(tmp_path):
     seq = _seq(50)
     reads = [lambda h: _read(h, "fwd", seq=seq, mapq=7,
                              tags=[("MD", "50"), ("NM", 0), ("st", "CT", "Z"),
+                                   ("cs", ":50", "Z"),
                                    ("MA", "50;nuc+Q:5-10", "Z")])]
     stash, stats, records, hdr = _lift_and_repair(tmp_path, header, reads)
     (rec,) = records
     assert rec.reference_name == "tgt" and rec.reference_start == 600
     assert rec.flag == 0 and rec.mapping_quality == 7
     assert rec.get_tag("Yq") == 7 and rec.get_tag("Yp") == "srcA:101:+"
-    for tag in ("Yf", "Yh", "MD", "NM", "SA"):
+    for tag in ("Yf", "Yh", "MD", "NM", "SA", "cs"):
         assert not rec.has_tag(tag)
     assert rec.get_tag("st") == "CT" and stats.st_swapped == 0
     assert hdr["HD"]["SO"] == "coordinate"
@@ -164,6 +165,7 @@ def test_strand_flip_swaps_st_and_keeps_molecular_annotations(tmp_path):
     header = _source_header(co=["fiberhmm:coord=molecular"])
     seq = "ACYTTGCYAA" * 5
     reads = [lambda h: _read(h, "daf", seq=seq, tags=[("st", "CT", "Z"),
+                                                     ("cs", "a.ct;a.ga", "Z"),
                                                      ("MA", "50;nuc.Q:5-10", "Z"),
                                                      ("AQ", array.array("B", [200]))])]
     _stash, stats, records, _hdr = _lift_and_repair(tmp_path, header, reads, flip=True)
@@ -171,6 +173,7 @@ def test_strand_flip_swaps_st_and_keeps_molecular_annotations(tmp_path):
     assert rec.is_reverse and rec.query_sequence == gl.revcomp(seq)
     assert "R" in rec.query_sequence and "Y" not in rec.query_sequence
     assert rec.get_tag("st") == "GA"
+    assert rec.get_tag("cs") == "a.ct;a.ga"       # duplex source names: kept
     assert rec.get_tag("MA") == "50;nuc.Q:5-10"   # molecular: untouched
     assert rec.get_tag("Yp") == "srcA:101:+"
     assert stats.strand_flipped == 1 and stats.st_swapped == 1

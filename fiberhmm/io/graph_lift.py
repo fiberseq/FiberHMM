@@ -10,7 +10,8 @@ right, but the lifted records are not consistent BAM records:
 - supplementaries lose 0x800 and come out as extra primaries;
 - hard clips are dropped (``649M1845H`` becomes ``649M``), so the record no
   longer agrees with the read length in ``MA``;
-- MD, NM, SA (and minimap2's ``cs``) still describe the source alignment;
+- MD, NM, SA (and minimap2's ``cs`` difference string) still describe the
+  source alignment;
 - ``st:Z`` (DAF deamination strand, read in SEQ orientation) is not swapped
   when the read changes strand, so DAF readers see no deamination;
 - SEQ-frame footprint annotations are mirrored on reads whose strand changed;
@@ -79,7 +80,10 @@ TAG_SOURCE_LOCUS = "Yp"
 STASH_TAGS = (TAG_FLAG, TAG_HARDCLIP)
 PROVENANCE_TAGS = (TAG_SOURCE_MAPQ, TAG_SOURCE_LOCUS)
 # Tags that describe the source alignment against the source reference.
-REFERENCE_TAGS = ("MD", "NM", "cs")
+# ``cs`` only in minimap2's difference-string form: FiberHMM's joint duplex
+# molecules use ``cs:Z`` for their source names.
+REFERENCE_TAGS = ("MD", "NM")
+_MINIMAP2_CS = re.compile(r"^[:*+~=-]")
 
 LIFT_PROGRAM = "fiberhmm-lift"
 
@@ -545,6 +549,8 @@ def repair_record(read, stats: RepairStats) -> bool:
     for tag in STASH_TAGS + REFERENCE_TAGS + ("SA",):
         if read.has_tag(tag):
             read.set_tag(tag, None)
+    if read.has_tag("cs") and _MINIMAP2_CS.match(str(read.get_tag("cs"))):
+        read.set_tag("cs", None)
     return True
 
 
