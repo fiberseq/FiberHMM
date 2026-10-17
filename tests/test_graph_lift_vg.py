@@ -137,7 +137,8 @@ def test_lift_repairs_flags_strand_and_history(lifted, target, flipped):
     assert all(not r.has_tag("Yf") and not r.has_tag("Yh") for r in records)
     pgs = header["PG"]
     assert pgs[-1]["ID"] == "fiberhmm-lift" and pgs[-1]["PP"] == pgs[-2]["ID"]
-    assert "excluded_supplementary=1" in pgs[-1]["DS"] and f"target={target}" in pgs[-1]["DS"]
+    assert "orphan_supplementary_no_primary_in_input=1" in pgs[-1]["DS"]
+    assert f"target={target}" in pgs[-1]["DS"]
     assert header["HD"]["SO"] == "coordinate"
     if flipped:
         assert daf.has_tag("MD") and daf.get_tag("NM") > 0           # Y vs C counts

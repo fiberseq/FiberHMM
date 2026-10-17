@@ -146,6 +146,7 @@ class StashStats:
     dropped_unmapped: int = 0
     filled_supplementary: int = 0
     excluded_supplementary: int = 0
+    orphan_supplementary_no_primary_in_input: int = 0
     excluded_unverifiable: int = 0
     mods_dropped: int = 0
     hard_clipped_kept: int = 0
@@ -581,11 +582,21 @@ def stash_bam(in_path: str, out_path: str, *, threads: int = 1) -> StashStats:
     been seen. A reverse record whose legacy footprint frame is undecidable
     stops the run (:class:`FrameError`)."""
     stats = StashStats()
-    need = set()
+    need, supp_names, with_primary = set(), set(), set()
     with pysam.AlignmentFile(in_path, "rb", check_sq=False, threads=threads) as bam:
         for read in bam.fetch(until_eof=True):
-            if read.is_supplementary and not read.is_unmapped and any(_hard_clips(read)):
-                need.add(read.query_name)
+            if read.is_supplementary and not read.is_unmapped:
+                supp_names.add(read.query_name)
+                if any(_hard_clips(read)):
+                    need.add(read.query_name)
+    if supp_names:
+        # Which of those have a primary record at all (second pass: the
+        # primary may come before or after its supplementaries).
+        with pysam.AlignmentFile(in_path, "rb", check_sq=False, threads=threads) as bam:
+            for read in bam.fetch(until_eof=True):
+                if (read.query_name in supp_names and not read.is_supplementary
+                        and not read.is_secondary):
+                    with_primary.add(read.query_name)
 
     primaries: Dict[str, dict] = {}
     waiting: Dict[str, list] = defaultdict(list)
@@ -616,6 +627,10 @@ def stash_bam(in_path: str, out_path: str, *, threads: int = 1) -> StashStats:
                 stats.dropped_secondary += 1
                 continue
             name = read.query_name
+            if read.is_supplementary and name not in with_primary:
+                # Its primary was never in the input: nothing to restore it against.
+                stats.orphan_supplementary_no_primary_in_input += 1
+                continue
             clips = _hard_clips(read)
             hard_supp = read.is_supplementary and any(clips)
             # A hard-clipped supplementary is converted in fill_hard_clips,
@@ -1023,8 +1038,6 @@ def repair_record(read, stats: RepairStats) -> bool:
     source_flag = int(read.get_tag(TAG_FLAG))
     lifted_flag = int(read.flag)
     read.flag = (source_flag & ~(_REVERSE | _UNMAPPED)) | (lifted_flag & (_REVERSE | _UNMAPPED))
-    if source_flag & _SUPP and not lifted_flag & _SUPP:
-        stats.supplementary_restored += 1
     flipped = (not read.is_unmapped) and bool(source_flag & _REVERSE) != read.is_reverse
     if flipped:
         stats.strand_flipped += 1
@@ -1120,6 +1133,9 @@ def lift_pg_record(*, repair: RepairStats, calmd: bool, mode: str = "lift",
         parts.append("MD/NM/SA dropped (no --target-fasta)")
     stash = stash or {}
     parts.append(f"excluded_supplementary={stash.get('excluded_supplementary', 0)}")
+    if "orphan_supplementary_no_primary_in_input" in stash:
+        parts.append("orphan_supplementary_no_primary_in_input="
+                     f"{stash['orphan_supplementary_no_primary_in_input']}")
     parts.append(f"filled_supplementary={stash.get('filled_supplementary', 0)}")
     for key in ("excluded_unverifiable", "mods_dropped"):
         if stash.get(key):
@@ -1228,12 +1244,15 @@ def repair_bam(lifted_path: str, out_path: str, *, work_dir: str,
             pysam.AlignmentFile(unsorted, "wb", header=out_header, threads=threads) as out:
         for read in bam.fetch(until_eof=True):
             stats.records_in += 1
+            lifted_supplementary = read.is_supplementary
             repair_record(read, stats)
             if read.is_supplementary:
                 if read.query_name not in primary_names:
                     stats.orphan_supplementary_dropped += 1
                     continue
                 multi.add(read.query_name)
+                if not lifted_supplementary:
+                    stats.supplementary_restored += 1    # counted only when written
             out.write(read)
             stats.records_out += 1
     stats.calmd = bool(target_fasta)

@@ -128,7 +128,9 @@ def _graph_lift(args, work_dir: str) -> int:
     stash = gl.stash_bam(args.input, stashed, threads=args.threads)
     print(f"{TOOL}: stashed {stash.stashed} records "
           f"({stash.filled_supplementary} hard-clipped supplementaries filled, "
-          f"{stash.excluded_supplementary} excluded without their primary; "
+          f"{stash.excluded_supplementary} excluded, "
+          f"{stash.orphan_supplementary_no_primary_in_input} supplementaries whose primary "
+          f"is not in the input left out; "
           f"{stash.dropped_secondary} secondary and {stash.dropped_unmapped} unmapped "
           f"records not lifted)", file=sys.stderr)
     lifted = os.path.join(work_dir, "lifted.bam")

@@ -293,10 +293,11 @@ def test_hard_clipped_supplementary_without_primary_is_excluded_and_recorded(tmp
     _molecule, reads = _chimera(with_primary=False)
     reads.append(lambda h: _read(h, "other", seq=_seq(50)))
     stash, stats, records, hdr = _lift_and_repair(tmp_path, _source_header(), reads)
-    assert stash.excluded_supplementary == 1
+    assert stash.orphan_supplementary_no_primary_in_input == 1
+    assert stash.excluded_supplementary == 0
     assert [r.query_name for r in records] == ["other"]
     pg = next(pg for pg in hdr["PG"] if pg["ID"] == "fiberhmm-lift")
-    assert "excluded_supplementary=1" in pg["DS"]
+    assert "orphan_supplementary_no_primary_in_input=1" in pg["DS"]
     assert "calmd=no" in pg["DS"] and "MD/NM/SA dropped" in pg["DS"]
 
 
@@ -318,6 +319,26 @@ def test_orphan_supplementary_is_dropped_when_its_primary_does_not_lift(tmp_path
     stats = gl.repair_bam(str(tmp_path / "o.lifted2.bam"), str(tmp_path / "o.out.bam"),
                           work_dir=str(tmp_path / "o.work"), pg_args={"mode": "lift"})
     assert stats.orphan_supplementary_dropped == 1 and stats.records_out == 0
+    # 0x800 restored on a record that was then dropped is not reported.
+    assert stats.supplementary_restored == 0
+
+
+def test_supplementaries_without_a_primary_in_the_input_are_counted_at_stash(tmp_path):
+    src = _write(tmp_path / "np.bam", _source_header(), [
+        lambda h: _read(h, "soft", flag=0x800, pos=300, cigar="20S30M", seq=_seq(50)),
+        lambda h: _read(h, "hard", flag=0x800, pos=400, cigar="20H30M", seq=_seq(30)),
+        lambda h: _read(h, "late", flag=0x800, pos=500, cigar="20S30M", seq=_seq(50)),
+        lambda h: _read(h, "late", pos=600, seq=_seq(50)),       # primary after its supp
+    ])
+    stats = gl.stash_bam(src, str(tmp_path / "np.stash.bam"))
+    assert stats.orphan_supplementary_no_primary_in_input == 2
+    assert stats.excluded_supplementary == 0 and stats.stashed == 2
+    records, _ = _records(tmp_path / "np.stash.bam")
+    assert sorted(r.query_name for r in records) == ["late", "late"]
+    lifted = _fake_lift(tmp_path / "np.stash.bam", tmp_path / "np.lifted.bam")
+    repair = gl.repair_bam(lifted, str(tmp_path / "np.out.bam"),
+                           work_dir=str(tmp_path / "np.w"), pg_args={"mode": "lift"})
+    assert repair.supplementary_restored == 1 and repair.orphan_supplementary_dropped == 0
 
 
 # --- repair-only (lifted without the stash) -------------------------------------
