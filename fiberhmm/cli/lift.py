@@ -141,7 +141,7 @@ def _graph_lift(args, work_dir: str) -> int:
     stash_info["unlifted"] = max(0, stash.stashed - _count_records(lifted, args.threads))
     stats = gl.repair_bam(
         lifted, args.output, work_dir=work_dir, target_fasta=args.target_fasta,
-        threads=args.threads, source_pgs=source_pgs,
+        threads=args.threads, source_pgs=source_pgs, mapq=args.mapq,
         pg_args={"mode": "lift", "source": _sample_of(args.prefix, args.delimiter),
                  "target": args.target, "graph": args.graph, "stash": stash_info})
     _report(stats, stash_info)
@@ -178,7 +178,7 @@ def _repair_only(args, work_dir: str) -> int:
               file=sys.stderr)
     stats = gl.repair_bam(
         current, args.output, work_dir=work_dir, target_fasta=args.target_fasta,
-        threads=args.threads, source_pgs=source_pgs,
+        threads=args.threads, source_pgs=source_pgs, mapq=args.mapq,
         pg_args={"mode": "repair-only", "source": _sample_of(args.prefix, args.delimiter),
                  "target": args.target, "graph": args.graph, "stash": stash_info})
     _report(stats, stash_info)
@@ -229,6 +229,15 @@ def _bed_lift(args, work_dir: str) -> int:
     return 0
 
 
+def _mapq_mode(value: str) -> str:
+    from fiberhmm.io.graph_lift import parse_mapq_mode
+
+    try:
+        return parse_mapq_mode(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from None
+
+
 def _has_files(path: str) -> bool:
     try:
         return any(name.endswith((".bam", ".bed")) for name in os.listdir(path))
@@ -272,6 +281,12 @@ Examples:
                         help="FASTA of the target assembly (contig names as in the lifted "
                              "@SQ). Recomputes MD/NM and rebuilds SA; without it they are "
                              "dropped. Recommended.")
+    parser.add_argument("--mapq", default="source", type=_mapq_mode, metavar="{source,fixed:N}",
+                        help="MAPQ of lifted records: 'source' (default) keeps the MAPQ of the "
+                             "source alignment, as CrossMap and ft pg-lift do; 'fixed:N' sets "
+                             "every lifted record to N. Against a diploid source assembly, "
+                             "MAPQ is low wherever the haplotypes are identical. Yq keeps the "
+                             "source value either way.")
     parser.add_argument("-d", "--delimiter", default="#", help="panSN delimiter (default: #)")
     parser.add_argument("--vg", help="vg binary or wrapper script (default: vg on PATH)")
     parser.add_argument("--ft", help="fibertools-rs ft binary (default: ft on PATH)")

@@ -98,6 +98,27 @@ def _stem(path: str) -> str:
     return name
 
 
+def _note_lifted_mapq(paths, min_mapq: int) -> None:
+    """One line per input lifted by fiberhmm-lift with its source MAPQ."""
+    try:
+        import pysam
+
+        from fiberhmm.io.graph_lift import MAPQ_SOURCE, lift_mapq_mode
+    except ImportError:
+        return
+    for path in paths:
+        try:
+            with pysam.AlignmentFile(str(path), "rb", check_sq=False) as bam:
+                mode = lift_mapq_mode(bam.header)
+        except (OSError, ValueError):
+            continue
+        if mode == MAPQ_SOURCE:
+            print(f"fiberhmm-qc: note: {path} was lifted with fiberhmm-lift and keeps the MAPQ "
+                  f"of its source assembly; --min-mapq {min_mapq} filters on that (a diploid "
+                  "source gives low MAPQ wherever the haplotypes are identical)",
+                  file=sys.stderr)
+
+
 def main(argv=None):
     args = parse_args(argv)
     input_paths = _input_paths(args.input)
@@ -119,6 +140,9 @@ def main(argv=None):
             file=sys.stderr,
         )
         return 2
+
+    if args.min_mapq > 0:
+        _note_lifted_mapq(input_paths, args.min_mapq)
 
     common = {
         "mode": args.mode,

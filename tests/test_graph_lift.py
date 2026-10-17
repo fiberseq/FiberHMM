@@ -969,3 +969,39 @@ def test_supplementary_modifications_its_own_first(tmp_path):
     stats, _prim, supp = _stash_pair(
         tmp_path, "u", dict(seq="CCCC", cigar="4M", tags=bad), dict(cigar="1H3M", seq="CCC"))
     assert supp is None and stats.excluded_unverifiable == 1
+
+
+# --- MAPQ mode -----------------------------------------------------------------------
+
+def test_mapq_mode_option_and_pg_record(tmp_path, capsys):
+    from fiberhmm.cli import lift, qc
+
+    assert gl.parse_mapq_mode("source") == "source"
+    assert gl.parse_mapq_mode("FIXED:060") == "fixed:60"
+    for bad in ("fixed:256", "fixed:", "max", "fixed:-1"):
+        with pytest.raises(ValueError):
+            gl.parse_mapq_mode(bad)
+    with pytest.raises(SystemExit):
+        lift.build_parser().parse_args(["-i", "x", "-o", "y", "--mapq", "fixed:999"])
+
+    src = _write(tmp_path / "mq.bam", _source_header(),
+                 [lambda h: _read(h, "r", seq=_seq(50), mapq=3)])
+    outputs = {}
+    for mode in ("source", "fixed:60"):
+        raw = _fake_lift(src, tmp_path / f"mq.{mode}.lifted.bam")
+        out = tmp_path / f"mq.{mode.replace(':', '')}.bam"
+        assert lift.main(["--repair-only", "-i", raw, "--source", src, "-o", str(out),
+                          "--mapq", mode]) == 0
+        (rec,), hdr = _records(out)
+        outputs[mode] = out
+        assert rec.get_tag("Yq") == 3
+        assert rec.mapping_quality == (3 if mode == "source" else 60)
+        assert f"mapq={mode} " in hdr["PG"][-1]["DS"]
+        assert gl.lift_mapq_mode(hdr) == mode
+    assert gl.lift_mapq_mode(_source_header()) is None
+
+    capsys.readouterr()
+    qc._note_lifted_mapq([str(outputs["source"]), str(outputs["fixed:60"]), src], 20)
+    err = capsys.readouterr().err.strip().splitlines()
+    assert len(err) == 1 and "keeps the MAPQ of its source assembly" in err[0]
+    assert str(outputs["source"]) in err[0] and "--min-mapq 20" in err[0]

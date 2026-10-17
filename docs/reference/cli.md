@@ -463,6 +463,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `-p` / `--prefix` | — | panSN prefix of the source assembly's paths in the graph, e.g. 'HG002#1#' (as ft pg-lift --prefix) |
 | `--target` | — | Target sample to surject onto, e.g. GRCh38 (as ft pg-lift --target) |
 | `--target-fasta` | — | FASTA of the target assembly (contig names as in the lifted @SQ). Recomputes MD/NM and rebuilds SA; without it they are dropped. Recommended. |
+| `--mapq` | `source` | MAPQ of lifted records: 'source' (default) keeps the MAPQ of the source alignment, as CrossMap and ft pg-lift do; 'fixed:N' sets every lifted record to N. Against a diploid source assembly, MAPQ is low wherever the haplotypes are identical. Yq keeps the source value either way. |
 | `-d` / `--delimiter` | `#` | panSN delimiter (default: #) |
 | `--vg` | — | vg binary or wrapper script (default: vg on PATH) |
 | `--ft` | — | fibertools-rs ft binary (default: ft on PATH) |

@@ -44,9 +44,11 @@ latest lift, and the @PG chain records every lift.
 
 Decisions:
 
-- MAPQ stays the source value: how uniquely the read placed on the source
-  assembly is what the lift inherits. 255 would pass every ``min_mapq``
-  filter, 0 would fail them all.
+- MAPQ stays the source value by default (as CrossMap and ft pg-lift do):
+  how uniquely the read placed on the source assembly. Against a diploid
+  assembly that is low wherever the haplotypes are identical.
+  ``mapq='fixed:N'`` sets every lifted record to N instead; ``Yq`` keeps the
+  source value either way, and the @PG records the mode.
 - Hard-clipped supplementaries get their clipped bases (and QUAL) from the
   primary of the same QNAME before the lift, as soft clips, so the record
   carries the whole molecule; their own footprint calls and modifications
@@ -1026,7 +1028,33 @@ def _readd_hard_clips(read, spec: str, flipped: bool) -> bool:
     return True
 
 
-def repair_record(read, stats: RepairStats) -> bool:
+MAPQ_SOURCE = "source"
+
+
+def parse_mapq_mode(value: str) -> str:
+    """``'source'`` or ``'fixed:N'`` (0 <= N <= 255), normalised."""
+    text = str(value).strip().lower()
+    if text == MAPQ_SOURCE:
+        return MAPQ_SOURCE
+    kind, _, number = text.partition(":")
+    if kind == "fixed" and number.isdigit() and 0 <= int(number) <= 255:
+        return f"fixed:{int(number)}"
+    raise ValueError(f"MAPQ mode must be 'source' or 'fixed:N' (0-255), not {value!r}")
+
+
+def lift_mapq_mode(header) -> Optional[str]:
+    """The MAPQ mode the last fiberhmm-lift @PG records (``'source'`` or
+    ``'fixed:N'``), or None when the header has no fiberhmm-lift @PG."""
+    hdr = header.to_dict() if hasattr(header, "to_dict") else dict(header or {})
+    mode = None
+    for pg in hdr.get("PG", []) or []:
+        if is_repair_pg(pg):
+            match = re.search(r"(?:^|[\s;])mapq=(source|fixed:\d+)", str(pg.get("DS", "")))
+            mode = match.group(1) if match else MAPQ_SOURCE
+    return mode
+
+
+def repair_record(read, stats: RepairStats, mapq: str = MAPQ_SOURCE) -> bool:
     """Repair one lifted record in place; False when it must be dropped.
 
     Orphan handling needs the whole file and is done by :func:`repair_bam`."""
@@ -1047,7 +1075,9 @@ def repair_record(read, stats: RepairStats) -> bool:
             if swapped is not None:
                 read.set_tag("st", swapped, value_type="Z")
                 stats.st_swapped += 1
-    if read.has_tag(TAG_SOURCE_MAPQ):
+    if mapq != MAPQ_SOURCE:
+        read.mapping_quality = int(mapq.split(":", 1)[1])
+    elif read.has_tag(TAG_SOURCE_MAPQ):
         read.mapping_quality = int(read.get_tag(TAG_SOURCE_MAPQ))
     if read.has_tag(TAG_HARDCLIP):
         if _readd_hard_clips(read, str(read.get_tag(TAG_HARDCLIP)), flipped):
@@ -1113,7 +1143,7 @@ def _rewrite_sa(in_path: str, out_path: str, multi: set, stats: RepairStats,
 def lift_pg_record(*, repair: RepairStats, calmd: bool, mode: str = "lift",
                    source: Optional[str] = None, target: Optional[str] = None,
                    graph: Optional[str] = None, stash: Optional[dict] = None,
-                   command: Optional[str] = None) -> dict:
+                   command: Optional[str] = None, mapq: str = MAPQ_SOURCE) -> dict:
     """The ``@PG ID:fiberhmm-lift`` record (coord=molecular)."""
     import sys
 
@@ -1147,7 +1177,7 @@ def lift_pg_record(*, repair: RepairStats, calmd: bool, mode: str = "lift",
             parts.append(f"{key}={stash[key]}")
     parts.append(f"orphan_supplementary_dropped={repair.orphan_supplementary_dropped}")
     parts.append(f"st_swapped={repair.st_swapped}")
-    parts.append(f"mapq=source provenance_tags={TAG_SOURCE_MAPQ},{TAG_SOURCE_LOCUS}")
+    parts.append(f"mapq={mapq} provenance_tags={TAG_SOURCE_MAPQ},{TAG_SOURCE_LOCUS}")
     return {
         "PN": LIFT_PROGRAM,
         "VN": getattr(fiberhmm, "__version__", "unknown"),
@@ -1189,7 +1219,8 @@ def _finalize(path: str, out_path: str, *, index: bool) -> None:
 def repair_bam(lifted_path: str, out_path: str, *, work_dir: str,
                target_fasta: Optional[str] = None, threads: int = 1,
                pg_args: Optional[dict] = None, index: bool = True,
-               source_pgs: Optional[List[dict]] = None) -> RepairStats:
+               source_pgs: Optional[List[dict]] = None,
+               mapq: str = MAPQ_SOURCE) -> RepairStats:
     """Repair a lifted (stashed) BAM into a sorted, indexed ``out_path``.
 
     Passes over the lifted BAM: (1) count what the repair will do (for the
@@ -1213,7 +1244,7 @@ def repair_bam(lifted_path: str, out_path: str, *, work_dir: str,
                               "fiberhmm-lift @PG)")
         for read in bam.fetch(until_eof=True):
             planned.records_in += 1
-            repair_record(read, planned)
+            repair_record(read, planned, mapq)
             if not read.is_unmapped:
                 used_contigs.add(read.reference_name)
             if read.is_supplementary:
@@ -1235,7 +1266,7 @@ def repair_bam(lifted_path: str, out_path: str, *, work_dir: str,
 
     out_header = append_pg_record(
         rechain_lift_history(header.to_dict(), source_pgs),
-        lift_pg_record(repair=planned, calmd=bool(target_fasta), **(pg_args or {})))
+        lift_pg_record(repair=planned, calmd=bool(target_fasta), mapq=mapq, **(pg_args or {})))
     os.makedirs(work_dir, exist_ok=True)
     unsorted = os.path.join(work_dir, "repaired.unsorted.bam")
     stats = RepairStats()
@@ -1245,7 +1276,7 @@ def repair_bam(lifted_path: str, out_path: str, *, work_dir: str,
         for read in bam.fetch(until_eof=True):
             stats.records_in += 1
             lifted_supplementary = read.is_supplementary
-            repair_record(read, stats)
+            repair_record(read, stats, mapq)
             if read.is_supplementary:
                 if read.query_name not in primary_names:
                     stats.orphan_supplementary_dropped += 1

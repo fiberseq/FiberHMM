@@ -32,7 +32,7 @@ Everything that depends on the source alignment is repaired:
 | `st` keeps its value on reads that change strand | `st` switched `CT` ↔ `GA` (DAF readers otherwise see no deamination) |
 | footprint tags in SEQ frame (FiberHMM ≤ 2.12) end up mirrored on those reads | converted to molecular frame before the lift |
 | `MD`, `NM`, `SA` describe the source alignment | recomputed against `--target-fasta` (`samtools calmd`; `SA` rebuilt from the lifted parts); without it they are removed |
-| `MAPQ` | kept: how uniquely the read placed on the source assembly is what the lift inherits |
+| `MAPQ` | kept from the source alignment by default (see [MAPQ](#mapq)) |
 | `@PG` lines of the lift unlinked, output unsorted | one `@PG` chain ending in `fiberhmm-lift`; sorted and indexed |
 
 A hard-clipped supplementary keeps its own calls: FiberHMM and fibertools
@@ -63,6 +63,21 @@ graph lift repair; mode=lift; source=HG002 target=GRCh38; graph=hprc.gbz; calmd=
 Each lifted record carries `Yq:i` (source `MAPQ`) and `Yp:Z` (source locus,
 `<contig>:<1-based POS>:<strand>`). Aligner scores other than `AS` (minimap2
 `tp`, `cm`, `s1`, `de`, ...) still describe the source alignment.
+
+## MAPQ
+
+A lifted record keeps the `MAPQ` of its source alignment (`--mapq source`,
+the default, as CrossMap and `ft pg-lift` do): it says how uniquely the read
+placed on the source assembly, not on the target. Reads aligned to a diploid
+assembly (both haplotypes in one reference) get low `MAPQ` wherever the two
+haplotypes are identical, and keep it after the lift: in one HG002 data set
+43% of the lifted chr1 primaries had `MAPQ` < 20, against none when the same
+reads were aligned to GRCh38 directly. A `MAPQ` filter (`fiberhmm-qc
+--min-mapq`, which prints a note on lifted BAMs) then drops those reads.
+Alternatives: select reads by their haplotype tags (`HP`) instead of `MAPQ`,
+or set a fixed value with `--mapq fixed:N` (for example `fixed:60`). The
+source `MAPQ` stays in `Yq` either way, and the `fiberhmm-lift` `@PG` records
+the mode (`mapq=source` or `mapq=fixed:N`).
 
 ## A BAM lifted with `ft pg-lift`
 
