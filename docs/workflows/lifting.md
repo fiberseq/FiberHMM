@@ -35,18 +35,20 @@ Everything that depends on the source alignment is repaired:
 | `MAPQ` | kept: how uniquely the read placed on the source assembly is what the lift inherits |
 | `@PG` lines of the lift unlinked, output unsorted | one `@PG` chain ending in `fiberhmm-lift`; sorted and indexed |
 
-For a hard-clipped supplementary the primary is the single source of truth
-for everything that describes the molecule. Its `SEQ` keeps the
-supplementary's own aligned bases (DAF R/Y codes are per alignment) with the
-clipped flanks from the primary. Its footprint tags (`MA`/`AQ`/`AN`,
-`Ma`/`Aq`/`An`, `ns`/`nl`/`nq`, `as`/`al`/`aq`) are replaced by the
-primary's, in molecular coordinates, and its `MM`/`ML` by the primary's
-calls re-encoded on the filled sequence; a call on a base the supplementary
-changed (C → Y) is dropped. The `@PG` counts supplementaries whose own tags
-were replaced (`supp_tags_replaced`) and dropped calls (`mods_dropped`). A
-supplementary is left out (`excluded_unverifiable`) when the primary's
-modifications cannot be decoded or its annotations cannot be carried over
-unambiguously.
+A hard-clipped supplementary keeps its own calls: FiberHMM and fibertools
+call each supplementary on its own aligned bases, so its footprints describe
+its segment of the molecule, not the primary's. Its `SEQ` keeps its own
+aligned bases (DAF R/Y codes are per alignment) with the clipped flanks from
+the primary. Its footprint tags (`MA`/`AQ`/`AN`, `Ma`/`Aq`/`An`,
+`ns`/`nl`/`nq`, `as`/`al`/`aq`) are rebased onto the filled sequence: the
+read length in `MA` (else `Ma`) says whether they describe the stored bases
+(moved by the clip, read length set to the molecule's) or the whole molecule
+(kept), and the legacy tags follow it. Its `MM`/`ML` are its own, moved onto
+the filled sequence, when they are valid; otherwise the primary's calls are
+re-encoded on it, and a call on a base the supplementary changed (C → Y) is
+dropped (`mods_dropped`). A supplementary without footprint tags stays
+without. One whose tags cannot be placed unambiguously is left out and
+counted (`excluded_unverifiable`).
 
 Secondary and unmapped records are not lifted, and supplementaries whose
 primary did not lift are dropped. The counts are printed and recorded in the

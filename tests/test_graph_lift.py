@@ -259,8 +259,8 @@ def test_hard_clipped_supplementary_is_filled_from_the_primary(tmp_path):
     prim = next(r for r in records if not r.is_supplementary)
     assert list(supp.query_qualities) == list(prim.query_qualities)[::-1][:40] + \
         [(i * 7) % 40 for i in range(20)]
-    # MM/ML/MN now describe the whole molecule: the primary's.
-    assert supp.get_tag("MM") == "C+m?,0;" and supp.get_tag("MN") == 60
+    # Its own (empty) MM, valid on its 20 stored bases, now covers 60.
+    assert supp.get_tag("MM") == "C+m?;" and supp.get_tag("MN") == 60
 
 
 def test_supplementary_restored_one_primary_per_qname_and_sa_rewritten(tmp_path):
@@ -751,7 +751,7 @@ def test_finalize_publishes_bam_and_index_together(tmp_path, monkeypatch):
         assert handle.count() == 3                    # the index matches the new BAM
 
 
-# --- hard-clipped supplementaries: the primary is the source of truth ---------------
+# --- hard-clipped supplementaries keep their own calls -----------------------------
 
 def _stash_pair(tmp_path, name, primary_kw, supp_kw, header=None):
     src = _write(tmp_path / f"{name}.bam", header or _source_header(), [
@@ -762,74 +762,6 @@ def _stash_pair(tmp_path, name, primary_kw, supp_kw, header=None):
     supp = next((r for r in records if r.is_supplementary), None)
     prim = next(r for r in records if not r.is_supplementary)
     return stats, prim, supp
-
-
-def test_supplementary_takes_the_primarys_annotations(tmp_path):
-    molecule = "ACGTACGTAC"
-    # Finding 1: equal legacy values next to a partial MA no longer matter;
-    # everything comes from the primary.
-    stats, prim, supp = _stash_pair(
-        tmp_path, "a",
-        dict(seq=molecule, cigar="10M", tags=[("MA", "10;nuc.Q:6-2", "Z"),
-                                              ("AQ", array.array("B", [9])),
-                                              ("ns", array.array("I", [5])),
-                                              ("nl", array.array("I", [2]))]),
-        dict(cigar="4H6M", seq=molecule[4:], tags=[("MA", "6;nuc.:2-2", "Z"),
-                                                   ("ns", array.array("I", [1])),
-                                                   ("nl", array.array("I", [2]))]))
-    for tag in ("MA", "AQ", "ns", "nl"):
-        assert supp.get_tag(tag) == prim.get_tag(tag)
-    assert stats.supp_tags_replaced == 1
-    # A supplementary with no tags of its own gains the primary's, uncounted.
-    stats, prim, supp = _stash_pair(
-        tmp_path, "b", dict(seq=molecule, cigar="10M", tags=[("MA", "10;nuc.:6-2", "Z")]),
-        dict(cigar="4H6M", seq=molecule[4:]))
-    assert supp.get_tag("MA") == "10;nuc.:6-2" and stats.supp_tags_replaced == 0
-
-
-def test_reverse_primary_is_converted_with_its_own_length(tmp_path):
-    # Finding 2: SEQ-frame header, reverse records. The supplementary's own
-    # legacy tags were mirrored with its 6 stored bases; now the molecule's
-    # come from the primary, mirrored with its 10.
-    molecule = "ACGTACGTAC"
-    stored = gl.revcomp(molecule)
-    stats, prim, supp = _stash_pair(
-        tmp_path, "r",
-        dict(flag=0x10, seq=stored, cigar="10M", tags=[("ns", array.array("I", [1])),
-                                                       ("nl", array.array("I", [2]))]),
-        dict(flag=0x810, cigar="4H6M", seq=stored[4:], tags=[("ns", array.array("I", [1])),
-                                                             ("nl", array.array("I", [2]))]))
-    assert list(prim.get_tag("ns")) == [7]           # 10 - 1 - 2
-    assert list(supp.get_tag("ns")) == [7] and supp.cigarstring == "4S6M"
-
-
-def test_undecodable_primary_modifications_exclude_the_supplementary(tmp_path):
-    # Finding 3: nothing is emitted whose MM may not describe its SEQ.
-    stats, _prim, supp = _stash_pair(
-        tmp_path, "u", dict(seq="CCCC", cigar="4M", tags=[("MM", "C+m?,9;", "Z"),
-                                                          ("ML", array.array("B", [1]))]),
-        dict(cigar="1H3M", seq="CCC", tags=[("MM", "C+m?,0;", "Z"),
-                                           ("ML", array.array("B", [7])), ("MN", 3)]))
-    assert supp is None and stats.excluded_unverifiable == 1
-    assert stats.excluded_supplementary == 1
-
-
-def test_supplementary_modifications_are_the_primarys_and_replacement_is_counted(tmp_path):
-    # Finding 4: a whole-molecule supplementary MM differing from the
-    # primary's is replaced, and that is counted.
-    stats, _prim, supp = _stash_pair(
-        tmp_path, "w", dict(seq="ACCC", cigar="4M", tags=[("MM", "A+a?,0;", "Z"),
-                                                          ("ML", array.array("B", [180]))]),
-        dict(cigar="1H3M", seq="CCC", tags=[("MM", "C+m?,1;", "Z"),
-                                           ("ML", array.array("B", [200])), ("MN", 4)]))
-    assert supp.modified_bases_forward == {("A", 0, "a"): [(0, 180)]}
-    assert supp.get_tag("MN") == 4 and stats.supp_tags_replaced == 1
-    # No MM on the primary: the supplementary's own is removed (counted).
-    stats, _prim, supp = _stash_pair(
-        tmp_path, "x", dict(seq="ACCC", cigar="4M"),
-        dict(cigar="1H3M", seq="CCC", tags=[("MM", "C+m?,0;", "Z"),
-                                           ("ML", array.array("B", [200]))]))
-    assert not supp.has_tag("MM") and not supp.has_tag("MN") and stats.supp_tags_replaced == 1
 
 
 def test_modification_grammar_is_re_encoded_from_the_primary(tmp_path):
@@ -919,3 +851,100 @@ def test_repeated_identical_mm_heads_are_merged(tmp_path):
     assert supp is not None and stats.excluded_unverifiable == 0
     calls = supp.modified_bases_forward[("C", 0, "m")]
     assert sorted(calls) == [(1, 10), (2, 20)]
+
+
+# --- audit round 5: supplementaries are called on their own bases ---------------------
+
+def _split_daf(reverse):
+    """A 40 bp DAF molecule split like minimap2 does: primary 20S20M over
+    molecule 20..39, supplementary 21M19H over molecule 0..20 (forward), each
+    called separately (FiberHMM alignments=primary-supplementary)."""
+    import random
+
+    rng = random.Random(11)
+    molecule = "".join(rng.choice("ACGT") for _ in range(40))
+    stored = gl.revcomp(molecule) if reverse else molecule
+    supp_seq = stored[:21] if not reverse else stored[:21]
+    primary = dict(seq=molecule, cigar="20S20M",
+                   tags=[("MA", "40;nuc.:25-10;msp.:36-4", "Z"), ("ns", array.array("I", [24])),
+                         ("nl", array.array("I", [10])), ("st", "CT", "Z")])
+    supp = dict(flag=0x810 if reverse else 0x800, cigar="21M19H", seq=supp_seq,
+                tags=[("MA", "21;nuc.:2-5,10-6;msp.:7-3", "Z"),
+                      ("ns", array.array("I", [1, 9])), ("nl", array.array("I", [5, 6])),
+                      ("as", array.array("I", [6])), ("al", array.array("I", [3]))])
+    return molecule, primary, supp
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_split_daf_supplementary_keeps_its_own_calls(tmp_path, reverse):
+    _molecule, primary, supp_kw = _split_daf(reverse)
+    header = _source_header(co=["fiberhmm:coord=molecular"])
+    stats, prim, supp = _stash_pair(tmp_path, f"s{int(reverse)}", primary, supp_kw, header)
+    assert stats.filled_supplementary == 1 and stats.excluded_supplementary == 0
+    offset = 19 if reverse else 0          # molecule offset of the stored bases
+    assert supp.get_tag("MA") == (f"40;nuc.:{2 + offset}-5,{10 + offset}-6;msp.:{7 + offset}-3")
+    assert list(supp.get_tag("ns")) == [1 + offset, 9 + offset]
+    assert list(supp.get_tag("as")) == [6 + offset] and list(supp.get_tag("al")) == [3]
+    assert supp.get_tag("MA") != prim.get_tag("MA")
+    assert supp.infer_read_length() == 40 and supp.query_length == 40
+
+
+def test_legacy_tags_follow_ma_scope(tmp_path):
+    # Round-3 finding 1: legacy values equal to the primary's follow the
+    # supplementary's partial MA, not the primary.
+    molecule = "ACGTACGTAC"
+    legacy = [("ns", array.array("I", [1])), ("nl", array.array("I", [2]))]
+    _stats, _prim, supp = _stash_pair(
+        tmp_path, "a", dict(seq=molecule, cigar="10M", tags=list(legacy)),
+        dict(cigar="4H6M", seq=molecule[4:], tags=[("MA", "6;nuc.:2-2", "Z"), *legacy]))
+    assert supp.get_tag("MA") == "10;nuc.:6-2" and list(supp.get_tag("ns")) == [5]
+
+
+def test_whole_molecule_reverse_tags_are_converted_with_the_molecule_length(tmp_path):
+    # Round-3 finding 2: SEQ-frame header, reverse 4H6M with whole-molecule
+    # MA and legacy tags: both mirrored over 10 bases.
+    molecule = "ACGTACGTAC"
+    stored = gl.revcomp(molecule)
+    stats, _prim, supp = _stash_pair(
+        tmp_path, "r", dict(flag=0x10, seq=stored, cigar="10M"),
+        dict(flag=0x810, cigar="4H6M", seq=stored[4:],
+             tags=[("MA", "10;nuc+:2-2", "Z"), ("ns", array.array("I", [1])),
+                   ("nl", array.array("I", [2]))]))
+    assert supp.get_tag("MA") == "10;nuc+:8-2" and list(supp.get_tag("ns")) == [7]
+
+
+def test_supplementary_without_calls_stays_without(tmp_path):
+    molecule = "ACGTACGTAC"
+    _stats, prim, supp = _stash_pair(
+        tmp_path, "n", dict(seq=molecule, cigar="10M", tags=[("MA", "10;nuc.:6-2", "Z")]),
+        dict(cigar="4H6M", seq=molecule[4:]))
+    assert prim.has_tag("MA") and not supp.has_tag("MA")
+
+
+def test_undecidable_scope_is_excluded(tmp_path):
+    molecule = "ACGTACGTAC"
+    stats, _prim, supp = _stash_pair(
+        tmp_path, "x", dict(seq=molecule, cigar="10M"),
+        dict(cigar="4H6M", seq=molecule[4:], tags=[("MA", "8;nuc.:2-2", "Z")]))
+    assert supp is None and stats.excluded_unverifiable == 1
+
+
+def test_supplementary_modifications_its_own_first(tmp_path):
+    bad = [("MM", "C+m?,9;", "Z"), ("ML", array.array("B", [1]))]
+    # Own MM valid on the stored bases (MN = 3): moved; the primary's unused.
+    stats, _prim, supp = _stash_pair(
+        tmp_path, "o", dict(seq="CCCC", cigar="4M", tags=bad),
+        dict(cigar="1H3M", seq="CCC", tags=[("MM", "C+m?,0;", "Z"),
+                                           ("ML", array.array("B", [7])), ("MN", 3)]))
+    assert supp.modified_bases_forward == {("C", 0, "m"): [(1, 7)]} and supp.get_tag("MN") == 4
+    # Own MM for the whole molecule (MN = 4): kept as it is.
+    _stats, _prim, supp = _stash_pair(
+        tmp_path, "w", dict(seq="ACCC", cigar="4M", tags=[("MM", "A+a?,0;", "Z"),
+                                                          ("ML", array.array("B", [180]))]),
+        dict(cigar="1H3M", seq="CCC", tags=[("MM", "C+m?,1;", "Z"),
+                                           ("ML", array.array("B", [200])), ("MN", 4)]))
+    assert supp.modified_bases_forward == {("C", 0, "m"): [(2, 200)]}
+    # No own MM: the primary's, which must then be decodable.
+    stats, _prim, supp = _stash_pair(
+        tmp_path, "u", dict(seq="CCCC", cigar="4M", tags=bad), dict(cigar="1H3M", seq="CCC"))
+    assert supp is None and stats.excluded_unverifiable == 1
