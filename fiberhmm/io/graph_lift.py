@@ -146,8 +146,9 @@ class StashStats:
     dropped_unmapped: int = 0
     filled_supplementary: int = 0
     excluded_supplementary: int = 0
-    excluded_undecidable_annotations: int = 0
-    mods_unverified: int = 0
+    excluded_unverifiable: int = 0
+    supp_tags_replaced: int = 0
+    mods_dropped: int = 0
     hard_clipped_kept: int = 0
     frame_converted: int = 0
 
@@ -180,8 +181,8 @@ def _require_legacy_frame(read) -> None:
 # --- base modifications (MM/ML) ----------------------------------------------------
 #
 # Decoding is pysam's (htslib's), which accepts the whole SAMtags grammar:
-# multi-letter, upper-case and ChEBI codes, N+ groups, and MM without ML.
-# The modes ('.', '?') and the group order come from the MM heads.
+# multi-letter, upper-case and ChEBI codes, N+ and U+ groups, and MM without
+# ML. The modes ('.', '?') and the group order come from the MM heads.
 
 _MM_HEAD = re.compile(r"^([ACGTUN])([+-])([A-Za-z]+|\d+)([.?]?)$")
 
@@ -189,7 +190,8 @@ _MM_HEAD = re.compile(r"^([ACGTUN])([+-])([A-Za-z]+|\d+)([.?]?)$")
 def _mod_candidates(seq: str, base: str) -> List[int]:
     if base == "N":
         return list(range(len(seq)))
-    return [i for i, b in enumerate(seq) if b.upper() == base]
+    bases = {"T", "U"} if base in ("T", "U") else {base}
+    return [i for i, b in enumerate(seq) if b.upper() in bases]
 
 
 def _mod_tags(read) -> Optional[Tuple[str, str]]:
@@ -206,7 +208,7 @@ def decode_mods(read) -> Optional[dict]:
     ``{'names': (MM, ML), 'has_ml': bool, 'groups': [(base, strand, code,
     mode, [(pos, ml), ...]), ...]}`` (one group per code, in MM order), or
     ``{'names': ..., 'groups': None}`` when htslib cannot decode them against
-    this record's SEQ."""
+    this record's SEQ. htslib files U groups under T."""
     names = _mod_tags(read)
     if names is None:
         return None
@@ -227,10 +229,15 @@ def decode_mods(read) -> Optional[dict]:
         decoded = None
     if decoded is None:
         return info
+    found = 0
     groups = []
     for base, strand, code, mode in heads:
-        calls = decoded.get((base, 0 if strand == "+" else 1, code), [])
+        key_base = "T" if base == "U" else base
+        calls = decoded.get((key_base, 0 if strand == "+" else 1, code), [])
+        found += len(calls)
         groups.append((base, strand, code, mode, [(int(p), int(q)) for p, q in calls]))
+    if found != sum(len(v) for v in decoded.values()):
+        return info                       # a call htslib decoded under another key
     info["groups"] = groups
     return info
 
@@ -260,113 +267,87 @@ def _candidate_sets(groups, seq):
     return [tuple(_mod_candidates(seq, g[0])) for g in groups]
 
 
-def _legacy_values(read) -> dict:
+# --- hard-clipped supplementaries --------------------------------------------------
+#
+# The primary is the single source of truth for every molecule-level tag of
+# its hard-clipped supplementaries: footprint annotations (converted to
+# molecular frame with the primary's own length and orientation, the frame
+# every lifted record carries) and base modifications (decoded on the
+# primary, re-encoded on the supplementary's filled SEQ). The
+# supplementary's own copies, which may describe its clipped SEQ, are
+# replaced, never shifted.
+
+# Molecule-level call tags FiberHMM and fibertools write. Interval tags are in
+# molecular frame on every lifted record, so they are the same on each
+# record of the molecule.
+MOLECULE_TAGS = ("MA", "AQ", "AN", "Ma", "Aq", "An", "ns", "nl", "nq", "as", "al", "aq", "hl")
+_MOD_TAGS = ("MM", "ML", "Mm", "Ml", "MN")
+
+
+def _tag_values(read, tags) -> dict:
     out = {}
-    for start_tag, length_tag in (("ns", "nl"), ("as", "al")):
-        if read.has_tag(start_tag) and read.has_tag(length_tag):
-            out[start_tag] = (tuple(int(v) for v in read.get_tag(start_tag)),
-                              tuple(int(v) for v in read.get_tag(length_tag)))
+    for tag in tags:
+        if read.has_tag(tag):
+            value = read.get_tag(tag)
+            out[tag] = tuple(value) if isinstance(value, array.array) else value
     return out
 
 
-def _primary_info(read) -> dict:
+def _intervals_fit(read, length: int) -> bool:
+    """The primary's molecular annotations describe a molecule of ``length``."""
+    for tag in ("MA", "Ma"):
+        if read.has_tag(tag):
+            try:
+                if int(str(read.get_tag(tag)).split(";", 1)[0]) != length:
+                    return False
+            except ValueError:
+                return False
+    for start_tag, size_tag in (("ns", "nl"), ("as", "al")):
+        if read.has_tag(start_tag) and read.has_tag(size_tag):
+            starts, sizes = list(read.get_tag(start_tag)), list(read.get_tag(size_tag))
+            if len(starts) != len(sizes) or any(s + n > length for s, n in zip(starts, sizes)):
+                return False
+    return True
+
+
+def _primary_info(read, converted: bool = True) -> dict:
+    """What a hard-clipped supplementary takes from its primary. Call it on
+    the primary after :func:`_to_molecular`; ``converted`` is its result.
+    ``verified`` is False when the primary's annotations or modifications
+    cannot be carried over unambiguously."""
     seq = read.query_sequence or ""
     quals = read.query_qualities
     mol_seq = revcomp(seq) if read.is_reverse else seq
     mol_qual = None
     if quals is not None:
         mol_qual = list(quals)[::-1] if read.is_reverse else list(quals)
-    return {"seq": mol_seq, "qual": mol_qual, "mods": decode_mods(read),
-            "legacy": _legacy_values(read)}
+    mods = decode_mods(read)
+    verified = (converted and not any(_hard_clips(read))
+                and _intervals_fit(read, len(mol_seq))
+                and (mods is None or mods["groups"] is not None))
+    return {"seq": mol_seq, "qual": mol_qual, "mods": mods, "verified": verified,
+            "tags": [(t, v, vt) for t, v, vt in read.get_tags(with_value_type=True)
+                     if t in MOLECULE_TAGS]}
 
 
-def _shift_ma(value: str, offset: int, total: int) -> str:
-    pieces = str(value).split(";")
-    out = [str(total)]
-    for chunk in pieces[1:]:
-        head, sep, body = chunk.partition(":")
-        if sep and body:
-            items = []
-            for item in body.split(","):
-                start, dash, size = item.partition("-")
-                items.append(f"{int(start) + offset}{dash}{size}" if dash else item)
-            body = ",".join(items)
-        out.append(head + sep + body)
-    return ";".join(out)
-
-
-def _annotation_plan(read, primary: dict, partial: int, total: int) -> Optional[dict]:
-    """Which annotation families of a hard-clipped record use its own
-    (partial) coordinates and must move, decided per family from its own
-    evidence; None when one cannot be decided.
-
-    ``MA``/``Ma``: the read length each states (partial: move; whole: keep;
-    anything else: undecidable). Legacy ``ns``/``as``: whole when an
-    interval ends beyond the partial SEQ or the values equal the primary's
-    (copied from it); otherwise they follow the read length of ``MA``, which
-    FiberHMM writes with them, else of fibertools' ``Ma``, which fibertools
-    writes with them; with neither, undecidable."""
-    plan = {}
-    for tag in ("MA", "Ma"):
-        if read.has_tag(tag):
-            try:
-                length = int(str(read.get_tag(tag)).split(";", 1)[0])
-            except ValueError:
-                return None
-            if length == partial:
-                plan[tag] = True
-            elif length == total:
-                plan[tag] = False
-            else:
-                return None
-    for start_tag, (starts, sizes) in _legacy_values(read).items():
-        if not starts:
-            continue
-        if max(s + n for s, n in zip(starts, sizes)) > partial:
-            plan[start_tag] = False
-        elif primary.get("legacy", {}).get(start_tag) == (starts, sizes):
-            plan[start_tag] = False
-        elif "MA" in plan:
-            plan[start_tag] = plan["MA"]
-        elif "Ma" in plan:
-            plan[start_tag] = plan["Ma"]
-        else:
-            return None
-    return plan
-
-
-def _apply_annotation_plan(read, plan: dict, offset: int, total: int) -> None:
-    for tag, move in plan.items():
-        if not move:
-            continue
-        if tag in ("MA", "Ma"):
-            read.set_tag(tag, _shift_ma(str(read.get_tag(tag)), offset, total), value_type="Z")
-        else:
-            read.set_tag(tag, array.array("I", [int(v) + offset for v in read.get_tag(tag)]))
-
-
-ANNOTATION_UNDECIDABLE = "annotation coordinates undecidable"
+UNVERIFIABLE = "primary annotations or modifications cannot be carried over"
 
 
 def fill_hard_clips(read, primary: dict, notes: Optional[Dict[str, int]] = None) -> Optional[str]:
-    """Fill a hard-clipped record's clipped bases from its primary, as soft clips.
+    """Fill a hard-clipped record from its primary and give it the primary's
+    molecule-level tags.
 
-    ``primary`` is :func:`_primary_info` of the primary record (molecular
-    orientation). The record keeps its own aligned SEQ: DAF R/Y encoding is
-    per record, and the primary's copy of those bases (soft-clipped or aligned
-    elsewhere) does not carry this alignment's deaminations. Only the clipped
-    flanks come from the primary.
-
-    Base modifications are re-encoded on the final SEQ from decoded
-    positions: the primary's when it has them, else the record's own --
-    kept as they are when its MN says they already describe the whole
-    molecule, else moved by the molecule offset with mode '?' (the filled
-    bases are not known to be unmodified). Calls on bases that are no longer
-    the modified base (C -> Y) are dropped. Tags htslib cannot decode are
-    kept unchanged and counted in ``notes['mods_unverified']``.
-
-    Footprint annotations move per :func:`_annotation_plan`. Returns None on
-    success, else why the record could not be filled (it is unchanged)."""
+    ``primary`` is :func:`_primary_info` of the primary record. SEQ: the
+    record's own aligned bases (DAF R/Y encoding is per record; the
+    primary's copy of those bases does not carry this alignment's
+    deaminations) with the clipped flanks from the primary, as soft clips;
+    QUAL likewise. Footprint tags (:data:`MOLECULE_TAGS`) are replaced by the
+    primary's, which are molecular. MM/ML/MN are replaced by the primary's
+    calls re-encoded on the final SEQ; a call whose base the record changed
+    (C -> Y) is dropped and counted (``notes['mods_dropped']``). A record
+    whose own tags differed from the result is counted in
+    ``notes['supp_tags_replaced']``. Returns None on success, else why the
+    record was left unchanged (it is then excluded)."""
     left, right = _hard_clips(read)
     if not (left or right):
         return None
@@ -378,13 +359,9 @@ def fill_hard_clips(read, primary: dict, notes: Optional[Dict[str, int]] = None)
     full = revcomp(mol) if read.is_reverse else mol
     if not _bases_agree(full[left:left + len(seq)], seq):
         return "primary SEQ does not match the supplementary"
-    plan = _annotation_plan(read, primary, len(seq), total)
-    if plan is None:
-        return ANNOTATION_UNDECIDABLE
-    # Molecule offset of this record's own bases.
-    offset = right if read.is_reverse else left
-    own_whole = read.has_tag("MN") and int(read.get_tag("MN")) == total
-    own = None if own_whole else decode_mods(read)
+    if not primary["verified"]:
+        return UNVERIFIABLE
+    before = _tag_values(read, MOLECULE_TAGS + _MOD_TAGS)
 
     quals = read.query_qualities
     new_qual = None
@@ -404,34 +381,27 @@ def fill_hard_clips(read, primary: dict, notes: Optional[Dict[str, int]] = None)
         read.query_qualities = new_qual
     new_mol = revcomp(new_seq) if read.is_reverse else new_seq
 
+    for tag in MOLECULE_TAGS + _MOD_TAGS:
+        if read.has_tag(tag):
+            read.set_tag(tag, None)
+    for tag, value, vtype in primary["tags"]:
+        read.set_tag(tag, value, value_type=None if str(vtype).startswith("B") else vtype)
     source = primary["mods"]
-    if source is not None and source["groups"] is not None:
+    if source is not None:
         groups = source["groups"]
         if _candidate_sets(groups, mol) != _candidate_sets(groups, new_mol):
+            # Bases the record changed are no longer known to be unmodified.
             groups = [(b, s, c, "?", calls) for b, s, c, _m, calls in groups]
-    elif source is not None or (own is not None and own["groups"] is None):
-        if notes is not None:
-            notes["mods_unverified"] = notes.get("mods_unverified", 0) + 1
-        source, groups = None, None        # keep the record's own tags as they are
-    elif own is not None:
-        source = own
-        groups = [(b, s, c, "?", [(p + offset, v) for p, v in calls])
-                  for b, s, c, _m, calls in own["groups"]]
-    else:
-        source, groups = None, None
-    if groups is not None:
-        for tag in ("MM", "ML", "Mm", "Ml", "MN"):
-            if read.has_tag(tag):
-                read.set_tag(tag, None)
-        mm, ml, _dropped = encode_mods(groups, new_mol, source["has_ml"])
-        names = source["names"]
-        read.set_tag(names[0], mm, value_type="Z")
+        mm, ml, dropped = encode_mods(groups, new_mol, source["has_ml"])
+        read.set_tag(source["names"][0], mm, value_type="Z")
         if source["has_ml"]:
-            read.set_tag(names[1], ml)
+            read.set_tag(source["names"][1], ml)
         read.set_tag("MN", len(new_seq), value_type="i")
-    elif own_whole:
-        pass                               # MM/ML/MN describe the filled molecule
-    _apply_annotation_plan(read, plan, offset, total)
+        if notes is not None and dropped:
+            notes["mods_dropped"] = notes.get("mods_dropped", 0) + dropped
+    after = _tag_values(read, MOLECULE_TAGS + _MOD_TAGS)
+    if notes is not None and before and before != after:
+        notes["supp_tags_replaced"] = notes.get("supp_tags_replaced", 0) + 1
     return None
 
 
@@ -445,21 +415,30 @@ def _stash_tags(read, hard: Optional[str]) -> None:
         read.set_tag(TAG_HARDCLIP, None)
 
 
-def _to_molecular(read, stats: Optional["StashStats"] = None) -> None:
+def _to_molecular(read, stats: Optional["StashStats"] = None) -> bool:
+    """Carry the record's footprint tags into molecular frame; False when
+    its MA could not be carried (malformed MA/AQ/AN: left as it was)."""
+    import warnings
+
     from fiberhmm.io.frame_carry import carry_to_molecular
 
     if not read.is_reverse:
-        return
+        return True
     _require_legacy_frame(read)
     before = (read.get_tag("MA") if read.has_tag("MA") else None,
               tuple(read.get_tag("ns")) if read.has_tag("ns") else None,
               tuple(read.get_tag("as")) if read.has_tag("as") else None)
-    carry_to_molecular(read)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", RuntimeWarning)
+        carry_to_molecular(read)
+    for warning in caught:
+        warnings.warn(warning.message, warning.category, stacklevel=2)
     after = (read.get_tag("MA") if read.has_tag("MA") else None,
              tuple(read.get_tag("ns")) if read.has_tag("ns") else None,
              tuple(read.get_tag("as")) if read.has_tag("as") else None)
     if stats is not None and before != after:
         stats.frame_converted += 1
+    return not any("cannot carry" in str(w.message) for w in caught)
 
 
 def stash_bam(in_path: str, out_path: str, *, threads: int = 1) -> StashStats:
@@ -487,11 +466,12 @@ def stash_bam(in_path: str, out_path: str, *, threads: int = 1) -> StashStats:
 
         def emit_supplementary(read, clips, primary):
             reason = fill_hard_clips(read, primary, notes)
-            stats.mods_unverified = notes.get("mods_unverified", 0)
+            stats.supp_tags_replaced = notes.get("supp_tags_replaced", 0)
+            stats.mods_dropped = notes.get("mods_dropped", 0)
             if reason is not None:
                 stats.excluded_supplementary += 1
-                if reason == ANNOTATION_UNDECIDABLE:
-                    stats.excluded_undecidable_annotations += 1
+                if reason == UNVERIFIABLE:
+                    stats.excluded_unverifiable += 1
                 return
             stats.filled_supplementary += 1
             _stash_tags(read, "S:{},{}".format(*clips))
@@ -506,17 +486,20 @@ def stash_bam(in_path: str, out_path: str, *, threads: int = 1) -> StashStats:
             if read.is_secondary:
                 stats.dropped_secondary += 1
                 continue
-            _to_molecular(read, stats)
             name = read.query_name
             clips = _hard_clips(read)
-            if read.is_supplementary and any(clips):
+            hard_supp = read.is_supplementary and any(clips)
+            # A hard-clipped supplementary takes the primary's annotations;
+            # its own are not converted (they may describe the clipped SEQ).
+            converted = True if hard_supp else _to_molecular(read, stats)
+            if hard_supp:
                 if name in primaries:
                     emit_supplementary(read, clips, primaries[name])
                 else:
                     waiting[name].append((read, clips))
                 continue
             if name in need and not read.is_supplementary:
-                primaries[name] = _primary_info(read)
+                primaries[name] = _primary_info(read, converted)
                 for held, held_clips in waiting.pop(name, []):
                     emit_supplementary(held, held_clips, primaries[name])
             hard = None
@@ -1010,7 +993,7 @@ def lift_pg_record(*, repair: RepairStats, calmd: bool, mode: str = "lift",
     stash = stash or {}
     parts.append(f"excluded_supplementary={stash.get('excluded_supplementary', 0)}")
     parts.append(f"filled_supplementary={stash.get('filled_supplementary', 0)}")
-    for key in ("excluded_undecidable_annotations", "mods_unverified"):
+    for key in ("excluded_unverifiable", "supp_tags_replaced", "mods_dropped"):
         if stash.get(key):
             parts.append(f"{key}={stash[key]}")
     parts.append(f"dropped_secondary={stash.get('dropped_secondary', 0)}")

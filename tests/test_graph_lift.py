@@ -529,46 +529,6 @@ def test_filled_supplementary_keeps_modifications_on_their_bases(tmp_path):
     assert _decoded(_fill_one(tmp_path, primary2, supp2, name="g")) == []
 
 
-def test_filled_supplementary_shifts_its_own_partial_modifications(tmp_path):
-    # Primary without MM; the supplementary's MM describes its 4 stored bases.
-    primary = lambda h: _read(h, "p", seq="GTACCA", cigar="6M")
-    supp = lambda h: _read(h, "p", flag=0x800, pos=500, cigar="2H4M", seq="ACCA",
-                           tags=[("MM", "C+m?,1;", "Z"), ("ML", array.array("B", [200]))])
-    rec = _fill_one(tmp_path, primary, supp)
-    assert rec.query_sequence == "GTACCA" and rec.get_tag("MN") == 6
-    assert _decoded(rec) == [4]
-    # Reverse supplementary: MM is in original read orientation.
-    molecule = "GTACCATT"
-    primary_r = lambda h: _read(h, "q", seq=molecule, cigar="8M")
-    stored = gl.revcomp(molecule)                    # AATGGTAC
-    supp_r = lambda h: _read(h, "q", flag=0x810, pos=500, cigar="2H6M", seq=stored[2:],
-                             tags=[("MM", "C+m?,0;", "Z"), ("ML", array.array("B", [200]))])
-    rec = _fill_one(tmp_path, primary_r, supp_r, name="r")
-    # Own original-orientation bases: revcomp("TGGTAC") = "GTACCA", first C at 3.
-    fwd = sorted(pos for calls in rec.modified_bases_forward.values() for pos, _q in calls)
-    assert fwd == [3] and rec.query_sequence == stored
-
-
-def test_filled_supplementary_moves_its_annotations(tmp_path):
-    molecule = "ACGTACGTAC"
-    primary = lambda h: _read(h, "a", seq=molecule, cigar="10M")
-    supp = lambda h: _read(h, "a", flag=0x800, pos=500, cigar="4H6M", seq=molecule[4:],
-                           tags=[("MA", "6;nuc+:2-2", "Z"), ("ns", array.array("I", [1])),
-                                 ("nl", array.array("I", [2]))])
-    rec = _fill_one(tmp_path, primary, supp)
-    assert rec.get_tag("MA") == "10;nuc+:6-2" and list(rec.get_tag("ns")) == [5]
-    # Reverse: the stored right-hand clip is the start of the molecule.
-    header = _source_header(co=["fiberhmm:coord=molecular"])
-    src = _write(tmp_path / "ar.bam", header, [
-        lambda h: _read(h, "b", seq=molecule, cigar="10M"),
-        lambda h: _read(h, "b", flag=0x810, pos=500, cigar="6M4H",
-                        seq=gl.revcomp(molecule)[:6], tags=[("MA", "6;nuc.:2-2", "Z")])])
-    gl.stash_bam(src, str(tmp_path / "ar.stash.bam"))
-    records, _ = _records(tmp_path / "ar.stash.bam")
-    rec = next(r for r in records if r.is_supplementary)
-    assert rec.cigarstring == "6M4S" and rec.get_tag("MA") == "10;nuc.:6-2"
-
-
 def test_repair_only_matches_on_sequence_not_length(tmp_path):
     # Two 40H20M supplementaries of one 60 bp molecule: A forward over
     # molecule 40..59, B reverse over molecule 0..19. Same lengths and spans.
@@ -709,61 +669,6 @@ def _hc_supp(tmp_path, name, molecule, supp_tags, primary_tags=(), cigar="4H6M")
     return stats, next((r for r in records if r.is_supplementary), None)
 
 
-def test_each_annotation_family_shifts_on_its_own_evidence(tmp_path):
-    molecule = "ACGTACGTAC"
-    # Whole-molecule legacy tags (they end beyond the 6 stored bases): kept.
-    _s, rec = _hc_supp(tmp_path, "w", molecule, [("ns", array.array("I", [5])),
-                                                 ("nl", array.array("I", [2]))])
-    assert list(rec.get_tag("ns")) == [5]
-    # Partial MA moves, a whole-length Ma stays, ns follows MA (same writer).
-    _s, rec = _hc_supp(tmp_path, "m", molecule, [
-        ("MA", "6;nuc.:2-2", "Z"), ("Ma", "10;nuc.:3-2", "Z"),
-        ("ns", array.array("I", [1])), ("nl", array.array("I", [2]))])
-    assert rec.get_tag("MA") == "10;nuc.:6-2" and rec.get_tag("Ma") == "10;nuc.:3-2"
-    assert list(rec.get_tag("ns")) == [5]
-    # Copied from the primary (same values): whole-molecule, kept.
-    legacy = [("ns", array.array("I", [1])), ("nl", array.array("I", [2]))]
-    _s, rec = _hc_supp(tmp_path, "c", molecule, legacy, primary_tags=legacy)
-    assert list(rec.get_tag("ns")) == [1]
-    # No evidence either way: refused, not guessed.
-    stats, rec = _hc_supp(tmp_path, "u", molecule, legacy)
-    assert rec is None and stats.excluded_undecidable_annotations == 1
-
-
-def test_modification_grammar_survives_filling(tmp_path):
-    def fill(name, primary_tags, supp_tags=()):
-        src = _write(tmp_path / f"{name}.bam", _source_header(), [
-            lambda h: _read(h, name, seq="ACCC", cigar="4M", tags=list(primary_tags)),
-            lambda h: _read(h, name, flag=0x800, pos=500, cigar="1H3M", seq="CCC",
-                            tags=list(supp_tags))])
-        gl.stash_bam(src, str(tmp_path / f"{name}.stash.bam"))
-        records, _ = _records(tmp_path / f"{name}.stash.bam")
-        return next(r for r in records if r.is_supplementary)
-
-    # Upper-case code.
-    rec = fill("u", [("MM", "C+C?,0;", "Z"), ("ML", array.array("B", [200]))])
-    assert rec.modified_bases_forward == {("C", 0, "C"): [(1, 200)]}
-    # ChEBI code, second C.
-    rec = fill("n", [("MM", "C+17596?,1;", "Z"), ("ML", array.array("B", [9]))])
-    assert rec.modified_bases_forward == {("C", 0, 17596): [(2, 9)]}
-    # MM without ML stays without ML.
-    rec = fill("l", [("MM", "C+m?,0;", "Z")])
-    assert rec.get_tag("MM") == "C+m?,0;" and not rec.has_tag("ML")
-    # Whole-molecule supplementary MM (MN = 4), primary without MM: kept.
-    rec = fill("w", [], [("MM", "C+m?,0;", "Z"), ("ML", array.array("B", [200])), ("MN", 4)])
-    assert rec.modified_bases_forward == {("C", 0, "m"): [(1, 200)]} and rec.get_tag("MN") == 4
-    # Undecodable primary MM: the supplementary's own tags are kept, and counted.
-    src = _write(tmp_path / "bad.bam", _source_header(), [
-        lambda h: _read(h, "b", seq="ACCC", cigar="4M",
-                        tags=[("MM", "C+m?,9;", "Z"), ("ML", array.array("B", [1]))]),
-        lambda h: _read(h, "b", flag=0x800, pos=500, cigar="1H3M", seq="CCC",
-                        tags=[("MM", "C+m?,0;", "Z"), ("ML", array.array("B", [7]))])])
-    stats = gl.stash_bam(src, str(tmp_path / "bad.stash.bam"))
-    records, _ = _records(tmp_path / "bad.stash.bam")
-    rec = next(r for r in records if r.is_supplementary)
-    assert stats.mods_unverified == 1 and rec.get_tag("MM") == "C+m?,0;"
-
-
 def test_native_vg_root_survives_lift_repair_and_relift(tmp_path):
     from fiberhmm.advisories import check_header
 
@@ -844,3 +749,106 @@ def test_finalize_publishes_bam_and_index_together(tmp_path, monkeypatch):
     assert not (tmp_path / "out" / "final.bam.csi").exists()
     with pysam.AlignmentFile(str(final)) as handle:
         assert handle.count() == 3                    # the index matches the new BAM
+
+
+# --- hard-clipped supplementaries: the primary is the source of truth ---------------
+
+def _stash_pair(tmp_path, name, primary_kw, supp_kw, header=None):
+    src = _write(tmp_path / f"{name}.bam", header or _source_header(), [
+        lambda h: _read(h, name, **primary_kw),
+        lambda h: _read(h, name, flag=supp_kw.pop("flag", 0x800), pos=500, **supp_kw)])
+    stats = gl.stash_bam(src, str(tmp_path / f"{name}.stash.bam"))
+    records, _ = _records(tmp_path / f"{name}.stash.bam")
+    supp = next((r for r in records if r.is_supplementary), None)
+    prim = next(r for r in records if not r.is_supplementary)
+    return stats, prim, supp
+
+
+def test_supplementary_takes_the_primarys_annotations(tmp_path):
+    molecule = "ACGTACGTAC"
+    # Finding 1: equal legacy values next to a partial MA no longer matter;
+    # everything comes from the primary.
+    stats, prim, supp = _stash_pair(
+        tmp_path, "a",
+        dict(seq=molecule, cigar="10M", tags=[("MA", "10;nuc.:6-2", "Z"),
+                                              ("AQ", array.array("B", [9])),
+                                              ("ns", array.array("I", [5])),
+                                              ("nl", array.array("I", [2]))]),
+        dict(cigar="4H6M", seq=molecule[4:], tags=[("MA", "6;nuc.:2-2", "Z"),
+                                                   ("ns", array.array("I", [1])),
+                                                   ("nl", array.array("I", [2]))]))
+    for tag in ("MA", "AQ", "ns", "nl"):
+        assert supp.get_tag(tag) == prim.get_tag(tag)
+    assert stats.supp_tags_replaced == 1
+    # A supplementary with no tags of its own gains the primary's, uncounted.
+    stats, prim, supp = _stash_pair(
+        tmp_path, "b", dict(seq=molecule, cigar="10M", tags=[("MA", "10;nuc.:6-2", "Z")]),
+        dict(cigar="4H6M", seq=molecule[4:]))
+    assert supp.get_tag("MA") == "10;nuc.:6-2" and stats.supp_tags_replaced == 0
+
+
+def test_reverse_primary_is_converted_with_its_own_length(tmp_path):
+    # Finding 2: SEQ-frame header, reverse records. The supplementary's own
+    # legacy tags were mirrored with its 6 stored bases; now the molecule's
+    # come from the primary, mirrored with its 10.
+    molecule = "ACGTACGTAC"
+    stored = gl.revcomp(molecule)
+    stats, prim, supp = _stash_pair(
+        tmp_path, "r",
+        dict(flag=0x10, seq=stored, cigar="10M", tags=[("ns", array.array("I", [1])),
+                                                       ("nl", array.array("I", [2]))]),
+        dict(flag=0x810, cigar="4H6M", seq=stored[4:], tags=[("ns", array.array("I", [1])),
+                                                             ("nl", array.array("I", [2]))]))
+    assert list(prim.get_tag("ns")) == [7]           # 10 - 1 - 2
+    assert list(supp.get_tag("ns")) == [7] and supp.cigarstring == "4S6M"
+
+
+def test_undecodable_primary_modifications_exclude_the_supplementary(tmp_path):
+    # Finding 3: nothing is emitted whose MM may not describe its SEQ.
+    stats, _prim, supp = _stash_pair(
+        tmp_path, "u", dict(seq="CCCC", cigar="4M", tags=[("MM", "C+m?,9;", "Z"),
+                                                          ("ML", array.array("B", [1]))]),
+        dict(cigar="1H3M", seq="CCC", tags=[("MM", "C+m?,0;", "Z"),
+                                           ("ML", array.array("B", [7])), ("MN", 3)]))
+    assert supp is None and stats.excluded_unverifiable == 1
+    assert stats.excluded_supplementary == 1
+
+
+def test_supplementary_modifications_are_the_primarys_and_replacement_is_counted(tmp_path):
+    # Finding 4: a whole-molecule supplementary MM differing from the
+    # primary's is replaced, and that is counted.
+    stats, _prim, supp = _stash_pair(
+        tmp_path, "w", dict(seq="ACCC", cigar="4M", tags=[("MM", "A+a?,0;", "Z"),
+                                                          ("ML", array.array("B", [180]))]),
+        dict(cigar="1H3M", seq="CCC", tags=[("MM", "C+m?,1;", "Z"),
+                                           ("ML", array.array("B", [200])), ("MN", 4)]))
+    assert supp.modified_bases_forward == {("A", 0, "a"): [(0, 180)]}
+    assert supp.get_tag("MN") == 4 and stats.supp_tags_replaced == 1
+    # No MM on the primary: the supplementary's own is removed (counted).
+    stats, _prim, supp = _stash_pair(
+        tmp_path, "x", dict(seq="ACCC", cigar="4M"),
+        dict(cigar="1H3M", seq="CCC", tags=[("MM", "C+m?,0;", "Z"),
+                                           ("ML", array.array("B", [200]))]))
+    assert not supp.has_tag("MM") and not supp.has_tag("MN") and stats.supp_tags_replaced == 1
+
+
+def test_modification_grammar_is_re_encoded_from_the_primary(tmp_path):
+    cases = [
+        ("ACCC", "C+C?,0;", [200], {("C", 0, "C"): [(1, 200)]}),
+        ("ACCC", "C+17596?,1;", [9], {("C", 0, 17596): [(2, 9)]}),
+        ("ACCC", "C+mh?,0;", [1, 2], {("C", 0, "m"): [(1, 1)], ("C", 0, "h"): [(1, 2)]}),
+        ("ATTT", "U+U?,0;", [200], {("T", 0, "U"): [(1, 200)]}),     # finding 5
+    ]
+    for k, (seq, mm, ml, expected) in enumerate(cases):
+        stats, _prim, supp = _stash_pair(
+            tmp_path, f"g{k}", dict(seq=seq, cigar="4M", tags=[("MM", mm, "Z"),
+                                                              ("ML", array.array("B", ml))]),
+            dict(cigar="1H3M", seq=seq[1:]))
+        assert supp.modified_bases_forward == expected, mm
+        assert stats.mods_dropped == 0
+    assert supp.get_tag("MM") == "U+U?,0;"
+    # MM without ML stays without ML.
+    _stats, _prim, supp = _stash_pair(
+        tmp_path, "l", dict(seq="ACCC", cigar="4M", tags=[("MM", "C+m?,0;", "Z")]),
+        dict(cigar="1H3M", seq="CCC"))
+    assert supp.get_tag("MM") == "C+m?,0;" and not supp.has_tag("ML")

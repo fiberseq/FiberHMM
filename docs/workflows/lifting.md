@@ -28,12 +28,25 @@ Everything that depends on the source alignment is repaired:
 | Lifted as | Repaired |
 |---|---|
 | supplementary alignments lose `0x800` and become extra primaries | `FLAG` restored from the source (one primary per read) |
-| hard clips are dropped (`649M1845H` → `649M`) | hard-clipped supplementaries get the clipped bases from their primary before the lift, as soft clips, with `MM`/`ML` re-encoded on the filled sequence and footprint coordinates moved onto the whole molecule; one whose primary is not in the input, or whose footprint coordinates cannot be told apart as partial or whole-molecule, is left out and counted |
+| hard clips are dropped (`649M1845H` → `649M`) | hard-clipped supplementaries get the clipped bases from their primary before the lift, as soft clips (see below); one whose primary is not in the input is left out and counted |
 | `st` keeps its value on reads that change strand | `st` switched `CT` ↔ `GA` (DAF readers otherwise see no deamination) |
 | footprint tags in SEQ frame (FiberHMM ≤ 2.12) end up mirrored on those reads | converted to molecular frame before the lift |
 | `MD`, `NM`, `SA` describe the source alignment | recomputed against `--target-fasta` (`samtools calmd`; `SA` rebuilt from the lifted parts); without it they are removed |
 | `MAPQ` | kept: how uniquely the read placed on the source assembly is what the lift inherits |
 | `@PG` lines of the lift unlinked, output unsorted | one `@PG` chain ending in `fiberhmm-lift`; sorted and indexed |
+
+For a hard-clipped supplementary the primary is the single source of truth
+for everything that describes the molecule. Its `SEQ` keeps the
+supplementary's own aligned bases (DAF R/Y codes are per alignment) with the
+clipped flanks from the primary. Its footprint tags (`MA`/`AQ`/`AN`,
+`Ma`/`Aq`/`An`, `ns`/`nl`/`nq`, `as`/`al`/`aq`) are replaced by the
+primary's, in molecular coordinates, and its `MM`/`ML` by the primary's
+calls re-encoded on the filled sequence; a call on a base the supplementary
+changed (C → Y) is dropped. The `@PG` counts supplementaries whose own tags
+were replaced (`supp_tags_replaced`) and dropped calls (`mods_dropped`). A
+supplementary is left out (`excluded_unverifiable`) when the primary's
+modifications cannot be decoded or its annotations cannot be carried over
+unambiguously.
 
 Secondary and unmapped records are not lifted, and supplementaries whose
 primary did not lift are dropped. The counts are printed and recorded in the
