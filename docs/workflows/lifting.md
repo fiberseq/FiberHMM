@@ -57,8 +57,10 @@ fiberhmm-lift --repair-only -i lifted.bam --source calls.hg002_mat.bam \
     -o lifted.repaired.bam --target-fasta GRCh38.fa
 ```
 
-Each lifted record is matched with its source record (same read name and
-sequence; the aligned part of the molecule decides between supplementaries).
+Each lifted record is matched one-to-one with its source record (same read
+name and sequence; the aligned part of the molecule decides between
+supplementaries). Records that match no source record, or several equally
+well, are dropped and counted.
 Hard clips the lift dropped are added back as hard clips.
 
 ## BED12 tracks
