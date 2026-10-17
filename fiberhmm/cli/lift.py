@@ -118,6 +118,7 @@ def _graph_lift(args, work_dir: str) -> int:
 
     with pysam.AlignmentFile(args.input, "rb", check_sq=False) as bam:
         pending = gl.header_lift_state(bam.header)["lift"]
+        source_pgs = bam.header.to_dict().get("PG", [])
     if pending:
         raise LiftError(f"{args.input} was lifted (@PG {', '.join(pending)}) without "
                         "fiberhmm-lift's repair; repair it first (--repair-only)")
@@ -138,7 +139,7 @@ def _graph_lift(args, work_dir: str) -> int:
     stash_info["unlifted"] = max(0, stash.stashed - _count_records(lifted, args.threads))
     stats = gl.repair_bam(
         lifted, args.output, work_dir=work_dir, target_fasta=args.target_fasta,
-        threads=args.threads,
+        threads=args.threads, source_pgs=source_pgs,
         pg_args={"mode": "lift", "source": _sample_of(args.prefix, args.delimiter),
                  "target": args.target, "graph": args.graph, "stash": stash_info})
     _report(stats, stash_info)
@@ -157,6 +158,10 @@ def _repair_only(args, work_dir: str) -> int:
         raise LiftError(f"{args.input}: already repaired (its last lift has a fiberhmm-lift @PG)")
     stash_info: dict = {}
     current = args.input
+    source_pgs = None
+    if args.source:
+        with pysam.AlignmentFile(args.source, "rb", check_sq=False) as bam:
+            source_pgs = bam.header.to_dict().get("PG", [])
     if first is not None and not first.has_tag(gl.TAG_FLAG):
         if not args.source:
             raise LiftError(
@@ -165,11 +170,13 @@ def _repair_only(args, work_dir: str) -> int:
         current = os.path.join(work_dir, "restashed.bam")
         match = gl.stash_from_source(args.input, args.source, current, threads=args.threads)
         stash_info["unmatched"] = match.unmatched
+        stash_info["ambiguous"] = match.ambiguous
         print(f"{TOOL}: matched {match.matched} lifted records to the source "
-              f"({match.unmatched} unmatched, dropped)", file=sys.stderr)
+              f"({match.unmatched} unmatched and {match.ambiguous} ambiguous, dropped)",
+              file=sys.stderr)
     stats = gl.repair_bam(
         current, args.output, work_dir=work_dir, target_fasta=args.target_fasta,
-        threads=args.threads,
+        threads=args.threads, source_pgs=source_pgs,
         pg_args={"mode": "repair-only", "source": _sample_of(args.prefix, args.delimiter),
                  "target": args.target, "graph": args.graph, "stash": stash_info})
     _report(stats, stash_info)
@@ -218,6 +225,13 @@ def _bed_lift(args, work_dir: str) -> int:
           f"{stats.rows_rearranged} rearranged; {stats.rows_flipped} changed strand)",
           file=sys.stderr)
     return 0
+
+
+def _has_files(path: str) -> bool:
+    try:
+        return any(name.endswith((".bam", ".bed")) for name in os.listdir(path))
+    except OSError:
+        return False
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -298,12 +312,16 @@ def main(argv=None) -> int:
             parser.error(f"{flag} {path}: no such file")
     out_dir = os.path.dirname(os.path.abspath(args.output))
     work_dir = tempfile.mkdtemp(prefix=".fiberhmm-lift-", dir=args.tmp_dir or out_dir)
+    succeeded = False
     try:
         if args.bed:
-            return _bed_lift(args, work_dir)
-        if args.repair_only:
-            return _repair_only(args, work_dir)
-        return _graph_lift(args, work_dir)
+            code = _bed_lift(args, work_dir)
+        elif args.repair_only:
+            code = _repair_only(args, work_dir)
+        else:
+            code = _graph_lift(args, work_dir)
+        succeeded = code == 0
+        return code
     except LiftError as error:
         print(f"error: {TOOL}: {error}", file=sys.stderr)
         return 2
@@ -315,7 +333,10 @@ def main(argv=None) -> int:
             return 2
         raise
     finally:
-        if args.keep_intermediate:
+        # A failed run keeps whatever it produced (a finished BAM that could
+        # not be moved into place, say); only empty work dirs go.
+        kept = args.keep_intermediate or (not succeeded and _has_files(work_dir))
+        if kept:
             print(f"{TOOL}: intermediate files kept in {work_dir}", file=sys.stderr)
         else:
             shutil.rmtree(work_dir, ignore_errors=True)

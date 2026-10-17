@@ -49,8 +49,9 @@ Decisions:
   filter, 0 would fail them all.
 - Hard-clipped supplementaries get their clipped bases (and QUAL) from the
   primary of the same QNAME before the lift, as soft clips, so the record
-  carries the whole molecule; MM/ML/MN are replaced by the primary's when
-  they differ (they describe the original read, whatever the strand). A
+  carries the whole molecule; MM/ML are re-encoded on the filled SEQ from
+  decoded positions and footprint annotations move with the molecule
+  offset (:func:`fill_hard_clips`). A
   hard-clipped supplementary whose primary is not in the input is excluded
   and counted.
 - Footprint annotations are converted to molecular frame before the lift
@@ -156,21 +157,89 @@ class FrameError(ValueError):
     """The footprint annotations' frame cannot be decided."""
 
 
-def check_input_frame(header, sample_reads: Iterable = ()) -> None:
-    """Refuse a BAM whose legacy ns/nl/as/al frame is undecidable.
+def _require_legacy_frame(read) -> None:
+    """Refuse a reverse read whose legacy ns/nl/as/al frame is undecidable.
 
     :func:`~fiberhmm.io.frame_carry.carry_to_molecular` would silently drop
-    those tags from reverse reads; lifting is not the place to lose them."""
-    from fiberhmm.io.annotation_frame import legacy_tag_frame
-
-    frame, reason = legacy_tag_frame(header)
-    if frame is not None:
+    those tags; lifting is not the place to lose them. Checked on every
+    record that is converted, not on a sample."""
+    if not read.is_reverse or not (read.has_tag("ns") or read.has_tag("as")):
         return
-    if any(read.has_tag("ns") or read.has_tag("as") for read in sample_reads):
+    from fiberhmm.io.annotation_frame import legacy_frame_of
+
+    resolver = legacy_frame_of(read.header)
+    if resolver.for_read(read) is None:
         raise FrameError(
-            f"cannot lift: the frame of the ns/nl/as/al tags is undecidable ({reason}), "
-            "and a strand change would leave them mirrored. Split the BAM by input, or "
-            "re-call it with FiberHMM >= 3.0, then lift.")
+            f"cannot lift record {read.query_name!r}: the frame of its ns/nl/as/al tags "
+            f"is undecidable ({resolver.reason}), and a strand change would leave them "
+            "mirrored. Split the BAM by input, or re-call it with FiberHMM >= 3.0, then lift.")
+
+
+# --- base modifications (MM/ML) ----------------------------------------------------
+
+_MM_HEAD = re.compile(r"^([ACGTUN])([+-])([a-z]+|\d+)([.?]?)$")
+
+
+def _mod_candidates(seq: str, base: str) -> List[int]:
+    if base == "N":
+        return list(range(len(seq)))
+    return [i for i, b in enumerate(seq) if b.upper() == base]
+
+
+def decode_mods(mm: str, ml, seq: str) -> Optional[list]:
+    """MM/ML against ``seq`` (original read orientation) as
+    ``[(base, strand, codes, mode, [(pos, [ml per code]), ...]), ...]``, or
+    None when they do not fit ``seq``."""
+    groups, ml = [], list(ml or [])
+    cursor = 0
+    for chunk in str(mm).split(";"):
+        if not chunk:
+            continue
+        head, *deltas = chunk.split(",")
+        match = _MM_HEAD.match(head)
+        if not match:
+            return None
+        base, strand, codes, mode = match.groups()
+        n_codes = 1 if codes.isdigit() else len(codes)
+        cands = _mod_candidates(seq, base)
+        calls, index = [], -1
+        for delta in deltas:
+            index += int(delta) + 1
+            if index >= len(cands):
+                return None
+            calls.append((cands[index], ml[cursor:cursor + n_codes]))
+            cursor += n_codes
+        groups.append((base, strand, codes, mode, calls))
+    if cursor > len(ml):
+        return None
+    return groups
+
+
+def encode_mods(groups: list, seq: str) -> Tuple[str, array.array, int]:
+    """``(MM, ML, dropped)`` of decoded ``groups`` on ``seq``; calls whose
+    base in ``seq`` is no longer the group's base are dropped."""
+    mm_parts, ml, dropped = [], array.array("B"), 0
+    for base, strand, codes, mode, calls in groups:
+        cands = _mod_candidates(seq, base)
+        rank = {pos: k for k, pos in enumerate(cands)}
+        deltas, previous = [], -1
+        for pos, values in sorted(calls):
+            k = rank.get(pos)
+            if k is None:
+                dropped += 1
+                continue
+            deltas.append(str(k - previous - 1))
+            previous = k
+            ml.extend(int(v) for v in values)
+        mm_parts.append(f"{base}{strand}{codes}{mode}" + "".join("," + d for d in deltas) + ";")
+    return "".join(mm_parts), ml, dropped
+
+
+def _mod_tags(read) -> Optional[Tuple[str, str]]:
+    for mm_tag, ml_tag in (("MM", "ML"), ("Mm", "Ml")):
+        if read.has_tag(mm_tag):
+            return mm_tag, ml_tag
+    return None
 
 
 def _primary_info(read) -> dict:
@@ -180,19 +249,66 @@ def _primary_info(read) -> dict:
     mol_qual = None
     if quals is not None:
         mol_qual = list(quals)[::-1] if read.is_reverse else list(quals)
-    mods = {}
-    for tag in ("MM", "ML", "Mm", "Ml", "MN"):
-        if read.has_tag(tag):
-            mods[tag] = read.get_tag(tag, with_value_type=True)
+    mods = None
+    names = _mod_tags(read)
+    if names and not (read.has_tag("MN") and int(read.get_tag("MN")) != len(seq)):
+        ml = read.get_tag(names[1]) if read.has_tag(names[1]) else []
+        mods = (names, decode_mods(read.get_tag(names[0]), ml, mol_seq))
     return {"seq": mol_seq, "qual": mol_qual, "mods": mods}
+
+
+def _shift_ma(value: str, offset: int, total: int) -> str:
+    pieces = str(value).split(";")
+    out = [str(total)]
+    for chunk in pieces[1:]:
+        head, sep, body = chunk.partition(":")
+        if sep and body:
+            items = []
+            for item in body.split(","):
+                start, dash, size = item.partition("-")
+                items.append(f"{int(start) + offset}{dash}{size}" if dash else item)
+            body = ",".join(items)
+        out.append(head + sep + body)
+    return ";".join(out)
+
+
+def _shift_annotations(read, offset: int, partial: int, total: int) -> None:
+    """Move molecular-frame annotations of a partial (hard-clipped) record
+    onto the whole molecule: MA/Ma intervals whose stated length is the
+    partial one, and legacy ns/as (unless an MA says the record already
+    used whole-molecule coordinates)."""
+    whole = False
+    for tag in ("MA", "Ma"):
+        if not read.has_tag(tag):
+            continue
+        value = str(read.get_tag(tag))
+        try:
+            length = int(value.split(";", 1)[0])
+        except ValueError:
+            continue
+        if length == partial and partial != total:
+            read.set_tag(tag, _shift_ma(value, offset, total), value_type="Z")
+        elif length == total:
+            whole = True
+    if whole or not offset:
+        return
+    for tag in ("ns", "as"):
+        if read.has_tag(tag):
+            read.set_tag(tag, array.array("I", [int(v) + offset for v in read.get_tag(tag)]))
 
 
 def fill_hard_clips(read, primary: dict) -> Optional[str]:
     """Fill a hard-clipped record's clipped bases from its primary, as soft clips.
 
     ``primary`` is :func:`_primary_info` of the primary record (molecular
-    orientation). The record keeps its own aligned SEQ (DAF encoding is
-    per-record); only the clipped flanks come from the primary. Returns None
+    orientation). The record keeps its own aligned SEQ: DAF R/Y encoding is
+    per record, and the primary's copy of those bases (soft-clipped or aligned
+    elsewhere) does not carry this alignment's deaminations. Only the clipped
+    flanks come from the primary. Base modifications are re-encoded on the
+    final SEQ from decoded positions (the primary's when it has them, else the
+    record's own, shifted, with unlisted bases unknown), so a call stays on its
+    base; calls on bases that are no longer the modified base (C -> Y) are
+    dropped. Footprint annotations move with the molecule offset. Returns None
     on success, else why it could not be filled (the record is unchanged)."""
     left, right = _hard_clips(read)
     if not (left or right):
@@ -205,6 +321,15 @@ def fill_hard_clips(read, primary: dict) -> Optional[str]:
     full = revcomp(mol) if read.is_reverse else mol
     if not _bases_agree(full[left:left + len(seq)], seq):
         return "primary SEQ does not match the supplementary"
+    # Molecule offset of this record's own bases.
+    offset = right if read.is_reverse else left
+    own_mol = revcomp(seq) if read.is_reverse else seq
+    own_names = _mod_tags(read)
+    own_mods = None
+    if own_names and not (read.has_tag("MN") and int(read.get_tag("MN")) == total):
+        ml = read.get_tag(own_names[1]) if read.has_tag(own_names[1]) else []
+        own_mods = decode_mods(read.get_tag(own_names[0]), ml, own_mol)
+
     quals = read.query_qualities
     new_qual = None
     if quals is not None and primary["qual"] is not None:
@@ -215,24 +340,37 @@ def fill_hard_clips(read, primary: dict) -> Optional[str]:
         cigar[0] = (_SOFT_CLIP, left)
     if right:
         cigar[-1] = (_SOFT_CLIP, right)
+    new_seq = full[:left] + seq + full[left + len(seq):]
     # Setting SEQ clears QUAL; QUAL is set again only when the primary has one.
-    read.query_sequence = full[:left] + seq + full[left + len(seq):]
+    read.query_sequence = new_seq
     read.cigartuples = cigar
     if new_qual is not None:
         read.query_qualities = new_qual
-    mods = primary["mods"]
-    own = {tag: read.get_tag(tag, with_value_type=True)
-           for tag in ("MM", "ML", "Mm", "Ml", "MN") if read.has_tag(tag)}
-    if not mods and "MN" in own and own["MN"][0] != len(read.query_sequence):
-        # MM/ML were trimmed with the hard clip and nothing replaces them.
-        for tag in own:
+    new_mol = revcomp(new_seq) if read.is_reverse else new_seq
+
+    groups, names = None, None
+    if primary["mods"] is not None and primary["mods"][1] is not None:
+        names, groups = primary["mods"]
+        if _candidate_sets(groups, mol) != _candidate_sets(groups, new_mol):
+            groups = [(b, s, c, "?", calls) for b, s, c, _m, calls in groups]
+    elif own_mods is not None:
+        names = own_names
+        groups = [(b, s, c, "?", [(p + offset, v) for p, v in calls])
+                  for b, s, c, _m, calls in own_mods]
+    for tag in ("MM", "ML", "Mm", "Ml", "MN"):
+        if read.has_tag(tag):
             read.set_tag(tag, None)
-    elif mods and own != mods:
-        for tag in own:
-            read.set_tag(tag, None)
-        for tag, (value, vtype) in mods.items():
-            read.set_tag(tag, value, value_type=None if str(vtype).startswith("B") else vtype)
+    if groups is not None:
+        mm, ml, _dropped = encode_mods(groups, new_mol)
+        read.set_tag(names[0], mm, value_type="Z")
+        read.set_tag(names[1], ml)
+        read.set_tag("MN", len(new_seq), value_type="i")
+    _shift_annotations(read, offset, len(seq), total)
     return None
+
+
+def _candidate_sets(groups, seq):
+    return [tuple(_mod_candidates(seq, b)) for b, *_rest in groups]
 
 
 def _stash_tags(read, hard: Optional[str]) -> None:
@@ -245,11 +383,12 @@ def _stash_tags(read, hard: Optional[str]) -> None:
         read.set_tag(TAG_HARDCLIP, None)
 
 
-def _to_molecular(read, stats: StashStats) -> None:
+def _to_molecular(read, stats: Optional["StashStats"] = None) -> None:
     from fiberhmm.io.frame_carry import carry_to_molecular
 
     if not read.is_reverse:
         return
+    _require_legacy_frame(read)
     before = (read.get_tag("MA") if read.has_tag("MA") else None,
               tuple(read.get_tag("ns")) if read.has_tag("ns") else None,
               tuple(read.get_tag("as")) if read.has_tag("as") else None)
@@ -257,30 +396,25 @@ def _to_molecular(read, stats: StashStats) -> None:
     after = (read.get_tag("MA") if read.has_tag("MA") else None,
              tuple(read.get_tag("ns")) if read.has_tag("ns") else None,
              tuple(read.get_tag("as")) if read.has_tag("as") else None)
-    if before != after:
+    if stats is not None and before != after:
         stats.frame_converted += 1
 
 
-def stash_bam(in_path: str, out_path: str, *, threads: int = 1,
-              frame_sample: int = 5000) -> StashStats:
+def stash_bam(in_path: str, out_path: str, *, threads: int = 1) -> StashStats:
     """Write ``in_path`` ready for lifting: stash tags, molecular frame,
     hard-clipped supplementaries filled from their primary.
 
     Secondary and unmapped records are dropped (counted). Two passes: the
     first finds the QNAMEs with hard-clipped supplementaries; the second
     writes, holding a hard-clipped supplementary back until its primary has
-    been seen."""
+    been seen. A reverse record whose legacy footprint frame is undecidable
+    stops the run (:class:`FrameError`)."""
     stats = StashStats()
     need = set()
-    sample = []
     with pysam.AlignmentFile(in_path, "rb", check_sq=False, threads=threads) as bam:
         for read in bam.fetch(until_eof=True):
-            if len(sample) < frame_sample:
-                sample.append(read)
             if read.is_supplementary and not read.is_unmapped and any(_hard_clips(read)):
                 need.add(read.query_name)
-        check_input_frame(bam.header, sample)
-    del sample
 
     primaries: Dict[str, dict] = {}
     waiting: Dict[str, list] = defaultdict(list)
@@ -338,22 +472,61 @@ def _molecular_span(read, length: int) -> Tuple[int, int]:
     return (length - end, length - start) if read.is_reverse else (start, end)
 
 
+def _molecular_seq_key(read) -> int:
+    seq = read.query_sequence or ""
+    return hash(revcomp(seq) if read.is_reverse else seq)
+
+
 @dataclass
 class SourceMatchStats:
     matched: int = 0
     unmatched: int = 0
+    ambiguous: int = 0
     already_stashed: int = 0
+
+
+def _assign(lifted: list, sources: list) -> Dict[int, Optional[int]]:
+    """One-to-one match of a QNAME's lifted records with its source records.
+
+    ``lifted``: ``[(index, length, seq_key, span)]``; ``sources``:
+    ``[(length, seq_key, span, identity)]``. A pair needs the same SEQ (in
+    molecular orientation) and is scored by the overlap of the aligned part of
+    that SEQ. A lifted record whose best score is shared by source records of
+    different identity is ambiguous (None). Returns ``{index: source or None}``
+    for the records that had a candidate at all."""
+    result: Dict[int, Optional[int]] = {}
+    pairs = []
+    for index, length, key, span in lifted:
+        scored = [(min(span[1], s[2][1]) - max(span[0], s[2][0]), j)
+                  for j, s in enumerate(sources) if s[0] == length and s[1] == key]
+        if not scored:
+            continue
+        best = max(score for score, _j in scored)
+        top = {sources[j][3] for score, j in scored if score == best}
+        if len(top) > 1:
+            result[index] = None
+            continue
+        pairs.extend((score, index, j) for score, j in scored)
+    used = set()
+    for score, index, j in sorted(pairs, key=lambda p: -p[0]):
+        if index in result or j in used:
+            continue
+        result[index] = j
+        used.add(j)
+    return result
 
 
 def stash_from_source(lifted_path: str, source_path: str, out_path: str, *,
                       threads: int = 1) -> SourceMatchStats:
     """Add the stash tags to a BAM lifted without :func:`stash_bam`.
 
-    Each lifted record is matched with the source record of the same QNAME
-    and SEQ length (the lift copies SEQ verbatim) whose aligned part of the
-    molecule overlaps it most. SEQ-frame footprint annotations are carried
-    into molecular frame using the source orientation. Unmatched records are
-    dropped (counted). Holds one summary per source record in memory."""
+    Each lifted record is matched one-to-one with a source record of the
+    same QNAME and the same SEQ in molecular orientation (the lift copies SEQ,
+    reverse-complementing it on a strand change); among those, the aligned
+    part of the SEQ decides. Unmatched and ambiguous records are dropped
+    (counted). SEQ-frame footprint annotations are carried into molecular
+    frame using the source orientation. Holds one summary per source and per
+    lifted record in memory."""
     from fiberhmm.io.frame_carry import carry_to_molecular
 
     stats = SourceMatchStats()
@@ -363,33 +536,44 @@ def stash_from_source(lifted_path: str, source_path: str, out_path: str, *,
             if read.is_unmapped or read.is_secondary:
                 continue
             length = read.query_length
-            source[read.query_name].append((
-                length, _molecular_span(read, length), int(read.flag),
-                int(read.mapping_quality), _source_locus(read), _hard_clips(read)))
+            identity = (int(read.flag), int(read.mapping_quality), _source_locus(read),
+                        _hard_clips(read))
+            source[read.query_name].append(
+                (length, _molecular_seq_key(read), _molecular_span(read, length), identity))
+    lifted: Dict[str, list] = defaultdict(list)
+    with pysam.AlignmentFile(lifted_path, "rb", check_sq=False, threads=threads) as bam:
+        for index, read in enumerate(bam.fetch(until_eof=True)):
+            if read.has_tag(TAG_FLAG) or read.is_unmapped:
+                continue
+            length = read.query_length
+            lifted[read.query_name].append(
+                (index, length, _molecular_seq_key(read), _molecular_span(read, length)))
+    assignment: Dict[int, Optional[int]] = {}
+    for name, records in lifted.items():
+        for index, j in _assign(records, source.get(name, [])).items():
+            assignment[index] = None if j is None else source[name][j][3]
+    del lifted
     with pysam.AlignmentFile(lifted_path, "rb", check_sq=False, threads=threads) as bam, \
             pysam.AlignmentFile(out_path, "wb", header=bam.header, threads=threads) as out:
-        for read in bam.fetch(until_eof=True):
+        for index, read in enumerate(bam.fetch(until_eof=True)):
             if read.has_tag(TAG_FLAG):
                 stats.already_stashed += 1
                 out.write(read)
                 continue
-            length = read.query_length
-            span = _molecular_span(read, length) if not read.is_unmapped else (0, 0)
-            best, best_overlap = None, -1
-            for entry in source.get(read.query_name, ()):
-                if entry[0] != length:
-                    continue
-                overlap = min(span[1], entry[1][1]) - max(span[0], entry[1][0])
-                if overlap > best_overlap:
-                    best, best_overlap = entry, overlap
-            if best is None:
+            if index not in assignment:
                 stats.unmatched += 1
                 continue
-            _length, _span, flag, mapq, locus, clips = best
+            identity = assignment[index]
+            if identity is None:
+                stats.ambiguous += 1
+                continue
+            flag, mapq, locus, clips = identity
             lifted_flag = read.flag
             # SEQ-frame annotations were written against the source orientation.
             read.flag = (lifted_flag & ~_REVERSE) | (flag & _REVERSE)
-            carry_to_molecular(read)
+            if read.is_reverse:
+                _require_legacy_frame(read)
+                carry_to_molecular(read)
             read.flag = lifted_flag
             read.set_tag(TAG_FLAG, flag, value_type="i")
             read.set_tag(TAG_SOURCE_MAPQ, mapq, value_type="i")
@@ -405,17 +589,26 @@ def stash_from_source(lifted_path: str, source_path: str, out_path: str, *,
 # @PG history
 # ---------------------------------------------------------------------------
 
+def _is_vg(pg: dict) -> bool:
+    return str(pg.get("PN", "") or "").strip().lower() == "vg"
+
+
+def _is_ft_lift(pg: dict) -> bool:
+    tokens = str(pg.get("CL", "") or "").split()
+    return bool(tokens) and os.path.basename(tokens[0]) in ("ft", "fibertools", "fibertools-rs") \
+        and any(t in ("pg-pansn", "pg-lift", "pg-inject") for t in tokens[1:3])
+
+
+def _is_vg_lift_cl(pg: dict) -> bool:
+    return re.match(r"^\S*\bvg\s+(surject|inject)\b", str(pg.get("CL", "") or "")) is not None
+
+
 def is_lift_pg(pg: dict) -> bool:
-    """A @PG line written by a graph lift: vg, or ft pg-pansn / pg-lift."""
-    pn = str(pg.get("PN", "") or "").strip().lower()
-    ident = str(pg.get("ID", "") or "").strip().lower()
-    cl = str(pg.get("CL", "") or "")
-    if pn == "vg" or re.match(r"^vg(?:[ .-]|$)", ident) or re.match(r"^\S*\bvg\s+(surject|inject)\b", cl):
-        return True
-    tokens = cl.split()
-    if tokens and os.path.basename(tokens[0]) in ("ft", "fibertools", "fibertools-rs"):
-        return any(t in ("pg-pansn", "pg-lift", "pg-inject") for t in tokens[1:3])
-    return False
+    """A @PG line that by itself shows a graph lift: ft pg-pansn / pg-lift /
+    pg-inject, or vg inject/surject in CL. vg's own ``@PG ID:0 PN:vg`` has
+    no CL and is a lift line only beside those (a vg giraffe alignment
+    writes the same line)."""
+    return _is_ft_lift(pg) or _is_vg_lift_cl(pg)
 
 
 def is_repair_pg(pg: dict) -> bool:
@@ -424,24 +617,29 @@ def is_repair_pg(pg: dict) -> bool:
     return pn == LIFT_PROGRAM or re.match(rf"^{LIFT_PROGRAM}(?:\.\d+)?$", ident) is not None
 
 
-def _is_vg(pg: dict) -> bool:
-    return str(pg.get("PN", "") or "").strip().lower() == "vg"
-
-
-def pending_lift_indices(pgs: List[dict]) -> List[int]:
+def pending_lift_indices(pgs: List[dict], source_pgs: Optional[List[dict]] = None) -> List[int]:
     """Indices of the @PG lines of a lift that no fiberhmm-lift has repaired.
 
-    vg writes ``@PG ID:0 PN:vg`` with no PP (a second lift writes another
-    ``ID:0``); the repair always gives it one, so a vg line without PP is
-    pending. A pg-pansn line is pending unless a fiberhmm-lift @PG descends
-    from it through PP."""
-    pending = {i for i, pg in enumerate(pgs) if is_lift_pg(pg) and _is_vg(pg) and not pg.get("PP")}
+    With ``source_pgs`` (the @PG lines of the BAM that was lifted), every
+    lift-like line (:func:`is_lift_pg`, or ``PN:vg``) not among them is the
+    new lift's. Without it: lines of a lift are :func:`is_lift_pg` lines,
+    plus bare ``PN:vg`` lines when the header has any. vg writes its line
+    without PP and the repair always gives it one, so a bare vg line without
+    PP is pending; any other lift line is pending unless a fiberhmm-lift @PG
+    descends from it through PP."""
+    if source_pgs is not None:
+        known = [dict(pg) for pg in source_pgs]
+        return [i for i, pg in enumerate(pgs)
+                if (is_lift_pg(pg) or _is_vg(pg)) and dict(pg) not in known]
+    has_lift = any(is_lift_pg(pg) for pg in pgs)
+    lift = {i for i, pg in enumerate(pgs) if is_lift_pg(pg) or (has_lift and _is_vg(pg))}
+    pending = {i for i in lift if _is_vg(pgs[i]) and not pgs[i].get("PP")}
     by_id = {}
     for i, pg in enumerate(pgs):
         if i not in pending:
             by_id.setdefault(pg.get("ID"), i)
     repaired = set()
-    for i, pg in enumerate(pgs):
+    for pg in pgs:
         if not is_repair_pg(pg):
             continue
         seen, parent = set(), pg.get("PP")
@@ -450,18 +648,18 @@ def pending_lift_indices(pgs: List[dict]) -> List[int]:
             seen.add(j)
             parent = pgs[j].get("PP")
         repaired |= seen
-    pending |= {i for i, pg in enumerate(pgs) if is_lift_pg(pg) and i not in repaired}
+    pending |= {i for i in lift if i not in repaired}
     return sorted(pending)
 
 
-def header_lift_state(header) -> dict:
+def header_lift_state(header, source_pgs: Optional[List[dict]] = None) -> dict:
     """``{'lift': [IDs of unrepaired lift @PG lines], 'repaired': bool}``.
 
     ``repaired`` means a fiberhmm-lift @PG is present and no lift after it
     is left unrepaired."""
     hdr = header.to_dict() if hasattr(header, "to_dict") else dict(header or {})
     pgs = list(hdr.get("PG", []) or [])
-    pending = pending_lift_indices(pgs)
+    pending = pending_lift_indices(pgs, source_pgs)
     return {"lift": [str(pgs[i].get("ID", "?")) for i in pending],
             "repaired": not pending and any(is_repair_pg(pg) for pg in pgs)}
 
@@ -476,29 +674,51 @@ def _lift_order(pg: dict) -> int:
     return 0
 
 
-def rechain_lift_history(header_dict: dict) -> dict:
-    """Link the unrepaired lift's @PG lines into one chain after the history.
+def rechain_lift_history(header_dict: dict, source_pgs: Optional[List[dict]] = None) -> dict:
+    """Link the unrepaired lift's @PG lines into one chain in the history.
 
-    The tip of the existing history (the last other @PG, append order)
-    becomes the parent of the panSN-prefix step, then vg, then the panSN
-    strip, each moved after the other lines so the strip step is last. A
-    lift line left dangling would count as its own @PG chain. IDs that
-    collide with earlier lines (vg's ``0`` on a second lift) get a suffix."""
-    pgs = list(header_dict.get("PG", []) or [])
-    pending = pending_lift_indices(pgs)
+    The lift's lines (panSN prefix, vg, panSN strip) become one chain whose
+    parent is the tip of the history the lift ran on: the last @PG, in
+    append order, that does not descend from the lift. Lines that ran on the
+    lifted output (a ``samtools sort`` with ``PP:ft.2``, say) follow the
+    chain, re-parented on its last step where they pointed into it. The
+    result has no cycles. IDs that collide with other lines (vg's ``0`` on a
+    second lift) get a suffix."""
+    pgs = [dict(pg) for pg in header_dict.get("PG", []) or []]
+    pending = set(pending_lift_indices(pgs, source_pgs))
     if not pending:
         return header_dict
-    rest = [pg for i, pg in enumerate(pgs) if i not in pending]
-    lift = sorted((pgs[i] for i in pending), key=_lift_order)   # stable within a step
-    used = {pg.get("ID") for pg in rest}
-    parent = rest[-1].get("ID") if rest else None
+    others = [i for i in range(len(pgs)) if i not in pending]
+    other_ids = {pgs[i].get("ID") for i in others}
+    # Original IDs that name only a lift line (vg's "0" may also name an old one).
+    lift_ids = {pgs[i].get("ID") for i in pending} - other_ids
+    by_id = {}
+    for i in others:
+        by_id.setdefault(pgs[i].get("ID"), i)
+
+    def descends_from_lift(i):
+        seen, parent = set(), pgs[i].get("PP")
+        while parent is not None and parent not in seen:
+            if parent in lift_ids:
+                return True
+            seen.add(parent)
+            j = by_id.get(parent)
+            if j is None:
+                return False
+            parent = pgs[j].get("PP")
+        return False
+
+    after = [i for i in others if descends_from_lift(i)]
+    before = [i for i in others if i not in set(after)]
+    used = set(other_ids)
+    parent = pgs[before[-1]].get("ID") if before else None
     chained = []
-    for pg in lift:
-        pg = dict(pg)
-        ident, n = pg.get("ID") or "lift", 1
+    for i in sorted(pending, key=lambda k: (_lift_order(pgs[k]), k)):
+        pg = pgs[i]
+        base, ident, n = pg.get("ID") or "lift", pg.get("ID") or "lift", 1
         while ident in used:
             n += 1
-            ident = f"{pg.get('ID') or 'lift'}.{n}"
+            ident = f"{base}.{n}"
         used.add(ident)
         pg["ID"] = ident
         if parent:
@@ -507,8 +727,14 @@ def rechain_lift_history(header_dict: dict) -> dict:
             pg.pop("PP", None)
         chained.append(pg)
         parent = ident
+    tail = []
+    for i in after:
+        pg = pgs[i]
+        if pg.get("PP") in lift_ids:
+            pg["PP"] = parent
+        tail.append(pg)
     out = dict(header_dict)
-    out["PG"] = rest + chained
+    out["PG"] = [pgs[i] for i in before] + chained + tail
     return out
 
 
@@ -675,7 +901,7 @@ def lift_pg_record(*, repair: RepairStats, calmd: bool, mode: str = "lift",
     parts.append(f"filled_supplementary={stash.get('filled_supplementary', 0)}")
     parts.append(f"dropped_secondary={stash.get('dropped_secondary', 0)}")
     parts.append(f"dropped_unmapped={stash.get('dropped_unmapped', 0)}")
-    for key in ("unlifted", "unmatched"):
+    for key in ("unlifted", "unmatched", "ambiguous"):
         if key in stash:
             parts.append(f"{key}={stash[key]}")
     parts.append(f"orphan_supplementary_dropped={repair.orphan_supplementary_dropped}")
@@ -689,9 +915,27 @@ def lift_pg_record(*, repair: RepairStats, calmd: bool, mode: str = "lift",
     }
 
 
+def _finalize(path: str, out_path: str, *, index: bool) -> None:
+    """Move ``path`` to ``out_path`` (any file system) and index it there.
+
+    The BAM is copied next to ``out_path`` under a temporary name and
+    renamed, so a reader never sees a partial output and a failed copy
+    leaves ``path`` in place."""
+    import shutil
+
+    final_dir = os.path.dirname(os.path.abspath(out_path))
+    staging = os.path.join(final_dir, f".{os.path.basename(out_path)}.{os.getpid()}.tmp")
+    shutil.move(path, staging)
+    if index:
+        pysam.index(staging, staging + ".bai")
+        os.replace(staging + ".bai", out_path + ".bai")
+    os.replace(staging, out_path)
+
+
 def repair_bam(lifted_path: str, out_path: str, *, work_dir: str,
                target_fasta: Optional[str] = None, threads: int = 1,
-               pg_args: Optional[dict] = None, index: bool = True) -> RepairStats:
+               pg_args: Optional[dict] = None, index: bool = True,
+               source_pgs: Optional[List[dict]] = None) -> RepairStats:
     """Repair a lifted (stashed) BAM into a sorted, indexed ``out_path``.
 
     Passes over the lifted BAM: (1) count what the repair will do (for the
@@ -699,13 +943,18 @@ def repair_bam(lifted_path: str, out_path: str, *, work_dir: str,
     a lifted primary; (3) repair, drop orphan supplementaries and write with
     the rechained header plus the fiberhmm-lift @PG. Then sort; with
     ``target_fasta`` recompute MD/NM (``samtools calmd``) and rebuild SA;
-    index. ``pg_args`` are :func:`lift_pg_record` keywords."""
+    index. ``pg_args`` are :func:`lift_pg_record` keywords; ``source_pgs``
+    the @PG lines of the BAM that was lifted, which tell the lift's own lines
+    apart exactly (else :func:`pending_lift_indices` infers them). The
+    output is written next to ``out_path`` first and moved into place, so
+    ``work_dir`` may be on another file system; a failure never removes a
+    finished output."""
     planned = RepairStats()
     supp_counts: Dict[str, int] = defaultdict(int)
     used_contigs = set()
     with pysam.AlignmentFile(lifted_path, "rb", check_sq=False, threads=threads) as bam:
         header = bam.header
-        if header_lift_state(header)["repaired"]:
+        if header_lift_state(header, source_pgs)["repaired"]:
             raise RepairError("the BAM was already repaired (its last lift has a "
                               "fiberhmm-lift @PG)")
         for read in bam.fetch(until_eof=True):
@@ -731,7 +980,7 @@ def repair_bam(lifted_path: str, out_path: str, *, work_dir: str,
     from fiberhmm.io.bam_header import append_pg_record
 
     out_header = append_pg_record(
-        rechain_lift_history(header.to_dict()),
+        rechain_lift_history(header.to_dict(), source_pgs),
         lift_pg_record(repair=planned, calmd=bool(target_fasta), **(pg_args or {})))
     os.makedirs(work_dir, exist_ok=True)
     unsorted = os.path.join(work_dir, "repaired.unsorted.bam")
@@ -768,9 +1017,7 @@ def repair_bam(lifted_path: str, out_path: str, *, work_dir: str,
             current = sa_path
     else:
         stats.sa_dropped = len(multi)
-    os.replace(current, out_path)
-    if index:
-        pysam.index(out_path)
+    _finalize(current, out_path, index=index)
     return stats
 
 
@@ -835,9 +1082,12 @@ def reassemble_bed12(lifted: Iterable[str], rows: List[list]) -> Tuple[List[str]
 
     A row is dropped (counted) when a block did not lift, its blocks land on
     different contigs or overlap, or their order is neither kept nor
-    reversed. Reversed order means the segment changed strand: the strand
-    is flipped and per-block comma-list columns (13+) are reversed with the
-    blocks. thickStart/thickEnd span the lifted row."""
+    reversed. The segment changed strand when the lifted blocks carry the
+    opposite strand or come back in reversed order (ft's BED mode copies the
+    strand column): the row takes the opposite strand and per-block
+    comma-list columns (13+) are reversed with the blocks. Blocks with
+    disagreeing strands, or a strand change whose blocks kept their order,
+    are dropped as rearranged. thickStart/thickEnd span the lifted row."""
     stats = BedStats(rows_in=len(rows))
     blocks: Dict[int, list] = defaultdict(list)
     for line in lifted:
@@ -846,7 +1096,8 @@ def reassemble_bed12(lifted: Iterable[str], rows: List[list]) -> Tuple[List[str]
             continue
         row, _, block = fields[3].rpartition("|")
         try:
-            blocks[int(row)].append((int(block), fields[0], int(fields[1]), int(fields[2])))
+            blocks[int(row)].append((int(block), fields[0], int(fields[1]), int(fields[2]),
+                                     fields[5] if len(fields) > 5 else "."))
         except ValueError:
             continue
     out = []
@@ -862,13 +1113,23 @@ def reassemble_bed12(lifted: Iterable[str], rows: List[list]) -> Tuple[List[str]
             continue
         by_position = sorted(lifted_blocks, key=lambda b: (b[2], b[3]))
         order = [b[0] for b in by_position]
+        strands = {b[4] for b in by_position}
+        original = fields[5]
+        if len(strands) != 1:
+            stats.rows_rearranged += 1
+            continue
+        strand_flipped = original in _FLIP_STRAND and strands == {_FLIP_STRAND[original]}
         if order == sorted(order):
-            flipped = False
+            reversed_order = False
         elif order == sorted(order, reverse=True):
-            flipped = True
+            reversed_order = True
         else:
             stats.rows_rearranged += 1
             continue
+        if strand_flipped and count > 1 and not reversed_order:
+            stats.rows_rearranged += 1
+            continue
+        flipped = strand_flipped or reversed_order
         if any(by_position[i][3] > by_position[i + 1][2] for i in range(count - 1)):
             stats.rows_rearranged += 1
             continue
@@ -881,7 +1142,7 @@ def reassemble_bed12(lifted: Iterable[str], rows: List[list]) -> Tuple[List[str]
         new[11] = ",".join(str(b[2] - start) for b in by_position)
         if flipped:
             stats.rows_flipped += 1
-            new[5] = _FLIP_STRAND.get(new[5], new[5])
+            new[5] = _FLIP_STRAND.get(original, original)
             if count > 1:
                 for col in range(12, len(new)):
                     values = new[col].split(",")

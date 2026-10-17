@@ -203,11 +203,20 @@ def test_undecidable_legacy_frame_is_refused(tmp_path):
         {"ID": "ft", "PN": "fibertools-rs", "VN": "0.6", "CL": "ft add-nucleosomes c.bam"},
     ])
     assert legacy_tag_frame(header)[0] is None
-    src = _write(tmp_path / "amb.bam", header, [
-        lambda h: _read(h, "r", seq=_seq(50), tags=[("ns", array.array("I", [1])),
-                                                   ("nl", array.array("I", [5]))])])
-    with pytest.raises(gl.FrameError):
+    # 5000 unannotated records first: the refusal must not depend on a sample.
+    reads = [lambda h, k=k: _read(h, f"plain{k}", pos=10 + k % 50, seq=_seq(50))
+             for k in range(5001)]
+    reads.append(lambda h: _read(h, "late", flag=0x10, pos=200, seq=_seq(50),
+                                 tags=[("ns", array.array("I", [1])),
+                                       ("nl", array.array("I", [5]))]))
+    src = _write(tmp_path / "amb.bam", header, reads)
+    with pytest.raises(gl.FrameError, match="late"):
         gl.stash_bam(src, str(tmp_path / "amb.stash.bam"))
+    # repair-only converts with the source orientation: same refusal.
+    fwd = _write(tmp_path / "amb_src.bam", header, reads[-1:])
+    lifted = _fake_lift(fwd, tmp_path / "amb.lifted.bam", flip=True)
+    with pytest.raises(gl.FrameError):
+        gl.stash_from_source(lifted, fwd, str(tmp_path / "amb.restash.bam"))
 
 
 # --- supplementaries -----------------------------------------------------------
@@ -395,7 +404,8 @@ def test_a_repaired_bam_can_be_lifted_again(tmp_path):
 
 
 def test_lift_pg_detection():
-    assert gl.is_lift_pg({"ID": "0", "PN": "vg"})
+    assert not gl.is_lift_pg({"ID": "0", "PN": "vg"})      # vg giraffe writes it too
+    assert gl.is_lift_pg({"ID": "vg", "PN": "vg", "CL": "vg surject -x g.gbz -"})
     assert gl.is_lift_pg({"ID": "ft.3", "PN": "fibertools-rs", "CL": "ft pg-lift --bam -i x"})
     assert not gl.is_lift_pg({"ID": "ft", "PN": "fibertools-rs", "CL": "ft add-nucleosomes x"})
     assert not gl.is_lift_pg({"ID": "samtools", "PN": "samtools", "CL": "samtools view vg.bam"})
@@ -484,3 +494,195 @@ def test_target_fasta_must_hold_the_contigs_reads_landed_on(tmp_path):
         gl.validate_target_fasta(header, str(fasta), {"tgt", "alt"})
     with pytest.raises(gl.RepairError, match="12"):
         gl.validate_target_fasta({"SQ": [{"SN": "tgt", "LN": 12}]}, str(fasta), set())
+
+
+# --- audit regressions -----------------------------------------------------------
+
+def _decoded(read):
+    """Modified positions in SEQ order (pysam's own MM/ML decoder)."""
+    return sorted(pos for calls in read.modified_bases.values() for pos, _q in calls)
+
+
+def _fill_one(tmp_path, primary, supp, name="f"):
+    src = _write(tmp_path / f"{name}.bam", _source_header(), [primary, supp])
+    stats = gl.stash_bam(src, str(tmp_path / f"{name}.stash.bam"))
+    assert stats.filled_supplementary == 1
+    records, _ = _records(tmp_path / f"{name}.stash.bam")
+    return next(r for r in records if r.is_supplementary)
+
+
+def test_filled_supplementary_keeps_modifications_on_their_bases(tmp_path):
+    # Primary C+m call on molecule base 3 (the third C). The supplementary
+    # carries a deamination (Y) at base 1, so the filled SEQ has one C fewer
+    # before base 3: MM must be re-encoded, not copied.
+    primary = lambda h: _read(h, "m", seq="CCACGC", cigar="6M",
+                              tags=[("MM", "C+m?,2;", "Z"), ("ML", array.array("B", [250]))])
+    supp = lambda h: _read(h, "m", flag=0x800, pos=500, cigar="1H5M", seq="YACGC")
+    rec = _fill_one(tmp_path, primary, supp)
+    assert rec.query_sequence == "CYACGC" and rec.get_tag("MN") == 6
+    assert _decoded(rec) == [3]
+    # A call on a base the supplementary deaminated cannot stay: dropped.
+    primary2 = lambda h: _read(h, "n", seq="CCACGC", cigar="6M",
+                               tags=[("MM", "C+m?,1;", "Z"), ("ML", array.array("B", [250]))])
+    supp2 = lambda h: _read(h, "n", flag=0x800, pos=500, cigar="1H5M", seq="YACGC")
+    assert _decoded(_fill_one(tmp_path, primary2, supp2, name="g")) == []
+
+
+def test_filled_supplementary_shifts_its_own_partial_modifications(tmp_path):
+    # Primary without MM; the supplementary's MM describes its 4 stored bases.
+    primary = lambda h: _read(h, "p", seq="GTACCA", cigar="6M")
+    supp = lambda h: _read(h, "p", flag=0x800, pos=500, cigar="2H4M", seq="ACCA",
+                           tags=[("MM", "C+m?,1;", "Z"), ("ML", array.array("B", [200]))])
+    rec = _fill_one(tmp_path, primary, supp)
+    assert rec.query_sequence == "GTACCA" and rec.get_tag("MN") == 6
+    assert _decoded(rec) == [4]
+    # Reverse supplementary: MM is in original read orientation.
+    molecule = "GTACCATT"
+    primary_r = lambda h: _read(h, "q", seq=molecule, cigar="8M")
+    stored = gl.revcomp(molecule)                    # AATGGTAC
+    supp_r = lambda h: _read(h, "q", flag=0x810, pos=500, cigar="2H6M", seq=stored[2:],
+                             tags=[("MM", "C+m?,0;", "Z"), ("ML", array.array("B", [200]))])
+    rec = _fill_one(tmp_path, primary_r, supp_r, name="r")
+    # Own original-orientation bases: revcomp("TGGTAC") = "GTACCA", first C at 3.
+    fwd = sorted(pos for calls in rec.modified_bases_forward.values() for pos, _q in calls)
+    assert fwd == [3] and rec.query_sequence == stored
+
+
+def test_filled_supplementary_moves_its_annotations(tmp_path):
+    molecule = "ACGTACGTAC"
+    primary = lambda h: _read(h, "a", seq=molecule, cigar="10M")
+    supp = lambda h: _read(h, "a", flag=0x800, pos=500, cigar="4H6M", seq=molecule[4:],
+                           tags=[("MA", "6;nuc+:2-2", "Z"), ("ns", array.array("I", [1])),
+                                 ("nl", array.array("I", [2]))])
+    rec = _fill_one(tmp_path, primary, supp)
+    assert rec.get_tag("MA") == "10;nuc+:6-2" and list(rec.get_tag("ns")) == [5]
+    # Reverse: the stored right-hand clip is the start of the molecule.
+    header = _source_header(co=["fiberhmm:coord=molecular"])
+    src = _write(tmp_path / "ar.bam", header, [
+        lambda h: _read(h, "b", seq=molecule, cigar="10M"),
+        lambda h: _read(h, "b", flag=0x810, pos=500, cigar="6M4H",
+                        seq=gl.revcomp(molecule)[:6], tags=[("MA", "6;nuc.:2-2", "Z")])])
+    gl.stash_bam(src, str(tmp_path / "ar.stash.bam"))
+    records, _ = _records(tmp_path / "ar.stash.bam")
+    rec = next(r for r in records if r.is_supplementary)
+    assert rec.cigarstring == "6M4S" and rec.get_tag("MA") == "10;nuc.:6-2"
+
+
+def test_repair_only_matches_on_sequence_not_length(tmp_path):
+    # Two 40H20M supplementaries of one 60 bp molecule: A forward over
+    # molecule 40..59, B reverse over molecule 0..19. Same lengths and spans.
+    import random
+
+    rng = random.Random(5)
+    molecule = "".join(rng.choice("ACGT") for _ in range(60))
+    src = _write(tmp_path / "m.src.bam", _source_header(), [
+        lambda h: _read(h, "z", seq=molecule, cigar="60M"),
+        lambda h: _read(h, "z", flag=0x800, pos=600, cigar="40H20M", seq=molecule[40:],
+                        tags=[("st", "CT", "Z")]),
+        lambda h: _read(h, "z", flag=0x810, pos=900, cigar="40H20M",
+                        seq=gl.revcomp(molecule)[40:], tags=[("st", "GA", "Z")]),
+    ])
+    lifted = _fake_lift(src, tmp_path / "m.lifted.bam", flip=True)
+    match = gl.stash_from_source(lifted, src, str(tmp_path / "m.restash.bam"))
+    assert match.matched == 3 and match.ambiguous == 0
+    gl.repair_bam(str(tmp_path / "m.restash.bam"), str(tmp_path / "m.out.bam"),
+                  work_dir=str(tmp_path / "mw"), pg_args={"mode": "repair-only"})
+    records, _ = _records(tmp_path / "m.out.bam")
+    by_locus = {r.get_tag("Yp"): r for r in records if r.is_supplementary}
+    a, b = by_locus["srcA:601:+"], by_locus["srcA:901:-"]
+    assert b.cigarstring == "20M40H" and b.get_tag("st") == "CT" and not b.is_reverse
+    assert a.cigarstring == "20M40H" and a.get_tag("st") == "GA" and a.is_reverse
+
+
+def test_repair_only_refuses_ambiguous_matches(tmp_path):
+    seq = _seq(30, seed=2)
+    src = _write(tmp_path / "amb2.bam", _source_header(), [
+        lambda h: _read(h, "d", seq=seq, cigar="30M"),
+        lambda h: _read(h, "d", flag=0x800, pos=700, cigar="30M", seq=seq),
+    ])
+    lifted = _fake_lift(src, tmp_path / "amb2.lifted.bam")
+    match = gl.stash_from_source(lifted, src, str(tmp_path / "amb2.restash.bam"))
+    assert match.ambiguous == 2 and match.matched == 0
+
+
+def _walk(pgs, start):
+    by_id = {pg["ID"]: pg for pg in pgs}
+    chain, node = [], start
+    while node:
+        assert node not in chain, f"cycle through {node}"
+        chain.append(node)
+        node = by_id.get(node, {}).get("PP")
+    return chain
+
+
+def test_rechain_has_no_cycle_when_tools_ran_after_the_lift():
+    pgs = [{"ID": "0", "PN": "vg"},
+           {"ID": "minimap2", "PN": "minimap2"},
+           {"ID": "fiberhmm-call", "PN": "fiberhmm-call", "PP": "minimap2"},
+           {"ID": "ft.1", "PN": "fibertools-rs", "CL": "ft pg-pansn in.bam --prefix S#0#"},
+           {"ID": "ft.2", "PN": "fibertools-rs", "PP": "ft.1",
+            "CL": "ft pg-pansn - out.bam --strip"},
+           {"ID": "samtools", "PN": "samtools", "PP": "ft.2", "CL": "samtools sort out.bam"},
+           {"ID": "samtools.1", "PN": "samtools", "PP": "samtools", "CL": "samtools index"}]
+    out = gl.rechain_lift_history({"PG": pgs})["PG"]
+    for pg in out:
+        _walk(out, pg["ID"])
+    assert _walk(out, out[-1]["ID"]) == ["samtools.1", "samtools", "ft.2", "0", "ft.1",
+                                         "fiberhmm-call", "minimap2"]
+
+
+def test_native_vg_alignment_is_not_a_lift():
+    from fiberhmm.advisories import check_header
+
+    header = {"HD": {"VN": "1.6"}, "SQ": [{"SN": "chr1", "LN": 100}],
+              "PG": [{"ID": "0", "PN": "vg"},
+                     {"ID": "fiberhmm-call", "PN": "fiberhmm-call", "PP": "0", "VN": "3.0.2",
+                      "CL": "fiberhmm-call -i giraffe.bam", "DS": "coord=molecular"}]}
+    assert gl.header_lift_state(header) == {"lift": [], "repaired": False}
+    assert not [a for a in check_header(header) if a.id == "graph-lift-unrepaired"]
+
+
+def test_output_on_another_file_system_and_failures_keep_results(tmp_path, monkeypatch, capsys):
+    import errno
+    import os as _os
+
+    from fiberhmm.cli import lift
+
+    src = _write(tmp_path / "fs.bam", _source_header(), [lambda h: _read(h, "r", seq=_seq(50))])
+    gl.stash_bam(src, str(tmp_path / "fs.stash.bam"))
+    lifted = _fake_lift(tmp_path / "fs.stash.bam", tmp_path / "fs.lifted.bam")
+    real_rename = _os.rename
+
+    def cross_device(a, b, *args, **kwargs):
+        if _os.path.dirname(_os.path.abspath(a)) != _os.path.dirname(_os.path.abspath(b)):
+            raise OSError(errno.EXDEV, "Invalid cross-device link")
+        return real_rename(a, b, *args, **kwargs)
+
+    monkeypatch.setattr(_os, "rename", cross_device)
+    (tmp_path / "out").mkdir()
+    gl.repair_bam(lifted, str(tmp_path / "out" / "fs.out.bam"), work_dir=str(tmp_path / "scratch"),
+                  pg_args={"mode": "lift"})
+    assert (tmp_path / "out" / "fs.out.bam").exists()
+    assert (tmp_path / "out" / "fs.out.bam.bai").exists()
+    monkeypatch.setattr(_os, "rename", real_rename)
+
+    def broken(*_args, **_kwargs):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(gl, "_finalize", broken)
+    raw = _fake_lift(src, tmp_path / "fs.raw.bam")
+    with pytest.raises(OSError):
+        lift.main(["--repair-only", "-i", raw, "--source", src, "-o", str(tmp_path / "x.bam"),
+                   "--tmp-dir", str(tmp_path / "out")])
+    kept = list((tmp_path / "out").glob(".fiberhmm-lift-*"))
+    assert kept and any(p.suffix == ".bam" for p in kept[0].iterdir())
+    assert "kept in" in capsys.readouterr().err
+
+
+def test_bed12_single_block_row_takes_the_lifted_strand():
+    rows = ["srcA\t100\t160\tr\t0\t+\t100\t160\t0\t1\t60\t0"]
+    _bed6, parsed, _ = gl.explode_bed12(rows)
+    out, stats = gl.reassemble_bed12(["tgt\t900\t960\t0|0\t0\t-"], parsed)
+    assert stats.rows_flipped == 1 and out[0].split("\t")[5] == "-"
+    out, stats = gl.reassemble_bed12(["tgt\t900\t960\t0|0\t0\t+"], parsed)
+    assert stats.rows_flipped == 0 and out[0].split("\t")[5] == "+"
