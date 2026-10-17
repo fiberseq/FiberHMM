@@ -106,6 +106,16 @@ integrated default); a collapse keeps only the representative, which keeps
 The joint molecule (`<ct_name>.cs`) has no `mt`/`mp` and carries its route's
 evidence tags.
 
+## Lift tags
+
+Written by [`fiberhmm-lift`](../workflows/lifting.md) (SAM user space).
+
+| Tag | Type | Content |
+|---|---|---|
+| `Yq` | `i` | `MAPQ` of the source alignment (kept as the record's `MAPQ`) |
+| `Yp` | `Z` | source locus, `<contig>:<1-based POS>:<+/->`; marks a lifted record |
+| `Yf`, `Yh` | `i`, `Z` | source `FLAG` and hard clips, between the stash and the repair only; never in a repaired BAM |
+
 ## Tags FiberHMM reads
 
 | Tag | Used for |

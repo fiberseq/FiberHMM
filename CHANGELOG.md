@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`fiberhmm-lift`** lifts a called BAM to another assembly through a
+  pangenome graph (vg + fibertools-rs `ft pg-pansn`, the stages of `ft
+  pg-lift --bam`, which fails on fibertools-rs ≤ 0.13), with footprints in
+  molecular coordinates. It repairs what the lift leaves stale: supplementary
+  flags, hard clips (filled from the primary), `st` on reads that change
+  strand, `MD`/`NM`/`SA` (recomputed with `--target-fasta`, else removed) and
+  the `@PG` history. The source `MAPQ` is kept and recorded in `Yq`, the
+  source locus in `Yp`. `--repair-only --source` repairs a BAM lifted with
+  `ft pg-lift` directly; `--bed` lifts BED12 rows block by block. See
+  [Lifting to another assembly](https://fiberseq.github.io/FiberHMM/workflows/lifting/).
+- `fiberhmm-check` reports BAMs lifted through a graph without that repair
+  (`graph-lift-unrepaired`).
+
 ## 3.0.2
 
 ### Fixed

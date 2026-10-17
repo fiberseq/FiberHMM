@@ -92,6 +92,7 @@ nav:
       - Plasmids: workflows/plasmids.md
       - Duplex (paired strands): workflows/duplex.md
       - Extracting tracks: workflows/extracting.md
+      - Lifting to another assembly: workflows/lifting.md
       - Posteriors: workflows/posteriors.md
       - Quality control: workflows/qc.md
       - Footprint classes (consensus): workflows/consensus.md

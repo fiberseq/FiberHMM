@@ -21,6 +21,7 @@ Every command also accepts `-h`/`--help` and `--version` (prints
 | [`fiberhmm-daf-encode`](#fiberhmm-daf-encode) | Stamp R/Y deamination codes into a DAF BAM | [DAF-seq](../workflows/daf-seq.md#ry-encoding-fiberhmm-daf-encode) |
 | [`fiberhmm-daf-snps`](#fiberhmm-daf-snps) | Recurrent C→T/G→A SNP mask for DAF-seq | [DAF-seq](../workflows/daf-seq.md#snp-screening) |
 | [`fiberhmm-pair`](#fiberhmm-pair), [`fiberhmm-merge`](#fiberhmm-merge) | Pair, merge and jointly re-call scDAF duplexes | [Duplex](../workflows/duplex.md) |
+| [`fiberhmm-lift`](#fiberhmm-lift) | Lift a BAM (or BED12) to another assembly through a pangenome graph and repair it | [Lifting to another assembly](../workflows/lifting.md) |
 | [`fiberhmm-tag-m5c`](#fiberhmm-tag-m5c), [`fiberhmm-call-m5c`](#fiberhmm-call-m5c) | DddA CpG-island methylation | [DAF-seq](../workflows/daf-seq.md#ddda-cpg-island-methylation) |
 | [`fiberhmm-consensus`](#fiberhmm-consensus) | Footprint classes across molecules | [Consensus](../workflows/consensus.md) |
 | [`fiberhmm-transfer`](#fiberhmm-transfer) | Apply frozen classes to new data | [Transfer](../workflows/transfer.md) |
@@ -451,6 +452,27 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--io-threads` | `4` | htslib compression threads (default 4) |
 | `--daf-mask-runs` | — | Thin DAF targets in same-strand runs of &gt;= N original C (CT) or G (GA) bases (N=2: CC/GG and longer). Default: 2 with keep-one for DddA (duplex-validated), off otherwise; 0 disables. |
 | `--daf-run-policy` | `keep-one` | With --daf-mask-runs: keep each run's 5'-most target (default) or drop the run. Choices: `keep-one`, `drop`. |
+
+## fiberhmm-lift
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-i` / `--input` | required | Source BAM (BED12 with --bed; the lifted BAM with --repair-only) |
+| `-o` / `--output` | required | Output BAM (sorted, indexed) or BED |
+| `-g` / `--graph` | — | Pangenome graph (GBZ) with source and target paths |
+| `-p` / `--prefix` | — | panSN prefix of the source assembly's paths in the graph, e.g. 'HG002#1#' (as ft pg-lift --prefix) |
+| `--target` | — | Target sample to surject onto, e.g. GRCh38 (as ft pg-lift --target) |
+| `--target-fasta` | — | FASTA of the target assembly (contig names as in the lifted @SQ). Recomputes MD/NM and rebuilds SA; without it they are dropped. Recommended. |
+| `-d` / `--delimiter` | `#` | panSN delimiter (default: #) |
+| `--vg` | — | vg binary or wrapper script (default: vg on PATH) |
+| `--ft` | — | fibertools-rs ft binary (default: ft on PATH) |
+| `-t` / `--threads` | `4` | Threads for vg, sorting and BAM I/O (default: 4) |
+| `--repair-only` | off | Only repair -i, a BAM already lifted (ft pg-lift, or the same stages); needs --source unless fiberhmm-lift stashed it |
+| `--bed` | off | -i is BED12(+N) (fiberhmm-extract): lift each block with ft pg-lift's BED mode and reassemble the rows |
+| `--source` | — | --repair-only: the BAM that was lifted |
+| `--source-fasta` | — | --bed: FASTA of the source assembly |
+| `--tmp-dir` | — | Directory for intermediate files (default: next to the output) |
+| `--keep-intermediate` | off | Keep the intermediate files |
 
 ## fiberhmm-tag-m5c
 
