@@ -17,6 +17,16 @@
 - `fiberhmm-check` reports BAMs lifted through a graph without that repair
   (`graph-lift-unrepaired`).
 
+### Fixed
+
+- **fibertools-rs ≥ 0.13 `Ma`/`Aq` input is read everywhere.** `fiberhmm-recall-tfs`
+  carries fibertools' `fire.Q` (and other non-footprint) groups into the `MA`
+  it writes, and `fiberhmm-call`/`-recall-tfs` drop the superseded `Ma`/`Aq`/`An`
+  instead of leaving them beside the new `MA`. `fiberhmm-qc` counts
+  nucleosomes and TF footprints from `Ma`, `fiberhmm-footprint-model` loads
+  `Ma` molecules, and the `fiberhmm-extract` tag sniff, `fiberhmm-utils
+  ma-types --scan` and `fiberhmm-check` see `Ma` calls.
+
 ## 3.0.2
 
 ### Fixed

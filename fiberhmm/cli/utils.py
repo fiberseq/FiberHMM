@@ -861,10 +861,13 @@ def _parse_ma_type_arguments(values):
 
 
 def _scan_bam_ma_types(bam_path, io_threads=1):
-    """Exhaustively scan every alignment and return MA names in observed order."""
+    """Exhaustively scan every alignment and return MA names in observed order.
+
+    A read without FiberHMM ``MA`` contributes its fibertools (>= 0.13) ``Ma``."""
     import pysam
 
     from fiberhmm.io.bam_header import ma_types_from_tag
+    from fiberhmm.io.ma_tags import annotation_tags
 
     names = []
     seen = set()
@@ -880,10 +883,11 @@ def _scan_bam_ma_types(bam_path, io_threads=1):
         )
         for read in reads:
             records += 1
-            if not read.has_tag('MA'):
+            tags = annotation_tags(read)
+            if tags is None:
                 continue
             records_with_ma += 1
-            for name in ma_types_from_tag(read.get_tag('MA')):
+            for name in ma_types_from_tag(tags[0]):
                 if name not in seen:
                     seen.add(name)
                     names.append(name)
@@ -1027,7 +1031,7 @@ def cmd_ma_types(args):
         except (OSError, ValueError) as error:
             raise SystemExit(f"failed to scan MA types: {error}") from error
         print(
-            f"Scanned all {scanned:,} alignments ({with_ma:,} with MA); "
+            f"Scanned all {scanned:,} alignments ({with_ma:,} with MA/Ma); "
             f"observed: {','.join(names) if names else '(none)'}"
         )
     else:

@@ -971,8 +971,11 @@ def scan_reads(bam, max_records: int = DEFAULT_SCAN_RECORDS) -> ReadScan:
             scan.pair_tags += 1
             if read.is_duplicate and read.has_tag("mp"):
                 scan.paired_duplicates += 1
+        # FiberHMM MA, else fibertools (>= 0.13) Ma (it writes no ns/as).
+        ma = read.get_tag("MA") if read.has_tag("MA") else (
+            read.get_tag("Ma") if read.has_tag("Ma") else None)
         if read.has_tag("ns") or read.has_tag("as") or (
-                read.has_tag("MA") and re.search(r";(nuc|msp|tf)[.+-]", str(read.get_tag("MA")))):
+                ma is not None and re.search(r";(nuc|msp|tf)[.+-]", str(ma))):
             scan.call_tags += 1
         if scan.records >= max_records:
             break

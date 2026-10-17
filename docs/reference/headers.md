@@ -144,7 +144,7 @@ fiberhmm-utils ma-types out/matypes.bam --scan
 
 ```text
 Updated out/matypes.bam in place (300 alignments); added: ddda_mcg; declared union: nuc,msp,tf,ddda_mcg
-Scanned all 300 alignments (300 with MA); observed: nuc,msp,tf
+Scanned all 300 alignments (300 with MA/Ma); observed: nuc,msp,tf
 All requested MA types were already declared; BAM left unchanged.
 ```
 

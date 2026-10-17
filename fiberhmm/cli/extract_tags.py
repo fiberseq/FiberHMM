@@ -1783,6 +1783,9 @@ def diagnose_bam_tags(input_bam: str, n_reads: int = 20) -> Dict[str, object]:
         # Footprint / MSP / TF tags
         'has_ns_nl': 0, 'has_as_al': 0, 'has_MA_AQ': 0,
         'has_MA_ddda_mcg': 0,
+        # fibertools >= 0.13 Ma (read only without MA) and the annotation
+        # types seen in MA/Ma, e.g. {'nuc', 'msp', 'fire'}
+        'has_Ma': 0, 'ma_features': set(),
         # Modified-base tags
         'has_MM': 0, 'has_ML': 0,
         'mm_subtypes': set(),
@@ -1809,9 +1812,16 @@ def diagnose_bam_tags(input_bam: str, n_reads: int = 20) -> Dict[str, object]:
                     counts['has_as_al'] += 1
                 if read.has_tag('MA') and read.has_tag('AQ'):
                     counts['has_MA_AQ'] += 1
-                if read.has_tag('MA'):
+                ma_tags = annotation_tags(read)
+                if ma_tags is not None:
+                    if ma_tags[3] == 'Ma':
+                        counts['has_Ma'] += 1
                     try:
-                        groups = str(read.get_tag('MA')).split(';')[1:]
+                        groups = [group for group in str(ma_tags[0]).split(';')[1:]
+                                  if group]
+                        counts['ma_features'].update(
+                            re.split(r'[.+-]', group.partition(':')[0], 1)[0]
+                            for group in groups)
                         if any(
                             group.partition(':')[0].split('.', 1)[0]
                             == DDDA_MCG_FEATURE
@@ -1855,6 +1865,7 @@ def diagnose_bam_tags(input_bam: str, n_reads: int = 20) -> Dict[str, object]:
 
     n = counts['reads_scanned']
     counts['mm_subtypes'] = sorted(counts['mm_subtypes'])
+    counts['ma_features'] = sorted(counts['ma_features'])
 
     if n == 0:
         counts['summary'] = "no mapped reads in first sniff — extract will be empty"
@@ -1870,6 +1881,8 @@ def diagnose_bam_tags(input_bam: str, n_reads: int = 20) -> Dict[str, object]:
         parts.append(f"as/al={frac(counts['has_as_al'])}")
     if counts['has_MA_AQ']:
         parts.append(f"MA/AQ={frac(counts['has_MA_AQ'])}")
+    if counts['has_Ma']:
+        parts.append(f"Ma={frac(counts['has_Ma'])}")
     if counts['has_MA_ddda_mcg']:
         parts.append(
             f"MA-{DDDA_MCG_FEATURE}={frac(counts['has_MA_ddda_mcg'])}"
@@ -1902,6 +1915,11 @@ def _print_tag_diagnostic(diag: Dict[str, object], extract_types: list) -> None:
     if diag['has_MA_AQ']:
         predicted['tf'] = 'MA/AQ tf. annotations'
         predicted['bothstrand'] = 'MA deam+/deam- (duplex consensus reads)'
+    ma_features = diag.get('ma_features', ())
+    ma_label = 'MA' if diag['has_MA_AQ'] or not diag.get('has_Ma') else 'Ma'
+    for track, feature in (('nucleosome', 'nuc'), ('msp', 'msp'), ('tf', 'tf')):
+        if track not in predicted and feature in ma_features:
+            predicted[track] = f'{ma_label} {feature}. annotations'
     if diag['has_MM'] and any('a' in s.lower() for s in diag['mm_subtypes']):
         predicted['m6a'] = 'MM/ML (A+a)'
     if diag.get('has_MA_ddda_mcg'):
