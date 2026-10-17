@@ -413,6 +413,18 @@
    }
   },
   {
+   "id": "graph-lift-unrepaired",
+   "severity": "rerun-recommended",
+   "artifact": "lifted BAM",
+   "title": "Lifted through a pangenome graph without fiberhmm-lift's repair",
+   "reason": "The header shows a vg / ft pg-pansn (ft pg-lift) lift and no fiberhmm-lift @PG. Such a lift copies SEQ, QUAL and every tag from the source alignment unchanged: supplementary alignments lose 0x800 and show up as extra primaries, hard clips are dropped, MD/NM/SA still describe the source assembly, st:Z keeps its source value on reads that changed strand, so DAF readers see no deamination, and SEQ-frame footprint tags are mirrored on those reads. Footprints in molecular coordinates (FiberHMM >= 3.0, fibertools Ma) are placed correctly.",
+   "fix": "Repair it: fiberhmm-lift --repair-only -i <lifted.bam> --source <source.bam> --target-fasta <target.fa> -o <repaired.bam>. Or lift the source BAM with fiberhmm-lift, which records what the repair needs before the lift.",
+   "fixed_in": {},
+   "changelog": "",
+   "detector": "graph_lift",
+   "match": {}
+  },
+  {
    "id": "untracked-calls",
    "severity": "unverifiable",
    "artifact": "calls",

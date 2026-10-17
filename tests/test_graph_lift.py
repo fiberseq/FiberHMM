@@ -406,3 +406,41 @@ def test_bed12_explode_and_reassemble_handles_forward_flip_and_lost_blocks():
     assert stats.rows_flipped == 1 and fields[5] == "-"
     assert fields[1:3] == ["4700", "4900"] and fields[10] == "100,50" and fields[11] == "0,150"
     assert fields[12] == "2,1" and fields[13] == "5"
+
+
+# --- fiberhmm-check -------------------------------------------------------------
+
+def test_check_flags_an_unrepaired_lift_and_clears_a_repaired_one(tmp_path):
+    from fiberhmm.advisories import check_header
+
+    src = _write(tmp_path / "k.bam", _source_header(), [lambda h: _read(h, "r", seq=_seq(50))])
+    _records_, lifted_hdr = _records(_fake_lift(src, tmp_path / "k.lifted.bam"))
+    (advisory,) = [a for a in check_header(lifted_hdr) if a.id == "graph-lift-unrepaired"]
+    assert advisory.severity == "rerun-recommended" and advisory.needs_rerun
+    assert "fiberhmm-lift --repair-only" in advisory.fix
+    assert "0, ft.1, ft.2" in advisory.evidence[0]
+    _stash, _stats, _recs, repaired_hdr = _lift_and_repair(
+        tmp_path, _source_header(), [lambda h: _read(h, "r", seq=_seq(50))], name="k2")
+    assert not [a for a in check_header(repaired_hdr) if a.id == "graph-lift-unrepaired"]
+    assert not [a for a in check_header(_source_header()) if a.id == "graph-lift-unrepaired"]
+
+
+# --- CLI -----------------------------------------------------------------------------
+
+def test_cli_reports_missing_tools_and_a_missing_source(tmp_path, capsys, monkeypatch):
+    from fiberhmm.cli import lift
+
+    src = _write(tmp_path / "s.bam", _source_header(), [lambda h: _read(h, "r", seq=_seq(50))])
+    graph = tmp_path / "g.gbz"
+    graph.write_bytes(b"")
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    code = lift.main(["-i", src, "-o", str(tmp_path / "o.bam"), "-g", str(graph),
+                      "--prefix", "SRC#0#", "--target", "TGT"])
+    assert code == 2 and "`vg` not found" in capsys.readouterr().err
+    lifted = _fake_lift(src, tmp_path / "l.bam")
+    code = lift.main(["--repair-only", "-i", lifted, "-o", str(tmp_path / "o.bam")])
+    assert code == 2 and "--source" in capsys.readouterr().err
+    code = lift.main(["--repair-only", "-i", lifted, "--source", src,
+                      "-o", str(tmp_path / "o.bam")])
+    assert code == 0 and (tmp_path / "o.bam.bai").exists()
+    assert not list(tmp_path.glob(".fiberhmm-lift-*"))   # work dir cleaned up
