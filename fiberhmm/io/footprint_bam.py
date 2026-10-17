@@ -23,7 +23,7 @@ import pysam
 
 from fiberhmm.core.bam_reader import cigar_to_query_ref
 from fiberhmm.inference.tf_sites import BaselineMolecule, TFObservation
-from fiberhmm.io.ma_tags import parse_ma_tag
+from fiberhmm.io.ma_tags import annotation_tags, parse_ma_tag
 
 
 @dataclass(frozen=True)
@@ -386,17 +386,21 @@ def load_footprint_molecules_from_bam(
                 continue
             counts["primary_mapped_records"] += 1
 
-            if not read.has_tag("MA"):
+            # FiberHMM MA, else fibertools (>= 0.13) Ma, which is always
+            # molecular frame whatever the header says.
+            tags = annotation_tags(read)
+            if tags is None:
                 counts["skipped_missing_ma"] += 1
                 continue
+            ma_string, _aq, an, ma_source = tags
             try:
-                parsed_ma = parse_ma_tag(read.get_tag("MA"))
+                parsed_ma = parse_ma_tag(ma_string)
                 _validate_ma_against_read(parsed_ma, read)
             except (TypeError, ValueError) as error:
                 raise BamFootprintInputError(
-                    f"malformed MA tag on read {read.query_name!r}: {error}"
+                    f"malformed {ma_source} tag on read {read.query_name!r}: {error}"
                 ) from error
-            if read.has_tag("AN") and any(
+            if an is not None and any(
                 name in {"tf", "msp"} and intervals
                 for name, _strand, _quality_spec, intervals in parsed_ma["raw_types"]
             ):
@@ -444,7 +448,7 @@ def load_footprint_molecules_from_bam(
             for name, strand, _quality_spec, intervals in parsed_ma["raw_types"]:
                 if name not in {"tf", "msp"}:
                     continue
-                molecular = group_frame.is_molecular(name, strand)
+                molecular = ma_source == "Ma" or group_frame.is_molecular(name, strand)
                 for raw_start, raw_length in intervals:
                     start, length = int(raw_start), int(raw_length)
                     try:
