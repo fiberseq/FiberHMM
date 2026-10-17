@@ -81,7 +81,9 @@ from fiberhmm.io.ma_tags import (
     DDDA_MCG_HEMI_FEATURE,
     DDDA_MCG_FEATURE,
     DDDA_UCG_FEATURE,
+    FIBERTOOLS_ANNOTATION_TAGS,
     ambiguity_to_edge,
+    annotation_tags,
     flip_interval_frame,
     flip_intervals_to_seq,
     format_an_tag,
@@ -1175,14 +1177,22 @@ def _preserved_ma_groups(read) -> Tuple[List[str], List[str], List[int]]:
     whose AQ bytes cannot be located (AQ missing or inconsistent with the MA
     quality specs) is dropped with a warning rather than written with
     misaligned qualities.
+
+    Without FiberHMM's ``MA`` the groups come from fibertools' (>= 0.13)
+    ``Ma``/``Aq``/``An`` (e.g. ``fire.Q``). Groups are carried verbatim: the
+    MA this writer emits is molecular frame (every caller declares
+    ``coord=molecular``), an input ``MA`` has already been carried into
+    molecular frame (``frame_carry.carry_to_molecular``), and ``Ma`` is
+    molecular by definition.
     """
-    if not read.has_tag('MA'):
+    tags = annotation_tags(read)
+    if tags is None:
         return [], [], []
-    groups = [group for group in str(read.get_tag('MA')).split(';')[1:] if group]
-    old_names = (parse_an_tag(str(read.get_tag('AN')))
-                 if read.has_tag('AN') else [])
+    ma, aq, an, _source = tags
+    groups = [group for group in str(ma).split(';')[1:] if group]
+    old_names = parse_an_tag(str(an)) if an is not None else []
     try:
-        old_aq = list(read.get_tag('AQ')) if read.has_tag('AQ') else []
+        old_aq = list(aq) if aq is not None else []
     except (TypeError, ValueError):
         old_aq = []
 
@@ -1278,6 +1288,12 @@ def write_ma_tags(read, read_length: int,
             "downstream_compat=True requires also_write_legacy=True "
             "(compat mode writes TF calls into the legacy ns/nl track)."
         )
+
+    # The MA written below supersedes a fibertools Ma (its non-footprint
+    # groups were just carried over); a stale Ma beside it would disagree.
+    for tag in FIBERTOOLS_ANNOTATION_TAGS:
+        if read.has_tag(tag):
+            read.set_tag(tag, None)
 
     # Default nq for kept nucs to 0 (sentinel for "unverified") if not provided.
     nq_values = list(nq_for_kept_nucs) if nq_for_kept_nucs is not None \

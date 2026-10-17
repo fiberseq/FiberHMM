@@ -226,10 +226,15 @@ def strip_stale_call_tags(read, *, legacy_tags=LEGACY_CALL_TAGS,
     reduced exactly as the MA writer of the matching pipeline would reduce it:
     the fused call writer keeps DddA m5C groups (``keep_m5c_groups=True``),
     the legacy apply writer drops MA/AN/AQ wholesale (``False``).
+    fibertools' (>= 0.13) ``Ma/Aq/An`` are dropped wholesale: they hold the
+    footprints this run replaces (nuc/msp, plus FIRE built on those MSPs) and
+    never DddA m5C groups.
     """
     if not hasattr(read, "has_tag"):
         return
     for tag in legacy_tags or ():
+        _strip_tag(read, tag)
+    for tag in ("Ma", "Aq", "An"):
         _strip_tag(read, tag)
     if "ns" in (legacy_tags or ()):
         _strip_tag(read, HARMONIZED_LEGACY_TAG)
