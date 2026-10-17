@@ -770,7 +770,7 @@ def test_supplementary_takes_the_primarys_annotations(tmp_path):
     # everything comes from the primary.
     stats, prim, supp = _stash_pair(
         tmp_path, "a",
-        dict(seq=molecule, cigar="10M", tags=[("MA", "10;nuc.:6-2", "Z"),
+        dict(seq=molecule, cigar="10M", tags=[("MA", "10;nuc.Q:6-2", "Z"),
                                               ("AQ", array.array("B", [9])),
                                               ("ns", array.array("I", [5])),
                                               ("nl", array.array("I", [2]))]),
@@ -852,3 +852,70 @@ def test_modification_grammar_is_re_encoded_from_the_primary(tmp_path):
         tmp_path, "l", dict(seq="ACCC", cigar="4M", tags=[("MM", "C+m?,0;", "Z")]),
         dict(cigar="1H3M", seq="CCC"))
     assert supp.get_tag("MM") == "C+m?,0;" and not supp.has_tag("ML")
+
+
+# --- audit round 4 -------------------------------------------------------------------
+
+def test_only_groups_gaining_unassessed_bases_lose_their_dot_mode(tmp_path):
+    # The record turns molecule C 2 into Y: the C group loses a candidate
+    # (its '.' claim about the remaining Cs stands), the A group is untouched.
+    stats, _prim, supp = _stash_pair(
+        tmp_path, "d", dict(seq="AACCCAAA", cigar="8M",
+                            tags=[("MM", "A+a.,0;C+m.,2;", "Z"),
+                                  ("ML", array.array("B", [200, 210]))]),
+        dict(cigar="1H7M", seq="AYCCAAA"))
+    assert supp.get_tag("MM") == "A+a.,0;C+m.,1;" and list(supp.get_tag("ML")) == [200, 210]
+    assert stats.mods_dropped == 0
+    # The primary has Y where the record has C: the C group gains a base the
+    # primary never assessed, so only it becomes '?'.
+    stats, _prim, supp = _stash_pair(
+        tmp_path, "e", dict(seq="AACYCAAA", cigar="8M",
+                            tags=[("MM", "A+a.,0;C+m.,0;", "Z"),
+                                  ("ML", array.array("B", [200, 210]))]),
+        dict(cigar="1H7M", seq="ACCCAAA"))
+    assert supp.get_tag("MM") == "A+a.,0;C+m?,0;" and stats.mods_dropped == 0
+    stats, _prim, supp = _stash_pair(
+        tmp_path, "f", dict(seq="AACCCAAA", cigar="8M",
+                            tags=[("MM", "C+m.,0;", "Z"), ("ML", array.array("B", [99]))]),
+        dict(cigar="1H7M", seq="AYCCAAA"))
+    assert supp.get_tag("MM") == "C+m.;" and stats.mods_dropped == 1
+
+
+def test_failed_frame_conversion_refuses_the_run(tmp_path):
+    # Reverse record, SEQ-frame header, MA needing AQ bytes it lacks.
+    src = _write(tmp_path / "cf.bam", _source_header(), [
+        lambda h: _read(h, "bad", flag=0x10, seq=_seq(10), cigar="10M",
+                        tags=[("MA", "10;nuc+Q:2-2", "Z")])])
+    with pytest.raises(gl.AnnotationError, match="bad"):
+        gl.stash_bam(src, str(tmp_path / "cf.stash.bam"))
+
+
+def test_mm_and_ml_spellings_resolve_independently(tmp_path):
+    _stats, _prim, supp = _stash_pair(
+        tmp_path, "mx", dict(seq="ACCC", cigar="4M", tags=[("Mm", "C+m?,0;", "Z"),
+                                                           ("ML", array.array("B", [200]))]),
+        dict(cigar="1H3M", seq="CCC"))
+    assert supp.modified_bases_forward == {("C", 0, "m"): [(1, 200)]}
+
+
+def test_malformed_primary_annotations_refuse_the_run(tmp_path):
+    cases = [
+        [("MA", "4;nuc.QQQ:2-2", "Z"), ("AQ", array.array("B", [10]))],     # 1 of 3 AQ bytes
+        [("MA", "4;nuc.:1-1,3-1", "Z"), ("AN", "x", "Z")],                   # 2 calls, 1 name
+    ]
+    for k, tags in enumerate(cases):
+        src = _write(tmp_path / f"mf{k}.bam", _source_header(co=["fiberhmm:coord=molecular"]), [
+            lambda h, tags=tags: _read(h, "p", flag=0x10, seq="ACCC", cigar="4M", tags=tags),
+            lambda h: _read(h, "p", flag=0x800, pos=500, cigar="1H3M", seq="CCC")])
+        with pytest.raises(gl.AnnotationError, match="'p'"):
+            gl.stash_bam(src, str(tmp_path / f"mf{k}.stash.bam"))
+
+
+def test_repeated_identical_mm_heads_are_merged(tmp_path):
+    stats, _prim, supp = _stash_pair(
+        tmp_path, "rp", dict(seq="ACCC", cigar="4M", tags=[("MM", "C+m?,0;C+m?,1;", "Z"),
+                                                           ("ML", array.array("B", [10, 20]))]),
+        dict(cigar="1H3M", seq="CCC"))
+    assert supp is not None and stats.excluded_unverifiable == 0
+    calls = supp.modified_bases_forward[("C", 0, "m")]
+    assert sorted(calls) == [(1, 10), (2, 20)]

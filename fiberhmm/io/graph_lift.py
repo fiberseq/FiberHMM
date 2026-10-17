@@ -160,6 +160,10 @@ class FrameError(ValueError):
     """The footprint annotations' frame cannot be decided."""
 
 
+class AnnotationError(FrameError):
+    """A record's footprint tags cannot be carried to molecular frame."""
+
+
 def _require_legacy_frame(read) -> None:
     """Refuse a reverse read whose legacy ns/nl/as/al frame is undecidable.
 
@@ -195,10 +199,12 @@ def _mod_candidates(seq: str, base: str) -> List[int]:
 
 
 def _mod_tags(read) -> Optional[Tuple[str, str]]:
-    for mm_tag, ml_tag in (("MM", "ML"), ("Mm", "Ml")):
-        if read.has_tag(mm_tag):
-            return mm_tag, ml_tag
-    return None
+    """``(MM tag, ML tag)`` names in use, each resolved on its own (``MM``
+    before ``Mm``, ``ML`` before ``Ml``), as htslib does."""
+    mm_tag = next((t for t in ("MM", "Mm") if read.has_tag(t)), None)
+    if mm_tag is None:
+        return None
+    return mm_tag, next((t for t in ("ML", "Ml") if read.has_tag(t)), "ML")
 
 
 def decode_mods(read) -> Optional[dict]:
@@ -222,7 +228,12 @@ def decode_mods(read) -> Optional[dict]:
             return info
         base, strand, codes, mode = match.groups()
         for code in ([int(codes)] if codes.isdigit() else list(codes)):
-            heads.append((base, strand, code, mode or "."))
+            # htslib pools the calls of repeated heads; one group per code.
+            same = [h for h in heads if h[:3] == (base, strand, code)]
+            if same and same[0][3] != (mode or "."):
+                return info               # repeated heads that disagree on mode
+            if not same:
+                heads.append((base, strand, code, mode or "."))
     try:
         decoded = read.modified_bases_forward
     except (ValueError, KeyError):
@@ -263,8 +274,8 @@ def encode_mods(groups: list, seq: str, has_ml: bool = True) -> Tuple[str, array
     return "".join(mm_parts), ml, dropped
 
 
-def _candidate_sets(groups, seq):
-    return [tuple(_mod_candidates(seq, g[0])) for g in groups]
+def _gains_candidates(base: str, old: str, new: str) -> bool:
+    return bool(set(_mod_candidates(new, base)) - set(_mod_candidates(old, base)))
 
 
 # --- hard-clipped supplementaries --------------------------------------------------
@@ -293,20 +304,43 @@ def _tag_values(read, tags) -> dict:
     return out
 
 
-def _intervals_fit(read, length: int) -> bool:
-    """The primary's molecular annotations describe a molecule of ``length``."""
-    for tag in ("MA", "Ma"):
-        if read.has_tag(tag):
-            try:
-                if int(str(read.get_tag(tag)).split(";", 1)[0]) != length:
-                    return False
-            except ValueError:
-                return False
-    for start_tag, size_tag in (("ns", "nl"), ("as", "al")):
-        if read.has_tag(start_tag) and read.has_tag(size_tag):
-            starts, sizes = list(read.get_tag(start_tag)), list(read.get_tag(size_tag))
-            if len(starts) != len(sizes) or any(s + n > length for s, n in zip(starts, sizes)):
-                return False
+def annotations_valid(read, length: int) -> bool:
+    """The record's footprint tags describe a molecule of ``length``
+    consistently: each MA/Ma parses (:func:`fiberhmm.io.ma_tags.parse_ma_tag`)
+    with that read length, intervals inside it, one AQ/Aq byte per quality
+    letter per interval and one AN/An name per interval; legacy starts,
+    lengths and scores agree in number and lie inside it."""
+    from fiberhmm.io.ma_tags import parse_an_tag, parse_ma_tag
+
+    for ma_tag, aq_tag, an_tag in (("MA", "AQ", "AN"), ("Ma", "Aq", "An")):
+        if not read.has_tag(ma_tag):
+            continue
+        try:
+            parsed = parse_ma_tag(str(read.get_tag(ma_tag)))
+        except ValueError:
+            return False
+        if parsed["read_length"] != length:
+            return False
+        types = parsed["raw_types"]
+        intervals = [iv for *_h, ivs in types for iv in ivs]
+        if any(s < 0 or n < 0 or s + n > length for s, n in intervals):
+            return False
+        expected = sum(len(spec) * len(ivs) for _n, _s, spec, ivs in types)
+        aq = list(read.get_tag(aq_tag)) if read.has_tag(aq_tag) else []
+        if len(aq) != expected:
+            return False
+        if read.has_tag(an_tag) and len(parse_an_tag(str(read.get_tag(an_tag)))) != len(intervals):
+            return False
+    for start_tag, size_tag, score_tag in (("ns", "nl", "nq"), ("as", "al", "aq")):
+        if not (read.has_tag(start_tag) or read.has_tag(size_tag)):
+            continue
+        if not (read.has_tag(start_tag) and read.has_tag(size_tag)):
+            return False
+        starts, sizes = list(read.get_tag(start_tag)), list(read.get_tag(size_tag))
+        if len(starts) != len(sizes) or any(s + n > length for s, n in zip(starts, sizes)):
+            return False
+        if read.has_tag(score_tag) and len(read.get_tag(score_tag)) != len(starts):
+            return False
     return True
 
 
@@ -322,8 +356,12 @@ def _primary_info(read, converted: bool = True) -> dict:
     if quals is not None:
         mol_qual = list(quals)[::-1] if read.is_reverse else list(quals)
     mods = decode_mods(read)
+    if not annotations_valid(read, len(mol_seq)):
+        raise AnnotationError(
+            f"cannot lift record {read.query_name!r}: its footprint tags (MA/AQ/AN, Ma/Aq/An "
+            f"or ns/nl/as/al) do not describe its {len(mol_seq)} bp molecule consistently; "
+            "its hard-clipped supplementaries would copy them. Fix or strip them, then lift.")
     verified = (converted and not any(_hard_clips(read))
-                and _intervals_fit(read, len(mol_seq))
                 and (mods is None or mods["groups"] is not None))
     return {"seq": mol_seq, "qual": mol_qual, "mods": mods, "verified": verified,
             "tags": [(t, v, vt) for t, v, vt in read.get_tags(with_value_type=True)
@@ -388,10 +426,12 @@ def fill_hard_clips(read, primary: dict, notes: Optional[Dict[str, int]] = None)
         read.set_tag(tag, value, value_type=None if str(vtype).startswith("B") else vtype)
     source = primary["mods"]
     if source is not None:
-        groups = source["groups"]
-        if _candidate_sets(groups, mol) != _candidate_sets(groups, new_mol):
-            # Bases the record changed are no longer known to be unmodified.
-            groups = [(b, s, c, "?", calls) for b, s, c, _m, calls in groups]
+        # A '.' group says its unlisted candidate bases are unmodified. Bases
+        # the record changed away from the group's base drop out of it (and
+        # any call on them is dropped); only a group that gains a candidate
+        # the primary never assessed loses that claim.
+        groups = [(b, st, c, "?" if m == "." and _gains_candidates(b, mol, new_mol) else m,
+                   calls) for b, st, c, m, calls in source["groups"]]
         mm, ml, dropped = encode_mods(groups, new_mol, source["has_ml"])
         read.set_tag(source["names"][0], mm, value_type="Z")
         if source["has_ml"]:
@@ -416,8 +456,10 @@ def _stash_tags(read, hard: Optional[str]) -> None:
 
 
 def _to_molecular(read, stats: Optional["StashStats"] = None) -> bool:
-    """Carry the record's footprint tags into molecular frame; False when
-    its MA could not be carried (malformed MA/AQ/AN: left as it was)."""
+    """Carry the record's footprint tags into molecular frame. A record
+    whose MA cannot be carried (malformed MA/AQ/AN) stops the run
+    (:class:`AnnotationError`): it would be published under coord=molecular
+    in SEQ frame."""
     import warnings
 
     from fiberhmm.io.frame_carry import carry_to_molecular
@@ -431,6 +473,11 @@ def _to_molecular(read, stats: Optional["StashStats"] = None) -> bool:
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", RuntimeWarning)
         carry_to_molecular(read)
+    failed = [str(w.message) for w in caught if "cannot carry" in str(w.message)]
+    if failed:
+        raise AnnotationError(
+            f"cannot lift record {read.query_name!r}: {failed[0]}. Its footprint tags would be "
+            "published as molecular while still in SEQ frame; fix or strip them, then lift.")
     for warning in caught:
         warnings.warn(warning.message, warning.category, stacklevel=2)
     after = (read.get_tag("MA") if read.has_tag("MA") else None,
@@ -438,7 +485,7 @@ def _to_molecular(read, stats: Optional["StashStats"] = None) -> bool:
              tuple(read.get_tag("as")) if read.has_tag("as") else None)
     if stats is not None and before != after:
         stats.frame_converted += 1
-    return not any("cannot carry" in str(w.message) for w in caught)
+    return True
 
 
 def stash_bam(in_path: str, out_path: str, *, threads: int = 1) -> StashStats:
@@ -639,9 +686,7 @@ def stash_from_source(lifted_path: str, source_path: str, out_path: str, *,
             lifted_flag = read.flag
             # SEQ-frame annotations were written against the source orientation.
             read.flag = (lifted_flag & ~_REVERSE) | (flag & _REVERSE)
-            if read.is_reverse:
-                _require_legacy_frame(read)
-                carry_to_molecular(read)
+            _to_molecular(read)
             read.flag = lifted_flag
             read.set_tag(TAG_FLAG, flag, value_type="i")
             read.set_tag(TAG_SOURCE_MAPQ, mapq, value_type="i")
