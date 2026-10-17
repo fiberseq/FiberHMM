@@ -39,6 +39,9 @@ minimap2, pbmm2 or vg):
 ``Yp:Z`` (provenance; kept)
     source locus ``<contig>:<1-based POS>:<strand>``; marks a lifted record.
 
+A lifted BAM can be lifted again; ``Yq``/``Yp`` then describe the BAM of the
+latest lift, and the @PG chain records every lift.
+
 Decisions:
 
 - MAPQ stays the source value: how uniquely the read placed on the source
@@ -421,12 +424,46 @@ def is_repair_pg(pg: dict) -> bool:
     return pn == LIFT_PROGRAM or re.match(rf"^{LIFT_PROGRAM}(?:\.\d+)?$", ident) is not None
 
 
+def _is_vg(pg: dict) -> bool:
+    return str(pg.get("PN", "") or "").strip().lower() == "vg"
+
+
+def pending_lift_indices(pgs: List[dict]) -> List[int]:
+    """Indices of the @PG lines of a lift that no fiberhmm-lift has repaired.
+
+    vg writes ``@PG ID:0 PN:vg`` with no PP (a second lift writes another
+    ``ID:0``); the repair always gives it one, so a vg line without PP is
+    pending. A pg-pansn line is pending unless a fiberhmm-lift @PG descends
+    from it through PP."""
+    pending = {i for i, pg in enumerate(pgs) if is_lift_pg(pg) and _is_vg(pg) and not pg.get("PP")}
+    by_id = {}
+    for i, pg in enumerate(pgs):
+        if i not in pending:
+            by_id.setdefault(pg.get("ID"), i)
+    repaired = set()
+    for i, pg in enumerate(pgs):
+        if not is_repair_pg(pg):
+            continue
+        seen, parent = set(), pg.get("PP")
+        while parent in by_id and by_id[parent] not in seen:
+            j = by_id[parent]
+            seen.add(j)
+            parent = pgs[j].get("PP")
+        repaired |= seen
+    pending |= {i for i, pg in enumerate(pgs) if is_lift_pg(pg) and i not in repaired}
+    return sorted(pending)
+
+
 def header_lift_state(header) -> dict:
-    """``{'lift': [@PG IDs of the lift], 'repaired': bool}`` of a header."""
+    """``{'lift': [IDs of unrepaired lift @PG lines], 'repaired': bool}``.
+
+    ``repaired`` means a fiberhmm-lift @PG is present and no lift after it
+    is left unrepaired."""
     hdr = header.to_dict() if hasattr(header, "to_dict") else dict(header or {})
-    pgs = hdr.get("PG", []) or []
-    return {"lift": [str(pg.get("ID", "?")) for pg in pgs if is_lift_pg(pg)],
-            "repaired": any(is_repair_pg(pg) for pg in pgs)}
+    pgs = list(hdr.get("PG", []) or [])
+    pending = pending_lift_indices(pgs)
+    return {"lift": [str(pgs[i].get("ID", "?")) for i in pending],
+            "repaired": not pending and any(is_repair_pg(pg) for pg in pgs)}
 
 
 def _lift_order(pg: dict) -> int:
@@ -434,34 +471,42 @@ def _lift_order(pg: dict) -> int:
     tokens = str(pg.get("CL", "") or "").split()
     if "--strip" in tokens:
         return 2
-    if str(pg.get("PN", "")).lower() == "vg" or (tokens and os.path.basename(tokens[0]) == "vg"):
+    if _is_vg(pg) or (tokens and os.path.basename(tokens[0]) == "vg"):
         return 1
     return 0
 
 
 def rechain_lift_history(header_dict: dict) -> dict:
-    """Link the lift's @PG lines into one chain after the source history.
+    """Link the unrepaired lift's @PG lines into one chain after the history.
 
-    The source chain's tip (the last non-lift @PG, append order) becomes the
-    parent of the panSN-prefix step, then vg, then the panSN strip, each
-    line moved after the source lines so the strip step is last. Every lift
-    line left dangling would count as its own @PG chain."""
+    The tip of the existing history (the last other @PG, append order)
+    becomes the parent of the panSN-prefix step, then vg, then the panSN
+    strip, each moved after the other lines so the strip step is last. A
+    lift line left dangling would count as its own @PG chain. IDs that
+    collide with earlier lines (vg's ``0`` on a second lift) get a suffix."""
     pgs = list(header_dict.get("PG", []) or [])
-    lift = [pg for pg in pgs if is_lift_pg(pg)]
-    if not lift:
+    pending = pending_lift_indices(pgs)
+    if not pending:
         return header_dict
-    rest = [pg for pg in pgs if not is_lift_pg(pg)]
-    lift = sorted(lift, key=_lift_order)   # stable: keeps their own order within a step
+    rest = [pg for i, pg in enumerate(pgs) if i not in pending]
+    lift = sorted((pgs[i] for i in pending), key=_lift_order)   # stable within a step
+    used = {pg.get("ID") for pg in rest}
     parent = rest[-1].get("ID") if rest else None
     chained = []
     for pg in lift:
         pg = dict(pg)
+        ident, n = pg.get("ID") or "lift", 1
+        while ident in used:
+            n += 1
+            ident = f"{pg.get('ID') or 'lift'}.{n}"
+        used.add(ident)
+        pg["ID"] = ident
         if parent:
             pg["PP"] = parent
         else:
             pg.pop("PP", None)
         chained.append(pg)
-        parent = pg.get("ID")
+        parent = ident
     out = dict(header_dict)
     out["PG"] = rest + chained
     return out
@@ -554,13 +599,18 @@ def repair_record(read, stats: RepairStats) -> bool:
     return True
 
 
-def validate_target_fasta(header, fasta_path: str) -> None:
-    """Every @SQ of the lifted header must be in the FASTA with its length."""
+def validate_target_fasta(header, fasta_path: str, used: Optional[set] = None) -> None:
+    """Every @SQ of the lifted header that carries records (``used`` names;
+    all when None) must be in the FASTA, and every @SQ in the FASTA must
+    have its length. (A surjected header lists every target path, alts and
+    all, whether or not a read landed there.)"""
     with pysam.FastaFile(fasta_path) as fasta:
         lengths = dict(zip(fasta.references, fasta.lengths))
     hdr = header.to_dict() if hasattr(header, "to_dict") else dict(header)
     for sq in hdr.get("SQ", []):
         name, length = sq.get("SN"), int(sq.get("LN", 0))
+        if name not in lengths and used is not None and name not in used:
+            continue
         if name not in lengths:
             raise RepairError(f"--target-fasta has no contig {name!r} (lifted @SQ)")
         if lengths[name] != length:
@@ -652,13 +702,17 @@ def repair_bam(lifted_path: str, out_path: str, *, work_dir: str,
     index. ``pg_args`` are :func:`lift_pg_record` keywords."""
     planned = RepairStats()
     supp_counts: Dict[str, int] = defaultdict(int)
+    used_contigs = set()
     with pysam.AlignmentFile(lifted_path, "rb", check_sq=False, threads=threads) as bam:
         header = bam.header
         if header_lift_state(header)["repaired"]:
-            raise RepairError("the BAM already has a fiberhmm-lift @PG (it was repaired)")
+            raise RepairError("the BAM was already repaired (its last lift has a "
+                              "fiberhmm-lift @PG)")
         for read in bam.fetch(until_eof=True):
             planned.records_in += 1
             repair_record(read, planned)
+            if not read.is_unmapped:
+                used_contigs.add(read.reference_name)
             if read.is_supplementary:
                 supp_counts[read.query_name] += 1
     primary_names = set()
@@ -672,7 +726,7 @@ def repair_bam(lifted_path: str, out_path: str, *, work_dir: str,
     planned.orphan_supplementary_dropped = sum(
         n for name, n in supp_counts.items() if name not in primary_names)
     if target_fasta:
-        validate_target_fasta(header, target_fasta)
+        validate_target_fasta(header, target_fasta, used_contigs)
 
     from fiberhmm.io.bam_header import append_pg_record
 

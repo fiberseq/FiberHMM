@@ -366,7 +366,32 @@ def test_pg_chain_is_linear_through_the_lift(tmp_path):
     assert lift["PN"] == "fiberhmm-lift" and lift["CL"] == "fiberhmm-lift test"
     for token in ("coord=molecular", "source=SRC", "target=TGT", "graph=g.gbz", "calmd=no"):
         assert token in lift["DS"]
-    assert gl.header_lift_state(hdr) == {"lift": ["ft.1", "0", "ft.2"], "repaired": True}
+    assert gl.header_lift_state(hdr) == {"lift": [], "repaired": True}
+
+
+def test_a_repaired_bam_can_be_lifted_again(tmp_path):
+    _stash, _stats, _records_, _hdr = _lift_and_repair(
+        tmp_path, _source_header(), [lambda h: _read(h, "r", seq=_seq(50), mapq=5)])
+    first = tmp_path / "x.out.bam"
+    stashed = tmp_path / "again.stash.bam"
+    gl.stash_bam(str(first), str(stashed))
+    lifted = _fake_lift(stashed, tmp_path / "again.lifted.bam", flip=True)
+    _recs, lifted_hdr = _records(lifted)
+    assert gl.header_lift_state(lifted_hdr) == {"lift": ["0", "ft.1", "ft.2"], "repaired": False}
+    gl.repair_bam(lifted, str(tmp_path / "again.out.bam"), work_dir=str(tmp_path / "w"),
+                  pg_args={"mode": "lift"})
+    (rec,), hdr = _records(tmp_path / "again.out.bam")
+    ids = [pg["ID"] for pg in hdr["PG"]]
+    assert len(ids) == len(set(ids))
+    chain, parent = [], hdr["PG"][-1]["ID"]
+    by_id = {pg["ID"]: pg for pg in hdr["PG"]}
+    while parent:
+        chain.append(parent)
+        parent = by_id[parent].get("PP")
+    assert chain == ["fiberhmm-lift.2", "ft.2.2", "0.2", "ft.1.2", "fiberhmm-lift",
+                     "ft.2", "0", "ft.1", "minimap2"]
+    assert gl.header_lift_state(hdr)["repaired"]
+    assert rec.get_tag("Yp").startswith("tgt:") and rec.mapping_quality == 5
 
 
 def test_lift_pg_detection():
@@ -447,3 +472,15 @@ def test_cli_reports_missing_tools_and_a_missing_source(tmp_path, capsys, monkey
                       "-o", str(tmp_path / "o.bam")])
     assert code == 0 and (tmp_path / "o.bam.bai").exists()
     assert not list(tmp_path.glob(".fiberhmm-lift-*"))   # work dir cleaned up
+
+
+def test_target_fasta_must_hold_the_contigs_reads_landed_on(tmp_path):
+    header = {"SQ": [{"SN": "tgt", "LN": 10}, {"SN": "alt", "LN": 5}]}
+    fasta = tmp_path / "t.fa"
+    fasta.write_text(">tgt\nACGTACGTAC\n")
+    pysam.faidx(str(fasta))
+    gl.validate_target_fasta(header, str(fasta), {"tgt"})
+    with pytest.raises(gl.RepairError, match="alt"):
+        gl.validate_target_fasta(header, str(fasta), {"tgt", "alt"})
+    with pytest.raises(gl.RepairError, match="12"):
+        gl.validate_target_fasta({"SQ": [{"SN": "tgt", "LN": 12}]}, str(fasta), set())

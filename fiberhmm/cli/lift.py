@@ -114,6 +114,13 @@ def _count_records(path: str, threads: int) -> int:
 def _graph_lift(args, work_dir: str) -> int:
     from fiberhmm.io import graph_lift as gl
 
+    import pysam
+
+    with pysam.AlignmentFile(args.input, "rb", check_sq=False) as bam:
+        pending = gl.header_lift_state(bam.header)["lift"]
+    if pending:
+        raise LiftError(f"{args.input} was lifted (@PG {', '.join(pending)}) without "
+                        "fiberhmm-lift's repair; repair it first (--repair-only)")
     vg = find_tool("vg", args.vg, "--vg")
     ft = find_tool("ft", args.ft, "--ft")
     stashed = os.path.join(work_dir, "stashed.bam")
@@ -147,7 +154,7 @@ def _repair_only(args, work_dir: str) -> int:
         state = gl.header_lift_state(bam.header)
         first = next(bam.fetch(until_eof=True), None)
     if state["repaired"]:
-        raise LiftError(f"{args.input}: already repaired (it has a fiberhmm-lift @PG)")
+        raise LiftError(f"{args.input}: already repaired (its last lift has a fiberhmm-lift @PG)")
     stash_info: dict = {}
     current = args.input
     if first is not None and not first.has_tag(gl.TAG_FLAG):
