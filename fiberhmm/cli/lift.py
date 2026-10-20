@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
 """fiberhmm-lift -- move FiberHMM BAMs to another assembly through a pangenome graph.
 
-Runs the four stages of ``ft pg-lift --bam`` (``ft pg-pansn`` adding the
-source panSN prefix, ``vg inject``, ``vg surject`` onto the target sample,
-``ft pg-pansn --strip``) between a pre-lift stash and a post-lift repair
-(:mod:`fiberhmm.io.graph_lift`), then sorts and indexes. The stages are run
-here rather than through ``ft pg-lift --bam``, which fails on fibertools-rs
-<= 0.13 (it passes ``--out`` to ``ft pg-pansn``, which takes the output path
-positionally).
+Two engines run between a pre-lift stash and a post-lift repair
+(:mod:`fiberhmm.io.graph_lift`), then sort and index:
+
+``native`` (default with ``--map``)
+    graphlift's ``liftbam`` lifts the records through a graphlift chain map
+    (``gbz2chain`` output, ``X.chain.graphlift.json``) derived from the
+    graph. No vg, no container.
+``vg`` (default with ``--graph``)
+    the four stages of ``ft pg-lift --bam`` (``ft pg-pansn`` adding the
+    source panSN prefix, ``vg inject``, ``vg surject`` onto the target
+    sample, ``ft pg-pansn --strip``). The stages are run here rather than
+    through ``ft pg-lift --bam``, which fails on fibertools-rs <= 0.13 (it
+    passes ``--out`` to ``ft pg-pansn``, which takes the output path
+    positionally).
 
 ``--repair-only`` repairs a BAM lifted with ``ft pg-lift`` (or the same
 stages) directly; it needs the source BAM to recover what the lift lost.
@@ -17,6 +24,7 @@ through ``ft pg-lift``'s BED mode and reassembles the rows.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -45,6 +53,8 @@ def find_tool(name: str, explicit: str | None, flag: str) -> str:
               "wrapper script that runs it in a container) and put it on PATH or pass --vg",
         "ft": "install fibertools-rs >= 0.13 (`ft`, with the pg-pansn subcommand) and put it "
               "on PATH or pass --ft",
+        "liftbam": "build graphlift (`cargo build --release`; the binary is "
+                   "target/release/liftbam) and put it on PATH or pass --liftbam",
     }
     raise LiftError(f"`{name}` not found: {hints[name]}")
 
@@ -104,6 +114,48 @@ def run_lift_stages(stashed: str, lifted: str, *, graph: str, prefix: str, targe
             raise LiftError(f"{label} failed (exit {code}): {' '.join(cmd)}\n{_tail(log_path)}")
 
 
+ENGINES = ("native", "vg")
+
+
+def read_lift_map(path: str) -> dict:
+    """The graphlift map manifest's samples: ``{'source': 'HG002', 'target': 'GRCh38'}``
+    (sample names of the source and target paths, comma-joined when several)."""
+    try:
+        with open(path) as handle:
+            manifest = json.load(handle)
+    except (OSError, ValueError) as error:
+        raise LiftError(f"--map {path}: not a readable graphlift map ({error})") from None
+    if not isinstance(manifest, dict) or manifest.get("format") != "graphlift.sidecar":
+        raise LiftError(f"--map {path}: not a graphlift map manifest (X.chain.graphlift.json)")
+
+    def samples(key):
+        names = sorted({str(c.get("path", "")).split("#")[0] for c in manifest.get(key, [])} - {""})
+        return ",".join(names) or None
+
+    return {"source": samples("sources"), "target": samples("targets")}
+
+
+def run_liftbam(stashed: str, lifted: str, *, liftbam: str, lift_map: str, threads: int,
+                work_dir: str, split_gap: int, alt: str, unlifted: str | None) -> dict:
+    """``liftbam`` from ``stashed`` into ``lifted``; returns its report.
+
+    The stash has put every footprint tag in molecular frame, hence
+    ``--footprint-frame molecular``."""
+    report = os.path.join(work_dir, "liftbam.json")
+    cmd = [liftbam, "-i", stashed, "-m", lift_map, "-o", lifted, "--footprint-frame", "molecular",
+           "--report", report, "-t", str(max(1, threads)), "--split-gap", str(split_gap),
+           "--alt", alt]
+    if unlifted:
+        cmd += ["--unlifted", unlifted]
+    log_path = os.path.join(work_dir, "liftbam.log")
+    with open(log_path, "wb") as log:
+        code = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=log, stderr=log).returncode
+    if code != 0:
+        raise LiftError(f"liftbam failed (exit {code}): {' '.join(cmd)}\n{_tail(log_path)}")
+    with open(report) as handle:
+        return json.load(handle)
+
+
 def _count_records(path: str, threads: int) -> int:
     import pysam
 
@@ -122,8 +174,12 @@ def _graph_lift(args, work_dir: str) -> int:
     if pending:
         raise LiftError(f"{args.input} was lifted (@PG {', '.join(pending)}) without "
                         "fiberhmm-lift's repair; repair it first (--repair-only)")
-    vg = find_tool("vg", args.vg, "--vg")
-    ft = find_tool("ft", args.ft, "--ft")
+    if args.engine == "native":
+        liftbam = find_tool("liftbam", args.liftbam, "--liftbam")
+        samples = read_lift_map(args.map)
+    else:
+        vg = find_tool("vg", args.vg, "--vg")
+        ft = find_tool("ft", args.ft, "--ft")
     stashed = os.path.join(work_dir, "stashed.bam")
     stash = gl.stash_bam(args.input, stashed, threads=args.threads)
     print(f"{TOOL}: stashed {stash.stashed} records "
@@ -134,16 +190,36 @@ def _graph_lift(args, work_dir: str) -> int:
           f"{stash.dropped_secondary} secondary and {stash.dropped_unmapped} unmapped "
           f"records not lifted)", file=sys.stderr)
     lifted = os.path.join(work_dir, "lifted.bam")
-    run_lift_stages(stashed, lifted, graph=args.graph, prefix=args.prefix, target=args.target,
-                    delimiter=args.delimiter, vg=vg, ft=ft, threads=args.threads,
-                    work_dir=work_dir)
     stash_info = stash.as_dict()
-    stash_info["unlifted"] = max(0, stash.stashed - _count_records(lifted, args.threads))
+    if args.engine == "native":
+        report = run_liftbam(stashed, lifted, liftbam=liftbam, lift_map=args.map,
+                             threads=args.threads, work_dir=work_dir, split_gap=args.split_gap,
+                             alt=args.alt, unlifted=args.unlifted)
+        stash_info["unlifted"] = int(report.get("unlifted", 0))
+        stash_info["split_records"] = int(report.get("split_pieces", 0))
+        reasons = ", ".join(f"{k}={v}" for k, v in sorted(report.get("unlifted_by_reason", {}).items()))
+        print(f"{TOOL}: liftbam lifted {report.get('lifted', 0)} records "
+              f"({report.get('split', 0)} split into {report.get('split_pieces', 0)} extra "
+              f"records); {stash_info['unlifted']} could not be lifted"
+              + (f" ({reasons})" if reasons else "")
+              + (f", written to {args.unlifted}" if args.unlifted and stash_info["unlifted"] else "")
+              + f"; {report.get('projected_bases', 0)} of {report.get('aligned_bases', 0)} "
+              "aligned bases projected", file=sys.stderr)
+        pg_args = {"mode": "lift", "engine": "native",
+                   "source": _sample_of(args.prefix, args.delimiter) or samples["source"],
+                   "target": args.target or samples["target"], "graph": args.map,
+                   "stash": stash_info}
+    else:
+        run_lift_stages(stashed, lifted, graph=args.graph, prefix=args.prefix, target=args.target,
+                        delimiter=args.delimiter, vg=vg, ft=ft, threads=args.threads,
+                        work_dir=work_dir)
+        stash_info["unlifted"] = max(0, stash.stashed - _count_records(lifted, args.threads))
+        pg_args = {"mode": "lift", "engine": "vg",
+                   "source": _sample_of(args.prefix, args.delimiter),
+                   "target": args.target, "graph": args.graph, "stash": stash_info}
     stats = gl.repair_bam(
         lifted, args.output, work_dir=work_dir, target_fasta=args.target_fasta,
-        threads=args.threads, source_pgs=source_pgs, mapq=args.mapq,
-        pg_args={"mode": "lift", "source": _sample_of(args.prefix, args.delimiter),
-                 "target": args.target, "graph": args.graph, "stash": stash_info})
+        threads=args.threads, source_pgs=source_pgs, mapq=args.mapq, pg_args=pg_args)
     _report(stats, stash_info)
     return 0
 
@@ -249,13 +325,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=TOOL,
         description="Lift a FiberHMM BAM (or BED12) to another assembly through a pangenome "
-                    "graph (vg + fibertools-rs pg-pansn), repairing what the lift leaves "
-                    "stale: supplementary flags, hard clips, st on strand changes, MD/NM/SA, "
-                    "@PG history. Footprints are carried in molecular coordinates.",
+                    "graph, repairing what the lift leaves stale: supplementary flags, hard "
+                    "clips, st on strand changes, MD/NM/SA, @PG history. Footprints are "
+                    "carried in molecular coordinates. The native engine lifts through a "
+                    "graphlift chain map (--map) with graphlift's liftbam; the vg engine "
+                    "through the GBZ (--graph) with vg + fibertools-rs pg-pansn.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    # HG002 maternal haplotype -> GRCh38, MD/NM/SA recomputed against GRCh38
+    # HG002 (both haplotypes) -> GRCh38 natively, through a graphlift map
+    # (gbz2chain -g hprc.gbz -t 'GRCh38#0' -s HG002 --hap-suffix 1=_PATERNAL,2=_MATERNAL ...)
+    fiberhmm-lift -i calls.hg002.bam -o calls.grch38.bam \\
+        --map hprc.GRCh38.HG002.chain.graphlift.json --target-fasta GRCh38.fa -t 16
+
+    # The same through vg: HG002 maternal haplotype -> GRCh38
     fiberhmm-lift -i calls.hg002_mat.bam -o calls.grch38.bam -g hprc.gbz \\
         --prefix 'HG002#1#' --target GRCh38 --target-fasta GRCh38.fa -t 16
 
@@ -271,6 +354,23 @@ Examples:
     parser.add_argument("-i", "--input", required=True,
                         help="Source BAM (BED12 with --bed; the lifted BAM with --repair-only)")
     parser.add_argument("-o", "--output", required=True, help="Output BAM (sorted, indexed) or BED")
+    parser.add_argument("--engine", choices=ENGINES,
+                        help="native: graphlift liftbam through --map (the default when --map "
+                             "is given); vg: vg inject/surject through --graph (the default "
+                             "otherwise, and the only engine for --bed)")
+    parser.add_argument("-m", "--map",
+                        help="graphlift chain map manifest (X.chain.graphlift.json, from "
+                             "graphlift gbz2chain) whose sources are the input's contigs")
+    parser.add_argument("--liftbam", help="graphlift liftbam binary (default: liftbam on PATH)")
+    parser.add_argument("--split-gap", type=int, default=10_000, metavar="BP",
+                        help="native: split a record into supplementaries at a read or target "
+                             "gap of at least BP (default: 10000)")
+    parser.add_argument("--alt", choices=("never", "fallback"), default="never",
+                        help="native: 'fallback' lifts a record through an alternative chain "
+                             "when no primary chain of the map projects it (default: never)")
+    parser.add_argument("--unlifted",
+                        help="native: write the records that could not be lifted here (source "
+                             "coordinates, Yu:Z:<reason>); they are always counted")
     parser.add_argument("-g", "--graph", help="Pangenome graph (GBZ) with source and target paths")
     parser.add_argument("-p", "--prefix",
                         help="panSN prefix of the source assembly's paths in the graph, "
@@ -315,14 +415,27 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     if args.threads < 1:
         parser.error("--threads must be >= 1")
-    if not args.repair_only:
+    if args.engine is None:
+        args.engine = "native" if args.map and not args.bed else "vg"
+    if args.bed and args.engine == "native":
+        parser.error("--bed lifts through ft pg-lift's BED mode: give --graph and --engine vg")
+    if args.engine == "native" and not args.repair_only:
+        if not args.map:
+            parser.error("--engine native needs --map (a graphlift chain map)")
+        if args.split_gap < 1:
+            parser.error("--split-gap must be >= 1")
+    elif not args.repair_only:
         missing = [flag for flag, value in (("--graph", args.graph), ("--prefix", args.prefix),
                                             ("--target", args.target)) if not value]
         if missing:
-            parser.error(f"lifting needs {', '.join(missing)}")
+            parser.error(f"lifting needs {', '.join(missing)}"
+                         + (" (or --map for the native engine)" if not args.map else ""))
+    if args.unlifted and (args.engine != "native" or args.repair_only or args.bed):
+        parser.error("--unlifted is for the native engine")
     if args.source and not args.repair_only:
         parser.error("--source is for --repair-only")
-    for flag, path in (("-i", args.input), ("--graph", args.graph), ("--source", args.source),
+    for flag, path in (("-i", args.input), ("--graph", args.graph), ("--map", args.map),
+                       ("--source", args.source),
                        ("--target-fasta", args.target_fasta),
                        ("--source-fasta", args.source_fasta)):
         if path and not os.path.isfile(path):

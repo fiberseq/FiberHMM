@@ -459,6 +459,12 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 |------|---------|-------------|
 | `-i` / `--input` | required | Source BAM (BED12 with --bed; the lifted BAM with --repair-only) |
 | `-o` / `--output` | required | Output BAM (sorted, indexed) or BED |
+| `--engine` | — | native: graphlift liftbam through --map (the default when --map is given); vg: vg inject/surject through --graph (the default otherwise, and the only engine for --bed) Choices: `native`, `vg`. |
+| `-m` / `--map` | — | graphlift chain map manifest (X.chain.graphlift.json, from graphlift gbz2chain) whose sources are the input's contigs |
+| `--liftbam` | — | graphlift liftbam binary (default: liftbam on PATH) |
+| `--split-gap` | `10000` | native: split a record into supplementaries at a read or target gap of at least BP (default: 10000) |
+| `--alt` | `never` | native: 'fallback' lifts a record through an alternative chain when no primary chain of the map projects it (default: never) Choices: `never`, `fallback`. |
+| `--unlifted` | — | native: write the records that could not be lifted here (source coordinates, Yu:Z:&lt;reason&gt;); they are always counted |
 | `-g` / `--graph` | — | Pangenome graph (GBZ) with source and target paths |
 | `-p` / `--prefix` | — | panSN prefix of the source assembly's paths in the graph, e.g. 'HG002#1#' (as ft pg-lift --prefix) |
 | `--target` | — | Target sample to surject onto, e.g. GRCh38 (as ft pg-lift --target) |

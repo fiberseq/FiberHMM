@@ -20,6 +20,14 @@ right, but the lifted records are not consistent BAM records:
 
 :func:`stash_bam` runs before the lift and records what the repair needs in
 aux tags (which the lift copies verbatim); :func:`repair_bam` runs after it.
+
+The native engine replaces the vg stages with graphlift's ``liftbam``, which
+lifts the stashed records directly through a graphlift chain map: it keeps
+hard clips (swapped on a strand change), sets 0x800 on the extra records of a
+split and drops MD/NM/SA, and leaves records carrying the ``Yf`` stash to this
+repair (``st`` swap, MAPQ mode, calmd, SA, @PG). The repair accepts both
+outputs: 0x800 is kept from the lift, and hard clips are re-added only when
+the lifted record has none.
 For a BAM lifted without the stash (``ft pg-lift`` run directly),
 :func:`stash_from_source` rebuilds the same tags by matching each lifted
 record with its source record, so one repair serves both routes.
@@ -816,12 +824,23 @@ def _is_vg_lift_cl(pg: dict) -> bool:
     return re.match(r"^\S*\bvg\s+(surject|inject)\b", str(pg.get("CL", "") or "")) is not None
 
 
+LIFTBAM_PROGRAM = "liftbam"
+
+
+def _is_liftbam(pg: dict) -> bool:
+    """graphlift's native BAM lift (``liftbam``)."""
+    if str(pg.get("PN", "") or "").strip().lower() == LIFTBAM_PROGRAM:
+        return True
+    tokens = str(pg.get("CL", "") or "").split()
+    return bool(tokens) and os.path.basename(tokens[0]) == LIFTBAM_PROGRAM
+
+
 def is_lift_pg(pg: dict) -> bool:
     """A @PG line that by itself shows a graph lift: ft pg-pansn / pg-lift /
-    pg-inject, or vg inject/surject in CL. vg's own ``@PG ID:0 PN:vg`` has
-    no CL and is a lift line only beside those (a vg giraffe alignment
-    writes the same line)."""
-    return _is_ft_lift(pg) or _is_vg_lift_cl(pg)
+    pg-inject, vg inject/surject in CL, or graphlift's liftbam. vg's own
+    ``@PG ID:0 PN:vg`` has no CL and is a lift line only beside those (a vg
+    giraffe alignment writes the same line)."""
+    return _is_ft_lift(pg) or _is_vg_lift_cl(pg) or _is_liftbam(pg)
 
 
 def is_repair_pg(pg: dict) -> bool:
@@ -904,11 +923,11 @@ def header_lift_state(header, source_pgs: Optional[List[dict]] = None) -> dict:
 
 
 def _lift_order(pg: dict) -> int:
-    """0 panSN prefix (and anything else), 1 vg, 2 panSN strip."""
+    """0 panSN prefix (and anything else), 1 vg or liftbam, 2 panSN strip."""
     tokens = str(pg.get("CL", "") or "").split()
     if "--strip" in tokens:
         return 2
-    if _is_vg(pg) or (tokens and os.path.basename(tokens[0]) == "vg"):
+    if _is_vg(pg) or _is_liftbam(pg) or (tokens and os.path.basename(tokens[0]) == "vg"):
         return 1
     return 0
 
@@ -1008,8 +1027,12 @@ _ST_SWAP = {"CT": "GA", "GA": "CT"}
 
 
 def _readd_hard_clips(read, spec: str, flipped: bool) -> bool:
+    """Re-add the stashed hard clips a lift dropped (vg does; liftbam keeps
+    them, and a record that still has hard clips is left alone)."""
     kind, _, values = spec.partition(":")
     if kind != "H":
+        return False
+    if any(op == _HARD_CLIP for op, _n in (read.cigartuples or [])):
         return False
     try:
         left, right = (int(v) for v in values.split(","))
@@ -1065,7 +1088,11 @@ def repair_record(read, stats: RepairStats, mapq: str = MAPQ_SOURCE) -> bool:
             "without fiberhmm-lift; give the source BAM (--source) to rebuild it")
     source_flag = int(read.get_tag(TAG_FLAG))
     lifted_flag = int(read.flag)
-    read.flag = (source_flag & ~(_REVERSE | _UNMAPPED)) | (lifted_flag & (_REVERSE | _UNMAPPED))
+    # Strand and placement come from the lift; 0x800 from either (vg drops it,
+    # liftbam sets it on the extra records of a split).
+    read.flag = ((source_flag & ~(_REVERSE | _UNMAPPED))
+                 | (lifted_flag & (_REVERSE | _UNMAPPED))
+                 | (lifted_flag & _SUPP if not source_flag & _SECONDARY else 0))
     flipped = (not read.is_unmapped) and bool(source_flag & _REVERSE) != read.is_reverse
     if flipped:
         stats.strand_flipped += 1
@@ -1143,7 +1170,8 @@ def _rewrite_sa(in_path: str, out_path: str, multi: set, stats: RepairStats,
 def lift_pg_record(*, repair: RepairStats, calmd: bool, mode: str = "lift",
                    source: Optional[str] = None, target: Optional[str] = None,
                    graph: Optional[str] = None, stash: Optional[dict] = None,
-                   command: Optional[str] = None, mapq: str = MAPQ_SOURCE) -> dict:
+                   command: Optional[str] = None, mapq: str = MAPQ_SOURCE,
+                   engine: Optional[str] = None) -> dict:
     """The ``@PG ID:fiberhmm-lift`` record (coord=molecular)."""
     import sys
 
@@ -1159,6 +1187,8 @@ def lift_pg_record(*, repair: RepairStats, calmd: bool, mode: str = "lift",
         f"graph={token(os.path.basename(graph)) if graph else 'unknown'}",
         f"calmd={'yes' if calmd else 'no'}",
     ]
+    if engine:
+        parts.insert(1, f"engine={token(engine)}")
     if not calmd:
         parts.append("MD/NM/SA dropped (no --target-fasta)")
     stash = stash or {}
@@ -1172,7 +1202,7 @@ def lift_pg_record(*, repair: RepairStats, calmd: bool, mode: str = "lift",
             parts.append(f"{key}={stash[key]}")
     parts.append(f"dropped_secondary={stash.get('dropped_secondary', 0)}")
     parts.append(f"dropped_unmapped={stash.get('dropped_unmapped', 0)}")
-    for key in ("unlifted", "unmatched", "ambiguous"):
+    for key in ("unlifted", "unmatched", "ambiguous", "split_records"):
         if key in stash:
             parts.append(f"{key}={stash[key]}")
     parts.append(f"orphan_supplementary_dropped={repair.orphan_supplementary_dropped}")

@@ -2,10 +2,37 @@
 
 `fiberhmm-lift` moves a called BAM from the assembly it was aligned to (a
 personal or haplotype assembly, say) to another assembly in the same
-pangenome graph, keeping every footprint on the same bases of the molecule.
-It runs the stages of fibertools-rs `ft pg-lift --bam` (`ft pg-pansn`,
-`vg inject`, `vg surject`, `ft pg-pansn --strip`) and repairs what that lift
-leaves stale.
+pangenome graph, keeping every footprint on the same bases of the molecule,
+and repairs what a lift leaves stale. It has two engines.
+
+**Native** (the default when a map is given): graphlift's `liftbam` lifts the
+records through a graphlift chain map, which graphlift's `gbz2chain` derives
+from the graph once per source/target pair. No vg and no container.
+
+```bash
+# once per graph: GRCh38 <- both HG002 haplotypes, contigs named as in the BAM
+gbz2chain -g hprc.gbz -t 'GRCh38#0' -s HG002 --hap-suffix 1=_PATERNAL,2=_MATERNAL \
+    --source-sizes hg002v1.1.fa.fai \
+    -o hprc.GRCh38.HG002.chain
+fiberhmm-lift -i calls.hg002.bam -o calls.grch38.bam \
+    --map hprc.GRCh38.HG002.chain.graphlift.json --target-fasta GRCh38.fa -t 16
+```
+
+The input's contig names must be the map's source names (`gbz2chain
+--hap-suffix` or `--source-rename` set them), with the same lengths.
+Aligned bases are projected through the chains that are primary in the
+target net; source bases with no target counterpart become insertions (soft
+clips at the ends) and target bases between two projected bases deletions.
+A record is split into supplementaries, each with the whole `SEQ`
+soft-clipped, at a chain break, a strand change or a gap of `--split-gap`
+bp or more (default 10,000). Records that cannot be lifted (no projection,
+contig not in the map) are counted by reason, and with `--unlifted` written
+to a BAM in source coordinates (`Yu:Z:<reason>`). `--alt fallback` lifts a
+record through an alternative chain when no primary chain projects it.
+`liftbam` must be on the `PATH` or named with `--liftbam`.
+
+**vg**: the stages of fibertools-rs `ft pg-lift --bam` (`ft pg-pansn`,
+`vg inject`, `vg surject`, `ft pg-pansn --strip`) on the graph itself.
 
 ```bash
 fiberhmm-lift -i calls.hg002_mat.bam -o calls.grch38.bam \
@@ -14,16 +41,21 @@ fiberhmm-lift -i calls.hg002_mat.bam -o calls.grch38.bam \
 ```
 
 `--prefix` is the panSN prefix of the source assembly's paths in the graph
-and `--target` the sample to surject onto, as for `ft pg-lift`. The output
-is sorted and indexed. `vg` and `ft` (fibertools-rs ≥ 0.13) must be on the
-`PATH`, or named with `--vg`/`--ft`; `--vg` may be a wrapper script that
-runs vg in a container.
+and `--target` the sample to surject onto, as for `ft pg-lift`. `vg` and `ft`
+(fibertools-rs ≥ 0.13) must be on the `PATH`, or named with `--vg`/`--ft`;
+`--vg` may be a wrapper script that runs vg in a container.
+
+On the same graph the two engines place 99.97% of footprint intervals at the
+same target coordinates. Either way the output is sorted and indexed.
 
 ## What the repair does
 
-The lift copies `SEQ`, `QUAL` and every tag unchanged, and footprints in
-molecular coordinates stay right, even on reads whose strand changes.
-Everything that depends on the source alignment is repaired:
+Both engines copy `SEQ`, `QUAL` and every tag unchanged (`SEQ` and `QUAL`
+reversed on a strand change; `MM`/`ML` are in original read orientation and
+need no change), and footprints in molecular coordinates stay right, even on
+reads whose strand changes. Everything that depends on the source alignment
+is repaired (the table lists what the vg stages leave; `liftbam` keeps
+`0x800` and hard clips itself):
 
 | Lifted as | Repaired |
 |---|---|
@@ -57,7 +89,7 @@ lift are dropped after it (`orphan_supplementary_dropped`). The counts are print
 `fiberhmm-lift` `@PG`, which also declares `coord=molecular`:
 
 ```text
-graph lift repair; mode=lift; source=HG002 target=GRCh38; graph=hprc.gbz; calmd=yes; excluded_supplementary=0; filled_supplementary=12; dropped_secondary=0; dropped_unmapped=0; unlifted=7; orphan_supplementary_dropped=0; st_swapped=563; mapq=source provenance_tags=Yq,Yp; coord=molecular (footprint tags carried over from the input)
+graph lift repair; mode=lift; engine=vg; source=HG002 target=GRCh38; graph=hprc.gbz; calmd=yes; excluded_supplementary=0; filled_supplementary=12; dropped_secondary=0; dropped_unmapped=0; unlifted=7; orphan_supplementary_dropped=0; st_swapped=563; mapq=source provenance_tags=Yq,Yp; coord=molecular (footprint tags carried over from the input)
 ```
 
 Each lifted record carries `Yq:i` (source `MAPQ`) and `Yp:Z` (source locus,

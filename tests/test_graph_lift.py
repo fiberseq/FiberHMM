@@ -1005,3 +1005,151 @@ def test_mapq_mode_option_and_pg_record(tmp_path, capsys):
     err = capsys.readouterr().err.strip().splitlines()
     assert len(err) == 1 and "keeps the MAPQ of its source assembly" in err[0]
     assert str(outputs["source"]) in err[0] and "--min-mapq 20" in err[0]
+
+
+# --- native engine (graphlift liftbam) -----------------------------------------------
+
+def _liftbam_like(stashed, lifted, *, split_at=None):
+    """What liftbam does to a stashed record (without the binary): move it to
+    ``tgt`` +500, keep hard clips, and with ``split_at`` cut the alignment
+    into a primary and a 0x800 record (whole SEQ, soft clips); a liftbam
+    @PG chained on the source history."""
+    with pysam.AlignmentFile(str(stashed), "rb", check_sq=False) as bam:
+        hdr = bam.header.to_dict()
+        reads = list(bam.fetch(until_eof=True))
+    hdr["SQ"] = [{"SN": "tgt", "LN": TGT_LEN}]
+    hdr["HD"] = {"VN": "1.6", "SO": "unsorted"}
+    hdr["PG"] = list(hdr.get("PG", [])) + [
+        {"ID": "liftbam", "PN": "liftbam", "PP": hdr["PG"][-1]["ID"], "VN": "0.4.0",
+         "CL": "liftbam -i stashed.bam -m map.chain.graphlift.json -o lifted.bam"}]
+    with pysam.AlignmentFile(str(lifted), "wb", header=hdr) as out:
+        for src in reads:
+            pieces = [list(src.cigartuples)]
+            if split_at is not None:
+                ops = list(src.cigartuples)
+                lead = [ops.pop(0)] if ops[0][0] == 5 else []
+                tail = [ops.pop()] if ops[-1][0] == 5 else []
+                (op, n), = ops
+                pieces = [lead + [(0, split_at), (4, n - split_at)] + tail,
+                          lead + [(4, split_at), (0, n - split_at)] + tail]
+            for k, cigar in enumerate(pieces):
+                rec = pysam.AlignedSegment(out.header)
+                rec.query_name = src.query_name
+                rec.flag = src.flag | (0x800 if k else 0)
+                rec.reference_id = 0
+                rec.reference_start = src.reference_start + 500 + (2000 if k else 0)
+                rec.mapping_quality = src.mapping_quality
+                rec.cigartuples = cigar
+                rec.query_sequence = src.query_sequence
+                rec.query_qualities = src.query_qualities
+                rec.set_tags(src.get_tags())
+                out.write(rec)
+    return str(lifted)
+
+
+def test_repair_keeps_liftbam_splits_and_hard_clips(tmp_path):
+    src = _write(tmp_path / "n.src.bam", _source_header(), [
+        lambda h: _read(h, "p", cigar="10H40M", seq=_seq(40), mapq=33)])
+    stashed = tmp_path / "n.stash.bam"
+    gl.stash_bam(src, str(stashed))
+    lifted = _liftbam_like(stashed, tmp_path / "n.lifted.bam", split_at=15)
+    assert gl.header_lift_state(pysam.AlignmentFile(lifted, check_sq=False).header)["lift"] \
+        == ["liftbam"]
+    out = tmp_path / "n.out.bam"
+    stats = gl.repair_bam(lifted, str(out), work_dir=str(tmp_path / "n.work"),
+                          pg_args={"mode": "lift", "engine": "native", "graph": "m.json",
+                                   "command": "fiberhmm-lift test"})
+    records, hdr = _records(out)
+    assert [(r.is_supplementary, r.cigarstring) for r in records] == \
+        [(False, "10H15M25S"), (True, "10H15S25M")]
+    assert stats.hard_clips_restored == 0 and stats.orphan_supplementary_dropped == 0
+    assert all(r.mapping_quality == 33 for r in records)
+    assert hdr["PG"][-1]["PN"] == "fiberhmm-lift" and hdr["PG"][-1]["PP"] == "liftbam"
+    assert "engine=native" in hdr["PG"][-1]["DS"]
+    assert gl.is_lift_pg({"ID": "x", "CL": "/opt/bin/liftbam -i a.bam"})
+    assert not gl.is_lift_pg({"ID": "x", "PN": "minimap2", "CL": "minimap2 -a"})
+
+
+def _stub_liftbam(tmp_path, *, exit_code=0):
+    """A stand-in ``liftbam``: runs _liftbam_like and writes a report."""
+    script = tmp_path / "liftbam"
+    here = Path(__file__).resolve().parent
+    script.write_text(f"""#!{__import__('sys').executable}
+import json, sys
+sys.path[:0] = [{str(here)!r}, {str(here.parent)!r}]
+args = sys.argv[1:]
+get = lambda flag: args[args.index(flag) + 1]
+if {exit_code}:
+    sys.stderr.write("liftbam: boom\\n"); sys.exit({exit_code})
+import test_graph_lift as t
+t._liftbam_like(get("-i"), get("-o"))
+assert get("--footprint-frame") == "molecular"
+json.dump({{"lifted": 1, "unlifted": 2, "unlifted_by_reason": {{"no_projection": 2}},
+           "split": 0, "split_pieces": 0, "aligned_bases": 50, "projected_bases": 48}},
+          open(get("--report"), "w"))
+""")
+    script.chmod(0o755)
+    return str(script)
+
+
+def _lift_map(tmp_path):
+    path = tmp_path / "m.chain.graphlift.json"
+    path.write_text('{"format": "graphlift.sidecar", "version": 2, '
+                    '"sources": [{"name": "srcA", "path": "SRC#1#srcA"}], '
+                    '"targets": [{"name": "tgt", "path": "TGT#0#tgt"}]}')
+    return str(path)
+
+
+def test_cli_native_engine_is_the_default_with_a_map(tmp_path, capsys):
+    from fiberhmm.cli import lift
+
+    src = _write(tmp_path / "s.bam", _source_header(), [lambda h: _read(h, "r", seq=_seq(50))])
+    out = tmp_path / "o.bam"
+    code = lift.main(["-i", src, "-o", str(out), "--map", _lift_map(tmp_path),
+                      "--liftbam", _stub_liftbam(tmp_path)])
+    err = capsys.readouterr().err
+    assert code == 0, err
+    assert "2 could not be lifted (no_projection=2)" in err
+    records, hdr = _records(out)
+    assert len(records) == 1 and records[0].reference_start == 600
+    ds = hdr["PG"][-1]["DS"]
+    assert "engine=native" in ds and "source=SRC" in ds and "target=TGT" in ds
+    assert "graph=m.chain.graphlift.json" in ds and "unlifted=2" in ds
+
+
+def test_cli_engine_choice_and_errors(tmp_path, capsys):
+    from fiberhmm.cli import lift
+
+    src = _write(tmp_path / "s.bam", _source_header(), [lambda h: _read(h, "r", seq=_seq(50))])
+    lmap = _lift_map(tmp_path)
+    base = ["-i", src, "-o", str(tmp_path / "o.bam")]
+    with pytest.raises(SystemExit):
+        lift.main(base + ["--engine", "native"])                        # no --map
+    assert "--map" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        lift.main(base + ["--map", lmap, "--engine", "vg"])             # vg needs the graph
+    assert "--graph" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        lift.main(base + ["--map", lmap, "--bed", "--engine", "native"])
+    assert "--bed" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        lift.main(base + ["-g", lmap, "--prefix", "S#0#", "--target", "T", "--unlifted", "u.bam"])
+    assert "--unlifted is for the native engine" in capsys.readouterr().err
+    bad = tmp_path / "bad.json"
+    bad.write_text("{}")
+    assert lift.main(base + ["--map", str(bad), "--liftbam", _stub_liftbam(tmp_path)]) == 2
+    assert "not a graphlift map" in capsys.readouterr().err
+    failing = tmp_path / "f"
+    failing.mkdir()
+    assert lift.main(base + ["--map", lmap, "--liftbam", _stub_liftbam(failing, exit_code=3)]) == 2
+    assert "liftbam failed (exit 3)" in capsys.readouterr().err
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    import os
+    old = os.environ["PATH"]
+    os.environ["PATH"] = str(empty)
+    try:
+        assert lift.main(base + ["--map", lmap]) == 2
+    finally:
+        os.environ["PATH"] = old
+    assert "`liftbam` not found" in capsys.readouterr().err
