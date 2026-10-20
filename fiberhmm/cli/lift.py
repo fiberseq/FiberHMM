@@ -136,17 +136,28 @@ def read_lift_map(path: str) -> dict:
 
 
 def run_liftbam(stashed: str, lifted: str, *, liftbam: str, lift_map: str, threads: int,
-                work_dir: str, split_gap: int, alt: str, unlifted: str | None) -> dict:
+                work_dir: str, split_gap: int, alt: str, unlifted: str | None,
+                target_fasta: str | None = None) -> dict:
     """``liftbam`` from ``stashed`` into ``lifted``; returns its report.
 
     The stash has put every footprint tag in molecular frame, hence
-    ``--footprint-frame molecular``."""
+    ``--footprint-frame molecular``. With ``target_fasta`` its contig lengths
+    go to ``--target-sizes`` (the map may only have inferred them; the repair
+    checks the lifted @SQ against the FASTA). MD/NM/SA are left to the repair."""
     report = os.path.join(work_dir, "liftbam.json")
     cmd = [liftbam, "-i", stashed, "-m", lift_map, "-o", lifted, "--footprint-frame", "molecular",
            "--report", report, "-t", str(max(1, threads)), "--split-gap", str(split_gap),
            "--alt", alt]
     if unlifted:
         cmd += ["--unlifted", unlifted]
+    if target_fasta:
+        import pysam
+
+        sizes = os.path.join(work_dir, "target.sizes")
+        with pysam.FastaFile(target_fasta) as fasta, open(sizes, "w") as handle:
+            for name, length in zip(fasta.references, fasta.lengths):
+                handle.write(f"{name}\t{length}\n")
+        cmd += ["--target-sizes", sizes]
     log_path = os.path.join(work_dir, "liftbam.log")
     with open(log_path, "wb") as log:
         code = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=log, stderr=log).returncode
@@ -194,7 +205,8 @@ def _graph_lift(args, work_dir: str) -> int:
     if args.engine == "native":
         report = run_liftbam(stashed, lifted, liftbam=liftbam, lift_map=args.map,
                              threads=args.threads, work_dir=work_dir, split_gap=args.split_gap,
-                             alt=args.alt, unlifted=args.unlifted)
+                             alt=args.alt, unlifted=args.unlifted,
+                             target_fasta=args.target_fasta)
         stash_info["unlifted"] = int(report.get("unlifted", 0))
         stash_info["split_records"] = int(report.get("split_pieces", 0))
         reasons = ", ".join(f"{k}={v}" for k, v in sorted(report.get("unlifted_by_reason", {}).items()))
@@ -234,6 +246,15 @@ def _repair_only(args, work_dir: str) -> int:
         first = next(bam.fetch(until_eof=True), None)
     if state["repaired"]:
         raise LiftError(f"{args.input}: already repaired (its last lift has a fiberhmm-lift @PG)")
+    with pysam.AlignmentFile(args.input, "rb", check_sq=False) as bam:
+        pgs = bam.header.to_dict().get("PG", [])
+    by_liftbam = any(gl._is_liftbam(pg) for pg in pgs if str(pg.get("ID")) in state["lift"])
+    if by_liftbam and first is not None and not first.has_tag(gl.TAG_FLAG):
+        raise LiftError(
+            f"{args.input} was lifted by graphlift's liftbam directly: its flags, st, hard clips "
+            "and MD/NM/SA are already consistent, and --repair-only cannot rebuild its stash "
+            "(liftbam may split a record into several). Lift the source BAM with "
+            "fiberhmm-lift --map instead to get fiberhmm-lift's MAPQ policy and provenance.")
     stash_info: dict = {}
     current = args.input
     source_pgs = None

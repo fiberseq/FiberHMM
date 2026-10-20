@@ -1009,7 +1009,7 @@ def test_mapq_mode_option_and_pg_record(tmp_path, capsys):
 
 # --- native engine (graphlift liftbam) -----------------------------------------------
 
-def _liftbam_like(stashed, lifted, *, split_at=None):
+def _liftbam_like(stashed, lifted, *, split_at=None, second_flag=0x800):
     """What liftbam does to a stashed record (without the binary): move it to
     ``tgt`` +500, keep hard clips, and with ``split_at`` cut the alignment
     into a primary and a 0x800 record (whole SEQ, soft clips); a liftbam
@@ -1035,7 +1035,7 @@ def _liftbam_like(stashed, lifted, *, split_at=None):
             for k, cigar in enumerate(pieces):
                 rec = pysam.AlignedSegment(out.header)
                 rec.query_name = src.query_name
-                rec.flag = src.flag | (0x800 if k else 0)
+                rec.flag = src.flag | (second_flag if k else 0)
                 rec.reference_id = 0
                 rec.reference_start = src.reference_start + 500 + (2000 if k else 0)
                 rec.mapping_quality = src.mapping_quality
@@ -1153,3 +1153,25 @@ def test_cli_engine_choice_and_errors(tmp_path, capsys):
     finally:
         os.environ["PATH"] = old
     assert "`liftbam` not found" in capsys.readouterr().err
+
+
+def test_repair_keeps_liftbam_secondary_placements(tmp_path):
+    src = _write(tmp_path / "d.src.bam", _source_header(), [
+        lambda h: _read(h, "p", cigar="40M", seq=_seq(40))])
+    stashed = tmp_path / "d.stash.bam"
+    gl.stash_bam(src, str(stashed))
+    lifted = _liftbam_like(stashed, tmp_path / "d.lifted.bam", split_at=15, second_flag=0x100)
+    out = tmp_path / "d.out.bam"
+    gl.repair_bam(lifted, str(out), work_dir=str(tmp_path / "d.work"),
+                  pg_args={"mode": "lift", "command": "t"})
+    records, _ = _records(out)
+    assert sorted(r.flag for r in records) == [0, 0x100]
+
+
+def test_repair_only_refuses_a_bam_lifted_by_liftbam_directly(tmp_path, capsys):
+    from fiberhmm.cli import lift
+
+    src = _write(tmp_path / "s.bam", _source_header(), [lambda h: _read(h, "r", seq=_seq(50))])
+    lifted = _liftbam_like(src, tmp_path / "l.bam")          # no stash: liftbam run directly
+    code = lift.main(["--repair-only", "-i", lifted, "--source", src, "-o", str(tmp_path / "o.bam")])
+    assert code == 2 and "lifted by graphlift's liftbam directly" in capsys.readouterr().err

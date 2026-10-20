@@ -28,7 +28,10 @@ soft-clipped, at a chain break, a strand change or a gap of `--split-gap`
 bp or more (default 10,000). Records that cannot be lifted (no projection,
 contig not in the map) are counted by reason, and with `--unlifted` written
 to a BAM in source coordinates (`Yu:Z:<reason>`). `--alt fallback` lifts a
-record through an alternative chain when no primary chain projects it.
+record through an alternative chain when no primary chain projects it. A
+second placement of mostly the same read bases (a duplication) is written as
+a secondary alignment. Paired-end records are not lifted
+(`paired_end_unsupported`).
 `liftbam` must be on the `PATH` or named with `--liftbam`.
 
 **vg**: the stages of fibertools-rs `ft pg-lift --bam` (`ft pg-pansn`,
@@ -45,8 +48,8 @@ and `--target` the sample to surject onto, as for `ft pg-lift`. `vg` and `ft`
 (fibertools-rs ≥ 0.13) must be on the `PATH`, or named with `--vg`/`--ft`;
 `--vg` may be a wrapper script that runs vg in a container.
 
-On the same graph the two engines place 99.97% of footprint intervals at the
-same target coordinates. Either way the output is sorted and indexed.
+On the same graph the two engines place 99.95–99.97% of footprint intervals
+at exactly the same target coordinates (HG002 → GRCh38 AluY and chr1 windows). Either way the output is sorted and indexed.
 
 ## What the repair does
 

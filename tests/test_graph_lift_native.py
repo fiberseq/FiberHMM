@@ -141,6 +141,10 @@ def test_native_lift_repairs_flags_strand_and_history(lifted, target, flipped):
     out, source = lifted
     records, header = out[target]
     by = {(r.query_name, r.is_supplementary): r for r in records}
+    # Every record, not just one per (name, supplementary): nothing else was split off.
+    assert sorted((r.query_name, r.is_supplementary, r.is_secondary) for r in records) == [
+        ("chim", False, False), ("chim", True, False), ("daf", False, False),
+        ("fwd", False, False), ("rev", False, False)]
     assert ("lonely", True) not in by                       # excluded: no primary
     primaries = collections.Counter(r.query_name for r in records
                                     if not r.is_supplementary and not r.is_secondary)

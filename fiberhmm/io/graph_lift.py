@@ -1089,10 +1089,15 @@ def repair_record(read, stats: RepairStats, mapq: str = MAPQ_SOURCE) -> bool:
     source_flag = int(read.get_tag(TAG_FLAG))
     lifted_flag = int(read.flag)
     # Strand and placement come from the lift; 0x800 from either (vg drops it,
-    # liftbam sets it on the extra records of a split).
-    read.flag = ((source_flag & ~(_REVERSE | _UNMAPPED))
-                 | (lifted_flag & (_REVERSE | _UNMAPPED))
-                 | (lifted_flag & _SUPP if not source_flag & _SECONDARY else 0))
+    # liftbam sets it on the extra records of a split), and 0x100 from liftbam
+    # on an alternative placement of the same read bases.
+    flag = (source_flag & ~(_REVERSE | _UNMAPPED)) | (lifted_flag & (_REVERSE | _UNMAPPED))
+    if not source_flag & _SECONDARY:
+        if lifted_flag & _SECONDARY:
+            flag = (flag & ~_SUPP) | _SECONDARY
+        else:
+            flag |= lifted_flag & _SUPP
+    read.flag = flag
     flipped = (not read.is_unmapped) and bool(source_flag & _REVERSE) != read.is_reverse
     if flipped:
         stats.strand_flipped += 1
