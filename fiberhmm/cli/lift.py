@@ -400,7 +400,7 @@ def _bed_lift(args, work_dir: str) -> int:
                   "unlifted rows)", file=sys.stderr)
         return 0
     with open(args.input) as handle:
-        bed6, rows, header = gl.explode_bed12(handle)
+        bed6, rows, header = gl.explode_bed12(handle, unstranded_as="+" if native else None)
     blocks_in = os.path.join(work_dir, "blocks.bed")
     blocks_out = os.path.join(work_dir, "blocks.lifted.bed")
     blocks_unlifted = os.path.join(work_dir, "blocks.unlifted.bed") if native else None
@@ -409,7 +409,7 @@ def _bed_lift(args, work_dir: str) -> int:
     report = _lift_bed_file(args, work_dir, blocks_in, blocks_out, blocks_unlifted)
     dropped: list = []
     with open(blocks_out) as handle:
-        out, stats = gl.reassemble_bed12(handle, rows, dropped=dropped)
+        out, stats = gl.reassemble_bed12(handle, rows, dropped=dropped, explicit_strand=native)
     with open(args.output, "w") as handle:
         handle.writelines(line + "\n" for line in header + out)
     if native:

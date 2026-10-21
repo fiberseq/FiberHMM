@@ -459,12 +459,14 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 |------|---------|-------------|
 | `-i` / `--input` | required | Source BAM (BED12 with --bed; the lifted BAM with --repair-only) |
 | `-o` / `--output` | required | Output BAM (sorted, indexed) or BED |
-| `--engine` | — | native: graphlift liftbam through --map (the default when --map is given); vg: vg inject/surject through --graph (the default otherwise, and the only engine for --bed) Choices: `native`, `vg`. |
+| `--engine` | — | native: graphlift liftbam (liftbed with --bed) through --map (the default when --map is given); vg: vg inject/surject (ft pg-lift's BED mode with --bed) through --graph (the default otherwise) Choices: `native`, `vg`. |
 | `-m` / `--map` | — | graphlift chain map manifest (X.chain.graphlift.json, from graphlift gbz2chain) whose sources are the input's contigs |
 | `--liftbam` | — | graphlift liftbam binary (default: liftbam on PATH) |
+| `--liftbed` | — | --bed: graphlift liftbed binary (default: next to --liftbam, else liftbed on PATH) |
 | `--split-gap` | `10000` | native: split a record into supplementaries at a read or target gap of at least BP (default: 10000) |
 | `--alt` | `never` | native: 'fallback' lifts a record through an alternative chain when no primary chain of the map projects it (default: never) Choices: `never`, `fallback`. |
-| `--unlifted` | — | native: write the records that could not be lifted here (source coordinates, Yu:Z:&lt;reason&gt;); they are always counted |
+| `--unlifted` | — | native: write the records that could not be lifted here (source coordinates, Yu:Z:&lt;reason&gt;; with --bed the rows, after a #reason line); they are always counted |
+| `--min-match` | `0.0` | native --bed: lift a BED interval (or BED12 block) only if a fraction F of its bases project (liftOver's -minMatch; default 0: any projected base, the interval shrinks to them) |
 | `-g` / `--graph` | — | Pangenome graph (GBZ) with source and target paths |
 | `-p` / `--prefix` | — | panSN prefix of the source assembly's paths in the graph, e.g. 'HG002#1#' (as ft pg-lift --prefix) |
 | `--target` | — | Target sample to surject onto, e.g. GRCh38 (as ft pg-lift --target) |
@@ -475,9 +477,9 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--ft` | — | fibertools-rs ft binary (default: ft on PATH) |
 | `-t` / `--threads` | `4` | Threads for vg, sorting and BAM I/O (default: 4) |
 | `--repair-only` | off | Only repair -i, a BAM already lifted (ft pg-lift, or the same stages); needs --source unless fiberhmm-lift stashed it |
-| `--bed` | off | -i is BED12(+N) (fiberhmm-extract): lift each block with ft pg-lift's BED mode and reassemble the rows |
+| `--bed` | off | -i is a BED file: BED12(+N) rows (fiberhmm-extract) are lifted block by block and reassembled, other BED files row by row |
 | `--source` | — | --repair-only: the BAM that was lifted |
-| `--source-fasta` | — | --bed: FASTA of the source assembly |
+| `--source-fasta` | — | --bed --engine vg: FASTA of the source assembly |
 | `--tmp-dir` | — | Directory for intermediate files (default: next to the output) |
 | `--keep-intermediate` | off | Keep the intermediate files |
 

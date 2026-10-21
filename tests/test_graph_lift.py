@@ -1282,3 +1282,27 @@ def test_bed12_reassembly_reports_dropped_rows():
     out, stats = gl.reassemble_bed12(["tgt\t1100\t1150\t0|0\t0\t+", "chrX\t1200\t1300\t0|1\t0\t+"],
                                      parsed, dropped=dropped)
     assert out == [] and dropped == [(0, "split_contigs"), (1, "lost_block")]
+
+
+def test_bed12_explicit_strand_does_not_invent_flips_from_block_order():
+    """Review finding: with liftbed's explicit strand, forward blocks that come back in
+    reversed order (two + chains in swapped target order) are a rearrangement, not a flip."""
+    rows = ["srcA\t100\t250\tr\t0\t+\t100\t250\t0\t2\t50,50\t0,100\t1,2",
+            "srcA\t500\t650\tu\t0\t.\t500\t650\t0\t2\t50,50\t0,100\ta,b"]
+    bed6, parsed, _ = gl.explode_bed12(rows, unstranded_as="+")
+    assert [l.split("\t")[5] for l in bed6] == ["+", "+", "+", "+"]
+    swapped = ["tgt\t2000\t2050\t0|0\t0\t+", "tgt\t1000\t1050\t0|1\t0\t+",
+               # row 1 on a - chain: reversed order and liftbed's swapped strand
+               "tgt\t4400\t4450\t1|0\t0\t-", "tgt\t4300\t4350\t1|1\t0\t-"]
+    dropped = []
+    out, stats = gl.reassemble_bed12(swapped, parsed, dropped=dropped, explicit_strand=True)
+    assert dropped == [(0, "rearranged")] and stats.rows_flipped == 1
+    f = out[0].split("\t")
+    assert f[3] == "u" and f[5] == "." and f[12] == "b,a"
+    # Without explicit strand (vg), the reversed order is still read as a flip.
+    out, stats = gl.reassemble_bed12(swapped[:2], parsed[:1])
+    assert stats.rows_flipped == 1 and out[0].split("\t")[5] == "-"
+    # Explicit strand: a flip whose blocks kept their order is a rearrangement too.
+    out, stats = gl.reassemble_bed12(["tgt\t1000\t1050\t0|0\t0\t-", "tgt\t2000\t2050\t0|1\t0\t-"],
+                                     parsed[:1], explicit_strand=True)
+    assert out == [] and stats.rows_rearranged == 1

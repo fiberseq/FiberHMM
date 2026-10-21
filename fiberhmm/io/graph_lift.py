@@ -1355,6 +1355,7 @@ def repair_bam(lifted_path: str, out_path: str, *, work_dir: str,
 # lifted blocks.
 
 _BED_HEADER_PREFIXES = ("#", "track", "browser")
+_FLIP_STRAND = {"+": "-", "-": "+"}
 
 
 @dataclass
@@ -1371,8 +1372,13 @@ class BedStats:
         return asdict(self)
 
 
-def explode_bed12(lines: Iterable[str]) -> Tuple[List[str], List[list], List[str]]:
-    """``(bed6_rows, rows, header_lines)`` of a BED12(+N) file."""
+def explode_bed12(lines: Iterable[str], unstranded_as: Optional[str] = None
+                  ) -> Tuple[List[str], List[list], List[str]]:
+    """``(bed6_rows, rows, header_lines)`` of a BED12(+N) file.
+
+    ``unstranded_as`` (``"+"``) gives the blocks of rows without a ``+``/``-``
+    strand that strand, so an engine that swaps the strand column on a ``-``
+    chain (liftbed) reports their flips too (see ``reassemble_bed12``)."""
     bed6, rows, header = [], [], []
     for line in lines:
         line = line.rstrip("\n")
@@ -1392,17 +1398,18 @@ def explode_bed12(lines: Iterable[str]) -> Tuple[List[str], List[list], List[str
         if len(sizes) != int(fields[9]) or len(offsets) != len(sizes):
             raise ValueError(f"BED12 row {index + 1}: blockCount does not match its blocks")
         for block, (size, offset) in enumerate(zip(sizes, offsets)):
+            strand = fields[5]
+            if unstranded_as and strand not in _FLIP_STRAND:
+                strand = unstranded_as
             bed6.append((fields[0], start + offset, start + offset + size,
-                         f"{index}|{block}", fields[4], fields[5]))
+                         f"{index}|{block}", fields[4], strand))
     bed6.sort(key=lambda r: (r[0], r[1], r[2]))
     return ["\t".join(str(v) for v in r) for r in bed6], rows, header
 
 
-_FLIP_STRAND = {"+": "-", "-": "+"}
-
-
 def reassemble_bed12(lifted: Iterable[str], rows: List[list],
-                     dropped: Optional[list] = None) -> Tuple[List[str], BedStats]:
+                     dropped: Optional[list] = None, *,
+                     explicit_strand: bool = False) -> Tuple[List[str], BedStats]:
     """BED12 rows rebuilt from lifted BED6 blocks (named ``<row>|<block>``).
 
     A row is dropped (counted) when a block did not lift, its blocks land on
@@ -1415,8 +1422,11 @@ def reassemble_bed12(lifted: Iterable[str], rows: List[list],
     are dropped as rearranged. thickStart/thickEnd span the lifted row.
     ``dropped``, when given, receives ``(row index, reason)`` for every dropped
     row (``lost_block``, ``split_contigs``, ``rearranged``). ft's BED mode
-    copies the strand column; liftbed swaps it on a ``-`` chain, so both
-    engines' flips are recognised."""
+    copies the strand column, so a flip is inferred from reversed block
+    order. ``explicit_strand`` (liftbed, which swaps the strand column on a
+    ``-`` chain; explode with ``unstranded_as="+"``) takes the flip from the
+    lifted strand alone and drops a multi-block row whose block order does
+    not agree with it as rearranged."""
     def drop(index, reason):
         if dropped is not None:
             dropped.append((index, reason))
@@ -1454,7 +1464,12 @@ def reassemble_bed12(lifted: Iterable[str], rows: List[list],
             stats.rows_rearranged += 1
             drop(index, "rearranged")
             continue
-        strand_flipped = original in _FLIP_STRAND and strands == {_FLIP_STRAND[original]}
+        block_strand = original if original in _FLIP_STRAND else ("+" if explicit_strand else original)
+        strand_flipped = block_strand in _FLIP_STRAND and strands == {_FLIP_STRAND[block_strand]}
+        if explicit_strand and block_strand in _FLIP_STRAND and strands != {block_strand} and not strand_flipped:
+            stats.rows_rearranged += 1
+            drop(index, "rearranged")
+            continue
         if order == sorted(order):
             reversed_order = False
         elif order == sorted(order, reverse=True):
@@ -1463,11 +1478,12 @@ def reassemble_bed12(lifted: Iterable[str], rows: List[list],
             stats.rows_rearranged += 1
             drop(index, "rearranged")
             continue
-        if strand_flipped and count > 1 and not reversed_order:
+        if count > 1 and (reversed_order != strand_flipped if explicit_strand
+                          else strand_flipped and not reversed_order):
             stats.rows_rearranged += 1
             drop(index, "rearranged")
             continue
-        flipped = strand_flipped or reversed_order
+        flipped = strand_flipped if explicit_strand else strand_flipped or reversed_order
         if any(by_position[i][3] > by_position[i + 1][2] for i in range(count - 1)):
             stats.rows_rearranged += 1
             drop(index, "rearranged")
