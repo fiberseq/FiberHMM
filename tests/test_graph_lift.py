@@ -1130,8 +1130,11 @@ def test_cli_engine_choice_and_errors(tmp_path, capsys):
         lift.main(base + ["--map", lmap, "--engine", "vg"])             # vg needs the graph
     assert "--graph" in capsys.readouterr().err
     with pytest.raises(SystemExit):
-        lift.main(base + ["--map", lmap, "--bed", "--engine", "native"])
-    assert "--bed" in capsys.readouterr().err
+        lift.main(base + ["--map", lmap, "--min-match", "0.5"])          # BAMs have no min-match
+    assert "--min-match is for --bed" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        lift.main(base + ["--map", lmap, "--bed", "--min-match", "2"])
+    assert "--min-match must be between 0 and 1" in capsys.readouterr().err
     with pytest.raises(SystemExit):
         lift.main(base + ["-g", lmap, "--prefix", "S#0#", "--target", "T", "--unlifted", "u.bam"])
     assert "--unlifted is for the native engine" in capsys.readouterr().err
@@ -1175,3 +1178,107 @@ def test_repair_only_refuses_a_bam_lifted_by_liftbam_directly(tmp_path, capsys):
     lifted = _liftbam_like(src, tmp_path / "l.bam")          # no stash: liftbam run directly
     code = lift.main(["--repair-only", "-i", lifted, "--source", src, "-o", str(tmp_path / "o.bam")])
     assert code == 2 and "lifted by graphlift's liftbam directly" in capsys.readouterr().err
+
+
+# --- --bed with the native engine (liftbed) ---------------------------------------
+
+def _stub_liftbed(tmp_path, *, exit_code=0):
+    """A stand-in ``liftbed``: srcA x -> tgt 5000 - x (a - chain: strand swapped), except
+    rows named ``*|1`` of row 1 and rows on srcB (unlifted); writes a report."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    script = tmp_path / "liftbed"
+    script.write_text(f"""#!{__import__('sys').executable}
+import json, sys
+args = sys.argv[1:]
+get = lambda flag: args[args.index(flag) + 1] if flag in args else None
+if {exit_code}:
+    sys.stderr.write("liftbed: boom\\n"); sys.exit({exit_code})
+assert get("--split") == "best"
+out, unl = open(get("-o"), "w"), open(get("--unlifted"), "w") if get("--unlifted") else None
+n = lifted = 0
+for line in open(get("-i")):
+    f = line.rstrip("\\n").split("\\t")
+    if line.startswith(("#", "track")):
+        out.write(line); continue
+    n += 1
+    if f[0] != "srcA" or (len(f) > 3 and f[3] == "1|1"):
+        unl and unl.write("#no_projection\\n" + line); continue
+    lifted += 1
+    f[0], f[1], f[2] = "tgt", str(5000 - int(f[2])), str(5000 - int(f[1]))
+    if len(f) > 5:
+        f[5] = {{"+": "-", "-": "+"}}.get(f[5], f[5])
+    out.write("\\t".join(f) + "\\n")
+json.dump({{"rows_in": n, "lifted": lifted, "unlifted": n - lifted, "split": 0, "partial": 0,
+           "strand_flipped": lifted, "unlifted_by_reason": {{"no_projection": n - lifted}} if n > lifted else {{}},
+           "min_match": get("--min-match")}}, open(get("--report"), "w"))
+""")
+    script.chmod(0o755)
+    return str(script)
+
+
+def test_cli_bed_native_lifts_bed12_blocks_and_writes_dropped_rows(tmp_path, capsys):
+    from fiberhmm.cli import lift
+
+    bed = tmp_path / "in.bed"
+    bed.write_text("track name=n\n"
+                   "srcA\t100\t300\tr0\t10\t+\t100\t300\t0\t2\t50,100\t0,100\t1,2\n"
+                   "srcA\t500\t700\tr1\t0\t+\t500\t700\t0\t2\t50,50\t0,150\t1,2\n")
+    out, unl = tmp_path / "out.bed", tmp_path / "unl.bed"
+    code = lift.main(["--bed", "-i", str(bed), "-o", str(out), "--map", _lift_map(tmp_path),
+                      "--liftbed", _stub_liftbed(tmp_path / "bin"), "--unlifted", str(unl)])
+    err = capsys.readouterr().err
+    assert code == 0, err
+    assert "1 of 2 BED12 rows lifted (1 lost a block" in err and "3 of 4 blocks lifted" in err
+    lines = out.read_text().splitlines()
+    assert lines[0] == "track name=n"
+    # Blocks [100, 150) and [200, 300) -> [4850, 4900) and [4700, 4800): reversed, strand -.
+    assert lines[1].split("\t") == ["tgt", "4700", "4900", "r0", "10", "-", "4700", "4900", "0",
+                                     "2", "100,50", "0,150", "2,1"]
+    assert unl.read_text() == ("#block_no_projection\n"
+                               "srcA\t500\t700\tr1\t0\t+\t500\t700\t0\t2\t50,50\t0,150\t1,2\n")
+
+
+def test_cli_bed_native_plain_bed_rows_and_liftbed_lookup(tmp_path, capsys):
+    from fiberhmm.cli import lift
+
+    bed = tmp_path / "peaks.bed"
+    bed.write_text("srcA\t100\t200\tp1\t5\t+\textra\nsrcB\t1\t2\tp2\t0\t.\textra\n")
+    out = tmp_path / "out.bed"
+    bindir = tmp_path / "bin"
+    _stub_liftbed(bindir)
+    # liftbed is found next to an explicit --liftbam.
+    code = lift.main(["--bed", "-i", str(bed), "-o", str(out), "--map", _lift_map(tmp_path),
+                      "--liftbam", str(bindir / "liftbam"), "--min-match", "0.5"])
+    err = capsys.readouterr().err
+    assert code == 0, err
+    assert "liftbed lifted 1 of 2 BED rows" in err and "(no_projection=1)" in err
+    assert out.read_text() == "tgt\t4800\t4900\tp1\t5\t-\textra\n"
+    mixed = tmp_path / "mixed.bed"
+    mixed.write_text("srcA\t1\t2\nsrcA\t100\t160\tr\t0\t+\t100\t160\t0\t1\t60\t0\n")
+    assert lift.main(["--bed", "-i", str(mixed), "-o", str(out), "--map", _lift_map(tmp_path),
+                      "--liftbed", str(bindir / "liftbed")]) == 2
+    assert "some rows are BED12" in capsys.readouterr().err
+    failing = _stub_liftbed(tmp_path / "f", exit_code=3)
+    assert lift.main(["--bed", "-i", str(bed), "-o", str(out), "--map", _lift_map(tmp_path),
+                      "--liftbed", failing]) == 2
+    assert "liftbed failed (exit 3)" in capsys.readouterr().err
+
+
+def test_cli_bed_vg_engine_needs_the_source_fasta(tmp_path, capsys):
+    from fiberhmm.cli import lift
+
+    bed = tmp_path / "in.bed"
+    bed.write_text("srcA\t100\t200\n")
+    code = lift.main(["--bed", "-i", str(bed), "-o", str(tmp_path / "o.bed"), "-g", str(bed),
+                      "--prefix", "S#0#", "--target", "T"])
+    assert code == 2 and "--source-fasta" in capsys.readouterr().err
+
+
+def test_bed12_reassembly_reports_dropped_rows():
+    rows = ["srcA\t100\t300\tr\t0\t+\t100\t300\t0\t2\t50,100\t0,100",
+            "srcA\t500\t560\tq\t0\t+\t500\t560\t0\t1\t60\t0"]
+    _bed6, parsed, _ = gl.explode_bed12(rows)
+    dropped = []
+    out, stats = gl.reassemble_bed12(["tgt\t1100\t1150\t0|0\t0\t+", "chrX\t1200\t1300\t0|1\t0\t+"],
+                                     parsed, dropped=dropped)
+    assert out == [] and dropped == [(0, "split_contigs"), (1, "lost_block")]

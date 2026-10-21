@@ -1345,13 +1345,14 @@ def repair_bam(lifted_path: str, out_path: str, *, work_dir: str,
 
 
 # ---------------------------------------------------------------------------
-# BED12 through ft's BED mode
+# BED12 block by block
 # ---------------------------------------------------------------------------
 #
-# ft pg-lift's BED mode lifts each row's start/end only; BED12 thickStart/
-# thickEnd and blocks stay in source offsets. explode_bed12 writes one BED6
-# row per block (name "<row>|<block>"), ft lifts those, and reassemble_bed12
-# rebuilds each BED12 row from its lifted blocks.
+# ft pg-lift's BED mode and graphlift's liftbed lift each row's start/end
+# only; BED12 thickStart/thickEnd and blocks would stay in source offsets.
+# explode_bed12 writes one BED6 row per block (name "<row>|<block>"), the
+# engine lifts those, and reassemble_bed12 rebuilds each BED12 row from its
+# lifted blocks.
 
 _BED_HEADER_PREFIXES = ("#", "track", "browser")
 
@@ -1400,8 +1401,9 @@ def explode_bed12(lines: Iterable[str]) -> Tuple[List[str], List[list], List[str
 _FLIP_STRAND = {"+": "-", "-": "+"}
 
 
-def reassemble_bed12(lifted: Iterable[str], rows: List[list]) -> Tuple[List[str], BedStats]:
-    """BED12 rows rebuilt from ft-lifted BED6 blocks (named ``<row>|<block>``).
+def reassemble_bed12(lifted: Iterable[str], rows: List[list],
+                     dropped: Optional[list] = None) -> Tuple[List[str], BedStats]:
+    """BED12 rows rebuilt from lifted BED6 blocks (named ``<row>|<block>``).
 
     A row is dropped (counted) when a block did not lift, its blocks land on
     different contigs or overlap, or their order is neither kept nor
@@ -1410,7 +1412,15 @@ def reassemble_bed12(lifted: Iterable[str], rows: List[list]) -> Tuple[List[str]
     strand column): the row takes the opposite strand and per-block
     comma-list columns (13+) are reversed with the blocks. Blocks with
     disagreeing strands, or a strand change whose blocks kept their order,
-    are dropped as rearranged. thickStart/thickEnd span the lifted row."""
+    are dropped as rearranged. thickStart/thickEnd span the lifted row.
+    ``dropped``, when given, receives ``(row index, reason)`` for every dropped
+    row (``lost_block``, ``split_contigs``, ``rearranged``). ft's BED mode
+    copies the strand column; liftbed swaps it on a ``-`` chain, so both
+    engines' flips are recognised."""
+    def drop(index, reason):
+        if dropped is not None:
+            dropped.append((index, reason))
+
     stats = BedStats(rows_in=len(rows))
     blocks: Dict[int, list] = defaultdict(list)
     for line in lifted:
@@ -1430,9 +1440,11 @@ def reassemble_bed12(lifted: Iterable[str], rows: List[list]) -> Tuple[List[str]
         lifted_blocks = blocks.get(index, [])
         if len({b[0] for b in lifted_blocks}) != count or len(lifted_blocks) != count:
             stats.rows_lost_blocks += 1
+            drop(index, "lost_block")
             continue
         if len({b[1] for b in lifted_blocks}) != 1:
             stats.rows_split += 1
+            drop(index, "split_contigs")
             continue
         by_position = sorted(lifted_blocks, key=lambda b: (b[2], b[3]))
         order = [b[0] for b in by_position]
@@ -1440,6 +1452,7 @@ def reassemble_bed12(lifted: Iterable[str], rows: List[list]) -> Tuple[List[str]
         original = fields[5]
         if len(strands) != 1:
             stats.rows_rearranged += 1
+            drop(index, "rearranged")
             continue
         strand_flipped = original in _FLIP_STRAND and strands == {_FLIP_STRAND[original]}
         if order == sorted(order):
@@ -1448,13 +1461,16 @@ def reassemble_bed12(lifted: Iterable[str], rows: List[list]) -> Tuple[List[str]
             reversed_order = True
         else:
             stats.rows_rearranged += 1
+            drop(index, "rearranged")
             continue
         if strand_flipped and count > 1 and not reversed_order:
             stats.rows_rearranged += 1
+            drop(index, "rearranged")
             continue
         flipped = strand_flipped or reversed_order
         if any(by_position[i][3] > by_position[i + 1][2] for i in range(count - 1)):
             stats.rows_rearranged += 1
+            drop(index, "rearranged")
             continue
         chrom = by_position[0][1]
         start, end = by_position[0][2], by_position[-1][3]

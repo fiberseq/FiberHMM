@@ -1,8 +1,9 @@
 """fiberhmm-lift --engine native end to end through a real graph (needs graphlift).
 
-Skipped unless graphlift's ``liftbam``, ``gbz2chain`` and ``pathseq`` are found:
-``FIBERHMM_TEST_GRAPHLIFT`` (the directory holding them, e.g.
-``graphlift/target/release``) or PATH. No vg or container.
+Skipped unless graphlift's ``liftbam``, ``gbz2chain`` and ``pathseq`` are found
+(the BED tests also need ``liftbed``): ``FIBERHMM_TEST_GRAPHLIFT`` (the directory
+holding them, e.g. ``graphlift/target/release``, built with ``--features bam``)
+or PATH. No vg or container.
 
 The graph is the vg test's fixture (``fixtures/graph_lift/hg002_chr1_window.gbz``,
 see ``test_graph_lift_vg.py``); the chain maps are built from it here with
@@ -33,7 +34,8 @@ def _tool(name):
     return path if path and os.path.isfile(path) and os.access(path, os.X_OK) else None
 
 
-LIFTBAM, GBZ2CHAIN, PATHSEQ = (_tool(n) for n in ("liftbam", "gbz2chain", "pathseq"))
+LIFTBAM, GBZ2CHAIN, PATHSEQ, LIFTBED = (_tool(n) for n in ("liftbam", "gbz2chain", "pathseq",
+                                                            "liftbed"))
 pytestmark = pytest.mark.skipif(not (LIFTBAM and GBZ2CHAIN and PATHSEQ),
                                 reason="needs graphlift liftbam, gbz2chain and pathseq")
 
@@ -124,6 +126,7 @@ def lifted(tmp_path_factory):
     with pysam.AlignmentFile(str(src)) as bam:
         source = {(r.query_name, r.is_supplementary): r for r in bam.fetch(until_eof=True)}
     out = {}
+    out["maps"] = {"HG002_PAT": pat_map, "GRCh38RC": rc_map}
     for target, manifest, fasta in (("HG002_PAT", pat_map, None), ("GRCh38RC", rc_map, tmp / "rc.fa")):
         path = tmp / f"{target}.bam"
         argv = ["-i", str(src), "-o", str(path), "--map", str(manifest), "--liftbam", LIFTBAM,
@@ -187,3 +190,56 @@ def test_native_lift_places_reads_where_the_target_agrees(lifted):
     for r in records:
         if r.query_name in ("fwd", "rev", "chim"):
             assert r.get_tag("NM") <= 0.01 * r.query_alignment_length, (r.query_name, r.cigarstring)
+
+
+def _footprint_span(read, start, length):
+    """Target span ``[first, last + 1)`` of molecular interval ``[start, start + length)``."""
+    n = read.infer_read_length()
+    if read.is_reverse:
+        start = n - start - length
+    q2r = dict(read.get_aligned_pairs(matches_only=True))
+    refs = [q2r[q] for q in range(start, start + length) if q in q2r]
+    return min(refs), max(refs) + 1
+
+
+@pytest.mark.skipif(not LIFTBED, reason="needs graphlift liftbed")
+@pytest.mark.parametrize("target, flipped", [("HG002_PAT", False), ("GRCh38RC", True)])
+def test_native_bed_lift_lands_where_liftbam_puts_the_footprints(lifted, tmp_path, target, flipped):
+    """The fwd read's nucleosomes (molecular 100+147, 1000+147) and the rev read's (200+147),
+    as BED12 and BED6 rows in source coordinates, lift to the spans the same footprints take
+    in the liftbam-lifted BAM."""
+    from fiberhmm.cli import lift
+
+    out, _source = lifted
+    records, _header = out[target]
+    by = {(r.query_name, r.is_supplementary): r for r in records}
+    manifest = out["maps"][target]
+    expected = {"fwd.0": _footprint_span(by[("fwd", False)], 100, 147),
+                "fwd.1": _footprint_span(by[("fwd", False)], 1000, 147),
+                "rev.0": _footprint_span(by[("rev", False)], 200, 147)}
+    # Source spans: fwd at 10,000 forward; rev at 20,000 reversed (molecule = revcomp SEQ).
+    source = {"fwd.0": (10_100, 10_247), "fwd.1": (11_000, 11_147), "rev.0": (22_653, 22_800)}
+    bed6 = tmp_path / "nuc.bed"
+    bed6.write_text("".join(f"chr1_MATERNAL\t{s}\t{e}\t{k}\t0\t+\tx\n" for k, (s, e) in source.items()))
+    lifted_bed = tmp_path / "nuc.lifted.bed"
+    argv = ["--bed", "-i", str(bed6), "-o", str(lifted_bed), "--map", str(manifest),
+            "--liftbed", LIFTBED, "--unlifted", str(tmp_path / "u.bed")]
+    assert lift.main(argv) == 0
+    got = {f[3]: ((int(f[1]), int(f[2])), f[5], f[6])
+           for f in (line.split("\t") for line in lifted_bed.read_text().splitlines())}
+    strand = "-" if flipped else "+"
+    assert got == {k: (v, strand, "x") for k, v in expected.items()}
+    # The fwd read's two nucleosomes as one BED12 row.
+    (s0, e0), (s1, e1) = source["fwd.0"], source["fwd.1"]
+    bed12 = tmp_path / "nuc12.bed"
+    bed12.write_text(f"chr1_MATERNAL\t{s0}\t{e1}\tfwd\t0\t+\t{s0}\t{e1}\t0\t2\t"
+                     f"{e0 - s0},{e1 - s1}\t0,{s1 - s0}\ta,b\n")
+    assert lift.main(["--bed", "-i", str(bed12), "-o", str(lifted_bed), "--map", str(manifest),
+                      "--liftbed", LIFTBED]) == 0
+    f = lifted_bed.read_text().split("\t")
+    spans = sorted([expected["fwd.0"], expected["fwd.1"]])
+    assert (int(f[1]), int(f[2]), f[5]) == (spans[0][0], spans[1][1], strand)
+    starts = [int(x) + int(f[1]) for x in f[11].split(",")]
+    sizes = [int(x) for x in f[10].split(",")]
+    assert [(a, a + b) for a, b in zip(starts, sizes)] == spans
+    assert f[12].strip() == ("b,a" if flipped else "a,b")

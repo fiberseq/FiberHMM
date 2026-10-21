@@ -32,7 +32,8 @@ record through an alternative chain when no primary chain projects it. A
 second placement of mostly the same read bases (a duplication) is written as
 a secondary alignment. Paired-end records are not lifted
 (`paired_end_unsupported`).
-`liftbam` must be on the `PATH` or named with `--liftbam`.
+`liftbam` must be on the `PATH` or named with `--liftbam`; build it with
+graphlift's `bam` feature (`cargo build --release --features bam`).
 
 **vg**: the stages of fibertools-rs `ft pg-lift --bam` (`ft pg-pansn`,
 `vg inject`, `vg surject`, `ft pg-pansn --strip`) on the graph itself.
@@ -131,19 +132,54 @@ well (checked again each time a source record is taken), are dropped and
 counted.
 Hard clips the lift dropped are added back as hard clips.
 
-## BED12 tracks
+`PS` (phase set) and `HP` are copied unchanged by both engines. `PS` names a
+phase block; readers only compare it for equality. Phasing tools that phase
+against a reference and then tag reads aligned to a personal assembly
+already put reference coordinates in it, so remapping it would change a
+correct value. On a diploid source, blocks of the two haplotypes can share a
+`PS` value on one target contig; `Yp` (the source locus) tells them apart.
 
-`ft pg-lift`'s BED mode moves only each row's start and end, so the blocks of
-`fiberhmm-extract`'s BED12 rows stay at source offsets. `fiberhmm-lift --bed`
-lifts every block as its own feature and rebuilds the rows:
+## BED files
+
+`fiberhmm-lift --bed` lifts BED files with either engine. With `--map` it
+runs graphlift's `liftbed`, which lifts each interval as `liftbam` would lift
+a read aligned over the same bases (same chains, same primary net, same
+splitting rules), so a lifted BED and a lifted BAM agree.
 
 ```bash
+# fiberhmm-extract BED12 rows, natively
+fiberhmm-lift --bed -i calls_nucleosome.bed -o calls_nucleosome.grch38.bed \
+    --map hprc.GRCh38.HG002.chain.graphlift.json --unlifted calls_nucleosome.unlifted.bed
+
+# a peak BED (BED3/BED6 and extra columns), natively
+fiberhmm-lift --bed -i peaks.hg002.bed -o peaks.grch38.bed \
+    --map hprc.GRCh38.HG002.chain.graphlift.json
+
+# the same through vg (ft pg-lift's BED mode)
 fiberhmm-lift --bed -i calls_nucleosome.bed -o calls_nucleosome.grch38.bed \
     -g hprc.gbz --prefix 'HG002#1#' --target GRCh38 --source-fasta hg002.fa
 ```
 
-A row is dropped when one of its blocks does not lift, or its blocks land on
-different contigs or out of order. `ft pg-lift`'s BED mode currently lifts
-nothing on segments that change strand. Lifting the BAM and extracting from
-the lifted BAM avoids both limits and is the better route when the BAM is at
-hand.
+- **BED12 rows** (`fiberhmm-extract` output) are lifted block by block and
+  rebuilt, since both engines move only an interval's start and end. A row
+  is dropped when one of its blocks does not lift, or its blocks land on
+  different contigs or out of order; with `--unlifted` the native engine
+  writes the dropped rows after a `#reason` line (`block_no_projection`,
+  `split_contigs`, `rearranged`, ...).
+- **Other BED files** are lifted row by row. Columns after the third are
+  copied; columns that hold coordinates of their own (a narrowPeak summit
+  offset) are not lifted.
+- **Native rules**: an interval runs from its first to its last projected
+  base, so bases with no target counterpart (an insertion in the source)
+  shrink it. `--min-match F` drops intervals (or blocks) of which less than a
+  fraction F projects (liftOver's `-minMatch`; default 0). An interval that
+  lands in several pieces (across an inversion breakpoint, say) keeps the
+  piece with the most projected bases. On a `-` chain the strand column is
+  swapped. Unlifted rows are counted by reason and, with `--unlifted`,
+  written liftOver style.
+- **vg**: `ft pg-lift`'s BED mode copies the strand column, lifts nothing
+  on segments that change strand (fibertools-rs 0.13), and does not report
+  the rows it could not lift.
+
+Lifting the BAM and extracting from the lifted BAM gives the same intervals
+and is the better route when the BAM is at hand.
