@@ -21,7 +21,7 @@ Every command also accepts `-h`/`--help` and `--version` (prints
 | [`fiberhmm-daf-encode`](#fiberhmm-daf-encode) | Stamp R/Y deamination codes into a DAF BAM | [DAF-seq](../workflows/daf-seq.md#ry-encoding-fiberhmm-daf-encode) |
 | [`fiberhmm-daf-snps`](#fiberhmm-daf-snps) | Recurrent C→T/G→A SNP mask for DAF-seq | [DAF-seq](../workflows/daf-seq.md#snp-screening) |
 | [`fiberhmm-pair`](#fiberhmm-pair), [`fiberhmm-merge`](#fiberhmm-merge) | Pair, merge and jointly re-call scDAF duplexes | [Duplex](../workflows/duplex.md) |
-| [`fiberhmm-lift`](#fiberhmm-lift) | Lift a BAM (or BED12) to another assembly through a pangenome graph and repair it | [Lifting to another assembly](../workflows/lifting.md) |
+| [`fiberhmm-lift`](#fiberhmm-lift) | Lift a BAM (repaired) or a BED file (BED, BED12, narrowPeak) to another assembly through a pangenome graph | [Lifting to another assembly](../workflows/lifting.md) |
 | [`fiberhmm-tag-m5c`](#fiberhmm-tag-m5c), [`fiberhmm-call-m5c`](#fiberhmm-call-m5c) | DddA CpG-island methylation | [DAF-seq](../workflows/daf-seq.md#ddda-cpg-island-methylation) |
 | [`fiberhmm-consensus`](#fiberhmm-consensus) | Footprint classes across molecules | [Consensus](../workflows/consensus.md) |
 | [`fiberhmm-transfer`](#fiberhmm-transfer) | Apply frozen classes to new data | [Transfer](../workflows/transfer.md) |
@@ -52,7 +52,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--force-chemistry` | off | Run although the reads contradict --enzyme/--seq (a FIBERHMM-CHEMISTRY declaration naming another enzyme or platform; m6A-tagged reads without deaminations for ddda/dddb; deaminated or untagged reads for hia5). Default: refuse. |
 | `--topology` | `auto` | Reference topology. auto (default): a plasmid map's own topology, FASTA contigs linear. circular: every contig is circular (a plasmid FASTA). Choices: `auto`, `circular`, `linear`. |
 | `--region` | — | Keep only reads overlapping this region (1-based, inclusive; repeatable). The first region is the one outputs.json asks FiberBrowser to open. |
-| `--min-mapq` | `20` | Keep primary alignments with at least this MAPQ (default 20); also passed to fiberhmm-call and fiberhmm-qc. |
+| `--min-mapq` | `0` | Keep primary alignments with at least this MAPQ (default: 0, no filtering); also passed to fiberhmm-call and fiberhmm-qc. |
 | `--keep-soft-clips` | off | Keep unaligned read arms as soft clips everywhere. Default: kept on linear contigs (DAF calling treats them as no evidence); for ddda/dddb hard-clipped on circular contigs (concatemer arms beyond one full circle). |
 | `--hard-clip` | off | Hard-clip unaligned read arms on every contig (the earlier ddda/dddb default). |
 | `--no-origin-merge` | off | Do not join the two pieces of reads that run through the origin of a circular reference (keep the primary piece). |
@@ -165,7 +165,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--qc` / `--no-qc` | on | Run bounded signal/periodicity/footprint QC after a file output (default: on; use --no-qc to disable). |
 | `--qc-sample-reads` | `2000` | Target random-window QC sample size (default 2000). |
 | `--qc-seed` | `20260824` | Deterministic QC sampler seed (default 20260824). |
-| `--qc-min-mapq` | `20` | Minimum mapping quality for the QC sample (default 20). |
+| `--qc-min-mapq` | `0` | Minimum mapping quality for the QC sample (default: 0, no filtering). |
 | `--qc-output-prefix` | — | QC output prefix (default: qc/&lt;BAM stem&gt; beside output BAM). |
 | `--region-parallel` | off | Process genomic regions in parallel (one worker per region). Scales linearly with --cores up to chromosome count. Requires coordinate-sorted + indexed input BAM. Recommended for full-genome runs; use streaming for stdin/unaligned. |
 | `--region-size` | `10000000` | Region size in bp for --region-parallel (default 10 Mb). |
@@ -305,7 +305,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--reference` | — | Indexed FASTA fallback for raw DAF BAMs lacking MD/R/Y |
 | `--sample-reads` | `2000` | Target bounded sample size (default 2,000) |
 | `--seed` | `20260824` | Deterministic sampler seed (default 20260824) |
-| `--min-mapq` | `20` | Minimum mapping quality (default 20) |
+| `--min-mapq` | `0` | Minimum mapping quality (default: 0, no filtering) |
 | `--prob-threshold` | — | Minimum MM/ML probability, 0-255 (default: 248 for Hia5 Nanopore, the threshold its QC reference is calibrated at; 125 otherwise) |
 | `--min-opportunities` | `200` | Minimum target sites per read for rate QC (default 200) |
 | `--snp-mask` | — | Applied DAF SNP-mask BED to summarize (single input only) |
@@ -383,7 +383,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `-i` / `--input` | required | Input BAM file, or "-" for stdin |
 | `-o` / `--output` | required | Output BAM path, or "-" for stdout |
 | `--reference` | — | Reference FASTA (fallback if MD tag is missing) |
-| `-q` / `--min-mapq` | `20` | Minimum mapping quality (default: 20) |
+| `-q` / `--min-mapq` | `0` | Minimum mapping quality (default: 0, no filtering) |
 | `--min-read-length` | `1000` | Minimum aligned read length in bp (default: 1000) |
 | `--io-threads` | `4` | htslib I/O threads for BAM compression/decompression (default: 4) |
 | `--strand` | `auto` | Force conversion strand: CT (+ strand), GA (- strand), or auto (per-read consensus, default: auto) Choices: `CT`, `GA`, `auto`. |
@@ -399,7 +399,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--min-alt-fibers` | `5` | Minimum mismatch-supporting fibers in each direction (validated default 5) |
 | `--min-dominant-events` | `5` | Minimum dominant conversions per classifiable fiber (default 5) |
 | `--min-dominant-purity` | `0.8` | Minimum dominant-direction purity (default 0.80) |
-| `--min-mapq` | `20` | Minimum mapping quality (default 20) |
+| `--min-mapq` | `0` | Minimum mapping quality (default: 0, no filtering) |
 | `--min-amplicon-reads` | `20` | Minimum aligned reads required for an amplicon consensus (default 20) |
 | `--reference` | — | Indexed FASTA fallback for BAMs lacking MD |
 
@@ -457,29 +457,31 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-i` / `--input` | required | Source BAM (BED12 with --bed; the lifted BAM with --repair-only) |
-| `-o` / `--output` | required | Output BAM (sorted, indexed) or BED |
-| `--engine` | — | native: graphlift liftbam (liftbed with --bed) through --map (the default when --map is given); vg: vg inject/surject (ft pg-lift's BED mode with --bed) through --graph (the default otherwise) Choices: `native`, `vg`. |
+| `-i` / `--input` | required | Source BAM (a BED file with --bed: plain, gzip or bgzip, - for stdin; the lifted BAM with --repair-only) |
+| `-o` / `--output` | required | Output BAM (sorted, indexed) or BED (bgzip-compressed when the name ends in .gz) |
+| `--engine` | — | native: graphlift liftbam (liftbed with --bed) through --map (the default when --map is given); vg (fallback): vg inject/surject through --graph (the default otherwise) Choices: `native`, `vg`. |
 | `-m` / `--map` | — | graphlift chain map manifest (X.chain.graphlift.json, from graphlift gbz2chain) whose sources are the input's contigs |
 | `--liftbam` | — | graphlift liftbam binary (default: liftbam on PATH) |
 | `--liftbed` | — | --bed: graphlift liftbed binary (default: next to --liftbam, else liftbed on PATH) |
 | `--split-gap` | `10000` | native: split a record into supplementaries at a read or target gap of at least BP (default: 10000) |
 | `--alt` | `never` | native: 'fallback' lifts a record through an alternative chain when no primary chain of the map projects it (default: never) Choices: `never`, `fallback`. |
-| `--unlifted` | — | native: write the records that could not be lifted here (source coordinates, Yu:Z:&lt;reason&gt;; with --bed the rows, after a #reason line); they are always counted |
-| `--min-match` | `0.0` | native --bed: lift a BED interval (or BED12 block) only if a fraction F of its bases project (liftOver's -minMatch; default 0: any projected base, the interval shrinks to them) |
+| `--unlifted` | — | native: write the records that could not be lifted here (source coordinates, Yu:Z:&lt;reason&gt;; with --bed the rows, after a #reason line, bgzip-compressed for a .gz name); they are always counted |
+| `--min-match` | `0.0` | native --bed: lift a BED interval (or BED12 block) only if a fraction F of its bases project (liftOver's -minMatch; default 0: any projected base, the interval shrinks to them, so a mostly unprojected block can lift as a remnant of a few bp, as with vg; 0.5 drops those) |
+| `--bed-format` | `auto` | --bed: how to read the input. bed12: blocks lifted one by one; narrowPeak: the summit (column 10) lifted with the peak (-1 when it does not lift); bed: row by row. thickStart/thickEnd (columns 7-8) are lifted for bed and bed12 when they hold coordinates. auto (default): bed12 when every row has 12+ columns, narrowPeak for a .narrowPeak[.gz] input or a 'track type=narrowPeak' line, else bed Choices: `auto`, `bed`, `bed12`, `narrowPeak`. |
+| `--bed12-partial` | `drop` | --bed: a BED12 row some of whose blocks do not lift. drop (default): drop the row; keep: keep the blocks that lift (blockCount, sizes, starts and bounds recomputed) when at least one does, and list the dropped blocks in --unlifted Choices: `drop`, `keep`. |
 | `-g` / `--graph` | — | Pangenome graph (GBZ) with source and target paths |
-| `-p` / `--prefix` | — | panSN prefix of the source assembly's paths in the graph, e.g. 'HG002#1#' (as ft pg-lift --prefix) |
-| `--target` | — | Target sample to surject onto, e.g. GRCh38 (as ft pg-lift --target) |
+| `-p` / `--prefix` | — | panSN prefix of the source assembly's paths in the graph, e.g. 'HG002#1#' (vg engine) |
+| `--target` | — | vg engine: target sample to surject onto, e.g. GRCh38 |
 | `--target-fasta` | — | FASTA of the target assembly (contig names as in the lifted @SQ). Recomputes MD/NM and rebuilds SA; without it they are dropped. Recommended. |
-| `--mapq` | `source` | MAPQ of lifted records: 'source' (default) keeps the MAPQ of the source alignment, as CrossMap and ft pg-lift do; 'fixed:N' sets every lifted record to N. Against a diploid source assembly, MAPQ is low wherever the haplotypes are identical. Yq keeps the source value either way. |
+| `--mapq` | `source` | MAPQ of lifted records: 'source' (default) keeps the MAPQ of the source alignment, as CrossMap does; 'fixed:N' sets every lifted record to N. Against a diploid source assembly, MAPQ is low wherever the haplotypes are identical. Yq keeps the source value either way. |
 | `-d` / `--delimiter` | `#` | panSN delimiter (default: #) |
 | `--vg` | — | vg binary or wrapper script (default: vg on PATH) |
-| `--ft` | — | fibertools-rs ft binary (default: ft on PATH) |
+| `--ft` | — | vg engine, BAM: fibertools-rs ft binary for its pg-pansn stages (default: ft on PATH) |
 | `-t` / `--threads` | `4` | Threads for vg, sorting and BAM I/O (default: 4) |
-| `--repair-only` | off | Only repair -i, a BAM already lifted (ft pg-lift, or the same stages); needs --source unless fiberhmm-lift stashed it |
+| `--repair-only` | off | Only repair -i, a BAM already lifted by a vg-based tool (vg inject/surject); needs --source unless fiberhmm-lift stashed it |
 | `--bed` | off | -i is a BED file: BED12(+N) rows (fiberhmm-extract) are lifted block by block and reassembled, other BED files row by row |
 | `--source` | — | --repair-only: the BAM that was lifted |
-| `--source-fasta` | — | --bed --engine vg: FASTA of the source assembly |
+| `--source-fasta` | — | --bed --engine vg: FASTA of the source assembly (each interval's sequence is surjected) |
 | `--tmp-dir` | — | Directory for intermediate files (default: next to the output) |
 | `--keep-intermediate` | off | Keep the intermediate files |
 
@@ -663,7 +665,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--nuc-model` | — | Protected/accessibility model used only for nucleosome edge evidence |
 | `--prob-threshold` | — |  |
 | `--control-flank` | `2000` |  |
-| `--min-mapq` | `20` |  |
+| `--min-mapq` | `0` | Minimum mapping quality (default: 0, no filtering) |
 | `--min-support` | `10` |  |
 | `--minimum-geometry-support` | `3` |  |
 | `--source-boundary-margin` | `10` |  |
@@ -780,7 +782,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--mode` | `pacbio-fiber` | Analysis mode: pacbio-fiber (PacBio), nanopore-fiber (Nanopore), daf (DAF-seq) (default: pacbio-fiber) Choices: `pacbio-fiber`, `nanopore-fiber`, `daf`, `gpc`, `cpg`. |
 | `-n` / `--max-reads` | `100000` | Maximum reads to process per sample type (0 = all) (default: 100000) |
 | `-s` / `--seed` | `42` | Random seed for sampling (default: 42) |
-| `-q` / `--min-mapq` | `20` | Minimum mapping quality (default: 20) |
+| `-q` / `--min-mapq` | `0` | Minimum mapping quality (default: 0, no filtering) (default: 0) |
 | `-p` / `--prob-threshold` | `128` | Minimum ML probability for modification call (0-255) (default: 128) |
 | `--min-read-length` | `1000` | Minimum aligned read length (default: 1000) |
 | `-e` / `--edge-trim` | `10` | Bases to exclude at read edges (default: 10) |
@@ -802,7 +804,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `-r` / `--read-count` | `500` | Total reads to sample for training (default: 500) |
 | `-s` / `--seed` | `42` | Random seed (default: 42) |
 | `-e` / `--edge-trim` | `10` | Edge masking (default: 10) |
-| `-q` / `--min-mapq` | `20` | Min mapping quality (default: 20) |
+| `-q` / `--min-mapq` | `0` | Min mapping quality (default: 0, no filtering) (default: 0) |
 | `--prob-threshold` | `125` | Min ML probability (default matches ft-extract) (default: 125) |
 | `--min-read-length` | `1000` | Min aligned length (default: 1000) |
 | `-a` / `--prob-adjust` | `1.0` | Accessible probability adjustment factor (default: 1.0) |
@@ -839,7 +841,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--accessibility-priors` / `-ap` | — | Pre-computed P(accessible\|context) TSV |
 | `-k` / `--context-sizes` | `3 4 5 6` | Context size(s) (default: [3, 4, 5, 6]) |
 | `-n` / `--max-reads` | `100000` | Max reads to process (0 = all) (default: 100000) |
-| `-q` / `--min-mapq` | `20` | Min mapping quality (default: 20) |
+| `-q` / `--min-mapq` | `0` | Min mapping quality (default: 0, no filtering) (default: 0) |
 | `-p` / `--prob-threshold` | `128` | Min ML probability for modification call (default: 128) |
 | `--min-read-length` | `1000` | Min aligned read length (default: 1000) |
 | `-e` / `--edge-trim` | `10` | Bases to exclude at read edges (default: 10) |

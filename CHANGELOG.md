@@ -4,18 +4,34 @@
 
 ### Added
 
-- **`fiberhmm-lift`** lifts a called BAM to another assembly through a
-  pangenome graph (vg + fibertools-rs `ft pg-pansn`, the stages of `ft
-  pg-lift --bam`, which fails on fibertools-rs ≤ 0.13), with footprints in
-  molecular coordinates. It repairs what the lift leaves stale: supplementary
-  flags, hard clips (filled from the primary), `st` on reads that change
-  strand, `MD`/`NM`/`SA` (recomputed with `--target-fasta`, else removed) and
-  the `@PG` history. The source `MAPQ` is kept and recorded in `Yq`, the
-  source locus in `Yp`. `--repair-only --source` repairs a BAM lifted with
-  `ft pg-lift` directly; `--bed` lifts BED12 rows block by block. See
+- **`fiberhmm-lift`** lifts a called BAM, or a BED file, to another assembly
+  through a pangenome graph, with footprints in molecular coordinates. The
+  primary route is native: graphlift's `liftbam` and `liftbed`
+  (<https://github.com/mtcicero26/graphlift>; `liftbam` needs its `bam`
+  feature) through a chain map derived from the graph, with no vg. vg
+  (`vg inject`/`vg surject`) is an optional fallback. The lift repairs what
+  it leaves stale: supplementary flags, hard clips (filled from the primary),
+  `st` on reads that change strand, `MD`/`NM`/`SA` (recomputed with
+  `--target-fasta`, else removed) and the `@PG` history. The source `MAPQ` is
+  kept and recorded in `Yq`, the source locus in `Yp`; `--unlifted` writes the
+  records that did not lift with their reason in `Yu`. `--repair-only
+  --source` repairs a BAM lifted by another vg-based tool. `--bed` lifts
+  BED12 rows block by block (`--bed12-partial keep` keeps a row without its
+  unliftable blocks), narrowPeak summits and thickStart/thickEnd with their
+  rows (`--bed-format`), and reads gzip, bgzip or stdin and writes `.gz`. See
   [Lifting to another assembly](https://fiberseq.github.io/FiberHMM/workflows/lifting/).
 - `fiberhmm-check` reports BAMs lifted through a graph without that repair
   (`graph-lift-unrepaired`).
+- `fiberhmm-lift` lifts a soft-clipped supplementary whose primary is not in
+  the input (a region slice, say): it carries its own `SEQ`, calls and `MM`.
+  Only hard-clipped ones, which have no `SEQ` to fill, are left out.
+
+### Changed
+
+- MAPQ filtering is off by default everywhere: `--min-mapq`, `--qc-min-mapq`,
+  `-q` and the consensus `input.minimum_mapq` default to 0 (was 20). Pass
+  `--min-mapq 20` to restore the old filter. A `fiberhmm-pipeline` run started
+  with the old default resumes only with `--min-mapq 20`.
 
 ### Fixed
 
