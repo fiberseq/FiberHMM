@@ -514,3 +514,13 @@ def test_grid_offset_applies_to_long_regions():
     a, _ = plan({'c': 500_000}, regions=[('c', 0, 100_000)])
     b, _ = plan({'c': 500_000}, regions=[('c', 0, 100_000)], grid_offset=5_000)
     assert [(u.zone_start, u.zone_end) for u in a] != [(u.zone_start, u.zone_end) for u in b]
+
+
+# ------------------------------------------------------------------ post-r3 review
+def test_stitched_tracks_promote_dtypes_across_zones():
+    import numpy as np
+    u, _ = plan({'c': 500}, genome=True, unit_bp=250, stride_bp=250)
+    runs = territory_runs([(u[0], {'x': np.zeros(250, dtype=int)}, 'ok'), (u[1], {'x': np.full(250, 0.75)}, 'ok')],
+                          100)
+    x = runs[0][2]['x']
+    assert x.dtype == np.float64 and int((x > 0.5).sum()) == 250
