@@ -240,3 +240,15 @@ def test_molecules_below_the_floor_are_not_measured(tmp_path):
         cal = {'datasets': {'d': _flat(lambda_floor=floor).to_dict()}}
         res = NucModule().run_unit(unit, inputs, settings, cal, {}, tmp_path, None)
         assert (res.tracks['measured:all'].sum() > 0) == expect_measured
+
+
+def test_stitch_handles_territories_shorter_than_the_smoothing_window():
+    from fiberhmm.scan.modules.nuc import NucModule, _smooth
+    m = NucModule()
+    for n in (1, 100, 199, 200, 201):
+        tracks = {k + ':all': [np.zeros(n)] for k in ('measured', 'reg', 'irr', 'sub', 'qsum')}
+        m.stitch('chrS', [(1000, 1000 + n, False, False)], tracks, m.resolve({}), None)
+        assert len(_smooth(np.ones(n), 200)) == n
+    x = np.zeros(1000)
+    x[400:600] = 1.0
+    np.testing.assert_allclose(_smooth(x, 200), np.convolve(x, np.ones(200) / 200, mode='same'))

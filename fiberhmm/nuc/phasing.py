@@ -174,17 +174,20 @@ def resultant_with_null(x_list: Sequence[np.ndarray], lo: float, hi: float, P: f
     tot = N.sum()
     if tot == 0:
         return float('nan'), float('nan'), 0, 0, float('nan'), float('nan')
-    S = V.sum()
-    R = abs(S) / tot
-    phi = float(np.angle(S))
     ids = np.arange(len(V)) if molecule_ids is None else np.asarray(molecule_ids)
     use = N > 0
     uniq, inv = np.unique(ids[use], return_inverse=True)
     Vm = np.zeros(len(uniq), dtype=complex)
     np.add.at(Vm, inv, V[use])                      # one vector per molecule
+    # the observed statistic from the same grouped vectors as the null
+    S = Vm.sum()
+    R = abs(S) / tot
+    phi = float(np.angle(S))
     shifts = rng.uniform(0, 2 * np.pi, size=(n_null, len(uniq)))
     Rn = np.abs((Vm[None, :] * np.exp(1j * shifts)).sum(axis=1)) / tot
-    p = (1 + int(np.sum(Rn >= R))) / (n_null + 1)
+    # numerical ties count as exceedances (one molecule: every rotation ties)
+    tol = 1e-9 * max(1.0, R)
+    p = (1 + int(np.sum(Rn >= R - tol))) / (n_null + 1)
     return R, phi, int(tot), int(len(uniq)), float(Rn.mean()), float(p)
 
 

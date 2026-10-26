@@ -386,11 +386,10 @@ class NucModule(ScanModuleBase):
             den_all = get('measured:all')
             if den_all is None:
                 continue
-            k = np.ones(smooth) / smooth
-            sden = np.convolve(den_all, k, mode='same')
+            sden = _smooth(den_all, smooth)
             for ptype, metric, tau_key in PATCH_TYPES:
                 num = get(f'{metric}:all')
-                snum = np.convolve(num, k, mode='same')
+                snum = _smooth(num, smooth)
                 with np.errstate(invalid='ignore', divide='ignore'):
                     frac = np.where(sden > 0, snum / sden, 0.0)
                 ok = (frac >= float(settings[tau_key])) & (den_all >= min_meas)
@@ -454,6 +453,17 @@ class NucModule(ScanModuleBase):
     def scalar_names(self) -> List[str]:
         from fiberhmm.nuc.tags import NUCMOL_CODECS
         return [c[0] for c in NUCMOL_CODECS]
+
+
+def _smooth(x: np.ndarray, w: int) -> np.ndarray:
+    """Centred moving average of window ``w`` with exactly ``len(x)`` values
+    (zero padding outside the territory), also when ``len(x) < w``."""
+    x = np.asarray(x, dtype=float)
+    if len(x) == 0 or w <= 1:
+        return x.copy()
+    full = np.convolve(x, np.ones(w) / w, mode='full')
+    a = (w - 1) // 2
+    return full[a:a + len(x)]
 
 
 def _runs(mask: np.ndarray) -> List[Tuple[int, int]]:

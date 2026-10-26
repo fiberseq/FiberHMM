@@ -391,3 +391,11 @@ def test_digest_reads_back_without_an_observation_mode(tmp_path):
         mol, _ = decode_record(r, DecodeContext(bam.header, NucParams(mode='pacbio-fiber')))
         annotate_record(r, molecule_outputs(mol, cal=flat_calibration()))
         assert not any(g['stale'] for g in read_nuc_groups(r).values())
+
+
+def test_phase_null_of_one_molecule_is_never_significant():
+    from fiberhmm.nuc.phasing import resultant_with_null
+    x = np.array([175., 390., 570., 780., 970.])
+    R, _phi, _n, nm, _null, p = resultant_with_null([x] * 50, 150., 1100., 190., 200,
+                                                    np.random.default_rng(0), molecule_ids=[0] * 50)
+    assert nm == 1 and p == 1.0 and R > 0.9
