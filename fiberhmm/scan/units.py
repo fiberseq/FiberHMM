@@ -55,7 +55,9 @@ def _grid_units(chrom: str, lo: int, hi: int, unit_bp: int, stride_bp: int, offs
     margin = (unit_bp - stride_bp) // 2
     zones = _grid_zones(lo, hi, stride_bp, offset)
     spans = [(max(lo, a - margin), min(hi, z + margin), a, z) for a, z in zones]
-    ids = [f'{chrom}:{s}-{e}' for s, e, _, _ in spans]
+    # A unit is named by the zone it owns: zones partition the territory, while clipped spans can repeat
+    # (two zones of a contig shorter than one unit compute the same span).
+    ids = [f'{chrom}:{a}-{z}' for _s, _e, a, z in spans]
     units = []
     for i, (s, e, a, z) in enumerate(spans):
         units.append(ScanUnit(unit_id=ids[i], chrom=chrom, start=s, end=e, zone_start=a, zone_end=z,

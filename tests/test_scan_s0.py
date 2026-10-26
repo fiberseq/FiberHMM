@@ -296,3 +296,71 @@ def test_tsv_fallback_molecules_table(tmp_path, synth_bam):
     assert len({r['record'] for r in rows}) == len(rows)            # each record exactly once
     with pysam.AlignmentFile(str(synth_bam)) as bam:
         assert len(rows) == sum(1 for _ in bam.fetch(until_eof=True))
+
+
+# ------------------------------------------------------------------ review findings (round 1)
+def test_unit_ids_unique_when_spans_repeat():
+    units, _ = plan({'c': 10_000}, genome=True, grid_offset=5_000)
+    assert [(u.zone_start, u.zone_end) for u in units] == [(0, 5_000), (5_000, 10_000)]
+    assert len({u.unit_id for u in units}) == len(units) == 2
+    assert units[0].start == units[1].start == 0 and units[0].end == units[1].end == 10_000
+    h = Hit('t', 'x', 'c', 1000, 1100, 1050)
+    kept, _c, _o = reconcile_anchor([(units[0], [h]), (units[1], [Hit('t', 'y', 'c', 1000, 1100, 1050)])])
+    assert len(kept) == 1
+
+
+def test_overlapping_version_outside_the_window_is_decided_with_the_component():
+    us = _units3()
+    u1, u2 = us[1], us[2]
+    a = Hit('t', 'f', 'c1', 47_000, 47_900, 47_450)      # meets the 50 kb boundary window
+    b = Hit('t', 'f', 'c1', 47_800, 52_300, 50_050)
+    kept, comps, _ = reconcile_anchor([(u1, [a]), (u2, [b])])
+    assert len(kept) == 1 and comps == 1
+
+
+def test_reannotation_replaces_older_marks(tmp_path, synth_bam):
+    from fiberhmm.io.scan_ma import scan_contracts, scan_groups_of
+    from fiberhmm.scan import run_units
+    units = plan({'chrS': 200_000}, genome=True)
+    p1 = {'plant': {'features': [['A', 10_000, 10_300, 'both']], 'boundaries': [], 'states': True}}
+    run_units([{'dataset_id': 'synth', 'paths': [synth_bam]}], units, modules=['plant'], params=p1,
+              out=tmp_path / 'one', annotate=True, registry=REG)
+    first = next((tmp_path / 'one' / 'annotated').glob('*.scan.bam'))
+    p2 = {'plant': {'features': [['B', 150_000, 150_300, 'both']], 'boundaries': [], 'states': True}}
+    run_units([{'dataset_id': 'synth', 'paths': [str(first)]}], units, modules=['plant'], params=p2,
+              out=tmp_path / 'two', annotate=True, registry=REG)
+    second = next((tmp_path / 'two' / 'annotated').glob('*.scan.bam'))
+    with pysam.AlignmentFile(str(second)) as bam:
+        contracts = scan_contracts(bam.header)
+        names = {g['name'] for r in bam.fetch(until_eof=True)
+                 for g in scan_groups_of(r, contracts).get('plantst', [])}
+    assert names and all(':150150:' in n for n in names)              # only the second scan's hit ids
+
+
+def test_relabelled_datasets_refuse_continue_and_extend_recomputes(tmp_path, synth_bam):
+    from fiberhmm.scan import run_units
+    from fiberhmm.scan.runner import ScanRefused
+    units = plan({'chrS': 200_000}, regions=[('chrS', 0, 100_000)])
+    feats = {'plant': {'features': FEATURES[:4], 'boundaries': [25_000, 50_000, 75_000]}}
+    out = tmp_path / 's'
+    run_units([{'dataset_id': 'x', 'paths': [synth_bam]}], units, modules=['plant'], params=feats, out=out,
+              annotate=False, registry=REG)
+    with pytest.raises(ScanRefused):
+        run_units([{'dataset_id': 'y', 'paths': [synth_bam]}], units, modules=['plant'], params=feats, out=out,
+                  annotate=False, registry=REG, continue_run=True)
+
+
+def test_extend_reuses_units_of_the_earlier_plan(tmp_path, synth_bam):
+    from fiberhmm.scan import run_units
+    ds = [{'dataset_id': 'synth', 'paths': [synth_bam]}]
+    feats = {'plant': {'features': FEATURES, 'boundaries': list(range(0, 200_001, 25_000))}}
+    small = plan({'chrS': 200_000}, regions=[('chrS', 0, 100_000)])
+    both = plan({'chrS': 200_000}, regions=[('chrS', 0, 100_000), ('chrS', 120_000, 200_000)])
+    out = tmp_path / 'ext'
+    run_units(ds, small, modules=['plant'], params=feats, out=out, annotate=False, registry=REG)
+    run_units(ds, both, modules=['plant'], params=feats, out=out, annotate=False, registry=REG,
+              continue_run=True, extend=True)
+    run = json.loads((out / 'run.json').read_text())
+    assert run['attempts'][-1]['units_reused'] == len(small[0])
+    run_units(ds, both, modules=['plant'], params=feats, out=tmp_path / 'fresh', annotate=False, registry=REG)
+    assert (out / 'plant' / 'hits.tsv.bgz').read_bytes() == (tmp_path / 'fresh' / 'plant' / 'hits.tsv.bgz').read_bytes()

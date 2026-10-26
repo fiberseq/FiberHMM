@@ -160,3 +160,97 @@ def test_rules_differ_only_in_the_rare_tier(fixtures, chem):
         loc = C.scan_peaks(num, tot, n_reads=len(_r), rule='local')
         assert [p for p in w['peaks'] if p['layer'] < 3] == [p for p in loc['peaks'] if p['layer'] < 3]
         assert all(int(tot[p['start']:p['end']].min()) >= 5 for p in loc['peaks'] if p['layer'] == 3)
+
+
+
+# ------------------------------------------------------------------ record shapes from the review probes
+def _bam(path, records, header_extra=None):
+    import array
+    header = {'HD': {'VN': '1.6', 'SO': 'coordinate'}, 'SQ': [{'SN': 'chrP', 'LN': 1500}],
+              'PG': [{'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call', 'VN': '3.0.2', 'DS': 'coord=molecular'}]}
+    header.update(header_extra or {})
+    with pysam.AlignmentFile(str(path), 'wb', header=header) as out:
+        for spec in records:
+            a = pysam.AlignedSegment(out.header)
+            a.query_name = spec.get('name', 'm/1/ccs')
+            a.flag = spec.get('flag', 0)
+            a.reference_id = 0
+            a.reference_start = spec.get('start', 100)
+            a.mapping_quality = 60
+            a.cigarstring = spec.get('cigar', '1000M')
+            a.query_sequence = 'A' * a.infer_query_length()
+            for tag, value in spec.get('tags', {}).items():
+                a.set_tag(tag, array.array('I', value) if isinstance(value, list) else value)
+            out.write(a)
+    pysam.index(str(path))
+    return str(path)
+
+
+def _rows(path, start=0, end=1500, **kw):
+    with pysam.AlignmentFile(path) as bam:
+        return compact_rows(bam, 'chrP', start, end, **kw)
+
+
+def test_string_footprint_tags_parse_like_arrays(tmp_path):
+    a = _bam(tmp_path / 'a.bam', [dict(tags={'ns': [100, 700], 'nl': [147, 147]})])
+    b = _bam(tmp_path / 'b.bam', [dict(tags={'ns': '100,700', 'nl': '147,147'})])
+    assert _rows(a) == _rows(b) and len(_rows(a)) == 1
+
+
+def test_ns_without_nl_gives_no_row(tmp_path):
+    assert _rows(_bam(tmp_path / 'a.bam', [dict(tags={'ns': [100, 700]})])) == []
+
+
+def test_unrepaired_lift_hides_former_supplementaries(tmp_path):
+    lift = {'PG': [{'ID': 'lift', 'PN': 'ft', 'CL': 'ft pg-lift x'}]}
+    recs = [dict(tags={'ns': [100, 700], 'nl': [147, 147], 'Yf': 2048})]
+    assert _rows(_bam(tmp_path / 'a.bam', recs, lift)) == []
+    assert len(_rows(_bam(tmp_path / 'b.bam', recs))) == 1             # not a lift: shown
+
+
+def test_merged_header_frame_majority(tmp_path):
+    from fiberhmm.scan.peaks_reads import legacy_frame
+    pgs = [{'ID': 'mm2', 'PN': 'minimap2'},
+           {'ID': 'ft', 'PN': 'fibertools', 'CL': 'ft add-nucleosomes in.bam', 'PP': 'mm2'},
+           {'ID': 'ft.1', 'PN': 'fibertools', 'CL': 'ft add-nucleosomes in.bam', 'PP': 'mm2'},
+           {'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call', 'PP': 'mm2'}]
+    assert legacy_frame({'PG': pgs}) == (True, False)
+    rec = [dict(flag=16, tags={'ns': [100, 700], 'nl': [147, 147]})]
+    rows = _rows(_bam(tmp_path / 'a.bam', rec, {'PG': pgs}))
+    first = min(iv for iv in rows[0]['intervals'] if iv[2] > 0)
+    assert first[:2] == [253, 400]                                    # flipped as molecular
+
+
+def test_records_rule_counts_do_not_depend_on_the_zone(tmp_path):
+    rec = [dict(flag=0x800, tags={'ns': [400, 700], 'nl': [147, 147]})]
+    path = _bam(tmp_path / 'a.bam', rec)
+    whole = C.compute_scan_counts(_rows(path, row_rule='records'), 'accessibility', 1500)
+    for cut in (250, 500, 600, 1000):
+        left = C.compute_scan_counts(_rows(path, 0, cut, row_rule='records'), 'accessibility', cut)
+        right = C.compute_scan_counts(_rows(path, cut, 1500, row_rule='records'), 'accessibility', 1500 - cut)
+        for k in (0, 1):
+            assert np.array_equal(np.concatenate([left[k], right[k]]), whole[k]), cut
+
+
+def test_review_records_match_browser(tmp_path):
+    fb = _browser()
+    if fb is None:
+        pytest.skip('set FIBERHMM_TEST_FIBERBROWSER to a FiberBrowser browser/ directory')
+    build, PS = fb
+    pgs = [{'ID': 'mm2', 'PN': 'minimap2'},
+           {'ID': 'ft', 'PN': 'fibertools', 'CL': 'ft add-nucleosomes in.bam', 'PP': 'mm2'},
+           {'ID': 'ft.1', 'PN': 'fibertools', 'CL': 'ft add-nucleosomes in.bam', 'PP': 'mm2'},
+           {'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call', 'PP': 'mm2'}]
+    cases = [([dict(tags={'ns': '100,700', 'nl': '147,147'})], None),
+             ([dict(tags={'ns': [100, 700]})], None),
+             ([dict(tags={'ns': [100, 700], 'nl': [147, 147], 'Yf': 2048})],
+              {'PG': [{'ID': 'lift', 'PN': 'ft', 'CL': 'ft pg-lift x'}]}),
+             ([dict(flag=16, tags={'ns': [100, 700], 'nl': [147, 147]})], {'PG': pgs})]
+    for i, (recs, extra) in enumerate(cases):
+        path = _bam(tmp_path / f'c{i}.bam', recs, extra)
+        for start, end in ((0, 1500), (300, 900)):
+            rows = build(path, 'chrP', start, end, spanning_only=False, include_layers=False,
+                         short_terminal_footprint_bp=90, hide_terminal_gaps=True, terminal_gap_threshold=500)
+            a = PS.compute_scan_counts(rows, 'accessibility', end - start)
+            b = C.compute_scan_counts(_rows(path, start, end), 'accessibility', end - start)
+            assert np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]), (i, start, end)

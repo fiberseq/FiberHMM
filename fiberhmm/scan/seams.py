@@ -1,10 +1,10 @@
 """Seam reconciliation between neighbouring units.
 
 Anchor modules (``fp``, ``nfr``): at each zone boundary, the root hits of one
-type from both units that meet ``[b - window, b + window)`` form connected
-components by interval overlap; each component is resolved by one unit, the
-one whose centre is nearest the midpoint of the component's union (ties go to
-the left unit). Hits away from boundaries are kept when their anchor lies in
+type from both units (inside the bases both computed) form connected
+components by interval overlap; each component that meets
+``[b - window, b + window)`` is resolved by one unit, the one whose centre is
+nearest the midpoint of the component's union (ties go to the left unit). Hits away from boundaries are kept when their anchor lies in
 their unit's zone; children follow their parent.
 
 Stitch modules (``peaks``, ``nuc`` patches): unit tracks cover zones only and
@@ -82,13 +82,19 @@ def reconcile_anchor(results: Sequence[Tuple[ScanUnit, Sequence[Hit]]], *,
         v, vhits = by_id[u.right]
         b = u.zone_end
         win = (b - window, b + window)
+        # Components are built over every root hit of either unit inside the bases both units computed, and
+        # kept when they reach the boundary window: a version that overlaps a boundary hit but lies partly
+        # outside the window is decided with it, never kept beside it.
+        shared = (max(u.start, v.start), min(u.end, v.end))
         types = sorted({h.type for h in hits if h.parent is None} | {h.type for h in vhits if h.parent is None})
         for t in types:
-            items = [(u.unit_id, h) for h in hits if h.parent is None and h.type == t and _overlaps(_span(h), win)]
-            items += [(v.unit_id, h) for h in vhits if h.parent is None and h.type == t and _overlaps(_span(h), win)]
+            items = [(u.unit_id, h) for h in hits if h.parent is None and h.type == t and _overlaps(_span(h), shared)]
+            items += [(v.unit_id, h) for h in vhits if h.parent is None and h.type == t and _overlaps(_span(h), shared)]
             if not items:
                 continue
             for comp in _components(items):
+                if not any(_overlaps(_span(items[i][1]), win) for i in comp):
+                    continue
                 components += 1
                 lo = min(_span(items[i][1])[0] for i in comp)
                 hi = max(_span(items[i][1])[1] for i in comp)
@@ -109,14 +115,13 @@ def reconcile_anchor(results: Sequence[Tuple[ScanUnit, Sequence[Hit]]], *,
             if k is None:
                 k = u.zone_start <= h.anchor < u.zone_end if u.mode == 'grid' or u.left or u.right else True
             keep_root[h.key] = k
+        by_key = {x.key: x for x in hits}
         for h in hits:
             root = h
             seen = set()
-            while root.parent is not None and root.parent not in seen:
+            while root is not None and root.parent is not None and root.parent not in seen:
                 seen.add(root.parent)
-                root = next((x for x in hits if x.key == root.parent), None)
-                if root is None:
-                    break
+                root = by_key.get(root.parent)
             if root is not None and keep_root.get(root.key, False):
                 kept.append((u, h))
     return kept, components, open_seams

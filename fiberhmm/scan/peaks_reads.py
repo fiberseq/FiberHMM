@@ -449,14 +449,7 @@ def split_at_deletions(intervals, cuts):
 
 
 # ------------------------------------------------------------------ the loader path
-def _cut(intervals, read, region_start):
-    cuts = read_deletion_cuts(read)
-    if not cuts:
-        return intervals
-    return split_at_deletions(intervals, [(a - region_start, b - region_start) for a, b in cuts])
-
-
-def _anchors(bam, chrom, start, end, include_duplicates=False, row_rule='view'):
+def _anchors(bam, chrom, start, end, include_duplicates=False, row_rule='view', hidden=None):
     """Rows of the region.
 
     ``view`` (FiberBrowser ``sv_molecules.molecule_alignments``): one row per primary record of each molecule
@@ -466,7 +459,7 @@ def _anchors(bam, chrom, start, end, include_duplicates=False, row_rule='view'):
     depends on no extent; grid scans use it so stitched zones do not depend on where units fall."""
     groups: Dict[str, dict] = {}
     for read in bam.fetch(chrom, start, end):
-        if read.is_unmapped or read.is_secondary:
+        if read.is_unmapped or read.is_secondary or (hidden is not None and hidden(read)):
             continue
         status = include_duplicates or not read.is_duplicate
         g = groups.setdefault(read.query_name, dict(primary=False, recs=[]))
@@ -490,102 +483,306 @@ def _anchors(bam, chrom, start, end, include_duplicates=False, row_rule='view'):
             yield anchor
 
 
-def compact_rows(bam, chrom, region_start, region_end, *, legacy_frame=None, group_frame=None,
+def parse_int_tag_values(tag):
+    """BAM array, list or comma-separated string tag values as ints (FiberBrowser ``parse_int_tag_values``)."""
+    if tag is None:
+        return None
+    if isinstance(tag, str):
+        return [int(x) for x in tag.split(',') if x]
+    return [int(x) for x in tag]
+
+
+def _optional_ints(tag):
+    try:
+        return parse_int_tag_values(tag)
+    except Exception:
+        return None
+
+
+# ------------------------------------------------------------------ legacy ns/nl frame (FiberBrowser bam_tags)
+_FIBERTOOLS_PROGRAMS = frozenset({'ft', 'fibertools', 'fibertools-rs'})
+_FIBERTOOLS_FOOTPRINT_SUBCOMMANDS = frozenset({'predict', 'predict-m6a', 'm6a', 'add', 'add-nucleosomes',
+                                               'add-nucleosome', 'fire', 'fiber-hmm'})
+_FIBERTOOLS_FOOTPRINT_PREFIXES = (('add-nucleosomes', 3), ('predict-m6a', 4), ('fire', 3), ('fiber-hmm', 5))
+_FIBERHMM_FOOTPRINT_PROGRAMS = frozenset({'fiberhmm-apply', 'fiberhmm-call', 'fiberhmm-recall-tfs',
+                                          'fiberhmm-recall-nucs'})
+_FIBERHMM_NAME_RE = re.compile(r'^fiberhmm(?:-[a-z0-9-]+)?$')
+_PG_ID_SUFFIX_RE = re.compile(r'(?:\.\d+|-[0-9a-f]{6,8})$')
+_COORD_MOLECULAR = 'coord=molecular'
+_MA_DOT_FOOTPRINT_RE = re.compile(r';(?:nuc|msp|tf)\.[A-Za-z]*:')
+
+
+def _fibertools_footprint_subcommand(token):
+    if token in _FIBERTOOLS_FOOTPRINT_SUBCOMMANDS:
+        return True
+    return any(len(token) >= n and full.startswith(token) for full, n in _FIBERTOOLS_FOOTPRINT_PREFIXES)
+
+
+def _pg_id_base(ident):
+    base = ident.lower()
+    while True:
+        stripped = _PG_ID_SUFFIX_RE.sub('', base)
+        if stripped == base or not stripped:
+            return base
+        base = stripped
+
+
+def _cl_tokens(cl):
+    return [t for t in str(cl or '').lower().split() if t]
+
+
+def _basename(token):
+    return token.rstrip('/').rsplit('/', 1)[-1]
+
+
+def _pg_family(pg):
+    pn = str(pg.get('PN', '') or '').strip().lower()
+    if pn:
+        if 'fibertools' in pn:
+            return 'fibertools'
+        return 'fiberhmm' if _FIBERHMM_NAME_RE.match(pn) else None
+    base = _pg_id_base(str(pg.get('ID', '') or '').strip())
+    if base in _FIBERTOOLS_PROGRAMS or base.startswith('fibertools'):
+        return 'fibertools'
+    if _FIBERHMM_NAME_RE.match(base):
+        return 'fiberhmm'
+    tokens = _cl_tokens(pg.get('CL', ''))
+    program = _basename(tokens[0]) if tokens else ''
+    if program in _FIBERTOOLS_PROGRAMS:
+        return 'fibertools'
+    if _FIBERHMM_NAME_RE.match(program):
+        return 'fiberhmm'
+    return None
+
+
+def _pg_text(pg):
+    try:
+        return ' '.join(str(v) for v in pg.values()).lower()
+    except AttributeError:
+        return str(pg).lower()
+
+
+def _pg_writer_frame(pg, header_marker):
+    family = _pg_family(pg)
+    if family == 'fibertools':
+        tokens = _cl_tokens(pg.get('CL', ''))
+        start = next((i + 1 for i, t in enumerate(tokens) if _basename(t) in _FIBERTOOLS_PROGRAMS), 1)
+        if any(_fibertools_footprint_subcommand(t) for t in tokens[start:]):
+            return 'molecular'
+        return None
+    if family == 'fiberhmm':
+        record_marker = _COORD_MOLECULAR in _pg_text(pg)
+        tokens = _cl_tokens(pg.get('CL', ''))
+        names = {str(pg.get('PN', '') or '').strip().lower(), _pg_id_base(str(pg.get('ID', '') or '').strip()),
+                 _basename(tokens[0]) if tokens else ''}
+        if record_marker or names & _FIBERHMM_FOOTPRINT_PROGRAMS:
+            return 'molecular' if (record_marker or header_marker) else 'seq'
+    return None
+
+
+def legacy_frame(header):
+    """``(molecular, unknown)`` for a BAM's legacy ns/nl/as/al (FiberBrowser ``bam_legacy_frame``): the @PG
+    chains vote; merged files with conflicting votes resolve to molecular when coord=molecular is declared
+    anywhere, else to the majority (ties: SEQ)."""
+    hdr = header.to_dict() if hasattr(header, 'to_dict') else dict(header or {})
+    pgs = [pg for pg in (hdr.get('PG', []) or []) if isinstance(pg, dict)]
+    comments = [str(c).lower() for c in (hdr.get('CO', []) or [])]
+    header_marker = any(_COORD_MOLECULAR in c for c in comments)
+    declared = header_marker or any(_COORD_MOLECULAR in _pg_text(pg) for pg in pgs)
+    frames = [_pg_writer_frame(pg, header_marker) for pg in pgs]
+    ids = [str(pg.get('ID', '') or '') for pg in pgs]
+    parent = [None] * len(pgs)
+    if any('PP' in pg for pg in pgs):
+        by_id: Dict[str, List[int]] = {}
+        for i, ident in enumerate(ids):
+            by_id.setdefault(ident, []).append(i)
+        for i, pg in enumerate(pgs):
+            pp = str(pg.get('PP', '') or '')
+            candidates = [j for j in by_id.get(pp, []) if j != i] if pp else []
+            if candidates:
+                earlier = [j for j in candidates if j < i]
+                parent[i] = earlier[-1] if earlier else candidates[-1]
+    else:
+        parent = [i - 1 if i > 0 else None for i in range(len(pgs))]
+    referenced = {j for j in parent if j is not None}
+    leaves = [i for i in range(len(pgs)) if i not in referenced]
+    if pgs and not leaves:
+        leaves = [len(pgs) - 1]
+    votes = {'molecular': 0, 'seq': 0}
+    for leaf in leaves:
+        node, seen = leaf, set()
+        while node is not None and node not in seen:
+            seen.add(node)
+            if frames[node] is not None:
+                votes[frames[node]] += 1
+                break
+            node = parent[node]
+    mol, seq = votes['molecular'], votes['seq']
+    if mol and seq:
+        return (bool(declared or mol > seq), False)
+    if mol or seq:
+        return (bool(mol), False)
+    if declared:
+        return (True, False)
+    return (False, True)
+
+
+def read_legacy_is_molecular(read, frame):
+    molecular, unknown = frame
+    if molecular or not unknown:
+        return molecular
+    try:
+        return read.has_tag('MA') and _MA_DOT_FOOTPRINT_RE.search(str(read.get_tag('MA'))) is not None
+    except (AttributeError, KeyError):
+        return False
+
+
+def lift_hidden_predicate(header):
+    """FiberBrowser's rule for an unrepaired graph lift (``ft pg-lift``): hide a primary whose stash tag
+    ``Yf`` (the source FLAG) marks a source supplementary or secondary. None for any other BAM."""
+    try:
+        from fiberhmm.io.graph_lift import header_lift_state
+        if not header_lift_state(header)['lift']:
+            return None
+    except Exception:
+        return None
+
+    def hidden(read):
+        if read.is_unmapped or read.is_secondary or read.is_supplementary or not read.has_tag('Yf'):
+            return False
+        try:
+            return bool(int(read.get_tag('Yf')) & 0x900)
+        except (TypeError, ValueError):
+            return False
+    return hidden
+
+
+def _record_tiles(read, lo, hi, *, legacy, group_frame, hide_terminal_gaps, terminal_gap_threshold,
+                  short_terminal_footprint_bp, min_fp_quality, molecular_layers):
+    """A record's tiles inside [lo, hi) as absolute ``[start, end, size]`` (deletion cuts applied), or None
+    when FiberBrowser shows no row for it there."""
+    ref_start, ref_end = read.reference_start, read.reference_end
+
+    def neutral():
+        a, b = max(ref_start, lo), min(ref_end, hi)
+        return _cut_abs([[int(a), int(b), 0]], read) if b > a else None
+
+    if read.is_supplementary and any(op == 5 for op, _n in read.cigartuples or []):
+        return None if min_fp_quality > 0 else neutral()
+    ns_tag = nl_tag = nq_tag = None
+    if read.has_tag('ns'):
+        ns_tag = read.get_tag('ns')
+        nl_tag = read.get_tag('nl') if read.has_tag('nl') else None
+        nq_tag = read.get_tag('nq') if read.has_tag('nq') and nl_tag is not None else None
+    if ns_tag is None and read.has_tag('as') and read.has_tag('al'):
+        ns_tag, nl_tag = msp_complement(read.get_tag('as'), read.get_tag('al'), read.query_length or 0)
+    if ns_tag is None:
+        # No legacy footprints (MA-only or untagged): FiberBrowser shows the read as one neutral tile.
+        return neutral()
+    try:
+        ns = parse_int_tag_values(ns_tag)
+        nl = parse_int_tag_values(nl_tag)
+        if ns is None or nl is None:
+            raise ValueError('missing ns/nl')
+    except Exception:
+        return None
+    nq = _optional_ints(nq_tag)
+    if len(ns) != len(nl):
+        return None
+    read_length = read.query_length or 0
+    if read.is_reverse and read_length > 0 and read_legacy_is_molecular(read, legacy):
+        ns = [read_length - (s + l) for s, l in zip(ns, nl)]
+    mapper = CigarCoordMapper(read.cigartuples, ref_start)
+    ma_tags = ma_tags_of(read, group_frame)
+    footprints = map_tagged_footprints(ns, nl, nq, mapper, min_fp_quality=min_fp_quality)
+    ma_spans = None
+    terminal_drop = set()
+    if short_terminal_footprint_bp > 0:
+        if ma_tags is not None:
+            ma_spans = ma_footprint_query_spans(ma_tags, read_length=read_length, is_reverse=read.is_reverse,
+                                                molecular_layers=molecular_layers)
+        terminal_drop = short_terminal_spans(ns, nl, ma_spans, short_terminal_footprint_bp, read_length=read_length)
+    all_footprints = footprints
+    dropped_extent = None
+    if terminal_drop:
+        footprints = []
+        for fp in all_footprints:
+            if fp[2] < short_terminal_footprint_bp and (ns[fp[4]], ns[fp[4]] + nl[fp[4]]) in terminal_drop:
+                dropped_extent = _extent_union(dropped_extent, (fp[0], fp[1]))
+            else:
+                footprints.append(fp)
+    # Without requested layers, only a supplementary row counts as explicit evidence.
+    has_explicit = bool(read.is_supplementary) and min_fp_quality <= 0
+    stubs_only = bool(terminal_drop) and not footprints and bool(all_footprints)
+    if not footprints and not has_explicit and not stubs_only:
+        return None
+    call_extent = None
+    if hide_terminal_gaps and (footprints or stubs_only) and ma_tags is not None:
+        if ma_spans is None:
+            ma_spans = ma_footprint_query_spans(ma_tags, read_length=read_length, is_reverse=read.is_reverse,
+                                                molecular_layers=molecular_layers)
+        call_extent = ma_footprint_call_extent(ma_spans, mapper, ref_start, ref_end)
+    if terminal_drop and hide_terminal_gaps:
+        call_extent = _extent_union(call_extent, dropped_extent)
+    if stubs_only:
+        terminal_filtered = hide_terminal_gaps and terminal_gap_rejects(
+            sorted(all_footprints, key=lambda item: item[0]), ref_start, ref_end, terminal_gap_threshold, call_extent)
+        intervals = []
+    else:
+        intervals, terminal_filtered = build_intervals_from_footprints(
+            footprints, ref_start, ref_end, lo, hi, hide_terminal_gaps=hide_terminal_gaps,
+            terminal_gap_threshold=terminal_gap_threshold, call_extent=call_extent)
+        intervals = [[a + lo, b + lo, size] for a, b, size in intervals]
+    if terminal_filtered and not has_explicit:
+        return None
+    if not intervals:
+        body_start, body_end = ref_start, ref_end
+        if stubs_only and hide_terminal_gaps:
+            call_body = _extent_union(
+                (min(fp[0] for fp in all_footprints), max(fp[1] for fp in all_footprints)) if all_footprints else None,
+                call_extent)
+            if call_body is not None:
+                body_start, body_end = max(call_body[0], ref_start), min(call_body[1], ref_end)
+        a, b = max(body_start, lo), min(body_end, hi)
+        if not (has_explicit or stubs_only) or b <= a:
+            return None
+        intervals = [[int(a), int(b), 0]]
+    return _cut_abs(intervals, read)
+
+
+def _cut_abs(intervals, read):
+    cuts = read_deletion_cuts(read)
+    return split_at_deletions(intervals, cuts) if cuts else intervals
+
+
+def compact_rows(bam, chrom, region_start, region_end, *, legacy_frame_value=None, group_frame=None,
                  hide_terminal_gaps=True, terminal_gap_threshold=TERMINAL_GAP_THRESHOLD,
                  short_terminal_footprint_bp=SHORT_TERMINAL_FOOTPRINT_BP, include_duplicates=False,
                  min_fp_quality=0, molecular_layers=frozenset(), row_rule='view'):
-    """Rows ``{'intervals': [[s, e, size], ...]}`` (region-relative) for the records overlapping the region,
-    as FiberBrowser's loader builds them for its accessibility and TF-density peak scans (no layers)."""
-    from fiberhmm.io.annotation_frame import legacy_frame_of, ma_group_frame_of
+    """Rows ``{'id', 'intervals': [[s, e, size], ...]}`` (region-relative) for the records overlapping the
+    region, as FiberBrowser's loader builds them for its accessibility and TF-density peak scans (no layers).
+
+    ``row_rule='view'`` is FiberBrowser's: rows and tiles are decided for this region (the view).
+    ``row_rule='records'`` decides each record's tiles over its whole alignment, then clips them to the
+    region, so the counts at a base never depend on the region's extent (grid scans)."""
+    from fiberhmm.io.annotation_frame import ma_group_frame_of
     header = bam.header
     group_frame = group_frame or ma_group_frame_of(header)
-    legacy = legacy_frame or legacy_frame_of(header)
+    legacy = legacy_frame_value or legacy_frame(header)
+    hidden = lift_hidden_predicate(header)
+    opts = dict(legacy=legacy, group_frame=group_frame, hide_terminal_gaps=hide_terminal_gaps,
+                terminal_gap_threshold=terminal_gap_threshold, short_terminal_footprint_bp=short_terminal_footprint_bp,
+                min_fp_quality=min_fp_quality, molecular_layers=molecular_layers)
     rows = []
-    for read in _anchors(bam, chrom, region_start, region_end, include_duplicates, row_rule):
-        ref_start, ref_end = read.reference_start, read.reference_end
-        if read.is_supplementary and any(op == 5 for op, _n in read.cigartuples or []):
-            if min_fp_quality > 0:
-                continue
-            a, b = max(ref_start, region_start), min(ref_end, region_end)
-            if b > a:
-                rows.append(dict(id=read.query_name, no_calls=True, intervals=_cut(
-                    [[a - region_start, b - region_start, 0]], read, region_start)))
-            continue
-        ns = nl = nq = None
-        if read.has_tag('ns') and read.has_tag('nl'):
-            ns, nl = list(read.get_tag('ns')), list(read.get_tag('nl'))
-            nq = list(read.get_tag('nq')) if read.has_tag('nq') else None
-        elif read.has_tag('as') and read.has_tag('al'):
-            ns, nl = msp_complement(read.get_tag('as'), read.get_tag('al'), read.query_length or 0)
-        ma_tags = ma_tags_of(read, group_frame)
-        if ns is None:
-            # No legacy footprints (MA-only or untagged): FiberBrowser shows the read as one neutral tile.
-            a, b = max(ref_start, region_start), min(ref_end, region_end)
-            if b > a:
-                rows.append(dict(id=read.query_name, intervals=_cut(
-                    [[int(a - region_start), int(b - region_start), 0]], read, region_start)))
-            continue
-        mapper = CigarCoordMapper(read.cigartuples, ref_start)
-        read_length = read.query_length or 0
-        ns = [int(x) for x in ns]
-        nl = [int(x) for x in nl]
-        if len(ns) != len(nl):
-            continue
-        if read.is_reverse and read_length > 0 and legacy.for_read(read) == 'molecular':
-            ns = [read_length - (s + l) for s, l in zip(ns, nl)]
-        footprints = map_tagged_footprints(ns, nl, nq, mapper, min_fp_quality=min_fp_quality)
-        ma_spans = None
-        terminal_drop = set()
-        if short_terminal_footprint_bp > 0:
-            if ma_tags is not None:
-                ma_spans = ma_footprint_query_spans(ma_tags, read_length=read_length, is_reverse=read.is_reverse,
-                                                    molecular_layers=molecular_layers)
-            terminal_drop = short_terminal_spans(ns, nl, ma_spans, short_terminal_footprint_bp,
-                                                 read_length=read_length)
-        all_footprints = footprints
-        dropped_extent = None
-        if terminal_drop:
-            footprints = []
-            for fp in all_footprints:
-                if fp[2] < short_terminal_footprint_bp and (ns[fp[4]], ns[fp[4]] + nl[fp[4]]) in terminal_drop:
-                    dropped_extent = _extent_union(dropped_extent, (fp[0], fp[1]))
-                else:
-                    footprints.append(fp)
-        # Without requested layers, only a supplementary row counts as explicit evidence.
-        has_explicit = bool(read.is_supplementary) and min_fp_quality <= 0
-        stubs_only = bool(terminal_drop) and not footprints and bool(all_footprints)
-        if not footprints and not has_explicit and not stubs_only:
-            continue
-        call_extent = None
-        if hide_terminal_gaps and (footprints or stubs_only) and ma_tags is not None:
-            if ma_spans is None:
-                ma_spans = ma_footprint_query_spans(ma_tags, read_length=read_length, is_reverse=read.is_reverse,
-                                                    molecular_layers=molecular_layers)
-            call_extent = ma_footprint_call_extent(ma_spans, mapper, ref_start, ref_end)
-        if terminal_drop and hide_terminal_gaps:
-            call_extent = _extent_union(call_extent, dropped_extent)
-        if stubs_only:
-            terminal_filtered = hide_terminal_gaps and terminal_gap_rejects(
-                sorted(all_footprints, key=lambda item: item[0]), ref_start, ref_end, terminal_gap_threshold,
-                call_extent)
-            intervals = []
+    for read in _anchors(bam, chrom, region_start, region_end, include_duplicates, row_rule, hidden):
+        if row_rule == 'records':
+            tiles = _record_tiles(read, read.reference_start, read.reference_end, **opts)
+            if tiles:
+                tiles = [[max(a, region_start), min(b, region_end), size] for a, b, size in tiles
+                         if min(b, region_end) > max(a, region_start)]
         else:
-            intervals, terminal_filtered = build_intervals_from_footprints(
-                footprints, ref_start, ref_end, region_start, region_end, hide_terminal_gaps=hide_terminal_gaps,
-                terminal_gap_threshold=terminal_gap_threshold, call_extent=call_extent)
-        if terminal_filtered and not has_explicit:
-            continue
-        if not intervals:
-            body_start, body_end = ref_start, ref_end
-            if stubs_only and hide_terminal_gaps:
-                call_body = _extent_union(
-                    (min(fp[0] for fp in all_footprints), max(fp[1] for fp in all_footprints)) if all_footprints
-                    else None, call_extent)
-                if call_body is not None:
-                    body_start, body_end = max(call_body[0], ref_start), min(call_body[1], ref_end)
-            a, b = max(body_start, region_start), min(body_end, region_end)
-            if not (has_explicit or stubs_only) or b <= a:
-                continue
-            intervals = [[int(a - region_start), int(b - region_start), 0]]
-        rows.append(dict(id=read.query_name, intervals=_cut(intervals, read, region_start)))
+            tiles = _record_tiles(read, region_start, region_end, **opts)
+        if tiles:
+            rows.append(dict(id=read.query_name,
+                             intervals=[[int(a - region_start), int(b - region_start), int(size)] for a, b, size in tiles]))
     return rows

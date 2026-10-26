@@ -111,8 +111,9 @@ class NfrModule(ScanModuleBase):
         nfr = dict(params.pop('nfr', {}) or {})
         if nfr.get('nfr_regions'):
             raise ValueError('nfr: a scan detects NFR regions per unit; nfr_regions cannot be given')
+        # Explicit caps (the cap flags) override the "nfr" group, as in fiberhmm-nfr.
         for name in CAP_NAMES:
-            if name in caps and name not in nfr and caps[name] not in (None, 0, 1 if name == 'sample_seed' else 0):
+            if caps.get(name) is not None:
                 nfr[name] = int(caps[name])
         opt = NFROptions.from_params(nfr)
         loader = {g: dict(v) for g, v in params.items() if v}
@@ -227,9 +228,13 @@ class NfrModule(ScanModuleBase):
                 vid = v['id']
                 L = _num(v.get('L')) if v.get('L') is not None else float(n['start'])
                 R = _num(v.get('R')) if v.get('R') is not None else float(n['end'])
+                is_depth = 'threshold' in v and 'L' not in v
                 cols = {c: v.get(c) for c in VARIANT_COLUMNS if c in v}
-                cols.update(nfr=nid, prevalence_em=v.get('prevalence'), prevalence_strict=v.get('strict'),
+                cols.update(nfr=nid, prevalence_em=v.get('prevalence'),
+                            prevalence_strict=v.get('prevalence') if is_depth else v.get('strict'),
                             ci_lo=(v.get('ci') or [None, None])[0], ci_hi=(v.get('ci') or [None, None])[1])
+                if is_depth:
+                    cols['relation'] = 'depth state'
                 res.hits.append(Hit('nfr.variant', vid, unit.chrom, int(math.floor(L)), int(math.ceil(R)),
                                     int(math.floor((L + R) / 2)), score=_num(v.get('prevalence')),
                                     label=f"{nid} {v.get('name', '')}".strip(), parent=nid, columns=cols))
@@ -237,7 +242,8 @@ class NfrModule(ScanModuleBase):
                 res.values.append(Value(vid, 'all', 'all', 'prevalence_em', _num(v.get('prevalence')),
                                         lo=_num(ci[0]), hi=_num(ci[1]), n_molecules=n.get('reads'),
                                         n_callable=n.get('callable')))
-                res.values.append(Value(vid, 'all', 'all', 'prevalence_strict', _num(v.get('strict')),
+                res.values.append(Value(vid, 'all', 'all', 'prevalence_strict',
+                                        _num(v.get('prevalence') if is_depth else v.get('strict')),
                                         n_molecules=n.get('reads'), n_callable=n.get('callable')))
                 for ch, rec in sorted((v.get('by_channel') or {}).items()):
                     res.values.append(Value(vid, ch, 'channel', 'em', _num(rec.get('em')), n_molecules=rec.get('n'),
@@ -256,7 +262,12 @@ class NfrModule(ScanModuleBase):
                 units[u['unit_id']] = recs
                 for rec in recs:
                     res.evidence.append(EvidenceMember(u['unit_id'], rec))
-        variants_of = {n['id']: [v for v in (n.get('variants') or [])] for n in result['nfrs']}
+        # Memberships come from the engine's own element states (unrounded posteriors against
+        # open_threshold); the rounded posteriors are only reported and byte-encoded.
+        from fiberhmm.inference.accessibility.workflow import decode_element_states
+        elements = decode_element_states(result) or {}
+        variants_of = {n['id']: list(n.get('variants') or []) for n in result['nfrs']}
+        depth_of = {n['id']: list(n.get('depth_states') or []) for n in result['nfrs']}
         for uid, m in sorted(result['molecules'].items()):
             for nid, rec in sorted((m.get('nfr') or {}).items()):
                 if rec.get('status') != 'callable':
@@ -270,10 +281,21 @@ class NfrModule(ScanModuleBase):
                     p = (rec.get('p') or {}).get(v['name'])
                     if p is None:
                         continue
-                    state = '1' if p >= opt.open_threshold else '0'
+                    element = elements.get(v['id'])
+                    if element is not None and uid in element['state']:
+                        state = '1' if element['state'][uid] else '0'
+                    else:       # elements = 'nfrs': variants are not elements; threshold the reported posterior
+                        state = '1' if p >= opt.open_threshold else '0'
                     q = (int(round(255 * min(1.0, max(0.0, float(p))))),)
                     for r in units.get(uid, ()):
                         res.states.append(State(v['id'], r, state, q, dict(cols, p=p)))
+                for d in depth_of.get(nid, []):
+                    element = elements.get(d['id'])
+                    if element is None or uid not in element['state']:
+                        continue
+                    state = '1' if element['state'][uid] else '0'
+                    for r in units.get(uid, ()):
+                        res.states.append(State(d['id'], r, state, (255 if state == '1' else 0,), cols))
         return res
 
     def molecule_outputs(self, molecule, settings, calibration):

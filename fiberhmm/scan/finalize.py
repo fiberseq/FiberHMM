@@ -130,6 +130,7 @@ def finalize(out: Path, manifest: dict, datasets, reference: Mapping[str, int], 
         if mod.reconcile == 'stitch':
             open_ends[name] = 0
     native_rows: Dict[str, Dict[str, list]] = {n: defaultdict(list) for n, _m, _s in mods}
+    seen_evidence: Dict[str, set] = {n: set() for n, _m, _s in mods}
     native_cols: Dict[str, Dict[str, List[str]]] = {n: {} for n, _m, _s in mods}
 
     ann = _Annotations() if annotate else None
@@ -177,8 +178,13 @@ def finalize(out: Path, manifest: dict, datasets, reference: Mapping[str, int], 
                                     native_cols[name].setdefault(table, [k for k in row if k != 'hit_key'])
                         _emit_states(name, mod, decls[name], r, u, keymap, w, ann, tsv_mode)
                         if tsv_mode:
+                            # overlapping units load the same records into the same evidence units: one row each
                             for e in r.evidence:
                                 rec = e.record
+                                ekey = (e.evidence_unit, rec.key)
+                                if ekey in seen_evidence[name]:
+                                    continue
+                                seen_evidence[name].add(ekey)
                                 w['units'].add(rec.chrom, rec.ref_start, rec.ref_end,
                                                [e.evidence_unit, rec.dataset_id, rec.qname, rec.record, rec.molecule])
                 else:
@@ -379,20 +385,29 @@ def _open_annotated(out: Path, manifest, datasets, mods, decls, command):
             tmp = target_dir / ('.' + name + '.tmp')
             dest = pysam.AlignmentFile(str(tmp), 'wb', header=header)
             handles[(ds.dataset_id, i)] = dict(src=src, dest=dest, tmp=tmp, final=target_dir / name, dataset=ds,
+                                               owned={g.group: g.spec for _n, m, _s in mods for g in m.ma_groups()},
                                                input_index=i, source=path, written=0, marked=0, done_contigs=set(),
                                                input_molecular=input_molecular, written_keys=set())
     return handles
 
 
-def _annotate_read(read, entries, input_molecular):
+def _annotate_read(read, entries, input_molecular, owned):
+    """Write this scan's groups on one record. ``owned``: group -> spec of every group the scan writes;
+    each is replaced, so a record with no new entry loses an older scan's marks of the same group."""
     from fiberhmm.io.frame_carry import carry_to_molecular
     from fiberhmm.io.scan_ma import ma_read_length, project_to_molecule, replace_scan_groups
     if not input_molecular:
         carry_to_molecular(read)
+    stale = False
+    if owned and read.has_tag('MA'):
+        ma = str(read.get_tag('MA'))
+        stale = any(f';{g}.' in ma for g in owned)
     if not entries:
+        if stale:
+            replace_scan_groups(read, {g: (spec, []) for g, spec in owned.items()})
         return 0
     length = ma_read_length(read)
-    groups: Dict[str, Tuple[str, list]] = {}
+    groups: Dict[str, Tuple[str, list]] = {g: (spec, []) for g, spec in owned.items()}
     for group, spec, a, b, mol, q, name in entries:
         if mol == 'whole':
             iv = (0, length)
@@ -403,7 +418,7 @@ def _annotate_read(read, entries, input_molecular):
         if iv is None:
             continue
         groups.setdefault(group, (spec, []))[1].append((iv[0], iv[1], q, name))
-    if not groups:
+    if not any(items for _spec, items in groups.values()) and not stale:
         return 0
     return replace_scan_groups(read, groups)
 
@@ -430,7 +445,7 @@ def _write_annotated_contig(handles, chrom, ann, cunits, full_copy):
                 occ = seen.get(sha, 0)
                 seen[sha] = occ + 1
                 entries = planned.get((sha, occ))
-            if _annotate_read(read, entries, h['input_molecular']):
+            if _annotate_read(read, entries, h['input_molecular'], h['owned']):
                 h['marked'] += 1
             dest.write(read)
             h['written'] += 1
@@ -459,6 +474,7 @@ def _close_annotated(out, handles, full_copy):
         src, dest = h['src'], h['dest']
         if full_copy:
             for read in src.fetch('*'):          # unplaced unmapped records, last as in the input
+                _annotate_read(read, None, h['input_molecular'], h['owned'])
                 dest.write(read)
                 h['written'] += 1
         dest.close()

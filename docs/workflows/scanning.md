@@ -63,7 +63,8 @@ values per dataset and channel.
 | `--genome`, or a `--region` longer than one unit | annotated BAMs (`annotated/*.scan.bam`) |
 | `--bed`, or a `--region` that fits one unit | tables (`<module>/states.tsv.bgz`, `molecules.tsv.bgz`, ...) |
 
-`--annotate` and `--no-annotate` override the default. An annotated BAM of
+`--annotate` and `--no-annotate` override the default. A scan whose modules
+write no per-molecule results (`--modules peaks`) writes no annotated BAM. An annotated BAM of
 a genome scan holds every record of its input; one of a BED or window scan
 holds the records overlapping the units. The scan's `MA` groups:
 
@@ -100,8 +101,10 @@ FiberBrowser's. Two rules make grid scans independent of where units fall:
   record (`row_rule: records`); BED and short-window scans keep
   FiberBrowser's rule.
 
-Tiers Strong to Weak never depend on either rule. `signal_source` is
-`accessibility` (default) or `tf_density`.
+Tiers Strong to Weak never depend on the rare-tier rule. The row rule
+changes the per-base counts where supplementary alignments lie, so it can
+change any tier there. `signal_source` is `accessibility` (default) or
+`tf_density`.
 
 ## Resuming and reruns
 

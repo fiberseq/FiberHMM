@@ -25,7 +25,8 @@ scan_dir/
 ```
 
 Two runs with the same inputs, units, read policy and settings write
-byte-identical `manifest.json`, tables, indexes and annotated BAMs.
+byte-identical `manifest.json`, tables, indexes and annotated BAMs. Units are
+named by the zone they own (`chrom:zone_start-zone_end`).
 
 ## Tables
 

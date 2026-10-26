@@ -229,8 +229,16 @@ def scan_id_of(manifest: Mapping[str, Any]) -> str:
     return I.digest(key, 16)
 
 
-def _unit_key(scan_id, module, version, settings_hash, cal_sha, unit: ScanUnit, upstream_keys) -> str:
-    return I.digest([scan_id, module, version, settings_hash, cal_sha, unit.unit_id, unit.start, unit.end,
+def base_key(contigs_sha: str, resolved, policy: Mapping[str, Any]) -> str:
+    """What every unit result depends on besides its module and its unit: the reference, the datasets
+    (ordinal, label, chemistry, content ids) and the read policy. Not the plan and not other modules, so a
+    scan can be extended with new units or re-run for one module and keep every other result."""
+    return I.digest([contigs_sha, [[d.ordinal, d.dataset_id, d.chemistry, list(d.content_ids)] for d in resolved],
+                     policy])
+
+
+def _unit_key(base, module, version, settings_hash, cal_sha, unit: ScanUnit, upstream_keys) -> str:
+    return I.digest([base, module, version, settings_hash, cal_sha, unit.unit_id, unit.start, unit.end,
                      unit.zone_start, unit.zone_end, upstream_keys])
 
 
@@ -418,11 +426,15 @@ def run_units(datasets: Sequence[Mapping[str, Any]], units, *, modules: Sequence
               params: Optional[Mapping[str, Any]] = None, read_policy: Optional[Mapping[str, Any]] = None,
               out, annotate: Optional[bool] = None, progress=None, cancel=None, cores: int = 1,
               window_jobs: int = 0, continue_run: bool = False, units_info: Optional[Mapping[str, Any]] = None,
-              registry: Optional[Mapping[str, Any]] = None, command: Optional[Sequence[str]] = None) -> dict:
+              registry: Optional[Mapping[str, Any]] = None, command: Optional[Sequence[str]] = None,
+              extend: bool = False) -> dict:
     """Compute (or extend, with ``continue_run``) a scan directory. Returns a summary dict.
 
     ``units``: the plan, as returned by :func:`fiberhmm.scan.units.plan` (``(units, info)``) or a
-    sequence of :class:`ScanUnit` with ``units_info``. ``datasets``: ``[{dataset_id, paths, chemistry?}]``."""
+    sequence of :class:`ScanUnit` with ``units_info``. ``datasets``: ``[{dataset_id, paths, chemistry?}]``.
+    ``continue_run`` finishes an interrupted scan with the same arguments; ``extend`` (with
+    ``continue_run``) also accepts another plan or other module settings for the same inputs and read
+    policy (a browser scan appending units): every unit result whose key still matches is reused."""
     progress = progress or _NullProgress()
     if isinstance(units, tuple) and len(units) == 2 and isinstance(units[1], dict):
         units, units_info = units
@@ -431,13 +443,17 @@ def run_units(datasets: Sequence[Mapping[str, Any]], units, *, modules: Sequence
     if not units:
         raise ScanRefused('the plan has no units')
     out = Path(out).expanduser().resolve()
-    policy = resolve_read_policy(read_policy or (params or {}).get('read_policy'))
+    raw_policy = read_policy or (params or {}).get('read_policy') or {}
+    policy = resolve_read_policy(raw_policy)
+    # Modules see only the caps the caller gave (as fiberhmm-consensus/-nfr see only their cap flags), so an
+    # explicit 0 or seed 1 overrides a parameter file and an absent cap leaves the module's own value.
+    explicit_caps = dict(raw_policy.get('caps') or {})
     resolved, reference = resolve_datasets(datasets)
     contigs = list(reference.items())
     for u in units:
         if u.chrom not in reference:
             raise ScanRefused(f'unit {u.unit_id}: contig not in the BAM header')
-    mods = resolve_modules(modules, params or {}, policy['caps'], registry)
+    mods = resolve_modules(modules, params or {}, explicit_caps, registry)
     annotate = default_annotate(units_info) if annotate is None else bool(annotate)
 
     out.mkdir(parents=True, exist_ok=True)
@@ -449,7 +465,7 @@ def run_units(datasets: Sequence[Mapping[str, Any]], units, *, modules: Sequence
         raise ScanRefused(str(error)) from None
     try:
         return _run_locked(out, resolved, reference, contigs, units, units_info, mods, policy, annotate,
-                           progress, cancel, cores, window_jobs, continue_run, registry, command)
+                           progress, cancel, cores, window_jobs, continue_run, registry, command, extend)
     finally:
         lock.release()
 
@@ -484,7 +500,7 @@ def _frame_of(resolved) -> dict:
     return dict(kind='linear')
 
 
-def _check_continue(out: Path, manifest: dict, continue_run: bool) -> None:
+def _check_continue(out: Path, manifest: dict, continue_run: bool, base: str, extend: bool = False) -> None:
     path = out / 'manifest.json'
     entries = [p for p in out.iterdir() if p.name != LOCK]
     if not continue_run:
@@ -501,9 +517,16 @@ def _check_continue(out: Path, manifest: dict, continue_run: bool) -> None:
     if previous is None:
         raise ScanRefused(f'--continue: {out} holds no scan (no manifest.json); give the output directory of an '
                           'interrupted fiberhmm-scan run')
-    if previous.get('scan_id') != manifest['scan_id']:
+    if extend:
+        if previous.get('base') != base:
+            raise ScanRefused(f'extending the scan in {out} refused: the reference, the datasets (files, labels, '
+                              'chemistry) or the read policy differ')
+        return
+    if previous.get('scan_id') != manifest['scan_id'] or previous.get('base') != base:
         diffs = [k for k in ('reference', 'datasets', 'read_policy', 'units', 'modules')
                  if I.canonical_json(_key_view(previous, k)) != I.canonical_json(_key_view(manifest, k))]
+        if previous.get('base') != base and not diffs:
+            diffs = ['dataset labels']
         raise ScanRefused('--continue refused: inputs, plan, read policy or module settings differ from the scan in '
                           f'{out} ({", ".join(diffs) or "scan key"}). Rerun with the original arguments, or write a '
                           'new scan to a new output directory. Only --cores, --window-jobs and --json-progress may '
@@ -524,30 +547,44 @@ def _key_view(manifest, key):
 
 
 def _run_locked(out, resolved, reference, contigs, units, units_info, mods, policy, annotate, progress, cancel,
-                cores, window_jobs, continue_run, registry, command) -> dict:
+                cores, window_jobs, continue_run, registry, command, extend=False) -> dict:
     started = time.monotonic()
     # Calibration (dataset-level, before any unit): nuc only in v1.
     cal_shas: Dict[str, Optional[str]] = {}
     calibrations: Dict[str, Optional[dict]] = {}
     inputs = ScanInputs(datasets=resolved, read_policy=policy, reference=reference, plan=units, cores=cores)
     pre = _manifest_core(resolved, contigs, units, units_info, mods, policy, {})
-    _check_continue(out, pre, continue_run)
+    base = base_key(pre['reference']['contigs_sha256'], resolved, policy)
+    _check_continue(out, pre, continue_run, base, extend)
     (out / WORK).mkdir(parents=True, exist_ok=True)
-    _write_json(out / WORK / 'scan_key.json', dict(scan_id=pre['scan_id'], reference=pre['reference'],
+    _write_json(out / WORK / 'scan_key.json', dict(scan_id=pre['scan_id'], base=base, reference=pre['reference'],
                                                   datasets=pre['datasets'], read_policy=pre['read_policy'],
                                                   units=pre['units'], modules=pre['modules']))
+    plan_digest = I.digest([u.to_json() for u in units])
     for name, mod, settings in mods:
-        cal_path = out / name / 'extra' / 'calibration.json'
+        # Calibration runs once per scan; a cached record is reused only for the same inputs, module
+        # settings and plan.
+        cal_dir = out / WORK / name / '_calibration'
+        cal_key = I.digest([base, name, mod.version, I.settings_hash(settings), plan_digest])
         cal = None
-        if cal_path.is_file() and continue_run:
-            cal = _read_json(cal_path)
-        if cal is None:
-            cal = mod.calibrate(inputs, units, settings, out / WORK / name / '_calibration', progress)
+        cached = cal_dir / 'calibration.json'
+        if continue_run and _marker_valid(cal_dir, cal_key) is not None and cached.is_file():
+            cal = _read_json(cached)
+        else:
+            if cal_dir.exists():
+                shutil.rmtree(cal_dir)
+            cal_dir.mkdir(parents=True)
+            cal = mod.calibrate(inputs, units, settings, cal_dir, progress)
+            _write_json(cached, cal)
+            _publish_marker(cal_dir, cal_key, {})
         calibrations[name] = cal
+        cal_path = out / name / 'extra' / 'calibration.json'
         if cal is not None:
             _write_json(cal_path, cal, indent=1)
             cal_shas[name] = _sha(cal_path)
         else:
+            if cal_path.is_file():
+                cal_path.unlink()
             cal_shas[name] = None
     manifest = _manifest_core(resolved, contigs, units, units_info, mods, policy, cal_shas)
     scan_id = manifest['scan_id']
@@ -558,11 +595,11 @@ def _run_locked(out, resolved, reference, contigs, units, units_info, mods, poli
         keys = {}
         for u in units:
             up = [[dep, unit_keys[dep][u.unit_id]] for dep in sorted(mod.needs(settings))]
-            keys[u.unit_id] = _unit_key(scan_id, name, mod.version, sh, cal_shas.get(name), u, up)
+            keys[u.unit_id] = _unit_key(base, name, mod.version, sh, cal_shas.get(name), u, up)
         unit_keys[name] = keys
     module_specs = [dict(name=n, settings=s, needs=sorted(m.needs(s)), calibration=calibrations.get(n),
                          unit_keys=unit_keys[n]) for n, m, s in mods]
-    core = I.digest([manifest['reference']['contigs_sha256'], manifest['datasets'], policy])
+    core = base
     pending, reused = [], 0
     for u in units:
         survey_dir = out / WORK / '_unit' / I.safe_name(u.unit_id)
@@ -584,6 +621,8 @@ def _run_locked(out, resolved, reference, contigs, units, units_info, mods, poli
                     if reused else f'{len(pending)} to run ({jobs} at a time)', completed=reused, total=len(units))
     _dispatch(specs, jobs, progress, cancel)
     from .finalize import finalize
+    # No module writes per-molecule MA groups (a peaks-only scan): nothing to annotate.
+    annotate = bool(annotate) and any(m.ma_groups() for _n, m, _s in mods)
     summary = finalize(out, manifest, resolved, reference, units, mods, unit_keys, annotate, progress,
                        command=command, calibrations=calibrations)
     run = dict(attempts=_attempts(out, cores, window_jobs, time.monotonic() - started, len(pending), reused))

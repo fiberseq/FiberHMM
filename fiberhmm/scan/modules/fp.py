@@ -108,8 +108,9 @@ class FpModule(ScanModuleBase):
         if engine != 'lattice_recaller':
             raise ValueError('fp runs the lattice recaller (cr.engine = lattice_recaller)')
         values.setdefault('cr', {})['engine'] = 'lattice_recaller'
+        # Explicit caps (the cap flags) override the parameter groups, as in fiberhmm-consensus.
         for name in CAP_NAMES:
-            if caps.get(name) not in (None, 0) or (name == 'sample_seed' and caps.get(name) not in (None, 1)):
+            if caps.get(name) is not None:
                 values.setdefault('recaller', {})[name] = int(caps[name])
         for group, names in EXECUTION_ONLY.items():
             for n in names:
@@ -120,8 +121,6 @@ class FpModule(ScanModuleBase):
         for group, names in EXECUTION_ONLY.items():
             for n in names:
                 resolved.get(group, {}).pop(n, None)
-        if resolved['compute'].get('maximum_region_bp', 50_000) < 50_000:
-            pass
         return dict(parameters=values, resolved=resolved)
 
     def feature_types(self):

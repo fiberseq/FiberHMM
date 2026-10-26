@@ -248,3 +248,28 @@ def test_continue_with_real_modules(tmp_path, locus_bam):
     assert sorted(a) == sorted(b)
     for k in a:
         assert a[k] == b[k], k
+
+
+# ------------------------------------------------------------------ review findings (round 1)
+def test_explicit_caps_override_parameter_files():
+    from fiberhmm.scan.modules.fp import FpModule
+    from fiberhmm.scan.modules.nfr import NfrModule
+    n = NfrModule().resolve({'nfr': {'max_discovery_molecules': 25}, 'caps': {'max_discovery_molecules': 10}})
+    assert n['nfr']['max_discovery_molecules'] == 10
+    assert NfrModule().resolve({'caps': {'sample_seed': 0}})['nfr']['sample_seed'] == 0
+    f = FpModule().resolve({'recaller': {'max_discovery_molecules': 50}, 'caps': {'max_discovery_molecules': 0}})
+    assert f['parameters']['recaller']['max_discovery_molecules'] == 0
+    assert FpModule().resolve({'recaller': {'max_discovery_molecules': 50}})['parameters']['recaller'][
+        'max_discovery_molecules'] == 50
+
+
+def test_nfr_depth_mode_writes_depth_states(tmp_path, locus_bam):
+    sp = tmp_path / 'sp.json'
+    sp.write_text(json.dumps({'nfr': {'nfr': {'mode': 'depth', 'bootstrap': 0}}}))
+    _scan(['--bam', locus_bam, '--region', REGION, '--modules', 'nfr', '--parameters', str(sp),
+           '-o', str(tmp_path / 's'), '--cores', '1'])
+    hits = {r['hit_id']: r for r in read_all(tmp_path / 's' / 'nfr' / 'hits.tsv.bgz')}
+    depth = {h for h, r in hits.items() if r['type'] == 'nfr.variant'}
+    assert depth and all(hits[h]['relation'] == 'depth state' and hits[h]['prevalence_strict'] for h in depth)
+    states = [s for s in read_all(tmp_path / 's' / 'nfr' / 'states.tsv.bgz') if s['hit_id'] in depth]
+    assert states and {s['state'] for s in states} <= {'0', '1'}
