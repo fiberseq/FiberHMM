@@ -80,6 +80,25 @@ They survive `fiberhmm-lift`. Any tool that re-calls footprints
 (`fiberhmm-call`, `-apply`, `-recall-tfs`, `-recall-nucs`) drops them,
 because they describe the old calls.
 
+## Running the scan
+
+```bash
+# genome-wide; per-molecule results go into annotated BAMs as MA groups
+fiberhmm-scan --bam calls.bam --genome --modules nuc --cores 8 -o nuc_scan
+
+# one region, self calibration instead of thinning, results as tables
+echo '{"nuc": {"calibration": "self"}}' > nuc_params.json
+fiberhmm-scan --bam calls.bam --region chr1:20000000-21000000 --modules nuc \
+    --parameters nuc_params.json --no-annotate -o nuc_region
+```
+
+The scan directory holds `nuc/hits` (patches: `nuc.patch.regular`,
+`.irregular`, `.sub_rich` and `.phased`), `nuc/values` (per-group patch
+values), `nuc/molecules` (the per-molecule scalars), `nuc/marks` (one row per
+footprint and per segment, when results are written as tables) and
+`nuc/extra/calibration.json`. `fiberhmm-scan --schema` lists the module's
+parameters and defaults. See [scan format](../reference/scan-format.md).
+
 ## Python
 
 ```python
