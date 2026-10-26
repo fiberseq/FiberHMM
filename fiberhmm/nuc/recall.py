@@ -7,7 +7,9 @@ path a region worker runs (``run_hmm_apply_stage`` then
 ``build_fused_recall_result``, recall included), with two calibration knobs:
 
 ``thin``
-    a mark-retention factor f. Thinning drops marks whatever the state, so
+    a mark-retention factor f (:func:`thin_fiber_read` drops marks; for DAF it
+    restores the unconverted base, so a dropped deamination reads as a miss).
+    Thinning drops marks whatever the state, so
     P(hit | context) is multiplied by f in **both** HMM states and the
     removed mass moves to the miss code of the same context (the context
     marginal is unchanged). The apply model and the recall/nucleosome LLR
@@ -53,6 +55,8 @@ class CallerSettings:
     edge_trim: int = 10
     prob_threshold: int = 128
     derived_tf_max_edge_ambiguity: Optional[int] = None
+    #: DddA CpG-aware calling policy (None = off), as fiberhmm-call resolves it
+    cpg_mask_policy: Optional[str] = None
     source: str = 'defaults'
     notes: tuple = field(default_factory=tuple)
 
@@ -112,7 +116,16 @@ class CallerSettings:
             m = re.search(r'phase_nrl=(\d+)', str(pg.get('DS', '')))
             if m:
                 kw['phase_nrl'] = int(m.group(1))
+            m = re.search(r'cpg_mask=(\S+)', str(pg.get('DS', '')))
+            if m:
+                kw['cpg_mask_policy'] = None if m.group(1) == 'off' else m.group(1)
+            else:
+                use = True if '--use-m5c' in toks else (False if '--no-use-m5c' in toks else None)
+                kw['_use_m5c'] = use
+                kw['_policy_flag'] = opt('--cpg-mask-policy')
             kw['source'] = 'header'
+        use_m5c = kw.pop('_use_m5c', None)
+        policy_flag = kw.pop('_policy_flag', None)
         kw.update(overrides)
         base = cls(**{k: v for k, v in kw.items() if k in cls.__dataclass_fields__})
         enzyme, seq = base.enzyme, base.seq
@@ -136,6 +149,12 @@ class CallerSettings:
             upd['nuc_model'] = base.nuc_model or get_model_path(enzyme, tool='nuc_refine', seq=seq)
             if base.derived_tf_max_edge_ambiguity is None:
                 upd['derived_tf_max_edge_ambiguity'] = 12
+        if 'cpg_mask_policy' not in kw:
+            from fiberhmm.inference.tf_recaller import resolve_cpg_mask_policy
+            try:
+                upd['cpg_mask_policy'] = resolve_cpg_mask_policy(use_m5c, policy_flag, enzyme, upd['mode'])
+            except ValueError:
+                upd['cpg_mask_policy'] = None
         upd['notes'] = tuple(notes)
         return replace(base, **upd)
 
@@ -193,6 +212,11 @@ class Caller:
         if abs(nuc_uplift - 1.0) > 1e-9:
             nh, nm = apply_emission_uplift(nh, nm, n_model, nuc_uplift)
         self.nuc_llr_hit, self.nuc_llr_miss = nh, nm
+        self.m5c = {}
+        if s.cpg_mask_policy:
+            from fiberhmm.inference.tf_recaller import build_m5c_llr_tables
+            self.m5c['hit'], self.m5c['miss'] = build_m5c_llr_tables(r_model, emission_uplift=s.emission_uplift)
+            self.m5c['nuc_hit'], self.m5c['nuc_miss'] = build_m5c_llr_tables(n_model, emission_uplift=nuc_uplift)
         self.nuc_profile = None
         if s.nuc_profile:
             from fiberhmm.inference.nuc_recaller import (attach_nuc_profile_emissions,
@@ -218,7 +242,10 @@ class Caller:
             nuc_recall_policy=s.nuc_recall_policy, nuc_min_size=s.nuc_min_size,
             msp_min_size=s.msp_min_size, phase_nrl=s.phase_nrl, nuc_profile=self.nuc_profile,
             derived_tf_max_edge_ambiguity=s.derived_tf_max_edge_ambiguity,
-            nuc_llr_hit=self.nuc_llr_hit, nuc_llr_miss=self.nuc_llr_miss)
+            m5c_mask=fiber_read.get('_hmm_cpg_mask') if s.cpg_mask_policy else None,
+            m5c_llr_hit=self.m5c.get('hit'), m5c_llr_miss=self.m5c.get('miss'),
+            nuc_llr_hit=self.nuc_llr_hit, nuc_llr_miss=self.nuc_llr_miss,
+            nuc_m5c_llr_hit=self.m5c.get('nuc_hit'), nuc_m5c_llr_miss=self.m5c.get('nuc_miss'))
         nucs = [(int(a), int(a) + int(b)) for a, b in zip(res['ns'], res['nl'])]
         msps = [(int(a), int(a) + int(b)) for a, b in zip(res['as'], res['al'])]
         tfs = [(int(c.start), int(c.start) + int(c.length)) for c in res.get('tf_calls', [])]
@@ -231,6 +258,10 @@ def fiber_read_from_record(read, settings: CallerSettings) -> Optional[dict]:
     fr = _extract_fiber_read_from_pysam(read, settings.mode, settings.prob_threshold)
     if fr is None or fr is CHIMERA_SKIP:
         return None
+    if settings.cpg_mask_policy:
+        # the same first-pass HMM and recall CpG mask fiberhmm-call applies (DddA)
+        from fiberhmm.inference.engine import attach_hmm_cpg_mask, read_cpg_ma_intervals
+        attach_hmm_cpg_mask(fr, settings.cpg_mask_policy, read_cpg_ma_intervals(read))
     return fr
 
 
@@ -239,6 +270,18 @@ def thin_fiber_read(fr: dict, keep: float, rng: np.random.Generator) -> dict:
     out = dict(fr)
     pos = np.fromiter(fr['m6a_query_positions'], dtype=np.int64)
     pos.sort()
-    kept = pos[rng.random(len(pos)) < keep]
+    keep_mask = rng.random(len(pos)) < keep
+    kept = pos[keep_mask]
     out['m6a_query_positions'] = set(int(p) for p in kept)
+    strand = fr.get('_daf_strand')
+    if strand in ('+', '-'):
+        # DAF marks are base conversions in SEQ (C->T on the CT strand, G->A on
+        # GA): a dropped deamination becomes an unconverted target base, i.e. a
+        # miss, not a non-target position
+        seq = bytearray(fr['query_sequence'].encode())
+        restore = ord('C') if strand == '+' else ord('G')
+        for p in pos[~keep_mask]:
+            if 0 <= p < len(seq):
+                seq[p] = restore
+        out['query_sequence'] = seq.decode()
     return out

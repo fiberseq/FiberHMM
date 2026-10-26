@@ -22,7 +22,8 @@ expected resultant. Bins fixed in bp get the uniform expectation subtracted
 instead (:func:`uniform_expectation`).
 
 **Null**: no Rayleigh test (dyads within a molecule are dependent). Each
-molecule appearance gets one uniform phase shift; ``phase_n_null`` draws give
+molecule gets one uniform phase shift, shared by its appearances at several
+anchors; ``phase_n_null`` draws give
 E_null[R] and the exceedance p. **Period sensitivity** reports the maximum R
 over P +/- ``phase_period_window`` bp.
 """
@@ -161,7 +162,13 @@ def _resultant(x_list: Sequence[np.ndarray], lo: float, hi: float, P: float, cor
 
 
 def resultant_with_null(x_list: Sequence[np.ndarray], lo: float, hi: float, P: float,
-                        n_null: int, rng: np.random.Generator, correct: bool = False):
+                        n_null: int, rng: np.random.Generator, correct: bool = False,
+                        molecule_ids: Optional[Sequence[int]] = None):
+    """Pooled resultant, phase and molecule-level phase-randomisation null.
+
+    ``molecule_ids`` groups appearances of one physical molecule (at several
+    anchors): they share one random shift per draw, and the reported molecule
+    count is of distinct molecules."""
     V, N = _resultant(x_list, lo, hi, P, correct)
     tot = N.sum()
     if tot == 0:
@@ -169,12 +176,15 @@ def resultant_with_null(x_list: Sequence[np.ndarray], lo: float, hi: float, P: f
     S = V.sum()
     R = abs(S) / tot
     phi = float(np.angle(S))
+    ids = np.arange(len(V)) if molecule_ids is None else np.asarray(molecule_ids)
     use = N > 0
-    Vu = V[use]
-    shifts = rng.uniform(0, 2 * np.pi, size=(n_null, len(Vu)))
-    Rn = np.abs((Vu[None, :] * np.exp(1j * shifts)).sum(axis=1)) / tot
+    uniq, inv = np.unique(ids[use], return_inverse=True)
+    Vm = np.zeros(len(uniq), dtype=complex)
+    np.add.at(Vm, inv, V[use])                      # one vector per molecule
+    shifts = rng.uniform(0, 2 * np.pi, size=(n_null, len(uniq)))
+    Rn = np.abs((Vm[None, :] * np.exp(1j * shifts)).sum(axis=1)) / tot
     p = (1 + int(np.sum(Rn >= R))) / (n_null + 1)
-    return R, phi, int(tot), int(use.sum()), float(Rn.mean()), float(p)
+    return R, phi, int(tot), int(len(uniq)), float(Rn.mean()), float(p)
 
 
 def _osc_fit(x_all: np.ndarray, lo: float, hi: float, P: float) -> Dict[str, float]:
@@ -254,8 +264,10 @@ def phasing(molecules: Sequence[NucMolecule], anchors: Sequence[Tuple[str, int, 
             x_list.append(x)
             who.append((i, ai))
     results = []
+    mol_ids = [i for i, _ai in who]
     for lo, hi in bins:
-        R, phi, nd, nm, null, p = resultant_with_null(x_list, lo, hi, P, params.phase_n_null, rng, correct_uniform)
+        R, phi, nd, nm, null, p = resultant_with_null(x_list, lo, hi, P, params.phase_n_null, rng,
+                                                      correct_uniform, molecule_ids=mol_ids)
         best_R, best_P = R, P
         for Pp in np.arange(P - params.phase_period_window, P + params.phase_period_window + 1, 1.0):
             k = (hi - lo) / P

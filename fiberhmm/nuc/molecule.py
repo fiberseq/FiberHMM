@@ -8,6 +8,9 @@ Footprints are the molecule's nucleosome calls and TF calls (the small end
 must read TF calls: recall moves TF-sized footprints to MA ``tf``). Each gets
 lambda_i, z, a coarse call and, with an absolute calibration, a named call.
 Eligible dyads, spacing scalars and segments use nucleosome calls only.
+A molecule whose lambda_acc is below the calibration's low-information floor
+(D8) is flagged, gets one low-information segment and is left out of window
+and patch aggregates (counted there as excluded).
 """
 from __future__ import annotations
 
@@ -22,7 +25,7 @@ from fiberhmm.nuc.density import (accessible_counts, edge_informativeness, edge_
                                   footprint_lambdas, rho_read)
 from fiberhmm.nuc.params import DEFAULT_PARAMS, NucParams
 from fiberhmm.nuc.records import NucMolecule
-from fiberhmm.nuc.segment import REGULAR, Segment, segment_molecule
+from fiberhmm.nuc.segment import REGULAR, Segment, lowinfo_segment, segment_molecule
 from fiberhmm.nuc.sizes import (CANT_TELL, LONG, MONO, MULTI2, MULTI3, SHORT, call_coarse,
                                 call_named)
 from fiberhmm.nuc.spacing import molecule_spacing
@@ -157,13 +160,21 @@ def molecule_outputs(mol: NucMolecule, params: NucParams = DEFAULT_PARAMS,
                      'gap_cv': sp.gap_cv, 'n_dyads': float(sp.n_dyads)})
         flags.update({'too_short_nrl': sp.too_short_nrl, 'too_short_regularity': sp.too_short_regularity,
                       'too_short_snr': sp.too_short_snr})
-        c = fp['coarse'][sel]
+        # class counts over every footprint, TF calls included (the small end
+        # of the size readout lives in the TF calls); spacing uses nucleosomes only
+        c = fp['coarse']
         scal['n_short'] = float((c == SHORT).sum())
         scal['n_mono'] = float((c == MONO).sum())
         scal['n_long'] = float((c == LONG).sum())
         scal['n_multi'] = float(((c == MULTI2) | (c == MULTI3)).sum())
         scal['n_cant_tell'] = float((c == CANT_TELL).sum())
-        if segments:
+        if segments and flags['low_information'] and not flags['too_short_segments']:
+            # below the calibration's floor (D8): excluded from segmentation;
+            # one low-information segment over its calls
+            nuc_sel = ~fp['is_tf']
+            if nuc_sel.any():
+                segs = [lowinfo_segment(int(fp['start'][nuc_sel].min()), int(fp['end'][nuc_sel].max()))]
+        elif segments:
             segs, too_short = segment_molecule(mol.length, mol.msps, fp, cal, params)
             flags['too_short_segments'] = too_short
             for s in segs:

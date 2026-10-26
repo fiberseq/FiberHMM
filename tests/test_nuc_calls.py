@@ -173,9 +173,11 @@ def test_low_information_state_on_cant_tell_runs():
 
 def test_state_space_shape_and_durations():
     sp = state_space(NucParams())
-    # 11 q x 2 comps x 5 + I (3 + 5) + X
-    assert len(sp.exp_base) == 11 * 2 * 5 + 3 + 5 + 1
-    assert len(sp.base_order) == 25
+    # 11 q x 2 tightness x 2 comps x 5 + I (3 + 5) + X
+    assert len(sp.exp_base) == 11 * 2 * 2 * 5 + 3 + 5 + 1
+    assert len(sp.base_order) == 47
+    one = state_space(NucParams(seg_sigma_tight=None))
+    assert len(one.base_order) == 25
 
 
 # --- molecule outputs --------------------------------------------------------------------------

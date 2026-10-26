@@ -144,23 +144,22 @@ def match_outcomes(dense: np.ndarray, thin: np.ndarray, min_recip: float = 0.5):
         if len(cand) == 0:
             out.append(('dropped', 0, np.nan, np.nan, np.nan))
             continue
-        big = [j for j in cand if ov[j] >= min_recip * L]
         inside = [j for j in cand if ov[j] >= min_recip * (te[j] - ts[j])]
-        if len(inside) >= 2 and not big:
-            out.append(('split', len(inside), np.nan, np.nan, np.nan))
-            continue
-        if not big:
-            out.append(('dropped', 0, np.nan, np.nan, np.nan))
-            continue
-        j = max(big, key=lambda k: ov[k])
+        # a thinned call covering >= 50% of two or more dense calls: merged
+        j = int(cand[np.argmax(ov[cand])])
         tl = te[j] - ts[j]
-        # how many dense calls does this thinned call cover by >= 50%?
         dov = np.maximum(0, np.minimum(dense[:, 1], te[j]) - np.maximum(dense[:, 0], ts[j]))
         n_cov = int((dov >= min_recip * (dense[:, 1] - dense[:, 0])).sum())
         if n_cov >= 2:
             out.append(('merged', n_cov, np.nan, np.nan, np.nan))
-        elif ov[j] >= min_recip * tl:
+        elif len(inside) >= 2:
+            # two or more thinned calls lying mostly inside this footprint: split
+            out.append(('split', len(inside), np.nan, np.nan, np.nan))
+        elif ov[j] >= min_recip * L and ov[j] >= min_recip * tl:
             out.append(('kept', 1, float(ts[j] - s), float(te[j] - e), float(tl - L)))
+        elif ov[j] >= min_recip * L:
+            # one dense call swallowed into a much longer thinned call (grown into linker)
+            out.append(('merged', 1, np.nan, np.nan, np.nan))
         else:
             out.append(('dropped', 0, np.nan, np.nan, np.nan))
     return out
@@ -185,7 +184,8 @@ def supported_range(lam_natural, lam_thinned, lam_dense, q: float = 0.025):
     references, so its low end is the thinned footprints' and its high end the
     dense references' (pooling them would let the far more numerous thinned
     footprints pull the top quantile down and cut off the densest natural
-    footprints, which are measured directly)."""
+    footprints, which are measured directly). None only without data; an
+    empty overlap comes back as [lo, hi] with hi <= lo (nothing supported)."""
     nat = np.asarray(lam_natural, float)
     thin = np.asarray(lam_thinned, float)
     dense = np.asarray(lam_dense, float)
@@ -193,7 +193,9 @@ def supported_range(lam_natural, lam_thinned, lam_dense, q: float = 0.025):
         return None
     lo = max(np.quantile(nat, q), np.quantile(thin, q))
     hi = min(np.quantile(nat, 1 - q), np.quantile(dense, 1 - q))
-    return [float(lo), float(hi)] if hi > lo else None
+    # an empty range (hi <= lo) is kept as is: every lambda is then unsupported,
+    # never silently unrestricted
+    return [float(lo), float(hi)]
 
 
 def _bin_edges(values: np.ndarray, n: int) -> np.ndarray:
@@ -445,15 +447,19 @@ def calibrate_thin(bam_path, params: NucParams = DEFAULT_PARAMS, *, label: str =
     cal.lambda_floor = floor
     cal.validation['cant_tell_by_lambda_acc'] = floor_curve
     # --- composition with the final calibration ------------------------------------
-    from fiberhmm.nuc.segment import fit_composition
+    from fiberhmm.nuc.segment import fit_composition, fit_gap_model
+    cal.gap_model = fit_gap_model(mols, cal.nrl_pooled, params)
+    ft_pop = footprint_table(mols, cal, params)
+    lam_typ = float(np.median(ft_pop['lambda'][~ft_pop['truncated']])) if len(ft_pop['lambda']) else 0.3
+    cal.gap_model['sigma_loc_typical'] = float(cal.sigma_loc_at(lam_typ))
     cal.composition = fit_composition(mols, cal, params)
     cal.notes.append(
         f'thinning: {len(dense_idx)} dense molecules (top lambda_acc quartile >= {q75:.3f}), '
         f'{len(hold)} held out, {len(targets)} targets x {seeds} seeds, {len(tasks)} caller runs, '
-        f'{len(errors)} caller errors, {t_call:.0f} s on {cores} cores')
+        f'{len(errors)} caller errors')
+    say(f'{len(tasks)} caller runs took {t_call:.0f} s on {cores} cores')
     cal.validation['population_strata_lambda_acc'] = [float(x) for x in strata_edges]
     cal.validation['decode'] = stats
-    cal.validation['caller_seconds'] = t_call
     cal.validation['caller_runs'] = len(tasks)
     cal.validation['caller_errors'] = len(errors)
     return cal

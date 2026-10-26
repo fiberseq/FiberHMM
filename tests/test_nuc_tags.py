@@ -238,3 +238,21 @@ def test_apply_drops_nuc_groups(annotated_bam, tmp_path, benchmark_model_path):
     assert res.returncode == 0, res.stderr.decode(errors='replace')
     out.write_bytes(res.stdout)
     _assert_no_nuc_groups(out)
+
+
+def test_msp_only_record_nucmol_is_not_stale(tmp_path):
+    rng = np.random.default_rng(4)
+    seq, nucs, msps, marks = planted_record_molecule(rng, n_nuc=3)
+    path = str(tmp_path / 'msp.bam')
+    L = len(seq)
+    with pysam.AlignmentFile(path, 'wb', header=header()) as out:
+        out.write(make_record(out, 'm', seq, 1000, (), [(0, L)], (), marks))
+    with pysam.AlignmentFile(path) as bam:
+        r = next(bam.fetch(until_eof=True))
+        mol, _ = decode_record(r, DecodeContext(bam.header))
+        res = molecule_outputs(mol, cal=flat_calibration())
+        annotate_record(r, res)
+        g = read_nuc_groups(r)
+        assert set(g) == {NUCMOL} and not g[NUCMOL]['stale']
+        r.set_tag('MA', f'{L};msp.:1-{L - 10};' + r.get_tag('MA').split(';', 2)[2])
+        assert read_nuc_groups(r)[NUCMOL]['stale']

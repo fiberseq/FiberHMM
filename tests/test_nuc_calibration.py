@@ -49,6 +49,8 @@ def test_match_outcomes_classes():
                      [1000, 1120], [1180, 1300]])   # splits dense 5; dense 4 dropped
     out = match_outcomes(dense, thin)
     assert [o[0] for o in out] == ['kept', 'merged', 'merged', 'dropped', 'split']
+    # a split whose larger piece still covers half the footprint is a split, not kept
+    assert match_outcomes(np.array([[100, 300]]), np.array([[100, 220], [230, 300]]))[0][0] == 'split'
     assert out[0][2:] == (2.0, 1.0, -1.0)
     assert out[1][1] == 2
 
@@ -111,3 +113,36 @@ def test_supported_range_ends_at_the_dense_references():
     assert abs(lo - np.quantile(nat, 0.025)) < 1e-9
     assert hi > 0.68                                # not cut at the thinned pool's top
     assert supported_range(nat, [], dense) is None
+    empty = supported_range([0.1, 0.2] * 50, [0.3, 0.4] * 50, [0.5, 0.6] * 50)
+    assert empty[1] <= empty[0]
+    from fiberhmm.nuc.calibration import NucCalibration as _C
+    c = _C(supported=empty)
+    assert not c.is_supported([0.0001, 0.15, 0.35, 0.9]).any()
+
+
+def test_daf_thinning_turns_dropped_conversions_into_misses():
+    from fiberhmm.core.bam_reader import encode_from_query_sequence
+    seq = 'A' * 50 + 'T' + 'A' * 50                 # CT strand: T at 50 is a converted C
+    fr = {'query_sequence': seq, 'm6a_query_positions': {50}, '_daf_strand': '+'}
+    t = thin_fiber_read(fr, 0.0, np.random.default_rng(0))
+    assert t['query_sequence'][50] == 'C' and not t['m6a_query_positions']
+    enc0 = encode_from_query_sequence(seq, {50}, 0, mode='daf', strand='+')
+    enc1 = encode_from_query_sequence(t['query_sequence'], set(), 0, mode='daf', strand='+')
+    assert enc0[50] < 4096 and 4097 <= enc1[50] < 8193      # hit -> miss, not non-target
+    ga = {'query_sequence': 'C' * 20 + 'A' + 'C' * 20, 'm6a_query_positions': {20}, '_daf_strand': '-'}
+    assert thin_fiber_read(ga, 0.0, np.random.default_rng(0))['query_sequence'][20] == 'G'
+
+
+def test_caller_settings_resolve_ddda_cpg_masking():
+    hdr = {'PG': [{'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call',
+                   'CL': 'fiberhmm-call -i a.bam -o b.bam --enzyme ddda'}]}
+    s = CallerSettings.from_header(hdr)
+    assert s.enzyme == 'ddda' and s.cpg_mask_policy == 'unmethylated-only'
+    off = CallerSettings.from_header({'PG': [{'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call',
+                                              'CL': 'fiberhmm-call --enzyme ddda --no-use-m5c'}]})
+    assert off.cpg_mask_policy is None
+    ds = CallerSettings.from_header({'PG': [{'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call',
+                                             'CL': 'fiberhmm-call --enzyme ddda',
+                                             'DS': 'cpg_mask=methylated-only hmm_cpg_mask=on'}]})
+    assert ds.cpg_mask_policy == 'methylated-only'
+    assert CallerSettings.from_header({'PG': []}).cpg_mask_policy is None     # Hia5

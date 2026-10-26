@@ -7,7 +7,8 @@ depends on nothing else:
 - the calibration population (molecule-name hashes), its source
   (``self`` / ``thin`` / ``absolute``) and the caller settings;
 - NRL_pooled, the lambda_acc beta prior, the reference curve
-  (mu_mono, sigma_mono knots), sigma_gap and the empirical gap density;
+  (mu_mono, sigma_mono knots), sigma_gap, the empirical gap density and the
+  dyad-gap model (regular jitter, irregular spread, missing-dyad weights);
 - segmentation composition frequencies;
 - thinning: sigma_loc knots, outcome rates, overshoot, supported lambda range,
   held-out validation and the low-information floor (D8);
@@ -61,6 +62,7 @@ class NucCalibration:
     curve: Optional[ReferenceCurve] = None
     sigma_gap: float = 15.0
     gap_density: Dict[str, List[float]] = field(default_factory=dict)
+    gap_model: Dict = field(default_factory=dict)
     composition: Dict[str, List[float]] = field(default_factory=dict)
     sigma_loc: Dict[str, List[float]] = field(default_factory=dict)   # log_lambda, sigma
     overshoot: Dict[str, List[float]] = field(default_factory=dict)   # log_lambda, shift
@@ -81,6 +83,8 @@ class NucCalibration:
         return np.interp(x, self.sigma_loc['log_lambda'], self.sigma_loc['sigma'])
 
     def is_supported(self, lam) -> np.ndarray:
+        """Within the supported lambda range (all True when the record sets
+        none, e.g. self calibration; all False for an empty range)."""
         lam = np.asarray(lam, dtype=float)
         ok = np.ones(lam.shape, dtype=bool)
         if self.supported is not None:
@@ -105,6 +109,7 @@ class NucCalibration:
             'prior': self.prior.to_dict(),
             'curve': self.curve.to_dict() if self.curve else None,
             'sigma_gap': _f(self.sigma_gap), 'gap_density': _clean(self.gap_density),
+            'gap_model': _clean(self.gap_model),
             'composition': _clean(self.composition), 'sigma_loc': _clean(self.sigma_loc),
             'overshoot': _clean(self.overshoot), 'outcomes': _clean(self.outcomes),
             'supported': None if self.supported is None else [float(x) for x in self.supported],
@@ -126,6 +131,7 @@ class NucCalibration:
             prior=BetaPrior.from_dict(d['prior']),
             curve=ReferenceCurve.from_dict(d['curve']) if d.get('curve') else None,
             sigma_gap=float(d.get('sigma_gap', 15.0)), gap_density=d.get('gap_density', {}),
+            gap_model=d.get('gap_model', {}),
             composition=d.get('composition', {}), sigma_loc=d.get('sigma_loc', {}),
             overshoot=d.get('overshoot', {}), outcomes=d.get('outcomes', {}),
             supported=d.get('supported'), lambda_floor=d.get('lambda_floor'),
@@ -236,6 +242,8 @@ def calibrate_self(molecules: Sequence[NucMolecule], params: NucParams = DEFAULT
         h, _ = np.histogram(g, bins=edges)
         dens = (h + 0.5) / (h.sum() + 0.5 * len(h)) / 5.0
         cal.gap_density = {'edges': edges.tolist(), 'density': dens.tolist()}
+    from fiberhmm.nuc.segment import fit_gap_model
+    cal.gap_model = fit_gap_model(pop, cal.nrl_pooled, params)
     if fit_composition:
         from fiberhmm.nuc.segment import fit_composition as _fit
         cal.composition = _fit(pop, cal, params)

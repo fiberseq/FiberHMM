@@ -189,3 +189,31 @@ def test_planted_patches_are_found(tsv_scan):
     values = read_all(tsv_scan / 'nuc' / 'values.tsv.bgz')
     groups = {v['group'] for v in values}
     assert {'all', 'synth', 'synth:HP1', 'synth:HP2'} <= groups
+
+
+def test_ref_envelope_of_unaligned_interval_is_the_nearest_aligned_base():
+    from fiberhmm.nuc.records import make_molecule
+    from fiberhmm.scan.modules.nuc import _ref_envelope
+    m = make_molecule(12_000, blocks=np.array([[0, 1000, 5000]]), ref_start=1000, ref_end=6000)
+    assert _ref_envelope(m, 10_000, 10_147) == (5999, 5999)
+    assert _ref_envelope(m, 100, 247) == (1100, 1247)
+    r = make_molecule(12_000, blocks=np.array([[7000, 1000, 5000]]), ref_start=1000, ref_end=6000,
+                      is_reverse=True)
+    assert _ref_envelope(r, 100, 247) == (5753, 5900)          # aligned: molecular start = SEQ end
+    assert _ref_envelope(r, 9000, 9147) == (1000, 1000)        # in the clip before the block
+
+
+def test_thinning_calibrated_scans_are_byte_identical_across_runs_and_cores(scan_bam, tmp_path):
+    def run(out, cores):
+        units = plan({'chrS': LENGTH}, genome=True, contigs=['chrS'])
+        run_units([{'dataset_id': 'synth', 'paths': [scan_bam]}], units, modules=['nuc'],
+                  params={'nuc': {'calibration': 'thin', 'calibration_population': 120,
+                                  'calibration_seeds': 1, 'calibration_targets': 2}},
+                  out=out, annotate=False, cores=cores)
+    run(tmp_path / 'one', 1)
+    run(tmp_path / 'two', 2)
+    for name in ('manifest.json', 'nuc/extra/calibration.json', 'nuc/hits.tsv.bgz', 'nuc/values.tsv.bgz',
+                 'nuc/molecules.tsv.bgz', 'nuc/marks.tsv.bgz'):
+        assert (tmp_path / 'one' / name).read_bytes() == (tmp_path / 'two' / name).read_bytes(), name
+    cal = json.loads((tmp_path / 'one' / 'nuc' / 'extra' / 'calibration.json').read_text())
+    assert cal['datasets']['synth']['source'] == 'thin'

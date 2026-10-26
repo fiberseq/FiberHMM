@@ -79,11 +79,24 @@ class NucParams:
 
     # --- segmentation (NUC 3.6) ----------------------------------------------
     seg_q_grid: Tuple[int, ...] = tuple(range(165, 216, 5))
-    seg_sigma_r: float = 8.0
+    #: regular-state gap SD (bp); None = the calibration's gap model
+    seg_sigma_r: Optional[float] = None
+    #: structural gap SD of a second, tight regular state (the design's 8 bp);
+    #: None = one regular state only
+    seg_sigma_tight: Optional[float] = 8.0
+    #: weights of gaps spanning 1, 2, 3 repeats (missing dyads); None = calibration
+    seg_grid_weights: Optional[Tuple[float, ...]] = None
+    #: irregular-state gap density: 'broad' (the gap model's broad component)
+    #: or 'empirical' (every gap of the dataset, NUC 3.6 as first written)
+    seg_irregular: str = 'broad'
+    #: whether a can't-tell footprint flags its step low-information
+    seg_cant_tell_low_info: bool = False
     seg_min_steps_regular: int = 5
     seg_min_steps_sub: int = 5
     seg_min_steps_irregular: int = 3
-    seg_switch_prob: float = 1.0 / 200.0
+    #: probability per step of an order or composition switch (design 1/200;
+    #: 1/50 from planted-array sensitivity at realistic densities)
+    seg_switch_prob: float = 1.0 / 50.0
     seg_dq_max: int = 10
     seg_merge_llr: float = 3.0
     seg_min_dyads: int = 5

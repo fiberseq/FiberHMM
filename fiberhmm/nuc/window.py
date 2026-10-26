@@ -9,13 +9,16 @@ window projected into its molecular coordinates:
   can't-tell and edge-truncated counted, never dropped;
 - NRL, S and CV_g from the eligible dyads centred in the window (or too short);
 - with an anchor: the molecule's local phase theta, resultant r and
-  positional offset f;
+  positional offset f, from its dyads in the anchor's flank bins (x0 to
+  x0 + 5 periods either side, so beyond a small window; only molecules that
+  span those flanks enter the phasing);
 - overlap fractions of its segments with the window and the q-hat of the
   dominant regular segment;
 - the nucleosome state at the anchor (``1`` covered by a nucleosome call,
   ``0`` not, ``.`` anchor not on the molecule).
 
-Aggregates per observation: class mix (``insufficient`` when more than
+Molecules below the calibration's low-information floor are counted
+(``excluded_low_information``) and left out. Aggregates per observation: class mix (``insufficient`` when more than
 ``window_insufficient_frac`` of the footprints are can't-tell or
 edge-truncated), NRL quantiles, regular fraction, and phasing (both frames,
 with nulls) when an anchor is given.
@@ -114,7 +117,7 @@ def molecule_window_row(mol: NucMolecule, result, ms: int, me: int, params: NucP
     if fp is not None:
         c = (fp['start'] + fp['end']) / 2.0
         inside = (c >= ms) & (c < me)
-        codes = fp['coarse'][inside & ~fp['is_tf']]
+        codes = fp['coarse'][inside]                       # nucleosome and TF calls
         counts = {COARSE_NAMES[k]: int((codes == k).sum()) for k in COARSE_NAMES}
         counts['tf'] = int((inside & fp['is_tf']).sum())
         if cal is not None and cal.named_available:
@@ -175,6 +178,7 @@ def window_metrics(molecules: Sequence[NucMolecule], window: Tuple[str, int, int
     for obs in observations:
         rows = []
         members = []
+        excluded = 0
         for m in molecules:
             if m.chrom != chrom or not obs.matches(m):
                 continue
@@ -184,9 +188,12 @@ def window_metrics(molecules: Sequence[NucMolecule], window: Tuple[str, int, int
             res = results.get(id(m)) if results is not None else None
             if res is None and cal is not None:
                 res = molecule_outputs(m, params, cal)
+            if res is not None and res.flags.get('low_information'):
+                excluded += 1                      # below the D8 floor: counted, not used
+                continue
             rows.append(molecule_window_row(m, res, env[0], env[1], params, cal, anchor, orientation))
             members.append(m)
-        agg: Dict = {'n_molecules': len(rows)}
+        agg: Dict = {'n_molecules': len(rows), 'excluded_low_information': excluded}
         if rows and 'class_counts' in rows[0]:
             tot = {}
             for r in rows:
@@ -206,10 +213,12 @@ def window_metrics(molecules: Sequence[NucMolecule], window: Tuple[str, int, int
             agg['state_counts'] = {s: states.count(s) for s in ('1', '0', '.')}
             agg['phasing'] = {}
             for frame in phase_frames:
+                # anchor-relative flank phasing (NUC 3.5): bins run x0 .. x0 + 5P
+                # from the anchor, beyond a small window; molecules must span them
                 ph = phasing(members, [(chrom, anchor, orientation)], frame=frame,
                              nrl_pooled=cal.nrl_pooled if cal is not None else None,
                              params=params, side='down' if orientation else 'both',
-                             seed=seed, require_span=False)
+                             seed=seed, require_span=True)
                 agg['phasing'][frame] = ph.as_dict()
                 # per-molecule theta / r / f
                 by_name = {members[pm['molecule']].name: pm for pm in ph.per_molecule}

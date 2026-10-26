@@ -14,25 +14,32 @@
 Molecules are pre-split at MSPs longer than ``long_msp_bp``; no state covers
 them.
 
-**States**: order {R_q for q in ``seg_q_grid``, I, X} x composition
-{canonical, sub-rich}; X has no composition (25 base states). Minimum
+**States**: order {R_q for q in ``seg_q_grid`` at two tightnesses (tight:
+``seg_sigma_tight``, the design's 8 bp; loose: the dataset's fitted jitter),
+I, X} x composition {canonical, sub-rich}; X has no composition (47 base
+states; 25 with ``seg_sigma_tight=None``). Tight and loose are both regular. Minimum
 durations by expanded chains: ``seg_min_steps_regular`` for R_q,
 ``seg_min_steps_sub`` for sub-rich, ``seg_min_steps_irregular`` for I; a path
 must end on a chain's last sub-state.
 
 **Emissions per step** (each normalised, so LLRs compare):
 
-1. gap: R_q N(g; q, sigma_R^2 + 2 sigma_loc^2); I the calibration's empirical
-   gap density (gaps < ``seg_max_gap``); X uniform on [0, 2000). Gaps touching
-   a virtual dyad carry no gap evidence (continuity only: virtual dyads are
-   equally spaced by construction).
+1. gap, on the dyad grid: R_q sum_k w_k N(g; k q, k sigma_R^2 + 2 sigma_loc^2)
+   for k = 1, 2, 3 (a can't-tell, short or long call between two mono calls
+   hides a dyad but the grid still fits); I the same grid over the broad
+   irregular density of the calibration's gap model (``seg_irregular =
+   'empirical'`` restores the dataset's empirical gap density); X uniform on
+   [0, 2000). sigma_R is the gap model's regular jitter minus the edge noise
+   at the dataset's typical density. Gaps touching a virtual dyad carry no gap
+   evidence (continuity only: virtual dyads are equally spaced by
+   construction).
 2. composition: multinomial over {mono, short, long, multi, TF} (can't-tell
    and edge-truncated are missing) with the composition's frequencies, times
    a Poisson on the step's total count scaled by its length. X uses the
    dataset mixture.
 3. information: a step is flagged low-information when its local lambda is
-   below the calibration floor or it holds a can't-tell footprint;
-   P(flag | X) = 0.8, P(flag | other) = 0.05.
+   below the calibration floor (``seg_cant_tell_low_info`` also flags steps
+   holding a can't-tell footprint); P(flag | X) = 0.8, P(flag | other) = 0.05.
 
 **Transitions**: R_q -> R_q' only for |q - q'| <= ``seg_dq_max`` (1/20 spread
 over the neighbours); other switches (order or composition) cost
@@ -100,19 +107,23 @@ class StateSpace:
     pred_idx: np.ndarray
     pred_logp: np.ndarray
     log_init: np.ndarray
-    nq: int
-    q_grid: np.ndarray
+    nq: int                    # number of regular columns (q x tightness)
+    q_grid: np.ndarray         # repeat of each regular column
+    tight: np.ndarray          # tight-regular flag of each regular column
 
 
 _SPACE_CACHE: Dict[tuple, StateSpace] = {}
 
 
 def state_space(params: NucParams = DEFAULT_PARAMS) -> StateSpace:
+    n_tight = 2 if params.seg_sigma_tight is not None else 1
     key = (tuple(params.seg_q_grid), params.seg_min_steps_regular, params.seg_min_steps_sub,
-           params.seg_min_steps_irregular, params.seg_switch_prob, params.seg_dq_max)
+           params.seg_min_steps_irregular, params.seg_switch_prob, params.seg_dq_max, n_tight)
     if key in _SPACE_CACHE:
         return _SPACE_CACHE[key]
-    q = np.asarray(params.seg_q_grid, dtype=float)
+    q1 = np.asarray(params.seg_q_grid, dtype=float)
+    q = np.tile(q1, n_tight)                 # regular columns: loose q..., then tight q...
+    tight = np.repeat(np.arange(n_tight) == 1, len(q1))
     nq = len(q)
     base_order, base_comp, dur = [], [], []
     for c in (0, 1):
@@ -154,6 +165,7 @@ def state_space(params: NucParams = DEFAULT_PARAMS) -> StateSpace:
             if oa < nq and ob < nq:                      # R_q -> R_q'
                 if ca == cb and abs(q[oa] - q[ob]) <= params.seg_dq_max:
                     n_nb = sum(1 for j in range(nq) if j != oa and abs(q[j] - q[oa]) <= params.seg_dq_max)
+                    # (neighbouring repeats, or the other tightness at the same repeat)
                     P[a, b] = (1.0 / 20.0) / max(n_nb, 1)
                 elif oa == ob and ca != cb:
                     P[a, b] = sw
@@ -188,7 +200,7 @@ def state_space(params: NucParams = DEFAULT_PARAMS) -> StateSpace:
     log_init = np.full(ns, -np.inf)
     log_init[exp_first] = -np.log(nb)
     sp = StateSpace(np.asarray(base_order), np.asarray(base_comp), exp_base, exp_first, exp_last,
-                    ptr, np.asarray(idx, dtype=np.int64), np.asarray(lp), log_init, nq, q)
+                    ptr, np.asarray(idx, dtype=np.int64), np.asarray(lp), log_init, nq, q, tight)
     _SPACE_CACHE[key] = sp
     return sp
 
@@ -353,18 +365,22 @@ def build_steps(fp_start, fp_end, fp_code, fp_post, fp_is_tf, fp_lambda, fp_trun
             if cats[i] >= 0:
                 cnt[cats[i]] += 1
         lam_sel = fp_lambda[sel & ~fp_is_tf]
-        low = bool(cant[sel].any())
+        low = bool(params.seg_cant_tell_low_info and cant[sel].any())
         if lam_floor is not None and len(lam_sel) and np.nanmedian(lam_sel) < lam_floor:
             low = True
         steps.append(Step(int(round(s)), int(round(e)), float(e - s), float(min(dy_w[j], dy_w[j + 1])),
                           cnt, low, bool(dy_obs[j]), bool(dy_obs[j + 1])))
     for run in runs:
-        cnt = np.zeros(len(CATS))
-        for i in run:
+        # one step per footprint, spanning to the next one's start, so a long
+        # dyad-free stretch has enough steps for the minimum durations
+        run = sorted(run, key=lambda j: fp_start[j])
+        for n_, i in enumerate(run):
+            cnt = np.zeros(len(CATS))
             cnt[cats[i]] += 1
-        s = int(min(fp_start[i] for i in run))
-        e = int(max(fp_end[i] for i in run))
-        steps.append(Step(s, e, float('nan'), 1.0, cnt, False, False))
+            s = int(fp_start[i])
+            e = int(fp_start[run[n_ + 1]]) if n_ + 1 < len(run) else int(fp_end[i])
+            steps.append(Step(s, max(e, int(fp_end[i]) if n_ + 1 == len(run) else e), float('nan'), 1.0,
+                              cnt, False, False))
     steps.sort(key=lambda st: (st.start, st.end))
     return steps
 
@@ -425,9 +441,26 @@ def emissions(steps: List[Step], space: StateSpace, cal, params: NucParams = DEF
     gap = np.array([st.gap for st in steps])
     has_gap = np.isfinite(gap)
     g = np.where(has_gap, gap, 0.0)
-    var = params.seg_sigma_r ** 2 + 2.0 * sigma_loc ** 2
-    dens_R = np.exp(-0.5 * (g[:, None] - q[None, :]) ** 2 / var) / np.sqrt(2 * np.pi * var)
-    dens_I = _gap_density_fn(cal)(g)
+    gm = resolve_gap_model(cal, params)
+    w = np.asarray(gm['grid_weights'], float)
+    # the fitted regular SD is observed-level (it holds the edge noise at the
+    # dataset's typical density); use its structural part plus this molecule's
+    # own edge noise
+    s_typ = float(gm.get('sigma_loc_typical') or 0.0) if params.seg_sigma_r is None else 0.0
+    s_struct2 = max(gm['sigma_regular'] ** 2 - 2.0 * s_typ ** 2, 16.0)
+    s2_col = np.where(space.tight, (params.seg_sigma_tight or 0.0) ** 2, s_struct2)[None, :]
+    dens_R = np.zeros((T, len(q)))
+    for k, wk in enumerate(w, start=1):
+        var = k * s2_col + 2.0 * sigma_loc ** 2
+        dens_R += wk * np.exp(-0.5 * (g[:, None] - k * q[None, :]) ** 2 / var) / np.sqrt(2 * np.pi * var)
+    if params.seg_irregular == 'empirical':
+        dens_I = _gap_density_fn(cal)(g)
+    else:
+        P = float(cal.nrl_pooled) if cal is not None else 189.0
+        dens_I = np.full(T, 0.05 / 1450.0)
+        for k, wk in enumerate(w, start=1):
+            var = k * gm['sigma_irregular'] ** 2
+            dens_I += 0.95 * wk * np.exp(-0.5 * (g - k * P) ** 2 / var) / np.sqrt(2 * np.pi * var)
     dens_X = np.full(T, _X_UNIFORM)
     # Steps touching a virtual dyad (from a multi(m) call) carry no gap
     # evidence: virtual dyads are equally spaced by construction, so they give
@@ -453,6 +486,72 @@ def emissions(steps: List[Step], space: StateSpace, cal, params: NucParams = DEF
             Eb[:, b] = gX + cl[:, 2] + iX
     parts = {'gR': gR, 'gI': gI, 'gX': gX, 'comp': cl, 'iX': iX, 'iO': iO}
     return Eb[:, space.exp_base], parts
+
+
+DEFAULT_GAP_MODEL = {'sigma_regular': 17.0, 'sigma_irregular': 30.0, 'grid_weights': [0.90, 0.07, 0.03],
+                     'w_regular': None, 'nrl_sd': None, 'n_gaps': 0, 'sigma_loc_typical': 0.0}
+
+
+def fit_gap_model(molecules, nrl_pooled: float, params: NucParams = DEFAULT_PARAMS) -> dict:
+    """Dyad-gap model of a dataset (calibration).
+
+    Deviations of adjacent mono-dyad gaps from each molecule's own median
+    gap are fitted by two zero-mean Gaussians: the narrow one is the jitter
+    of regular arrays, the broad one (widened by the spread of molecule
+    NRLs) the irregular gap density. Grid weights are the shares of
+    consecutive mono-dyad spacings near 1, 2 and 3 repeats (a can't-tell,
+    short or long call between two mono calls hides a dyad).
+    """
+    from fiberhmm.nuc.spacing import eligible_dyads
+    dev, meds, kcount = [], [], np.zeros(3)
+    for m in molecules:
+        d = eligible_dyads(m, nrl_pooled, params)
+        g = d.gaps
+        if len(g) < params.min_gaps_regularity:
+            continue
+        core = g[(g > 0.6 * nrl_pooled) & (g < 1.4 * nrl_pooled)]
+        if len(core) < params.min_gaps_regularity:
+            continue
+        med = float(np.median(core))
+        meds.append(med)
+        dev.extend((core - med).tolist())
+        sp = np.diff(d.centres)
+        k = np.round(sp / med)
+        ok = (k >= 1) & (k <= 3) & (np.abs(sp - k * med) <= 0.2 * med)
+        for kk in (1, 2, 3):
+            kcount[kk - 1] += int((ok & (k == kk)).sum())
+    if len(dev) < 200:
+        return dict(DEFAULT_GAP_MODEL)
+    x = np.asarray(dev, float)
+    s1, s2, wn = 10.0, 40.0, 0.5
+    for _ in range(300):
+        p1 = wn * np.exp(-0.5 * (x / s1) ** 2) / s1
+        p2 = (1 - wn) * np.exp(-0.5 * (x / s2) ** 2) / s2
+        r = p1 / np.maximum(p1 + p2, 1e-300)
+        wn_new = float(r.mean())
+        s1_new = float(np.sqrt((r * x * x).sum() / max(r.sum(), 1e-9)))
+        s2_new = float(np.sqrt(((1 - r) * x * x).sum() / max((1 - r).sum(), 1e-9)))
+        done = abs(s1_new - s1) < 1e-4 and abs(s2_new - s2) < 1e-4
+        s1, s2, wn = max(s1_new, 3.0), max(s2_new, 3.0), wn_new
+        if done:
+            break
+    nrl_sd = float(1.4826 * np.median(np.abs(np.asarray(meds) - np.median(meds))))
+    gw = (kcount + 1.0) / (kcount.sum() + 3.0)
+    return {'sigma_regular': float(min(s1, s2)), 'sigma_irregular': float(np.sqrt(max(s1, s2) ** 2 + nrl_sd ** 2)),
+            'grid_weights': [float(v) for v in gw], 'w_regular': float(wn if s1 <= s2 else 1 - wn),
+            'nrl_sd': nrl_sd, 'n_gaps': int(len(x)), 'sigma_loc_typical': 0.0}
+
+
+def resolve_gap_model(cal, params: NucParams = DEFAULT_PARAMS) -> dict:
+    """The gap model in use: the calibration's, with parameter overrides."""
+    gm = dict(DEFAULT_GAP_MODEL)
+    if cal is not None and getattr(cal, 'gap_model', None):
+        gm.update({k: v for k, v in cal.gap_model.items() if v is not None})
+    if params.seg_sigma_r is not None:
+        gm['sigma_regular'] = float(params.seg_sigma_r)
+    if params.seg_grid_weights is not None:
+        gm['grid_weights'] = [float(v) for v in params.seg_grid_weights]
+    return gm
 
 
 # ---------------------------------------------------------------------------
@@ -631,11 +730,23 @@ def segment_molecule(length: int, msps: np.ndarray, fp: Dict[str, np.ndarray], c
         lam_med = float(np.nanmedian(fp['lambda'][~fp['is_tf']])) if (~fp['is_tf']).any() else 0.3
         sigma_loc = float(cal.sigma_loc_at(lam_med))
     segs: List[Segment] = []
+    centres = (fp['start'] + fp['end']) / 2.0
     for piece in _pieces(length, msps, params.long_msp_bp):
         steps = build_steps(fp['start'], fp['end'], fp['coarse'], fp['posterior'], fp['is_tf'],
                             fp['lambda'], fp['truncated'], piece, nrl, mu_fn, lam_floor, params)
-        segs.extend(segment_steps(steps, cal, params, sigma_loc))
+        got = segment_steps(steps, cal, params, sigma_loc)
+        if not got:
+            # calls but nothing measurable (can't-tell, truncated): low information
+            inside = (centres >= piece[0]) & (centres < piece[1]) & ~fp['is_tf']
+            if inside.any():
+                got = [lowinfo_segment(int(fp['start'][inside].min()), int(fp['end'][inside].max()))]
+        segs.extend(got)
     return segs, False
+
+
+def lowinfo_segment(start: int, end: int) -> Segment:
+    """A low-information segment with no decoded evidence."""
+    return Segment(start, end, LOWINFO, False, 1.0, 0.0, None, 0, 0)
 
 
 def fit_composition(molecules, cal, params: NucParams = DEFAULT_PARAMS, max_iter: int = 30) -> dict:

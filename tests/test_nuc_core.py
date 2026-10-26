@@ -337,3 +337,14 @@ def test_ma_without_footprint_groups_falls_back_to_legacy_calls(tmp_path):
         again, _ = decode_record(r, DecodeContext(bam.header))
         assert again.source == 'legacy' and len(again.nucs) == 10
         assert not any(g['stale'] for g in read_nuc_groups(r).values())
+
+
+def test_decode_context_needs_a_known_mode():
+    bare = pysam.AlignmentHeader.from_dict({'HD': {'VN': '1.6'}, 'SQ': [{'SN': 'c', 'LN': 10}]})
+    with pytest.raises(ValueError):
+        DecodeContext(bare)
+    assert DecodeContext(bare, NucParams(mode='nanopore-fiber')).mode == 'nanopore-fiber'
+    pb = pysam.AlignmentHeader.from_dict({'HD': {'VN': '1.6'}, 'SQ': [{'SN': 'c', 'LN': 10}],
+                                          'PG': [{'ID': 'jasmine', 'PN': 'jasmine', 'CL': 'jasmine --6ma'}]})
+    assert DecodeContext(pb).mode == 'pacbio-fiber'
+    assert DecodeContext(pysam.AlignmentHeader.from_dict(header())).mode == 'pacbio-fiber'

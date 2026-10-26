@@ -238,6 +238,20 @@ def header_chemistry(header) -> dict:
     return out
 
 
+_PACBIO_PROGRAMS = ('jasmine', 'ccs', 'pbmm2', 'predict-m6a', 'm6a')
+
+
+def _pacbio_from_programs(header) -> Optional[str]:
+    """'pacbio-fiber' when the @PG history shows PacBio m6A calling (jasmine,
+    ccs, pbmm2, fibertools predict-m6a); otherwise None."""
+    hd = header.to_dict() if hasattr(header, 'to_dict') else dict(header or {})
+    for pg in hd.get('PG', []):
+        text = ' '.join(str(pg.get(k, '')) for k in ('ID', 'PN', 'CL')).lower()
+        if any(p in text.split() or f'/{p}' in text or text.startswith(p) for p in _PACBIO_PROGRAMS):
+            return 'pacbio-fiber'
+    return None
+
+
 class DecodeContext:
     """Header-level decoding state, built once per BAM."""
 
@@ -248,7 +262,10 @@ class DecodeContext:
         self.params = params
         chem = header_chemistry(header)
         self.chemistry = chem
-        self.mode = params.mode or chem['mode'] or 'pacbio-fiber'
+        self.mode = params.mode or chem['mode'] or _pacbio_from_programs(header)
+        if self.mode is None:
+            raise ValueError('cannot tell the observation mode from the BAM header (no chemistry '
+                             'declaration or FiberHMM call record); pass NucParams(mode=...)')
         self.mark_threshold = resolve_prob_threshold(
             params.mark_threshold, chem['enzyme'], chem['platform'])
         self.ma_frame = ma_group_frame_of(header)

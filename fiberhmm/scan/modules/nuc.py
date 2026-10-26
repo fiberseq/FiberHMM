@@ -15,7 +15,9 @@ Wraps :mod:`fiberhmm.nuc` (NUC design; feature-hub CONTRACTS 11):
   measured denominator (aligned and not low-information) and the summed
   q-hat of regular segments; plus phased-window statistics on a fixed genome
   grid (``phase_window_bp`` windows every ``phase_step_bp``), each written by
-  the zone holding the window start. Nothing depends on the tiling.
+  the zone holding the window start, from molecular distances to the window
+  start (indels never stretch a phase). Molecules below the calibration's
+  low-information floor are not measured. Nothing depends on the tiling.
 - ``stitch``: patches from the concatenated tracks: per-base fractions
   smoothed over ``patch_smooth_bp`` and thresholded (regular 0.5, irregular
   0.35, sub-rich 0.25 by default), at least ``patch_min_bp`` long with at
@@ -221,6 +223,8 @@ class NucModule(ScanModuleBase):
         scalars = {k: (None if v is None or not np.isfinite(v) else float(v)) for k, v in res.scalars.items()}
         from fiberhmm.nuc.tags import FLAG_BITS
         scalars['flags'] = float(sum(1 << i for i, k in enumerate(FLAG_BITS) if res.flags.get(k)))
+        from fiberhmm.nuc.tags import digest_pieces
+        scalars['calls_digest_hi'], scalars['calls_digest_lo'] = digest_pieces(res.digest)
         return MoleculeResult(rec, scalars, marks)
 
     # ------------------------------------------------------------------ unit tracks
@@ -298,23 +302,36 @@ class NucModule(ScanModuleBase):
                             for k in SEG_METRICS:
                                 arr(f'{k}:{g}')[segmask[k] & cov] += 1
                             arr(f'qsum:{g}')[segmask['reg'] & cov] += qsum[segmask['reg'] & cov]
-                        # dyads for phased windows (reference positions of observed mono dyads)
+                        # dyads for phased windows: molecular positions of observed mono
+                        # dyads (distances are measured along the molecule; the
+                        # reference position only decides window membership)
                         fp = res.footprints
-                        if fp is not None:
+                        if fp is not None and not res.flags.get('low_information'):
                             from fiberhmm.nuc.sizes import MONO
                             sel = (fp['coarse'] == MONO) & ~fp['is_tf'] & ~fp['truncated']
-                            c = ((fp['start'][sel] + fp['end'][sel]) // 2).astype(np.int64)
-                            ref = mol.mol_to_ref(c) if len(c) else np.zeros(0, dtype=np.int64)
-                            ref = np.sort(ref[ref >= 0])
+                            c = ((fp['start'][sel] + fp['end'][sel]) / 2.0)
+                            ref = mol.mol_to_ref(np.round(c).astype(np.int64)) if len(c) else np.zeros(0, np.int64)
+                            ok = ref >= 0
                             for g in grp:
-                                phase_mols.setdefault(g, []).append((ref, mol.ref_start, mol.ref_end))
+                                phase_mols.setdefault(g, []).append((mol, c[ok], ref[ok]))
         # fixed-grid phased windows written by the zone holding the window start
         qgrid = np.arange(165.0, 216.0, 1.0)
         for g in groups_seen:
             Rt, Nt, nullt, logpt, Pt = (np.full(n, np.nan) for _ in range(5))
             mols = phase_mols.get(g, [])
             for w in win_starts:
-                xs = [ref[(ref >= w) & (ref < w + W)] for ref, rs, re_ in mols if rs <= w and re_ >= w + W]
+                xs = []
+                for mol, c, ref in mols:
+                    if not (mol.ref_start <= w and mol.ref_end >= w + W):
+                        continue
+                    inw = (ref >= w) & (ref < w + W)
+                    if not inw.any():
+                        continue
+                    a = int(mol.ref_to_mol([w])[0])
+                    if a < 0:
+                        continue
+                    sgn = -1.0 if mol.is_reverse else 1.0
+                    xs.append(sgn * (c[inw] - a))
                 xs = [x for x in xs if len(x)]
                 if len(xs) < int(settings['patch_min_measured']):
                     continue
@@ -444,16 +461,23 @@ def _runs(mask: np.ndarray) -> List[Tuple[int, int]]:
 
 def _ref_envelope(mol, s: int, e: int) -> Tuple[int, int]:
     """Reference envelope of molecular [s, e); zero-width at the nearest
-    aligned base when no base of it is aligned (inside a clip or insertion)."""
+    aligned base (by alignment-block boundaries) when none of it is aligned
+    (inside a clip or an insertion)."""
     env = mol.mol_interval_to_ref(s, e)
     if env is not None:
         return env
-    pos = np.arange(max(0, s - 2000), min(mol.length, e + 2000))
-    ref = mol.mol_to_ref(pos)
-    ok = ref >= 0
-    if not ok.any():
+    blocks = mol.blocks
+    if blocks is None or len(blocks) == 0:
         p = mol.ref_start if mol.ref_start >= 0 else 0
         return p, p
-    d = np.abs(pos[ok] - (s + e) / 2)
-    p = int(ref[ok][int(np.argmin(d))])
+    if mol.is_reverse:
+        ss, se = mol.length - e, mol.length - s
+    else:
+        ss, se = s, e
+    mid = (ss + se) / 2.0
+    q0, r0, n = blocks[:, 0], blocks[:, 1], blocks[:, 2]
+    cand_q = np.concatenate([q0, q0 + n - 1])
+    cand_r = np.concatenate([r0, r0 + n - 1])
+    k = int(np.argmin(np.abs(cand_q - mid)))
+    p = int(cand_r[k])
     return p, p
