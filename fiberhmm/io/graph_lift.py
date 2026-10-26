@@ -766,10 +766,13 @@ def stash_from_source(lifted_path: str, source_path: str, out_path: str, *,
 
     stats = SourceMatchStats()
     source: Dict[str, list] = defaultdict(list)
+    with_primary = set()
     with pysam.AlignmentFile(source_path, "rb", check_sq=False, threads=threads) as bam:
         for read in bam.fetch(until_eof=True):
             if read.is_unmapped or read.is_secondary:
                 continue
+            if not read.is_supplementary:
+                with_primary.add(read.query_name)
             length = read.query_length
             identity = (int(read.flag), int(read.mapping_quality), _source_locus(read),
                         _hard_clips(read))
@@ -813,6 +816,10 @@ def stash_from_source(lifted_path: str, source_path: str, out_path: str, *,
             read.set_tag(TAG_SOURCE_LOCUS, locus, value_type="Z")
             if any(clips):
                 read.set_tag(TAG_HARDCLIP, "H:{},{}".format(*clips), value_type="Z")
+            elif flag & _SUPP and read.query_name not in with_primary:
+                # As stash_bam: a soft-clipped supplementary whose primary is not in
+                # the source carries its own SEQ and calls; the repair keeps it.
+                read.set_tag(TAG_ORPHAN, 1, value_type="i")
             out.write(read)
             stats.matched += 1
     return stats

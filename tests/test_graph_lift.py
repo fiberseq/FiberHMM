@@ -1550,3 +1550,29 @@ def test_cli_bed_vg_engine_lifts_without_fibertools(tmp_path, capsys, flip):
     f = out.read_text().split("\t")
     summit = int(f[1]) + int(f[9])
     assert summit == (60150 if not flip else L - 60151)
+
+
+def test_repair_only_keeps_soft_clipped_supplementary_without_primary_in_source(tmp_path):
+    """Review finding: --repair-only --source rebuilt the stash without Yo, so the repair
+    dropped a soft-clipped supplementary whose primary is not in the source BAM."""
+    from fiberhmm.cli import lift
+
+    source = _write(tmp_path / "src.bam", _source_header(), [
+        lambda h: _read(h, "orphan", flag=0x800, cigar="20S30M", seq=_seq(50)),
+        lambda h: _read(h, "gone", pos=200, seq=_seq(50, 2)),
+        lambda h: _read(h, "gone", flag=0x800, pos=900, cigar="20S30M", seq=_seq(50, 2)),
+    ])
+    projected = _fake_lift(source, tmp_path / "lifted.bam", flip=True)
+    # The lift lost gone's primary: its supplementary must still be dropped.
+    records, hdr = _records(projected)
+    with pysam.AlignmentFile(str(tmp_path / "lifted2.bam"), "wb",
+                             header=pysam.AlignmentHeader.from_dict(hdr)) as out:
+        for rec in records:
+            if not (rec.query_name == "gone" and rec.cigarstring == "50M"):
+                out.write(rec)
+    out = tmp_path / "out.bam"
+    assert lift.main(["--repair-only", "-i", str(tmp_path / "lifted2.bam"), "--source", source,
+                      "-o", str(out), "--tmp-dir", str(tmp_path)]) == 0
+    kept, _ = _records(out)
+    assert [(r.query_name, r.is_supplementary, r.has_tag("Yo")) for r in kept] == [
+        ("orphan", True, False)]
