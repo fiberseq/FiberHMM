@@ -17,7 +17,8 @@ Wraps :mod:`fiberhmm.nuc` (NUC design; feature-hub CONTRACTS 11):
   grid (``phase_window_bp`` windows every ``phase_step_bp``), each written by
   the zone holding the window start, from molecular distances to the window
   start (indels never stretch a phase). Molecules below the calibration's
-  low-information floor are not measured. Nothing depends on the tiling.
+  low-information floor, too short to segment, or with nothing to segment
+  are not measured. Nothing depends on the tiling.
 - ``stitch``: patches from the concatenated tracks: per-base fractions
   smoothed over ``patch_smooth_bp`` and thresholded (regular 0.5, irregular
   0.35, sub-rich 0.25 by default), at least ``patch_min_bp`` long with at
@@ -271,6 +272,10 @@ class NucModule(ScanModuleBase):
                         if mol is None:
                             continue
                         res = nuc_outputs(mol, params, cal)
+                        if res.flags.get('low_information') or not res.segments:
+                            # below the floor (D8), too short or nothing to segment:
+                            # not measured anywhere
+                            continue
                         grp = ['all', ds.dataset_id]
                         if haps and mol.hp in (1, 2):
                             grp.append(f'{ds.dataset_id}:HP{mol.hp}')

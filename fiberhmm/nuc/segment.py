@@ -384,7 +384,38 @@ def build_steps(fp_start, fp_end, fp_code, fp_post, fp_is_tf, fp_lambda, fp_trun
             steps.append(Step(s, max(e, int(fp_end[i]) if n_ + 1 == len(run) else e), float('nan'), 1.0,
                               cnt, False, False))
     steps.sort(key=lambda st: (st.start, st.end))
-    return steps
+    return _partition(steps)
+
+
+def _partition(steps: List[Step]) -> List[Step]:
+    """Make steps disjoint: a dyad-gap step that spans composition-only steps
+    is cut around them into gap-free pieces (its counts stay on the first
+    piece), so decoded segments never overlap."""
+    comp = [st for st in steps if not np.isfinite(st.gap)]
+    if not comp:
+        return steps
+    out: List[Step] = []
+    for st in steps:
+        if not np.isfinite(st.gap):
+            out.append(st)
+            continue
+        inner = sorted((c for c in comp if c.start < st.end and c.end > st.start), key=lambda c: c.start)
+        if not inner:
+            out.append(st)
+            continue
+        pieces = []
+        pos = st.start
+        for c in inner:
+            if c.start > pos:
+                pieces.append((pos, c.start))
+            pos = max(pos, c.end)
+        if pos < st.end:
+            pieces.append((pos, st.end))
+        for n_, (a, b) in enumerate(pieces):
+            cnt = st.counts if n_ == 0 else np.zeros(len(CATS))
+            out.append(Step(int(a), int(b), float('nan'), st.weight, cnt, st.low_info, False, False))
+    out.sort(key=lambda x: (x.start, x.end))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -630,10 +661,13 @@ def segment_steps(steps: List[Step], cal, params: NucParams = DEFAULT_PARAMS,
     iX, iO = parts['iX'], parts['iO']
 
     def run_stats(a, b, o, c):
+        # the same factors the decoder used: R and I with the run's composition,
+        # X with the dataset mixture
         sl = slice(a, b)
-        ll_R = gR[sl].sum(axis=0) + iO[sl].sum()
-        ll = {REGULAR: float(ll_R.max()), IRREGULAR: float(gI[sl].sum() + iO[sl].sum()),
-              LOWINFO: float(gX[sl].sum() + iX[sl].sum())}
+        cc = float(cl[sl, c].sum())
+        ll_R = gR[sl].sum(axis=0) + iO[sl].sum() + cc
+        ll = {REGULAR: float(ll_R.max()), IRREGULAR: float(gI[sl].sum() + iO[sl].sum() + cc),
+              LOWINFO: float(gX[sl].sum() + iX[sl].sum() + cl[sl, 2].sum())}
         llr_order = ll[o] - max(v for k, v in ll.items() if k != o)
         llr_comp = float(cl[sl, c].sum() - cl[sl, 1 - c].sum())
         gap_steps = [st for st in steps[a:b] if np.isfinite(st.gap)]

@@ -88,7 +88,10 @@ class NucCalibration:
         lam = np.asarray(lam, dtype=float)
         ok = np.ones(lam.shape, dtype=bool)
         if self.supported is not None:
-            ok &= (lam >= self.supported[0]) & (lam <= self.supported[1])
+            lo, hi = self.supported
+            if hi <= lo:
+                return np.zeros(lam.shape, dtype=bool)
+            ok &= (lam >= lo) & (lam <= hi)
         return ok
 
     def below_floor(self, lam_acc: float) -> bool:

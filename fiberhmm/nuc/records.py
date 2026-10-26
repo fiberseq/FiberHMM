@@ -252,14 +252,23 @@ def _pacbio_from_programs(header) -> Optional[str]:
     return None
 
 
-class DecodeContext:
-    """Header-level decoding state, built once per BAM."""
+class FrameContext:
+    """Footprint-frame state of a header (enough to read calls; no marks)."""
 
     def __init__(self, header, params: NucParams = DEFAULT_PARAMS):
         from fiberhmm.io.annotation_frame import legacy_frame_of, ma_group_frame_of
-        from fiberhmm.models import resolve_prob_threshold
         self.header = header
         self.params = params
+        self.ma_frame = ma_group_frame_of(header)
+        self.legacy_frame = legacy_frame_of(header)
+
+
+class DecodeContext(FrameContext):
+    """Header-level decoding state, built once per BAM."""
+
+    def __init__(self, header, params: NucParams = DEFAULT_PARAMS):
+        from fiberhmm.models import resolve_prob_threshold
+        super().__init__(header, params)
         chem = header_chemistry(header)
         self.chemistry = chem
         self.mode = params.mode or chem['mode'] or _pacbio_from_programs(header)
@@ -268,8 +277,6 @@ class DecodeContext:
                              'declaration or FiberHMM call record); pass NucParams(mode=...)')
         self.mark_threshold = resolve_prob_threshold(
             params.mark_threshold, chem['enzyme'], chem['platform'])
-        self.ma_frame = ma_group_frame_of(header)
-        self.legacy_frame = legacy_frame_of(header)
 
 
 def _aligned_blocks(read) -> Optional[np.ndarray]:

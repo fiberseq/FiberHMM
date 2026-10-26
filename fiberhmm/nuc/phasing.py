@@ -146,7 +146,8 @@ class PhasingResult:
         return {'frame': self.frame, 'P': self.P, 'side': self.side,
                 'bins': [b.as_dict() for b in self.bins], 'oscillation': dict(self.oscillation),
                 'excluded': dict(self.excluded), 'dispersion_bp': self.dispersion_bp,
-                'n_molecules': len(self.per_molecule)}
+                'n_molecules': len({pm['molecule'] for pm in self.per_molecule if pm['n'] > 0}),
+                'n_appearances': len(self.per_molecule)}
 
 
 def _resultant(x_list: Sequence[np.ndarray], lo: float, hi: float, P: float, correct: bool = False):

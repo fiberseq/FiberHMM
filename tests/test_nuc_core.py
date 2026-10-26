@@ -348,3 +348,46 @@ def test_decode_context_needs_a_known_mode():
                                           'PG': [{'ID': 'jasmine', 'PN': 'jasmine', 'CL': 'jasmine --6ma'}]})
     assert DecodeContext(pb).mode == 'pacbio-fiber'
     assert DecodeContext(pysam.AlignmentHeader.from_dict(header())).mode == 'pacbio-fiber'
+
+
+def test_window_phasing_uses_calibrated_mono_dyads_only():
+    from fiberhmm.nuc.records import make_molecule
+    mols = []
+    for i in range(10):
+        m = array_molecule([('reg', 40, 190)], np.random.default_rng(i), core=90, chrom='chrS', name=f's{i}')
+        m.ref_start, m.ref_end = 0, m.length
+        m.blocks = np.array([[0, 0, m.length]])
+        mols.append(m)
+    w = window_metrics(mols, ('chrS', 3000, 4000), anchor=3500, orientation=1, cal=flat_calibration())
+    ph = w.groups['all']['phasing']['anchor']
+    assert ph['bins'][-1]['n_dyads'] == 0             # every call is short: no mono dyads
+
+
+def test_phasing_counts_distinct_molecules():
+    rng = np.random.default_rng(7)
+    mols = _phased_mols(rng, 1, True)
+    anchors = [('chrS', 50_000 + 190 * k, 0) for k in range(10)]
+    ph = phasing(mols, anchors, P=190.0, require_span=False)
+    d = ph.as_dict()
+    assert d['n_molecules'] == 1 and d['n_appearances'] == 10
+    assert ph.summary.n_molecules == 1
+
+
+def test_equal_endpoint_support_is_empty():
+    assert not NucCalibration(supported=[0.5, 0.5]).is_supported([0.5, 0.2]).any()
+
+
+def test_digest_reads_back_without_an_observation_mode(tmp_path):
+    from fiberhmm.nuc.molecule import molecule_outputs
+    from fiberhmm.nuc.tags import annotate_record, read_nuc_groups
+    rng = np.random.default_rng(3)
+    seq, nucs, msps, marks = planted_record_molecule(rng, n_nuc=8)
+    hdr = {'HD': {'VN': '1.6'}, 'SQ': [{'SN': 'chrS', 'LN': 100_000}], 'CO': ['fiberhmm:coord=molecular']}
+    path = str(tmp_path / 'nomode.bam')
+    with pysam.AlignmentFile(path, 'wb', header=hdr) as out:
+        out.write(make_record(out, 'r', seq, 100, nucs, msps, (), marks))
+    with pysam.AlignmentFile(path) as bam:
+        r = next(bam.fetch(until_eof=True))
+        mol, _ = decode_record(r, DecodeContext(bam.header, NucParams(mode='pacbio-fiber')))
+        annotate_record(r, molecule_outputs(mol, cal=flat_calibration()))
+        assert not any(g['stale'] for g in read_nuc_groups(r).values())

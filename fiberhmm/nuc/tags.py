@@ -213,12 +213,12 @@ def record_calls_digest(read) -> Optional[str]:
     """Digest of a record's current nuc/tf/msp calls, read from MA alone (no
     marks needed, so hard-clipped records work). None without calls or when
     the header leaves the frame undecided."""
-    from fiberhmm.nuc.records import DecodeContext, _footprints_from_legacy, _footprints_from_ma
+    from fiberhmm.nuc.records import FrameContext, _footprints_from_legacy, _footprints_from_ma
     from fiberhmm.io.ma_tags import annotation_tags
     hdr = getattr(read, 'header', None)
     if hdr is None:
         return None
-    ctx = DecodeContext(hdr)
+    ctx = FrameContext(hdr)            # frames only: no observation mode needed
     tags = annotation_tags(read)
     fp = None
     if tags is not None:

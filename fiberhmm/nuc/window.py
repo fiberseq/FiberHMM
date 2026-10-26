@@ -39,7 +39,7 @@ from fiberhmm.nuc.params import DEFAULT_PARAMS, NucParams
 from fiberhmm.nuc.phasing import anchor_offsets, phasing
 from fiberhmm.nuc.records import NucMolecule
 from fiberhmm.nuc.segment import IRREGULAR, LOWINFO, REGULAR
-from fiberhmm.nuc.sizes import CANT_TELL, COARSE_NAMES, EDGE_TRUNCATED, NAMED_CODES
+from fiberhmm.nuc.sizes import CANT_TELL, COARSE_NAMES, EDGE_TRUNCATED, MONO, NAMED_CODES
 from fiberhmm.nuc.spacing import molecule_spacing
 
 
@@ -209,6 +209,16 @@ def window_metrics(molecules: Sequence[NucMolecule], window: Tuple[str, int, int
         regs = [r['segments']['regular'] for r in rows if 'segments' in r]
         agg['regular_fraction'] = float(np.mean(regs)) if regs else None
         if anchor is not None and members:
+            # whole-molecule eligible dyads from the calibrated coarse calls
+            dyads = {}
+            for m in members:
+                res = results.get(id(m)) if results is not None else None
+                if res is None and cal is not None:
+                    res = molecule_outputs(m, params, cal)
+                if res is not None and res.footprints is not None:
+                    fp = res.footprints
+                    sel = (fp['coarse'] == MONO) & ~fp['is_tf'] & ~fp['truncated']
+                    dyads[id(m)] = np.sort((fp['start'][sel] + fp['end'][sel]) / 2.0)
             states = [r.get('state_at_anchor', '.') for r in rows]
             agg['state_counts'] = {s: states.count(s) for s in ('1', '0', '.')}
             agg['phasing'] = {}
@@ -217,8 +227,8 @@ def window_metrics(molecules: Sequence[NucMolecule], window: Tuple[str, int, int
                 # from the anchor, beyond a small window; molecules must span them
                 ph = phasing(members, [(chrom, anchor, orientation)], frame=frame,
                              nrl_pooled=cal.nrl_pooled if cal is not None else None,
-                             params=params, side='down' if orientation else 'both',
-                             seed=seed, require_span=True)
+                             params=params, dyads=dyads or None,
+                             side='down' if orientation else 'both', seed=seed, require_span=True)
                 agg['phasing'][frame] = ph.as_dict()
                 # per-molecule theta / r / f
                 by_name = {members[pm['molecule']].name: pm for pm in ph.per_molecule}

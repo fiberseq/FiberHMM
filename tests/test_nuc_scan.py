@@ -217,3 +217,26 @@ def test_thinning_calibrated_scans_are_byte_identical_across_runs_and_cores(scan
         assert (tmp_path / 'one' / name).read_bytes() == (tmp_path / 'two' / name).read_bytes(), name
     cal = json.loads((tmp_path / 'one' / 'nuc' / 'extra' / 'calibration.json').read_text())
     assert cal['datasets']['synth']['source'] == 'thin'
+
+
+def test_molecules_below_the_floor_are_not_measured(tmp_path):
+    from nuc_synth import array_molecule, flat_calibration as _flat, planted_record_molecule
+    from fiberhmm.scan.modules.nuc import NucModule
+    from fiberhmm.scan.reads import resolve_read_policy
+    from fiberhmm.scan.types import Dataset, ScanInputs, ScanUnit
+    rng = np.random.default_rng(2)
+    seq, nucs, msps, marks = planted_record_molecule(rng, n_nuc=20)
+    path = str(tmp_path / 'one.bam')
+    with pysam.AlignmentFile(path, 'wb', header=header(contig='chrS', length=60_000)) as out:
+        out.write(make_record(out, 'm1/1/ccs', seq, 1000, nucs, msps, (), marks))
+    pysam.index(path)
+    unit = ScanUnit('chrS:0-50000', 'chrS', 0, 50_000, 0, 50_000, 'bed', 0)
+    ds = Dataset('d', 0, None, (path,), ('x',))
+    inputs = ScanInputs(datasets=(ds,), read_policy=resolve_read_policy(None), reference={'chrS': 60_000},
+                        plan=(unit,))
+    mod = NucModule()
+    settings = mod.resolve({})
+    for floor, expect_measured in ((0.9, False), (None, True)):
+        cal = {'datasets': {'d': _flat(lambda_floor=floor).to_dict()}}
+        res = NucModule().run_unit(unit, inputs, settings, cal, {}, tmp_path, None)
+        assert (res.tracks['measured:all'].sum() > 0) == expect_measured

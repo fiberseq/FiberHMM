@@ -245,3 +245,27 @@ def test_virtual_dyads_give_continuity_not_regularity():
     r3 = molecule_outputs(m3, cal=flat_calibration())
     regs = [s for s in r3.segments if s.state == REGULAR]
     assert len(regs) == 1 and regs[0].start < merged[7][0] and regs[0].end > merged[7][1]
+
+
+def test_segments_partition_the_molecule_around_composition_runs():
+    rng = np.random.default_rng(1)
+    m = array_molecule([('reg', 30, 190), ('sub', 60, 90), ('reg', 30, 190)], rng)
+    segs = molecule_outputs(m, cal=flat_calibration()).segments
+    for a, b in zip(segs, segs[1:]):
+        assert a.end <= b.start, (a.as_dict(), b.as_dict())
+    from fiberhmm.nuc.window import _seg_fracs
+    f = _seg_fracs(segs, 6500, 7500)
+    assert sum(f[k] for k in ('regular', 'irregular', 'low_information')) <= 1.0 + 1e-9
+
+
+def test_relabel_compares_orders_with_their_composition_terms():
+    from fiberhmm.nuc.segment import LOWINFO, Step, segment_steps
+    cal = flat_calibration()
+    cal.composition = {'cats': ['mono', 'short', 'long', 'multi', 'tf'],
+                       'canonical': [0.9, 0.025, 0.025, 0.025, 0.025],
+                       'sub_rich': [0.05, 0.45, 0.025, 0.025, 0.45],
+                       'rate_canonical': 3 / 230, 'rate_sub_rich': 3 / 230, 'weight_sub_rich': 0.5}
+    steps = [Step(230 * i, 230 * (i + 1), 230.0, 1.0, np.array([1.0, 1, 0, 0, 1]), True, True, True)
+             for i in range(20)]
+    segs = segment_steps(steps, cal)
+    assert segs and all(s.state == LOWINFO for s in segs)
