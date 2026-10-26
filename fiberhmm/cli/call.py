@@ -370,8 +370,8 @@ def parse_args():
                    help='Target random-window QC sample size (default 2000).')
     p.add_argument('--qc-seed', type=int, default=20260824,
                    help='Deterministic QC sampler seed (default 20260824).')
-    p.add_argument('--qc-min-mapq', type=int, default=20,
-                   help='Minimum mapping quality for the QC sample (default 20).')
+    p.add_argument('--qc-min-mapq', type=int, default=0,
+                   help='Minimum mapping quality for the QC sample (default: 0, no filtering).')
     p.add_argument('--qc-output-prefix', default=None,
                    help='QC output prefix (default: qc/<BAM stem> beside output BAM).')
 
@@ -726,7 +726,7 @@ def _remove_dedup_temp(dedup_tmp):
 
 def _daf_snp_depth_preflight(
     input_bam,
-    min_mapq=20,
+    min_mapq=0,
     min_local_depth=20,
     max_records=20_000,
 ):

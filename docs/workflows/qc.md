@@ -15,7 +15,7 @@ fiberhmm-qc -i out/pacbio.calls.bam out/dddb.calls.bam -o out/qc_compare   # sev
 QC never reads a whole BAM. An indexed BAM is sampled through seeded random
 genomic windows (168 windows of 20 kb, filled from a capped reservoir when
 the index is sparse) to a target of `--sample-reads` (2,000) primary reads at
-MAPQ ≥ `--min-mapq` (20); an unindexed BAM uses a reservoir over at most 10×
+MAPQ ≥ `--min-mapq` (0, no filter); an unindexed BAM uses a reservoir over at most 10×
 the target records. The JSON records the strategy, seed (`--seed`, default
 20260824), records examined and `whole_bam_scanned: false`. QC never
 deduplicates.

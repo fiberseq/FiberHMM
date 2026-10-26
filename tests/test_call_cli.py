@@ -259,7 +259,7 @@ def test_call_qc_is_default_on_and_can_be_disabled(monkeypatch):
     )
     args = parse_call_args()
     assert args.qc is True
-    assert args.qc_min_mapq == 20
+    assert args.qc_min_mapq == 0
 
     monkeypatch.setattr(
         sys,

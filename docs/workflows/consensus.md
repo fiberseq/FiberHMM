@@ -70,7 +70,7 @@ the default; 2000 is a good cap) take a stable hash sample per dataset and
 chemical channel, in each discovery tile and each scoring window, after the
 evidence filters and duplicate collapse. Prevalence then uses the selected
 molecules. `--sample-seed` (`recaller.sample_seed`, 1) sets the hash seed. MAPQ
-(`input.minimum_mapq`, 20), native-opportunity and DAF molecule-collapse
+(`input.minimum_mapq`, 0 = no filter), native-opportunity and DAF molecule-collapse
 filters apply and are recorded in the manifest. Empty evidence gives an empty
 result, not an invented class. Source BAMs are never modified; output
 directories must be new or empty.

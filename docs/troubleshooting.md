@@ -277,7 +277,7 @@ Nucleosome edge normalization is off by default; add
 ## QC
 
 **`INSUFFICIENT`.** Too few reads or opportunities to grade. QC samples
-primary reads at MAPQ ≥ 20 (`--min-mapq`); a BAM with no aligned records at
+primary reads (`--min-mapq` filters them by MAPQ; default 0, no filter); a BAM with no aligned records at
 all (calls made on an unaligned BAM) is graded on its unmapped reads.
 
 **Rate capped at WARN with a threshold mismatch.** The run's ML threshold

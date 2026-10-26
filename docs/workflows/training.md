@@ -47,7 +47,7 @@ targets on GA reads are reverse-complemented into C-centred contexts).
   (`gpc`, `cpg` are development modes).
 - `-k/--context-sizes` (default `3 4 5 6`): bases on each side; 3 gives
   7-mers (4^6 = 4,096 contexts). Larger contexts need much more data.
-- `-n/--max-reads` (100,000 per sample; 0 = all), `-q/--min-mapq` (20),
+- `-n/--max-reads` (100,000 per sample; 0 = all), `-q/--min-mapq` (0, no filter),
   `-p/--prob-threshold` (128), `--min-read-length` (1000), `-e/--edge-trim`
   (10). DAF inputs are read like `fiberhmm-call` reads them (R/Y, `MD`, or
   MM/ML dU).
@@ -83,7 +83,7 @@ Saving to out/model
 - `-k` must match the context size of the tables, and `--mode` (default
   `pacbio-fiber`) the mode they were built with: pass `--mode nanopore-fiber`
   or `--mode daf` for those tables.
-- `-q/--min-mapq` (20), `--prob-threshold` (125), `--min-read-length` (1000)
+- `-q/--min-mapq` (0, no filter), `--prob-threshold` (125), `--min-read-length` (1000)
   and `-e/--edge-trim` (10) filter the training reads; `--daf-mask-runs` /
   `--daf-run-policy` thin DAF targets as in `fiberhmm-call`.
 - `-r/--read-count` (500) reads are sampled from `-i`; `-c/--iterations` (10)

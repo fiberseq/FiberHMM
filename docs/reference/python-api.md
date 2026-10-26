@@ -20,7 +20,7 @@ fiberhmm.__version__          # "3.0.2"
 | `fiberhmm.FiberHMM` | `(n_states=2)` | the two-state HMM: `predict` (Viterbi), `predict_proba` (posteriors), `fit`, `score` |
 | `fiberhmm.ContextEncoder` | | builds and caches context lookup tables |
 | `fiberhmm.FiberRead` | | one read with its modification calls and encoding |
-| `fiberhmm.read_bam` | `(bam_path, region=None, min_mapq=20, prob_threshold=125, min_read_length=1000, mode='pacbio-fiber')` | iterate `FiberRead`s from a BAM |
+| `fiberhmm.read_bam` | `(bam_path, region=None, min_mapq=0, prob_threshold=125, min_read_length=1000, mode='pacbio-fiber')` | iterate `FiberRead`s from a BAM |
 
 Loading a `.pickle` model executes code; load only trusted files.
 

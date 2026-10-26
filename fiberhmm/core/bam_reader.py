@@ -1625,7 +1625,7 @@ def _encode_vectorized(sequence: str, target_base: str, context_size: int,
 
 def read_bam(bam_path: str,
              region: Optional[str] = None,
-             min_mapq: int = 20,
+             min_mapq: int = 0,
              prob_threshold: int = 125,
              min_read_length: int = 1000,
              mode: str = 'pacbio-fiber') -> Iterator[FiberRead]:
@@ -1635,7 +1635,7 @@ def read_bam(bam_path: str,
     Args:
         bam_path: Path to indexed BAM file
         region: Optional region string (e.g., "chr2L:1000-5000")
-        min_mapq: Minimum mapping quality
+        min_mapq: Minimum mapping quality (default 0, no filtering)
         prob_threshold: Minimum ML probability (0-255) to call modification
         min_read_length: Minimum aligned read length
         mode: 'pacbio-fiber' for fiber-seq, 'daf' for DAF-seq

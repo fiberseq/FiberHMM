@@ -1351,8 +1351,8 @@ Examples:
                            default=[3, 4, 5, 6], help='Context size(s)')
     p_transfer.add_argument('-n', '--max-reads', type=int, default=100000,
                            help='Max reads to process (0 = all)')
-    p_transfer.add_argument('-q', '--min-mapq', type=int, default=20,
-                           help='Min mapping quality')
+    p_transfer.add_argument('-q', '--min-mapq', type=int, default=0,
+                           help='Min mapping quality (default: 0, no filtering)')
     p_transfer.add_argument('-p', '--prob-threshold', type=int, default=128,
                            help='Min ML probability for modification call')
     p_transfer.add_argument('--min-read-length', type=int, default=1000,

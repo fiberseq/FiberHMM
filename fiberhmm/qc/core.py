@@ -157,7 +157,7 @@ def sample_bam_reads(
     path: str,
     sample_reads: int = DEFAULT_SAMPLE_READS,
     seed: int = DEFAULT_SEED,
-    min_mapq: int = 20,
+    min_mapq: int = 0,
     scan_limit: Optional[int] = None,
 ) -> SampledReads:
     """Take a deterministic, bounded read sample without a whole-file pass."""
@@ -2647,7 +2647,7 @@ def run_qc(
     reference_fasta: Optional[str] = None,
     sample_reads: int = DEFAULT_SAMPLE_READS,
     seed: int = DEFAULT_SEED,
-    min_mapq: int = 20,
+    min_mapq: int = 0,
     prob_threshold: Optional[int] = None,
     min_opportunities: int = 200,
     snp_report_path: Optional[str] = None,
@@ -3427,7 +3427,7 @@ def run_multi_qc(
     reference_fasta: Optional[str] = None,
     sample_reads: int = DEFAULT_SAMPLE_READS,
     seed: int = DEFAULT_SEED,
-    min_mapq: int = 20,
+    min_mapq: int = 0,
     prob_threshold: Optional[int] = None,
     min_opportunities: int = 200,
     stream: Optional[TextIO] = sys.stderr,

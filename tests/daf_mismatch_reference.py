@@ -254,7 +254,7 @@ def call_opposite_conversion_snps(
     min_alt_fibers: int = DEFAULT_SNP_MIN_ALT_FIBERS,
     min_dominant_events: int = 5,
     min_dominant_purity: float = 0.80,
-    min_mapq: int = 20,
+    min_mapq: int = 0,
     reference_fasta: Optional[str] = None,
     max_profile_sites: int = _SITE_PROFILE_MAX_SITES,
     profile_min_depth: int = _SITE_PROFILE_MIN_DEPTH,

@@ -70,8 +70,8 @@ def parse_args():
                         help='Random seed')
     parser.add_argument('-e', '--edge-trim', type=int, default=10,
                         help='Edge masking')
-    parser.add_argument('-q', '--min-mapq', type=int, default=20,
-                        help='Min mapping quality')
+    parser.add_argument('-q', '--min-mapq', type=int, default=0,
+                        help='Min mapping quality (default: 0, no filtering)')
     parser.add_argument('--prob-threshold', type=int, default=125,
                         help='Min ML probability (default matches ft-extract)')
     parser.add_argument('--min-read-length', type=int, default=1000,
@@ -201,7 +201,7 @@ def make_emission_probs(acc_file: str, inacc_file: str,
 
 
 def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
-                         mode: str = 'pacbio-fiber', min_mapq: int = 20,
+                         mode: str = 'pacbio-fiber', min_mapq: int = 0,
                          prob_threshold: int = 125, min_read_length: int = 1000) -> list:
     """
     Sample reads using BAM index for efficient random access.

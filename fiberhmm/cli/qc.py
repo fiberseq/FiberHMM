@@ -59,7 +59,7 @@ def parse_args(argv=None):
     parser.add_argument("--reference", default=None, help="Indexed FASTA fallback for raw DAF BAMs lacking MD/R/Y")
     parser.add_argument("--sample-reads", type=int, default=DEFAULT_SAMPLE_READS, help=f"Target bounded sample size (default {DEFAULT_SAMPLE_READS:,})")
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED, help=f"Deterministic sampler seed (default {DEFAULT_SEED})")
-    parser.add_argument("--min-mapq", type=int, default=20, help="Minimum mapping quality (default 20)")
+    parser.add_argument("--min-mapq", type=int, default=0, help="Minimum mapping quality (default: 0, no filtering)")
     parser.add_argument("--prob-threshold", type=int, default=None, help="Minimum MM/ML probability, 0-255 (default: 248 for Hia5 Nanopore, the threshold its QC reference is calibrated at; 125 otherwise)")
     parser.add_argument("--min-opportunities", type=int, default=200, help="Minimum target sites per read for rate QC (default 200)")
     parser.add_argument("--snp-mask", default=None, help="Applied DAF SNP-mask BED to summarize (single input only)")

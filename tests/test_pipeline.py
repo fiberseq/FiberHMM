@@ -726,13 +726,13 @@ def test_daf_hard_clip_and_supplementary_drop_stay_on_circular_contigs():
 def test_aligner_step_keeps_unique_supplementary_of_ambiguous_primary():
     group, circular = _split_group()
     group[0].mapping_quality = 0
-    kept, stats = _process(group, circular)
+    kept, stats = _process(group, circular, min_mapq=20)
     assert [r.is_supplementary for r in kept] == [True]
     assert stats["low_mapq"] == 1 and stats["supplementary_kept"] == 1
     assert not kept[0].has_tag("SA")
     group, circular = _split_group()
     group[0].mapping_quality = 0
-    assert _process(group, circular, alignments="primary")[0] == []
+    assert _process(group, circular, alignments="primary", min_mapq=20)[0] == []
 
 
 @pytest.mark.parametrize("call_args, mask, insert", [
