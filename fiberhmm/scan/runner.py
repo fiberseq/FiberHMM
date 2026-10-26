@@ -23,7 +23,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from . import identity as I
 from .modules import ORDER, load_module
-from .reads import owned_records, record_ref, resolve_read_policy, unit_survey
+from .reads import overlapping_records, record_ref, resolve_read_policy, unit_survey
 from .seams import reconcile_anchor, territory_runs
 from .tables import COMMON, TableWriter
 from .types import (SCHEMA, Dataset, FullMolecule, ScanInputs, ScanUnit, molecule_result_from_json,
@@ -245,7 +245,7 @@ def _unit_key(base, module, version, settings_hash, cal_sha, unit: ScanUnit, ups
 
 # ------------------------------------------------------------------ unit work
 def _unit_dir(out: Path, module: str, unit: ScanUnit) -> Path:
-    return out / WORK / module / I.safe_name(unit.unit_id)
+    return out / WORK / module / I.unit_dir_name(unit.unit_id)
 
 
 def _marker_valid(folder: Path, key: str) -> Optional[dict]:
@@ -300,7 +300,7 @@ def run_unit_task(spec: dict) -> dict:
     plan_units = tuple(ScanUnit.from_json(u) for u in spec['plan'])
     inputs = ScanInputs(datasets=datasets, read_policy=spec['read_policy'], reference=spec['reference'],
                         plan=plan_units, cores=int(spec['cores']))
-    log_path = out / WORK / 'logs' / (I.safe_name(unit.unit_id) + '.log')
+    log_path = out / WORK / 'logs' / (I.unit_dir_name(unit.unit_id) + '.log')
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with ExitStack() as stack:
         handle = stack.enter_context(open(log_path, 'a'))
@@ -314,7 +314,7 @@ def run_unit_task(spec: dict) -> dict:
                 pass
         progress = _LogProgress(handle)
         # Unit survey: emptiness and callable territory (orchestrator-owned, independent of modules).
-        survey_dir = out / WORK / '_unit' / I.safe_name(unit.unit_id)
+        survey_dir = out / WORK / '_unit' / I.unit_dir_name(unit.unit_id)
         survey_key = I.digest([spec['scan_id_core'], unit.to_json()])
         marker = _marker_valid(survey_dir, survey_key)
         if marker is None:
@@ -358,7 +358,10 @@ def run_unit_task(spec: dict) -> dict:
             result = mod.run_unit(unit, inputs, settings, calibration, upstream, scratch, progress)
             molecules = []
             if mod.wants_molecules:
-                for ds, i, read, sha, occ in owned_records(datasets, unit, index, inputs.read_policy):
+                # Every record overlapping the unit: molecule-wide outputs do not depend on the unit, and
+                # finalize keeps each record's result from the unit that owns it under the current plan
+                # (so a scan extended with new units never reports a record twice).
+                for ds, i, read, sha, occ in overlapping_records(datasets, unit, inputs.read_policy):
                     rec = record_ref(read, ds, i, sha, occ, unit.chrom)
                     mr = mod.molecule_outputs(FullMolecule(rec, read, ds), settings, calibration)
                     if mr is not None:
@@ -603,7 +606,7 @@ def _run_locked(out, resolved, reference, contigs, units, units_info, mods, poli
     core = base
     pending, reused = [], 0
     for u in units:
-        survey_dir = out / WORK / '_unit' / I.safe_name(u.unit_id)
+        survey_dir = out / WORK / '_unit' / I.unit_dir_name(u.unit_id)
         surveyed = _marker_valid(survey_dir, I.digest([core, u.to_json()])) is not None
         empty = surveyed and _read_json(survey_dir / 'survey.json')['records'] == 0
         all_ok = surveyed and (empty or all(_marker_valid(_unit_dir(out, n, u), unit_keys[n][u.unit_id]) is not None

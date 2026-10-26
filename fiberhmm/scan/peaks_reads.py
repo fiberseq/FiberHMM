@@ -675,7 +675,10 @@ def _record_tiles(read, lo, hi, *, legacy, group_frame, hide_terminal_gaps, term
         nl_tag = read.get_tag('nl') if read.has_tag('nl') else None
         nq_tag = read.get_tag('nq') if read.has_tag('nq') and nl_tag is not None else None
     if ns_tag is None and read.has_tag('as') and read.has_tag('al'):
-        ns_tag, nl_tag = msp_complement(read.get_tag('as'), read.get_tag('al'), read.query_length or 0)
+        try:
+            ns_tag, nl_tag = msp_complement(read.get_tag('as'), read.get_tag('al'), read.query_length or 0)
+        except (TypeError, ValueError):
+            return None          # an MSP stream FiberBrowser cannot read either: no row
     if ns_tag is None:
         # No legacy footprints (MA-only or untagged): FiberBrowser shows the read as one neutral tile.
         return neutral()

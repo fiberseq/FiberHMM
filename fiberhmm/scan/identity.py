@@ -125,8 +125,13 @@ def record_sha256(read) -> str:
     return hashlib.sha256(read.to_string().encode('utf-8')).hexdigest()
 
 
+def unit_dir_name(unit_id: str) -> str:
+    """A filesystem-safe, injective directory name for a unit id (readable part + digest of the full id)."""
+    return f'{safe_name(unit_id)}-{hashlib.sha256(unit_id.encode()).hexdigest()[:12]}'
+
+
 def safe_name(text: str) -> str:
-    """A filesystem-safe rendering of a unit id or similar key."""
+    """A filesystem-safe rendering of a key (not injective: use :func:`unit_dir_name` for unit ids)."""
     out = []
     for ch in str(text):
         out.append(ch if ch.isalnum() or ch in '-_.' else '_')

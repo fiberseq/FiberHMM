@@ -115,6 +115,9 @@ class NfrModule(ScanModuleBase):
         for name in CAP_NAMES:
             if caps.get(name) is not None:
                 nfr[name] = int(caps[name])
+        if nfr.get('elements', 'variants') != 'variants':
+            raise ValueError("nfr: elements chooses fiberhmm-nfr's co-accessibility elements, which a scan does not "
+                             "write; per-molecule memberships need the variants as elements (leave it unset)")
         opt = NFROptions.from_params(nfr)
         loader = {g: dict(v) for g, v in params.items() if v}
         loader.get('compute', {}).pop('cores', None)
@@ -282,10 +285,9 @@ class NfrModule(ScanModuleBase):
                     if p is None:
                         continue
                     element = elements.get(v['id'])
-                    if element is not None and uid in element['state']:
-                        state = '1' if element['state'][uid] else '0'
-                    else:       # elements = 'nfrs': variants are not elements; threshold the reported posterior
-                        state = '1' if p >= opt.open_threshold else '0'
+                    if element is None or uid not in element['state']:
+                        continue
+                    state = '1' if element['state'][uid] else '0'
                     q = (int(round(255 * min(1.0, max(0.0, float(p))))),)
                     for r in units.get(uid, ()):
                         res.states.append(State(v['id'], r, state, q, dict(cols, p=p)))

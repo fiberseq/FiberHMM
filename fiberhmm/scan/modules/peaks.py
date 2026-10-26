@@ -110,12 +110,24 @@ class PeaksModule(ScanModuleBase):
         if rows == 'view' and not single:
             raise ValueError("peaks: row_rule 'view' depends on the view's extent, so it needs every unit to be one "
                              "BED/region unit; use row_rule 'records' for grid scans")
-        return dict(tier_rule=rule, row_rule=rows, datasets={str(d.ordinal): d.dataset_id for d in inputs.datasets})
+        # Circular contigs (@SQ TP:circular): FiberBrowser joins records that run past the contig end with
+        # their wrapped tails; that is not ported, so these contigs are not scanned for peaks.
+        circular = set()
+        import pysam
+        for d in inputs.datasets:
+            for path in d.paths:
+                with pysam.AlignmentFile(path, 'rb', check_sq=False) as bam:
+                    circular.update(sq['SN'] for sq in bam.header.to_dict().get('SQ', [])
+                                    if str(sq.get('TP', '')).lower() == 'circular')
+        return dict(tier_rule=rule, row_rule=rows, datasets={str(d.ordinal): d.dataset_id for d in inputs.datasets},
+                    circular_contigs_skipped=sorted(circular & {u.chrom for u in units}))
 
     def run_unit(self, unit, inputs, settings, calibration, upstream, work, progress):
         import pysam
         from ..peaks_reads import compact_rows
         lo, hi = unit.zone_start, unit.zone_end
+        if unit.chrom in (calibration or {}).get('circular_contigs_skipped', ()):
+            return UnitResult(tracks=None, extra=dict(skipped='circular contig'))
         tracks: Dict[str, Any] = {}
         n_reads = 0
         for ds in inputs.datasets:

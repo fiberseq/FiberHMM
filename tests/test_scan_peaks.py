@@ -254,3 +254,21 @@ def test_review_records_match_browser(tmp_path):
             a = PS.compute_scan_counts(rows, 'accessibility', end - start)
             b = C.compute_scan_counts(_rows(path, start, end), 'accessibility', end - start)
             assert np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]), (i, start, end)
+
+
+
+def test_empty_zones_do_not_truncate_stitched_peaks(tmp_path):
+    from fiberhmm.scan import plan, run_units
+    path = _bam(tmp_path / 'a.bam', [dict(start=421, cigar='79M', tags={'ns': [0], 'nl': [79]})])
+    hits = []
+    for offset in (0, 250):
+        units = plan({'chrP': 1500}, genome=True, unit_bp=500, stride_bp=500, grid_offset=offset)
+        out = tmp_path / f'o{offset}'
+        run_units([{'dataset_id': 'x', 'paths': [path]}], units, modules=['peaks'], out=out, annotate=False)
+        hits.append((out / 'peaks' / 'hits.tsv.bgz').read_bytes())
+    assert hits[0] == hits[1]
+
+
+def test_msp_only_string_tags_do_not_crash(tmp_path):
+    path = _bam(tmp_path / 'a.bam', [dict(tags={'as': '100,700', 'al': '147,147'})])
+    assert isinstance(_rows(path), list)

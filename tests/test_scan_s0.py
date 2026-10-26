@@ -173,7 +173,11 @@ def test_territory_runs():
                            (us[3], t(us[3]), 'ok')])
     assert [(s, e, lo, ro) for s, e, _a, lo, ro in runs] == [(0, 25_000, False, True), (50_000, 100_000, True, False)]
     runs = territory_runs([(us[0], t(us[0]), 'ok'), (us[1], None, 'empty'), (us[2], t(us[2]), 'ok')])
-    assert [(lo, ro) for _s, _e, _a, lo, ro in runs] == [(False, False), (False, False)]
+    assert [(s, e, lo, ro) for s, e, _a, lo, ro in runs] == [(0, 75_000, False, False)]     # zeros between
+    assert runs[0][2]['x'][25_000:50_000].sum() == 0 and runs[0][2]['x'][:25_000].sum() == 25_000
+    runs = territory_runs([(us[0], None, 'empty'), (us[1], t(us[1]), 'ok'), (us[2], None, 'empty'),
+                           (us[3], None, 'empty')])
+    assert [(s, e) for s, e, _a, _l, _r in runs] == [(0, 75_000)]                   # one empty zone padded each side
 
 
 # ------------------------------------------------------------------ the planted fixture through run_units
@@ -364,3 +368,38 @@ def test_extend_reuses_units_of_the_earlier_plan(tmp_path, synth_bam):
     assert run['attempts'][-1]['units_reused'] == len(small[0])
     run_units(ds, both, modules=['plant'], params=feats, out=tmp_path / 'fresh', annotate=False, registry=REG)
     assert (out / 'plant' / 'hits.tsv.bgz').read_bytes() == (tmp_path / 'fresh' / 'plant' / 'hits.tsv.bgz').read_bytes()
+
+
+# ------------------------------------------------------------------ review findings (round 2)
+def test_extend_keeps_one_molecule_result_per_record(tmp_path, synth_bam):
+    from fiberhmm.scan import run_units
+    ds = [{'dataset_id': 'synth', 'paths': [synth_bam]}]
+    out = tmp_path / 'm'
+    run_units(ds, plan({'chrS': 200_000}, regions=[('chrS', 20_000, 21_000)]), modules=['molly'], out=out,
+              annotate=False, registry=REG)
+    both = plan({'chrS': 200_000}, regions=[('chrS', 10_000, 11_000), ('chrS', 20_000, 21_000)])
+    run_units(ds, both, modules=['molly'], out=out, annotate=False, registry=REG, continue_run=True, extend=True)
+    rows = read_all(out / 'molly' / 'molecules.tsv.bgz')
+    assert len({r['record'] for r in rows}) == len(rows)
+    run_units(ds, both, modules=['molly'], out=tmp_path / 'fresh', annotate=False, registry=REG)
+    assert (out / 'molly' / 'molecules.tsv.bgz').read_bytes() == \
+        (tmp_path / 'fresh' / 'molly' / 'molecules.tsv.bgz').read_bytes()
+
+
+def test_unit_directories_are_injective():
+    assert I.unit_dir_name('c#1:0-10000') != I.unit_dir_name('c_1:0-10000')
+
+
+def test_feature_reaching_several_seams_is_kept_once():
+    units, _ = plan({'c': 10_000}, genome=True, unit_bp=5_000, stride_bp=250)
+    by_idx = {u.index: u for u in units}
+    spans = {10: (2_600, 2_800), 11: (2_500, 2_950), 12: (2_700, 3_600)}
+    results = [(u, [Hit('fp.class', 'k', 'c', *spans[u.index], (spans[u.index][0] + spans[u.index][1]) // 2)]
+                if u.index in spans else []) for u in units]
+    kept, _c, _o = reconcile_anchor(results)
+    kept_spans = [(h.start, h.end) for _u, h in kept]
+    for a in kept_spans:
+        for b in kept_spans:
+            if a != b:
+                assert not (a[0] < b[1] and b[0] < a[1])
+    assert len(kept) >= 1

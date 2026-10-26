@@ -37,7 +37,7 @@ def _read_json(path: Path):
 
 
 def _unit_dir(out: Path, module: str, unit: ScanUnit) -> Path:
-    return out / 'work' / module / I.safe_name(unit.unit_id)
+    return out / 'work' / module / I.unit_dir_name(unit.unit_id)
 
 
 class _Annotations:
@@ -57,6 +57,8 @@ class _Annotations:
 
 def finalize(out: Path, manifest: dict, datasets, reference: Mapping[str, int], units: Sequence[ScanUnit],
              mods, unit_keys, annotate: bool, progress, *, command=None, calibrations=None) -> dict:
+    from .units import UnitIndex
+    index = UnitIndex(units)
     order = {c: i for i, c in enumerate(reference)}
     contigs_in_plan = sorted({u.chrom for u in units}, key=lambda c: order[c])
     units_by_chrom = defaultdict(list)
@@ -69,7 +71,7 @@ def finalize(out: Path, manifest: dict, datasets, reference: Mapping[str, int], 
     surveys, status = {}, {}
     for u in units:
         try:
-            surveys[u.unit_id] = _read_json(out / 'work' / '_unit' / I.safe_name(u.unit_id) / 'survey.json')
+            surveys[u.unit_id] = _read_json(out / 'work' / '_unit' / I.unit_dir_name(u.unit_id) / 'survey.json')
         except (OSError, ValueError):
             surveys[u.unit_id] = None
         if surveys[u.unit_id] is None:
@@ -221,7 +223,7 @@ def finalize(out: Path, manifest: dict, datasets, reference: Mapping[str, int], 
                             if row.get('hit_key') in skey:
                                 native_rows[name][table].append(((chrom,) + spans[row['hit_key']], skey[row['hit_key']], row))
                                 native_cols[name].setdefault(table, [k for k in row if k != 'hit_key'])
-                # molecule-wide outputs (owned records; never reconciled)
+                # molecule-wide outputs: each record's result from the unit that owns it under this plan
                 for u in cunits:
                     if status[u.unit_id] != 'done':
                         continue
@@ -229,7 +231,12 @@ def finalize(out: Path, manifest: dict, datasets, reference: Mapping[str, int], 
                     if not p.is_file():
                         continue
                     for item in _read_json(p):
-                        _emit_molecule(name, mod, decls[name], molecule_result_from_json(item), w, ann, tsv_mode)
+                        mr = molecule_result_from_json(item)
+                        rec = mr.record
+                        owner = index.owner_of_record(rec.chrom, rec.ref_start, max(rec.ref_end, rec.ref_start + 1))
+                        if owner is None or owner.unit_id != u.unit_id:
+                            continue
+                        _emit_molecule(name, mod, decls[name], mr, w, ann, tsv_mode)
             if annotate:
                 _write_annotated_contig(bam_writers, chrom, ann, cunits, full_copy)
                 ann.clear()

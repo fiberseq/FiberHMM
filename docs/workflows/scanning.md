@@ -101,7 +101,9 @@ FiberBrowser's. Two rules make grid scans independent of where units fall:
   record (`row_rule: records`); BED and short-window scans keep
   FiberBrowser's rule.
 
-Tiers Strong to Weak never depend on the rare-tier rule. The row rule
+Circular contigs (`@SQ TP:circular`) are not scanned for peaks: FiberBrowser
+joins records that run past the contig end with their wrapped tails, which
+is not ported yet. Tiers Strong to Weak never depend on the rare-tier rule. The row rule
 changes the per-base counts where supplementary alignments lie, so it can
 change any tier there. `signal_source` is `accessibility` (default) or
 `tf_density`.
