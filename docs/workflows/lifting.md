@@ -104,10 +104,14 @@ dropped (`mods_dropped`). A supplementary without footprint tags stays
 without. One whose tags cannot be placed unambiguously is left out and
 counted (`excluded_unverifiable`).
 
-Secondary and unmapped records are not lifted. Supplementaries whose primary
-is not in the input are left out before the lift
-(`orphan_supplementary_no_primary_in_input`), and those whose primary did not
-lift are dropped after it (`orphan_supplementary_dropped`). The counts are printed and recorded in the
+Secondary and unmapped records are not lifted. A supplementary whose primary
+is not in the input (a region slice, say) is lifted when it is soft-clipped,
+since it carries its own `SEQ`, calls and modifications
+(`orphan_supplementary_kept`); a hard-clipped one has nothing to fill its
+clips from and is left out before the lift
+(`orphan_supplementary_no_primary_in_input`). Supplementaries whose primary
+was in the input but did not lift are dropped after it
+(`orphan_supplementary_dropped`). The counts are printed and recorded in the
 `fiberhmm-lift` `@PG`, which also declares `coord=molecular`:
 
 ```text

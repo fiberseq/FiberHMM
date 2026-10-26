@@ -212,8 +212,9 @@ def _graph_lift(args, work_dir: str) -> int:
     print(f"{TOOL}: stashed {stash.stashed} records "
           f"({stash.filled_supplementary} hard-clipped supplementaries filled, "
           f"{stash.excluded_supplementary} excluded, "
-          f"{stash.orphan_supplementary_no_primary_in_input} supplementaries whose primary "
-          f"is not in the input left out; "
+          f"{stash.orphan_supplementary_no_primary_in_input} hard-clipped supplementaries whose "
+          f"primary is not in the input left out, {stash.orphan_supplementary_kept} soft-clipped "
+          f"ones lifted; "
           f"{stash.dropped_secondary} secondary and {stash.dropped_unmapped} unmapped "
           f"records not lifted)", file=sys.stderr)
     lifted = os.path.join(work_dir, "lifted.bam")

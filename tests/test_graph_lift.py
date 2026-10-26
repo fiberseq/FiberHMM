@@ -331,14 +331,27 @@ def test_supplementaries_without_a_primary_in_the_input_are_counted_at_stash(tmp
         lambda h: _read(h, "late", pos=600, seq=_seq(50)),       # primary after its supp
     ])
     stats = gl.stash_bam(src, str(tmp_path / "np.stash.bam"))
-    assert stats.orphan_supplementary_no_primary_in_input == 2
-    assert stats.excluded_supplementary == 0 and stats.stashed == 2
+    # Only the hard-clipped orphan is left out: the soft-clipped one (a region slice
+    # cutting off its primary) carries its own SEQ and calls and is lifted.
+    assert stats.orphan_supplementary_no_primary_in_input == 1
+    assert stats.orphan_supplementary_kept == 1
+    assert stats.excluded_supplementary == 0 and stats.stashed == 3
     records, _ = _records(tmp_path / "np.stash.bam")
-    assert sorted(r.query_name for r in records) == ["late", "late"]
+    assert sorted(r.query_name for r in records) == ["late", "late", "soft"]
+    assert [r.has_tag("Yo") for r in records if r.query_name == "soft"] == [True]
+    assert not any(r.has_tag("Yo") for r in records if r.query_name == "late")
     lifted = _fake_lift(tmp_path / "np.stash.bam", tmp_path / "np.lifted.bam")
     repair = gl.repair_bam(lifted, str(tmp_path / "np.out.bam"),
-                           work_dir=str(tmp_path / "np.w"), pg_args={"mode": "lift"})
-    assert repair.supplementary_restored == 1 and repair.orphan_supplementary_dropped == 0
+                           work_dir=str(tmp_path / "np.w"),
+                           pg_args={"mode": "lift", "stash": stats.as_dict()})
+    assert repair.supplementary_restored == 2 and repair.orphan_supplementary_dropped == 0
+    out, hdr = _records(tmp_path / "np.out.bam")
+    soft = [r for r in out if r.query_name == "soft"]
+    assert len(soft) == 1 and soft[0].is_supplementary and not soft[0].has_tag("Yo")
+    assert soft[0].query_sequence == _seq(50) and soft[0].cigarstring == "20S30M"
+    ds = next(pg for pg in hdr["PG"] if pg["ID"] == "fiberhmm-lift")["DS"]
+    assert "orphan_supplementary_no_primary_in_input=1" in ds
+    assert "orphan_supplementary_kept=1" in ds
 
 
 # --- repair-only (lifted without the stash) -------------------------------------

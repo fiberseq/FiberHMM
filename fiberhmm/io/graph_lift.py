@@ -37,6 +37,10 @@ minimap2, pbmm2 or vg):
 
 ``Yf:i`` (stash; removed by the repair)
     source FLAG.
+``Yo:i`` (stash; removed by the repair)
+    1 on a soft-clipped supplementary whose primary is not in the input (a
+    region slice, say): it carries its own SEQ and calls, is lifted, and the
+    repair keeps it although no primary of its read lifted.
 ``Yh:Z`` (stash; removed by the repair)
     hard clips of the source record as ``<kind>:<left>,<right>`` in its CIGAR
     order. ``S`` means the stash filled the clipped bases from the primary
@@ -63,7 +67,8 @@ Decisions:
   (supplementaries are called separately) are rebased onto the filled SEQ
   (:func:`fill_hard_clips`). A
   hard-clipped supplementary whose primary is not in the input is excluded
-  and counted.
+  and counted; a soft-clipped one carries its own SEQ, calls and
+  modifications, and is lifted (``Yo``).
 - Footprint annotations are converted to molecular frame before the lift
   (:func:`fiberhmm.io.frame_carry.carry_to_molecular`); only molecular
   coordinates survive a strand change. ``MA`` m5C groups and fibertools
@@ -89,9 +94,10 @@ import pysam
 
 TAG_FLAG = "Yf"
 TAG_HARDCLIP = "Yh"
+TAG_ORPHAN = "Yo"
 TAG_SOURCE_MAPQ = "Yq"
 TAG_SOURCE_LOCUS = "Yp"
-STASH_TAGS = (TAG_FLAG, TAG_HARDCLIP)
+STASH_TAGS = (TAG_FLAG, TAG_HARDCLIP, TAG_ORPHAN)
 PROVENANCE_TAGS = (TAG_SOURCE_MAPQ, TAG_SOURCE_LOCUS)
 # Tags that describe the source alignment against the source reference.
 # ``cs`` only in minimap2's difference-string form: FiberHMM's joint duplex
@@ -157,6 +163,7 @@ class StashStats:
     filled_supplementary: int = 0
     excluded_supplementary: int = 0
     orphan_supplementary_no_primary_in_input: int = 0
+    orphan_supplementary_kept: int = 0
     excluded_unverifiable: int = 0
     mods_dropped: int = 0
     hard_clipped_kept: int = 0
@@ -637,11 +644,12 @@ def stash_bam(in_path: str, out_path: str, *, threads: int = 1) -> StashStats:
                 stats.dropped_secondary += 1
                 continue
             name = read.query_name
-            if read.is_supplementary and name not in with_primary:
-                # Its primary was never in the input: nothing to restore it against.
+            clips = _hard_clips(read)
+            orphan = read.is_supplementary and name not in with_primary
+            if orphan and any(clips):
+                # Its primary was never in the input: nothing to fill its clips from.
                 stats.orphan_supplementary_no_primary_in_input += 1
                 continue
-            clips = _hard_clips(read)
             hard_supp = read.is_supplementary and any(clips)
             # A hard-clipped supplementary is converted in fill_hard_clips,
             # once the scope of its annotations is known.
@@ -662,6 +670,10 @@ def stash_bam(in_path: str, out_path: str, *, threads: int = 1) -> StashStats:
                 hard = "H:{},{}".format(*clips)
                 stats.hard_clipped_kept += 1
             _stash_tags(read, hard)
+            if orphan:
+                # Soft-clipped: its own SEQ, calls and MM; lifted and kept.
+                read.set_tag(TAG_ORPHAN, 1, value_type="i")
+                stats.orphan_supplementary_kept += 1
             out.write(read)
             stats.stashed += 1
         for held in waiting.values():
@@ -1201,6 +1213,8 @@ def lift_pg_record(*, repair: RepairStats, calmd: bool, mode: str = "lift",
     if "orphan_supplementary_no_primary_in_input" in stash:
         parts.append("orphan_supplementary_no_primary_in_input="
                      f"{stash['orphan_supplementary_no_primary_in_input']}")
+    if stash.get("orphan_supplementary_kept"):
+        parts.append(f"orphan_supplementary_kept={stash['orphan_supplementary_kept']}")
     parts.append(f"filled_supplementary={stash.get('filled_supplementary', 0)}")
     for key in ("excluded_unverifiable", "mods_dropped"):
         if stash.get(key):
@@ -1285,6 +1299,7 @@ def repair_bam(lifted_path: str, out_path: str, *, work_dir: str,
             if read.is_supplementary:
                 supp_counts[read.query_name] += 1
     primary_names = set()
+    kept_orphans = set()
     if supp_counts:
         with pysam.AlignmentFile(lifted_path, "rb", check_sq=False, threads=threads) as bam:
             for read in bam.fetch(until_eof=True):
@@ -1292,8 +1307,11 @@ def repair_bam(lifted_path: str, out_path: str, *, work_dir: str,
                         and not int(read.get_tag(TAG_FLAG)) & (_SUPP | _SECONDARY)
                         and not read.is_unmapped):
                     primary_names.add(read.query_name)
+                if read.query_name in supp_counts and read.has_tag(TAG_ORPHAN):
+                    kept_orphans.add(read.query_name)
     planned.orphan_supplementary_dropped = sum(
-        n for name, n in supp_counts.items() if name not in primary_names)
+        n for name, n in supp_counts.items()
+        if name not in primary_names and name not in kept_orphans)
     if target_fasta:
         validate_target_fasta(header, target_fasta, used_contigs)
 
@@ -1311,9 +1329,10 @@ def repair_bam(lifted_path: str, out_path: str, *, work_dir: str,
         for read in bam.fetch(until_eof=True):
             stats.records_in += 1
             lifted_supplementary = read.is_supplementary
+            input_orphan = read.has_tag(TAG_ORPHAN)
             repair_record(read, stats, mapq)
             if read.is_supplementary:
-                if read.query_name not in primary_names:
+                if read.query_name not in primary_names and not input_orphan:
                     stats.orphan_supplementary_dropped += 1
                     continue
                 multi.add(read.query_name)
