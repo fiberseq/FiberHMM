@@ -228,7 +228,9 @@ def strip_stale_call_tags(read, *, legacy_tags=LEGACY_CALL_TAGS,
     the legacy apply writer drops MA/AN/AQ wholesale (``False``).
     fibertools' (>= 0.13) ``Ma/Aq/An`` are dropped wholesale: they hold the
     footprints this run replaces (nuc/msp, plus FIRE built on those MSPs) and
-    never DddA m5C groups.
+    never DddA m5C groups. Groups derived from the old calls (fiberhmm-scan's
+    ``nucsz``/``nucseg``/``nucmol``, ``fpcls``, ``nfrvar``, ``nfrmol``) are
+    always dropped: only m5C groups survive.
     """
     if not hasattr(read, "has_tag"):
         return

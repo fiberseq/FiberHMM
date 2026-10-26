@@ -41,7 +41,7 @@ from fiberhmm.inference.streaming_workers import (
 )
 from fiberhmm.inference.worker_results import enforce_worker_failure_policy
 from fiberhmm.io.bam_header import (
-    append_coord_marker,
+    call_writer_header,
     append_ma_types,
 )
 
@@ -182,7 +182,7 @@ def _process_bam_streaming_pipeline_fused(
             # The @CO marker keeps the frame declared when a pipeline strips
             # or rewrites @PG (the @PG DS carries it too).
             output_header = append_ma_types(
-                output_header_with_provenance(append_coord_marker(inbam.header),
+                output_header_with_provenance(call_writer_header(inbam.header),
                                               pg_record),
                 ma_types,
             )
@@ -407,7 +407,7 @@ def _process_bam_streaming_pipeline(
             has_references = bool(inbam.references)
             with pysam.AlignmentFile(_output_target(output_path), "wb",
                                      header=output_header_with_provenance(
-                                         append_coord_marker(inbam.header),
+                                         call_writer_header(inbam.header),
                                          pg_record),
                                      threads=io_threads) as outbam:
 

@@ -44,7 +44,7 @@ from fiberhmm.inference.tagging import (
 )
 from fiberhmm.inference.worker_results import record_failure_message
 from fiberhmm.io.bam_header import (
-    append_coord_marker,
+    call_writer_header,
     append_ma_types,
 )
 from fiberhmm.posteriors.region_tsv import format_region_posterior_line
@@ -212,7 +212,7 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
 
         try:
             with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
-                region_header = append_coord_marker(inbam.header)
+                region_header = call_writer_header(inbam.header)
                 if params.get('pg_record'):
                     # The run's @PG and chemistry declaration (the region BAMs'
                     # header becomes the output's).
@@ -690,7 +690,7 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
             if params.get("ddda_mcg", False):
                 ma_types.append("ddda_mcg")
             output_header = append_ma_types(
-                output_header_with_provenance(append_coord_marker(inbam.header),
+                output_header_with_provenance(call_writer_header(inbam.header),
                                               params.get('pg_record')),
                 ma_types,
             )

@@ -77,6 +77,22 @@ DDDA_UCG_FEATURE = 'ddda_ucg'
 DDDA_MCG_HEMI_FEATURE = 'ddda_mcg_hemi'
 
 
+# Groups fiberhmm-scan derives from the calls (nucleosome size classes and
+# segments, per-molecule scalars, hit states). They describe the calls they were
+# computed from, so every writer that regenerates nuc/msp/tf drops them. The
+# registry is fiberhmm.io.scan_ma.SCAN_MA_GROUPS; these are its v1 names.
+_SCAN_MA_GROUPS_V1 = frozenset({'fpcls', 'nfrvar', 'nfrmol', 'nucsz', 'nucseg', 'nucmol'})
+
+
+def derived_ma_groups() -> frozenset:
+    """MA groups dropped whenever the calls they were derived from are rewritten."""
+    try:
+        from fiberhmm.io.scan_ma import SCAN_MA_GROUPS
+    except ImportError:
+        return _SCAN_MA_GROUPS_V1
+    return frozenset(SCAN_MA_GROUPS) | _SCAN_MA_GROUPS_V1
+
+
 def llr_to_tq(llr: float) -> int:
     """Encode an LLR (nats) into the tq quality byte."""
     return max(0, min(255, int(round(llr * TQ_SCALE))))

@@ -44,7 +44,7 @@ from fiberhmm.crossstrand.recall import (
     recall_consensus_full,
 )
 from fiberhmm.inference.bam_output import atomic_output, temporary_output_path
-from fiberhmm.io.bam_header import append_ma_types
+from fiberhmm.io.bam_header import append_ma_types, drop_derived_ma_contracts
 
 _TAG_SOURCES = 'cs'
 _PAIR_TAGS = ('mc', 'mg', 'pm', 'pa', 'sb', 'sd', 'sr', 'sg', 'dm', 'mv')
@@ -176,6 +176,8 @@ def run_merge(in_bam, out_bam, prob_threshold=0, pairs_only=False, io_threads=4,
     bam = pysam.AlignmentFile(in_bam, 'rb')
     header = append_ma_types(
         bam.header, ['deam', 'nuc', 'msp', 'tf'] if recall else ['deam'])
+    # consensus records are new: no call-derived group of the inputs survives
+    header = drop_derived_ma_contracts(header)
     header = _merge_output_header(
         header, recall=recall, enzyme=enzyme, prob_threshold=prob_threshold,
         pairs_only=pairs_only, nuc_recall_policy=nuc_recall_policy,

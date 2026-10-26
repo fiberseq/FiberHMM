@@ -1155,9 +1155,9 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
 
 
 # MA features write_ma_tags regenerates from the recall; every other group is
-# carried through unchanged.
+# carried through unchanged, except the groups derived from the calls
+# (fiberhmm.io.ma_tags.derived_ma_groups).
 _REGENERATED_MA_FEATURES = frozenset({'nuc', 'msp', 'tf'})
-
 
 def _ma_group_head(group: str) -> Tuple[str, str]:
     """Return ``(feature, qual_spec)`` for one MA group string."""
@@ -1170,6 +1170,10 @@ def _ma_group_head(group: str) -> Tuple[str, str]:
 
 def _preserved_ma_groups(read) -> Tuple[List[str], List[str], List[int]]:
     """Collect the read's MA groups that ``write_ma_tags`` does not rewrite.
+
+    Groups derived from the calls (:func:`fiberhmm.io.ma_tags.derived_ma_groups`: fiberhmm-scan's
+    nucleosome classes, segments, scalars and hit states) are dropped with
+    nuc/msp/tf, because they describe the calls being replaced.
 
     Returns ``(groups, names, aq_bytes)``: the verbatim MA group strings in
     their original order, their AN names (``''`` when unnamed), and the AQ
@@ -1211,11 +1215,13 @@ def _preserved_ma_groups(read) -> Tuple[List[str], List[str], List[int]]:
     kept_aq: List[int] = []
     name_offset = 0
     dropped = []
+    from fiberhmm.io.ma_tags import derived_ma_groups
+    derived = derived_ma_groups()
     for group, feature, count, aq_offset, n_bytes in layout:
         group_names = old_names[name_offset:name_offset + count]
         group_names.extend([''] * (count - len(group_names)))
         name_offset += count
-        if feature in _REGENERATED_MA_FEATURES:
+        if feature in _REGENERATED_MA_FEATURES or feature in derived:
             continue
         if n_bytes and not aq_consistent:
             dropped.append(feature)

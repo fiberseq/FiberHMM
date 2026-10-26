@@ -12,7 +12,7 @@ import pysam
 
 from fiberhmm.core.progress import progress
 from fiberhmm.inference.bam_output import _sort_and_index_bam, atomic_output
-from fiberhmm.io.bam_header import append_coord_marker
+from fiberhmm.io.bam_header import call_writer_header
 from fiberhmm.inference.engine import (
     CHIMERA_SKIP,
     _extract_fiber_read_from_pysam,
@@ -218,7 +218,7 @@ def _process_bam_legacy_pipeline(
                                 check_sq=False) as inbam:
         with pysam.AlignmentFile(output_path, "wb",
                                  header=output_header_with_provenance(
-                                     append_coord_marker(inbam.header), pg_record),
+                                     call_writer_header(inbam.header), pg_record),
                                  threads=io_threads) as outbam:
 
             if output_posteriors:
