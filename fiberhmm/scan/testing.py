@@ -82,7 +82,9 @@ class PlantedAnchorModule(ScanModuleBase):
 
     def parameter_schema(self):
         return {'features': {'default': [], 'type': 'list', 'help': 'planted features'},
-                'boundaries': {'default': [], 'type': 'list', 'help': 'grid boundaries used for merge cases'}}
+                'boundaries': {'default': [], 'type': 'list', 'help': 'grid boundaries used for merge cases'},
+                'states': {'default': False, 'type': 'bool',
+                           'help': 'state 1 for every record overlapping a planted feature'}}
 
     def feature_types(self):
         return [FeatureTypeDecl('plant.feature', 'plant', 'Planted feature', 'Planted features', ('hit', 'state'),
@@ -119,6 +121,19 @@ class PlantedAnchorModule(ScanModuleBase):
             res.hits.append(Hit('plant.feature', key, unit.chrom, s, e, (s + e) // 2, columns={'planted': key}))
         # parents must precede children in the hit list only for readability
         res.hits.sort(key=lambda h: (h.parent is not None, h.start, h.key))
+        if settings.get('states') and inputs.datasets:
+            import pysam
+            from .reads import iter_records, record_ref
+            roots = [h for h in res.hits if h.type == 'plant.feature']
+            for ds in inputs.datasets:
+                for i, path in enumerate(ds.paths):
+                    with pysam.AlignmentFile(path, 'rb') as bam:
+                        for read, sha, occ in iter_records(bam, unit.chrom, unit.start, unit.end,
+                                                           inputs.read_policy['filters']):
+                            end = read.reference_end or read.reference_start + 1
+                            for h in roots:
+                                if read.reference_start < max(h.end, h.start + 1) and h.start < end:
+                                    res.states.append(State(h.key, record_ref(read, ds, i, sha, occ, unit.chrom), '1'))
         for h in res.hits:
             res.values.append(Value(h.key, 'all', 'all', 'width', float(h.end - h.start)))
             res.native.setdefault('planted', []).append(dict(hit_key=h.key, planted=h.columns['planted'],
@@ -191,3 +206,66 @@ class PlantedMoleculeModule(ScanModuleBase):
         if read.has_tag('MA'):
             n = len(parse_ma_tag(str(read.get_tag('MA')))['nuc'])
         return MoleculeResult(molecule.record, scalars={'length': float(read.query_length), 'n_nuc': float(n)})
+
+
+def write_daf_locus_bam(path, seed: int = 3, reads: int = 40, contig: str = 'chr1', length: int = 6000,
+                        nfr=(2000, 2400), tf_at: int = 2150) -> str:
+    """A DddA locus both fp and nfr find features in: nucleosome arrays, an NFR open in about 60% of
+    molecules holding a TF footprint, C -> Y deamination outside protection (st CT), MA calls."""
+    import random
+    import pysam
+    from fiberhmm.io.bam_header import append_chemistry
+    rng = random.Random(seed)
+    ref = ''.join(rng.choice('ACGT') for _ in range(length))
+    header = pysam.AlignmentHeader.from_dict(dict(HD={'VN': '1.6', 'SO': 'coordinate'},
+                                                  SQ=[{'SN': contig, 'LN': length}],
+                                                  CO=['fiberhmm:coord=molecular']))
+    header = append_chemistry(header, dict(assay='daf', enzyme='ddda', platform='pacbio', mode='daf'))
+    recs = []
+    for i in range(reads):
+        start = 500 + rng.randint(0, 40)
+        n = 4000
+        prot = []
+        p = 30 + rng.randint(0, 20)
+        nfr_open = rng.random() < 0.6
+        while p + 147 < n:
+            a = start + p
+            if nfr[0] <= a <= nfr[1] and nfr_open:
+                p = nfr[1] - start + rng.randint(0, 10)
+                continue
+            prot.append((p, 147))
+            p += 147 + rng.choice((25, 35, 45, 30))
+        tf = (tf_at - start + rng.randint(-2, 2), 40) if (nfr_open and rng.random() < 0.7) else None
+        seq = []
+        for q in range(n):
+            b = ref[start + q]
+            covered = any(s0 <= q < s0 + l for s0, l in prot) or (tf and tf[0] <= q < tf[0] + tf[1])
+            if b == 'C' and not covered and rng.random() < .85:
+                b = 'Y'
+            seq.append(b)
+        r = pysam.AlignedSegment(header)
+        r.query_name = f'm9/{2000 + i}/ccs'
+        r.query_sequence = ''.join(seq)
+        r.reference_id = 0
+        r.reference_start = start
+        r.mapping_quality = 60
+        r.cigarstring = f'{n}M'
+        r.set_tag('st', 'CT')
+        msp, prev = [], 0
+        for s0, l in prot:
+            if s0 > prev:
+                msp.append((prev, s0 - prev))
+            prev = s0 + l
+        parts = [str(n), 'nuc.:' + ','.join(f'{s0 + 1}-{l}' for s0, l in prot)]
+        if msp:
+            parts.append('msp.:' + ','.join(f'{s0 + 1}-{l}' for s0, l in msp))
+        if tf:
+            parts.append(f'tf.:{tf[0] + 1}-{tf[1]}')
+        r.set_tag('MA', ';'.join(parts))
+        recs.append(r)
+    recs.sort(key=lambda r: r.reference_start)
+    with pysam.AlignmentFile(str(path), 'wb', header=header) as h:
+        for r in recs:
+            h.write(r)
+    pysam.index(str(path))
+    return str(path)
