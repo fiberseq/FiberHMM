@@ -429,14 +429,18 @@ M5C_GROUPS = frozenset({'ddda_mcg', 'ddda_ucg', 'ddda_mcg_hemi'})
 
 
 class MAGroupFrame:
-    """Frame of each MA group of a BAM, by the rules above: m5C groups and
-    consensus family layers molecular; otherwise the header rule, except that
-    without header evidence a '.' group is molecular. Picklable."""
+    """Frame of each MA group of a BAM, by the rules above: m5C groups,
+    consensus family layers and fiberhmm-scan groups (declared by a
+    FIBERHMM-SCAN-MA contract) molecular; otherwise the header rule, except
+    that without header evidence a '.' group is molecular. Picklable."""
 
     def __init__(self, header):
+        from fiberhmm.io.scan_ma import scan_molecular_groups
         self.header_frame = ma_annotation_frame(header)
         self.evidence = header_has_frame_evidence(header)
-        self.molecular_layers = frozenset(consensus_molecular_layers(header) | M5C_GROUPS)
+        hdr = _header_dict(header) or {}
+        self.molecular_layers = frozenset(consensus_molecular_layers(header) | M5C_GROUPS
+                                          | scan_molecular_groups(hdr))
 
     def is_molecular(self, name: str, strand: str) -> bool:
         return (name in self.molecular_layers
