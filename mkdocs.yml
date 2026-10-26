@@ -97,6 +97,7 @@ nav:
       - Posteriors: workflows/posteriors.md
       - Quality control: workflows/qc.md
       - Footprint classes (consensus): workflows/consensus.md
+      - Scanning features genome-wide: workflows/scanning.md
       - Transferring classes: workflows/transfer.md
       - Strand rescue: workflows/strand-rescue.md
       - Tag consensus states: workflows/tag-consensus.md
@@ -110,6 +111,7 @@ nav:
       - Checking outputs for re-runs: reference/advisories.md
       - Bundled models: reference/models.md
       - Consensus output files: reference/consensus-outputs.md
+      - Scan directory format: reference/scan-format.md
       - Python API: reference/python-api.md
       - Environment variables: reference/environment.md
   - Troubleshooting: troubleshooting.md

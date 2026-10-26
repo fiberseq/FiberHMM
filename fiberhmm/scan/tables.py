@@ -18,6 +18,14 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence
 
 COMMON = ('chrom', 'start', 'end', 'idx_start', 'idx_end')
+TBI_MAX = (1 << 29) - 1
+
+
+def index_path(path) -> Path:
+    """The table's index: ``.tbi``, or ``.csi`` for tables with positions beyond 2^29."""
+    p = Path(path)
+    csi = Path(str(p) + '.csi')
+    return csi if csi.is_file() else Path(str(p) + '.tbi')
 
 
 def cell(value: Any) -> str:
@@ -86,12 +94,18 @@ class TableWriter:
                     handle.write('\t'.join((chrom, str(start), str(end), str(a), str(b), *cells)) + '\n')
             tmp_gz = raw + '.bgz'
             pysam.tabix_compress(raw, tmp_gz, force=True)
+            # TBI addresses positions below 2^29; a table reaching further gets a CSI index instead.
+            csi = any(r[2] > TBI_MAX for r in self._rows)
             pysam.tabix_index(tmp_gz, seq_col=0, start_col=3, end_col=4, zerobased=True,
-                              meta_char='#', force=True)
+                              meta_char='#', force=True, csi=csi)
+            suffix = '.csi' if csi else '.tbi'
+            for other in ('.tbi', '.csi'):
+                if other != suffix and os.path.exists(str(self.path) + other):
+                    os.unlink(str(self.path) + other)
             os.replace(tmp_gz, self.path)
-            os.replace(tmp_gz + '.tbi', str(self.path) + '.tbi')
+            os.replace(tmp_gz + suffix, str(self.path) + suffix)
         finally:
-            for leftover in (raw, raw + '.bgz', raw + '.bgz.tbi'):
+            for leftover in (raw, raw + '.bgz', raw + '.bgz.tbi', raw + '.bgz.csi'):
                 if os.path.exists(leftover):
                     os.unlink(leftover)
         n = len(self._rows)
@@ -113,7 +127,7 @@ class Table:
     def __init__(self, path):
         import pysam
         self.path = Path(path)
-        self._tabix = pysam.TabixFile(str(self.path))
+        self._tabix = pysam.TabixFile(str(self.path), index=str(index_path(self.path)))
         header = list(self._tabix.header)
         if not header or not header[-1].startswith('#'):
             raise ValueError(f'{self.path}: missing header line')

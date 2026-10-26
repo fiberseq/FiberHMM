@@ -30,7 +30,7 @@ class Dataset:
 @dataclass(frozen=True)
 class ScanUnit:
     """A fixed unit of computation and the zone of the contig it owns."""
-    unit_id: str                        # '<chrom>:<start>-<end>' of the computed span
+    unit_id: str                        # '<chrom>:<zone_start>-<zone_end>' (a BED unit's zone is its span)
     chrom: str
     start: int
     end: int

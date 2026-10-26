@@ -48,6 +48,9 @@ DddA island groups are kept.
 | `tf_consensus.QQQQQQ` | `tq`, `fi`, `fq`, `op`, `sq`, `q0` | `fiberhmm-consensus`, `fiberhmm-transfer` | native TF calls labelled with their class ([Consensus](../workflows/consensus.md#family-tagged-bams)) |
 | `tf_recaller.QQQQQQ` | `tq`, `fi`, `tier`, `q0`, `lr`, `rr` | `fiberhmm-consensus --bam-recaller-layer` | the lattice recaller's own class calls |
 | `tf_cross_consensus.QQQQQQ` | as `tf_consensus` | `fiberhmm-consensus --engine staged_native_families` (XCR) | deprecated staged engine |
+| `fpcls.QQQ` | `state`, `p`, `tier` | `fiberhmm-scan` (`fp`) | per (footprint class, molecule): membership state, class posterior ×255, tier; `AN` = hit id ([Scanning](../workflows/scanning.md)) |
+| `nfrvar.QQ` | `state`, `p` | `fiberhmm-scan` (`nfr`) | per (NFR or NFR variant, molecule): open/closed and P(variant) ×255; `AN` = hit id |
+| `nfrmol.QQQQ` | `openness`, `n_nfr`, `longest_linker` (2 bytes) | `fiberhmm-scan` (`nfr`) | one whole-molecule interval with per-molecule scalars ([scan format](scan-format.md#ma-groups)) |
 
 ### Nucleosome groups
 

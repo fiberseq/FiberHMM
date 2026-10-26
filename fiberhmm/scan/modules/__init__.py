@@ -76,6 +76,10 @@ class ScanModuleBase:
                          calibration: Optional[dict]) -> Optional[MoleculeResult]:
         return None
 
+    def stitch_support_bp(self, settings: Mapping[str, Any]) -> Optional[int]:
+        """Zero context a stitch run needs beyond its data (None: one adjacent empty zone)."""
+        return None
+
     def stitch(self, chrom: str, territory: Sequence[tuple], tracks: Mapping[str, Any],
                settings: Mapping[str, Any], calibration: Optional[dict]) -> StitchResult:
         return StitchResult()

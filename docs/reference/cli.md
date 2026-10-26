@@ -631,6 +631,35 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--json-progress` | off | Structured progress on stderr (JSON lines) |
 | `--output` | — | New or empty output directory |
 
+## fiberhmm-scan
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--bam` | — | Input BAM (repeat for separate datasets); FiberHMM-called (MA tags from fiberhmm-call/apply). Chemistry from @CO metadata |
+| `--datasets` | — | JSON list of {dataset_id, paths: [BAMs], chemistry?} |
+| `--genome` | off | Scan whole contigs on the fixed grid (see --contigs) |
+| `--region` | — | Scan a window (0-based, half-open; repeatable). A window longer than --unit-bp is grid-planned restricted to it |
+| `--bed` | — | BED units (overlapping or touching intervals are merged; longer than --unit-bp: grid-planned inside) |
+| `--contigs` | — | With --genome: comma-separated contigs (default: every contig in the header) |
+| `--modules` | `fp,nfr,peaks` | Comma-separated modules (default fp,nfr,peaks; nfr is an EXPERIMENTAL preview) |
+| `--parameters` | — | JSON {"fp": {...}, "nfr": {...}, "peaks": {...}, "read_policy": {...}}; see --schema |
+| `--chemistry` | — | Chemistry for --bam inputs whose header does not declare one Choices: `ddda`, `dddb`, `hia5-pacbio`, `hia5-nanopore`. |
+| `--unit-bp` | `50000` | Grid unit span (default 50000; at most the engines' 50 kb budget) |
+| `--stride-bp` | `25000` | Grid stride = owned zone (default 25000) |
+| `--grid-offset` | `0` | Shift of the grid's zone boundaries (default 0) |
+| `--max-discovery-molecules` | — | Molecules per dataset and chemical channel for discovery; 0 = all molecules; 2000 is a good cap for deep data (thousands of reads per site) (default 0) |
+| `--max-quantification-molecules` | — | Molecules per dataset and chemical channel for quantification; 0 = all molecules; 2000 is a good cap for deep data (thousands of reads per site) (default 0) |
+| `--sample-seed` | — | Stable molecule hash seed (default 1) |
+| `--cores` | `4` | Worker budget (default 4) |
+| `--window-jobs` | `0` | Units computed at the same time (default 0 = automatic: up to --cores); each gets an equal share of --cores |
+| `--continue` | off | Finish an interrupted scan in its output directory: finished units are kept, the rest are run, and the tables, annotated BAMs and manifest are rebuilt. Refused if inputs, plan, read policy or module settings differ |
+| `--json-progress` | off | Structured progress on stderr (JSON lines) |
+| `--annotate` | auto | Write per-molecule results as MA tags in annotated BAMs (default for --genome and long --region scans) |
+| `--no-annotate` | auto | Write per-molecule results as tables (states, marks, molecules) instead (default for --bed and short --region scans) |
+| `-o` / `--output` | — | New or empty scan directory (with --continue: the interrupted scan's) |
+| `--schema` | off | Print every module's parameters with defaults as JSON |
+| `--inspect` | — | Print a scan directory's summary and validate its tables, indexes and annotated BAMs (exit 1 on problems) |
+
 ## fiberhmm-footprint-model
 
 | Flag | Default | Description |

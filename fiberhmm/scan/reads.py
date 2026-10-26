@@ -90,7 +90,7 @@ def record_ref(read, dataset: Dataset, input_index: int, sha: str, occ: int, chr
 
 
 def unit_survey(datasets: Sequence[Dataset], unit: ScanUnit, read_policy: Mapping) -> dict:
-    """Records overlapping the unit span, and callable runs over its zone per dataset.
+    """Mapped records overlapping the unit span (any flags), and callable runs over its zone per dataset.
 
     callable: bases covered (aligned blocks) by at least ``callable_min_molecules``
     annotated records of the dataset."""
@@ -108,10 +108,12 @@ def unit_survey(datasets: Sequence[Dataset], unit: ScanUnit, read_policy: Mappin
                 if unit.chrom not in bam.references:
                     continue
                 for read in bam.fetch(unit.chrom, unit.start, unit.end):
-                    if not passes(read, filters):
+                    if read.is_unmapped:
                         continue
+                    # Emptiness counts every mapped record, whatever the filters: a module may admit records
+                    # the read policy leaves out (peaks with include_duplicates, say).
                     records += 1
-                    if not has_annotations(read):
+                    if not passes(read, filters) or not has_annotations(read):
                         continue
                     for a, b in read.get_blocks():
                         a = max(a, unit.zone_start) - unit.zone_start
@@ -129,6 +131,20 @@ def unit_survey(datasets: Sequence[Dataset], unit: ScanUnit, read_policy: Mappin
                 runs.append([int(a) + unit.zone_start, int(b) + unit.zone_start])
         callable_runs[ds.dataset_id] = runs
     return dict(records=records, callable=callable_runs)
+
+
+def overlapping_records(datasets: Sequence[Dataset], unit: ScanUnit, read_policy: Mapping):
+    """Every source record overlapping the unit's span that passes the read policy:
+    (dataset, input_index, read, sha, occ)."""
+    import pysam
+    filters = read_policy['filters']
+    for ds in datasets:
+        for i, path in enumerate(ds.paths):
+            with pysam.AlignmentFile(path, 'rb') as bam:
+                if unit.chrom not in bam.references:
+                    continue
+                for read, sha, occ in iter_records(bam, unit.chrom, unit.start, unit.end, filters):
+                    yield ds, i, read, sha, occ
 
 
 def owned_records(datasets: Sequence[Dataset], unit: ScanUnit, index, read_policy: Mapping):

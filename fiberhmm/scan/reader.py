@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional
 
-from .tables import Table, sha256_file
+from .tables import Table, index_path, sha256_file
 from .types import SCHEMA
 
 
@@ -32,7 +32,8 @@ class ScanDir:
         return self._tables[rel]
 
     def has(self, rel: str) -> bool:
-        return (self.path / rel).is_file()
+        """A table this scan wrote (listed in the manifest) and present on disk."""
+        return rel in (self.manifest.get('outputs', {}).get('tables') or {}) and (self.path / rel).is_file()
 
     def _fetch(self, rel, chrom, start, end) -> List[dict]:
         if not self.has(rel):
@@ -69,7 +70,7 @@ class ScanDir:
             if not p.is_file():
                 problems.append(f'missing table {rel}')
                 continue
-            if not Path(str(p) + '.tbi').is_file():
+            if not index_path(p).is_file():
                 problems.append(f'missing index {rel}.tbi')
             if sha256_file(p) != rec.get('sha256'):
                 problems.append(f'{rel}: SHA-256 differs from the manifest')

@@ -55,7 +55,9 @@ def _grid_units(chrom: str, lo: int, hi: int, unit_bp: int, stride_bp: int, offs
     margin = (unit_bp - stride_bp) // 2
     zones = _grid_zones(lo, hi, stride_bp, offset)
     spans = [(max(lo, a - margin), min(hi, z + margin), a, z) for a, z in zones]
-    ids = [f'{chrom}:{s}-{e}' for s, e, _, _ in spans]
+    # A unit is named by the zone it owns: zones partition the territory, while clipped spans can repeat
+    # (two zones of a contig shorter than one unit compute the same span).
+    ids = [f'{chrom}:{a}-{z}' for _s, _e, a, z in spans]
     units = []
     for i, (s, e, a, z) in enumerate(spans):
         units.append(ScanUnit(unit_id=ids[i], chrom=chrom, start=s, end=e, zone_start=a, zone_end=z,
@@ -113,6 +115,12 @@ def merge_intervals(rows: Iterable[Tuple[str, int, int, str]]):
     return merged, records
 
 
+def _check_names(reference: Mapping[str, int]) -> None:
+    bad = [c for c in reference if str(c).startswith('#')]
+    if bad:
+        raise PlanError(f'contig name(s) starting with "#" cannot be indexed in tabix tables: {", ".join(bad[:5])}')
+
+
 def plan(reference: Mapping[str, int], *, genome: bool = False, contigs: Optional[Sequence[str]] = None,
          regions: Optional[Sequence[Tuple[str, int, int]]] = None, bed=None,
          unit_bp: int = DEFAULT_UNIT_BP, stride_bp: int = DEFAULT_STRIDE_BP, grid_offset: int = 0,
@@ -128,10 +136,11 @@ def plan(reference: Mapping[str, int], *, genome: bool = False, contigs: Optiona
         raise PlanError(f'grid_offset must be a non-negative multiple of {LATTICE_BP} bp')
     order = {c: i for i, c in enumerate(reference)}
     units: List[ScanUnit] = []
+    _check_names(reference)
     info = dict(unit_bp=unit_bp, stride_bp=stride_bp, grid_offset=grid_offset, contigs=None,
                 regions=None, bed=None, merged=[])
     if genome:
-        chosen = list(contigs) if contigs else list(reference)
+        chosen = list(dict.fromkeys(contigs)) if contigs else list(reference)
         missing = [c for c in chosen if c not in reference]
         if missing:
             raise PlanError(f'contig(s) not in the BAM header: {", ".join(missing)}')
@@ -167,7 +176,7 @@ def plan(reference: Mapping[str, int], *, genome: bool = False, contigs: Optiona
                                   zone_end=b, mode='bed', index=len(units), name=name))
         else:
             gridded = True
-            sub = _grid_units(chrom, a, b, unit_bp, stride_bp, 0, len(units))
+            sub = _grid_units(chrom, a, b, unit_bp, stride_bp, grid_offset, len(units))
             units.extend(ScanUnit(**{**u.to_json(), 'name': name}) for u in sub)
     # A --region longer than one unit is a grid scan restricted to it; a BED file stays a BED scan.
     info['mode'] = 'grid' if (regions and gridded) else 'bed'

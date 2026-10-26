@@ -106,6 +106,7 @@ fiberhmm-nfr = "fiberhmm.inference.accessibility.cli:main"  # EXPERIMENTAL previ
 fiberhmm-qc = "fiberhmm.cli._entry:qc_main"
 fiberhmm-check = "fiberhmm.cli._entry:check_main"
 fiberhmm-lift = "fiberhmm.cli._entry:lift_main"
+fiberhmm-scan = "fiberhmm.scan.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["fiberhmm*"]

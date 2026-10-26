@@ -1,10 +1,10 @@
 """Seam reconciliation between neighbouring units.
 
 Anchor modules (``fp``, ``nfr``): at each zone boundary, the root hits of one
-type from both units that meet ``[b - window, b + window)`` form connected
-components by interval overlap; each component is resolved by one unit, the
-one whose centre is nearest the midpoint of the component's union (ties go to
-the left unit). Hits away from boundaries are kept when their anchor lies in
+type from both units (inside the bases both computed) form connected
+components by interval overlap; each component that meets
+``[b - window, b + window)`` is resolved by one unit, the one whose centre is
+nearest the midpoint of the component's union (ties go to the left unit). Hits away from boundaries are kept when their anchor lies in
 their unit's zone; children follow their parent.
 
 Stitch modules (``peaks``, ``nuc`` patches): unit tracks cover zones only and
@@ -62,16 +62,35 @@ def reconcile_anchor(results: Sequence[Tuple[ScanUnit, Sequence[Hit]]], *,
                      missing: Iterable[str] = ()) -> Tuple[List[Tuple[ScanUnit, Hit]], int, int]:
     """Keep each feature once across unit seams.
 
-    ``results``: every computed unit of the scan with its hits (any order).
-    ``missing``: unit ids that are planned but have no result (failed or not
-    run); a boundary with a missing neighbour is an open seam, and hits there
-    fall back to the anchor-in-zone rule.
+    At each zone boundary, the root hits of one type from both neighbours that lie in the bases both
+    computed form connected components by overlap; components that meet the boundary window are seam
+    components. Seam components that share a hit (a feature reaching several seams when units overlap
+    more than two deep) are merged, and each merged component is resolved once: among the neighbours of
+    the seams involved, the unit whose centre is nearest the midpoint of the component's union keeps its
+    hits (ties: the earlier unit in the plan), every other unit's hits in it are dropped. Root hits in no seam component are kept when
+    their anchor lies in their unit's zone; children follow their parent.
+
+    ``results``: every computed unit with its hits. ``missing``: planned units without a result; a boundary
+    with a missing neighbour is an open seam, and hits there fall back to the anchor-in-zone rule.
     Returns ``(kept, components, open_seams)``; ``kept`` is in plan order."""
     by_id = {u.unit_id: (u, list(hits)) for u, hits in results}
     missing = set(missing)
-    decided: Dict[Tuple[str, str], bool] = {}
-    components = 0
     open_seams = 0
+    parent: Dict[Tuple[str, str], Tuple[str, str]] = {}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[max(ra, rb)] = min(ra, rb)
+
+    spans: Dict[Tuple[str, str], Tuple[int, int]] = {}
+    candidates: Dict[Tuple[str, str], set] = {}      # both neighbours of every seam a hit takes part in
     for uid, (u, hits) in sorted(by_id.items(), key=lambda kv: kv[1][0].index):
         if u.right is None:
             continue
@@ -82,23 +101,38 @@ def reconcile_anchor(results: Sequence[Tuple[ScanUnit, Sequence[Hit]]], *,
         v, vhits = by_id[u.right]
         b = u.zone_end
         win = (b - window, b + window)
+        shared = (max(u.start, v.start), min(u.end, v.end))
         types = sorted({h.type for h in hits if h.parent is None} | {h.type for h in vhits if h.parent is None})
         for t in types:
-            items = [(u.unit_id, h) for h in hits if h.parent is None and h.type == t and _overlaps(_span(h), win)]
-            items += [(v.unit_id, h) for h in vhits if h.parent is None and h.type == t and _overlaps(_span(h), win)]
+            items = [(u.unit_id, h) for h in hits if h.parent is None and h.type == t and _overlaps(_span(h), shared)]
+            items += [(v.unit_id, h) for h in vhits if h.parent is None and h.type == t and _overlaps(_span(h), shared)]
             if not items:
                 continue
             for comp in _components(items):
-                components += 1
-                lo = min(_span(items[i][1])[0] for i in comp)
-                hi = max(_span(items[i][1])[1] for i in comp)
-                mid = (lo + hi) / 2.0
-                resolver = u.unit_id if abs(mid - u.centre) <= abs(mid - v.centre) else v.unit_id
-                for i in comp:
-                    owner, h = items[i]
-                    keep = owner == resolver
-                    key = (owner, h.key)
-                    decided[key] = decided.get(key, True) and keep
+                if not any(_overlaps(_span(items[i][1]), win) for i in comp):
+                    continue
+                nodes = [(items[i][0], items[i][1].key) for i in comp]
+                for n, i in zip(nodes, comp):
+                    parent.setdefault(n, n)
+                    spans[n] = _span(items[i][1])
+                    candidates.setdefault(n, set()).update((u.unit_id, v.unit_id))
+                for n in nodes[1:]:
+                    union(nodes[0], n)
+    groups: Dict[Tuple[str, str], List[Tuple[str, str]]] = {}
+    for n in parent:
+        groups.setdefault(find(n), []).append(n)
+    decided: Dict[Tuple[str, str], bool] = {}
+    for members in groups.values():
+        lo = min(spans[n][0] for n in members)
+        hi = max(spans[n][1] for n in members)
+        mid = (lo + hi) / 2.0
+        # Candidates: both neighbours of every seam involved, so a component that only the farther unit
+        # called is dropped when the nearer unit computed the same bases and called nothing.
+        units_in = set().union(*(candidates[n] for n in members))
+        resolver = min(units_in, key=lambda uid: (abs(mid - by_id[uid][0].centre), by_id[uid][0].index))
+        for n in members:
+            decided[n] = n[0] == resolver
+    components = len(groups)
     kept: List[Tuple[ScanUnit, Hit]] = []
     for uid, (u, hits) in sorted(by_id.items(), key=lambda kv: kv[1][0].index):
         keep_root: Dict[str, bool] = {}
@@ -109,55 +143,105 @@ def reconcile_anchor(results: Sequence[Tuple[ScanUnit, Sequence[Hit]]], *,
             if k is None:
                 k = u.zone_start <= h.anchor < u.zone_end if u.mode == 'grid' or u.left or u.right else True
             keep_root[h.key] = k
+        by_key = {x.key: x for x in hits}
         for h in hits:
             root = h
             seen = set()
-            while root.parent is not None and root.parent not in seen:
+            while root is not None and root.parent is not None and root.parent not in seen:
                 seen.add(root.parent)
-                root = next((x for x in hits if x.key == root.parent), None)
-                if root is None:
-                    break
+                root = by_key.get(root.parent)
             if root is not None and keep_root.get(root.key, False):
                 kept.append((u, h))
     return kept, components, open_seams
 
 
-def territory_runs(zones: Sequence[Tuple[ScanUnit, Optional[Mapping[str, object]], str]]):
+def territory_runs(zones: Sequence[Tuple[ScanUnit, Optional[Mapping[str, object]], str]], pad_bp: Optional[int] = None):
     """Concatenate adjacent computed zones of one contig into runs.
 
-    ``zones``: ``(unit, tracks, status)`` in zone order, ``status`` one of
-    ``'ok'`` (tracks over the zone), ``'empty'`` (scanned, no molecules: a
-    territory break that is not open, since zero signal there equals the zero
-    padding used at run ends) and ``'missing'`` (planned but not computed).
-    Returns ``(start, end, {name: array}, left_open, right_open)`` per run;
-    ``*_open`` is True where the run ends next to a missing zone."""
+    ``zones``: ``(unit, tracks, status)`` in zone order, ``status`` one of ``'ok'`` (tracks over the zone),
+    ``'empty'`` (scanned, no molecules) and ``'missing'`` (planned but not computed). Each run of computed
+    zones is extended into the scanned empty zones next to it with zero tracks, ``pad_bp`` on each side
+    (``None``: one whole empty zone), so a feature reaching into them (a smoothing tail, a peak edge) is
+    computed as if the contig were one array; runs whose extensions meet are joined, the empty bases between
+    them filled with zeros. Returns ``(start, end, {name: array}, left_open, right_open)`` per run; ``*_open``
+    is True where the run ends next to a missing zone."""
     import numpy as np
-    runs = []
-    cur = None
-    prev = None              # (unit, status) of the previous zone
-    for unit, tracks, status in zones:
-        contiguous = prev is not None and prev[0].zone_end == unit.zone_start
-        if status != 'ok' or tracks is None:
-            if cur is not None:
-                cur['right_open'] = contiguous and status == 'missing'
-                runs.append(cur)
-                cur = None
-            prev = (unit, status)
+    zones = list(zones)
+    n = len(zones)
+    kind = ['ok' if (st == 'ok' and tr is not None) else ('missing' if st == 'missing' else 'empty')
+            for _u, tr, st in zones]
+
+    def contiguous(i, j):          # zone i directly followed by zone j
+        return zones[i][0].zone_end == zones[j][0].zone_start
+
+    # 1. data runs: maximal stretches of contiguous ok zones
+    data = []
+    i = 0
+    while i < n:
+        if kind[i] != 'ok':
+            i += 1
             continue
-        if cur is not None and contiguous:
-            cur['end'] = unit.zone_end
-            for name, arr in tracks.items():
-                cur['parts'].setdefault(name, []).append(arr)
+        j = i
+        while j + 1 < n and kind[j + 1] == 'ok' and contiguous(j, j + 1):
+            j += 1
+        data.append([i, j])
+        i = j + 1
+    if not data:
+        return []
+    template = zones[data[0][0]][1]
+
+    def extend(i, step):
+        """Zero padding beyond zone i in direction step: (bases, reached_missing, first_zone_index_used)."""
+        got, k, last = 0, i, i
+        limit = pad_bp
+        while True:
+            nxt = k + step
+            if nxt < 0 or nxt >= n or not (contiguous(k, nxt) if step > 0 else contiguous(nxt, k)):
+                return got, False, last
+            if kind[nxt] == 'missing':
+                return got, True, last
+            if kind[nxt] == 'ok':
+                return got, False, last
+            zl = zones[nxt][0].zone_end - zones[nxt][0].zone_start
+            if limit is None:
+                return zl, False, nxt
+            take = min(zl, limit - got)
+            got += take
+            last = nxt
+            if got >= limit:
+                return got, False, last
+            k = nxt
+
+    runs = []
+    for a, b in data:
+        lpad, lmiss, _ = extend(a, -1)
+        rpad, rmiss, _ = extend(b, +1)
+        start = zones[a][0].zone_start - lpad
+        end = zones[b][0].zone_end + rpad
+        runs.append(dict(a=a, b=b, start=start, end=end, left_open=lmiss, right_open=rmiss))
+    # 2. join runs whose padded extents meet across contiguous empty zones
+    joined = [runs[0]]
+    for r in runs[1:]:
+        prev = joined[-1]
+        between = all(kind[k] == 'empty' for k in range(prev['b'] + 1, r['a'])) and all(
+            contiguous(k, k + 1) for k in range(prev['b'], r['a']))
+        if between and r['start'] <= prev['end']:
+            prev['b'], prev['end'], prev['right_open'] = r['b'], r['end'], r['right_open']
         else:
-            if cur is not None:
-                runs.append(cur)
-            cur = dict(start=unit.zone_start, end=unit.zone_end, parts={n: [a] for n, a in tracks.items()},
-                       left_open=bool(contiguous and prev is not None and prev[1] == 'missing'), right_open=False)
-        prev = (unit, status)
-    if cur is not None:
-        runs.append(cur)
+            joined.append(r)
+    # 3. materialise: data zones' arrays, zeros elsewhere
     out = []
-    for r in runs:
-        arrays = {n: np.concatenate(parts) if len(parts) > 1 else parts[0] for n, parts in r['parts'].items()}
-        out.append((r['start'], r['end'], arrays, r['left_open'], r['right_open']))
+    for r in joined:
+        length = r['end'] - r['start']
+        arrays = {name: np.zeros(length, dtype=np.asarray(arr).dtype) for name, arr in template.items()}
+        for k in range(r['a'], r['b'] + 1):
+            if kind[k] != 'ok':
+                continue
+            u, tracks, _st = zones[k]
+            lo = u.zone_start - r['start']
+            for name, arr in tracks.items():
+                if name not in arrays:
+                    arrays[name] = np.zeros(length, dtype=np.asarray(arr).dtype)
+                arrays[name][lo:lo + (u.zone_end - u.zone_start)] = arr
+        out.append((r['start'], r['end'], arrays, bool(r['left_open']), bool(r['right_open'])))
     return out
