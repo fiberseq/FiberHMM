@@ -281,13 +281,70 @@ class DecodeContext(FrameContext):
         # informative sites are the ones the caller saw
         self.daf_runs, self.daf_policy, self.cpg_policy = 0, 'keep-one', None
         if self.mode == 'daf':
-            from fiberhmm.core.bam_reader import resolve_daf_run_mask
-            from fiberhmm.inference.tf_recaller import resolve_cpg_mask_policy
-            self.daf_runs, self.daf_policy = resolve_daf_run_mask(None, 'keep-one', chem['enzyme'])
+            self.daf_runs, self.daf_policy, self.cpg_policy = recorded_call_masks(
+                header, chem['enzyme'], 'daf')
+
+
+def _last_call_record(header) -> Optional[dict]:
+    hd = header.to_dict() if hasattr(header, 'to_dict') else dict(header or {})
+    for pg in reversed(hd.get('PG', [])):
+        if 'fiberhmm-call' in str(pg.get('PN') or pg.get('ID') or ''):
+            return pg
+    return None
+
+
+def _cl_option(toks, *names) -> Optional[str]:
+    for i, t in enumerate(toks):
+        for n in names:
+            if t == n and i + 1 < len(toks):
+                return toks[i + 1]
+            if t.startswith(n + '='):
+                return t.split('=', 1)[1]
+    return None
+
+
+def recorded_call_masks(header, enzyme: Optional[str], mode: Optional[str]):
+    """``(daf_mask_runs, daf_run_policy, cpg_mask_policy)`` as the header's
+    last fiberhmm-call run resolved them (``--daf-mask-runs``,
+    ``--daf-run-policy``, ``DS cpg_mask=`` or the m5C flags); the chemistry
+    defaults when the header has no call record. Matches
+    ``CallerSettings.from_header`` without resolving models, so decoding
+    works when no caller can be built."""
+    import shlex
+    from fiberhmm.core.bam_reader import resolve_daf_run_mask
+    from fiberhmm.inference.tf_recaller import resolve_cpg_mask_policy
+    runs = policy = use_m5c = policy_flag = None
+    cpg_recorded, cpg = False, None
+    pg = _last_call_record(header)
+    if pg is not None:
+        try:
+            toks = shlex.split(str(pg.get('CL', '')))
+        except ValueError:
+            toks = str(pg.get('CL', '')).split()
+        r = _cl_option(toks, '--daf-mask-runs')
+        if r is not None:
             try:
-                self.cpg_policy = resolve_cpg_mask_policy(None, None, chem['enzyme'], 'daf')
+                runs = int(r)
             except ValueError:
-                self.cpg_policy = None
+                runs = None
+        policy = _cl_option(toks, '--daf-run-policy')
+        m = re.search(r'cpg_mask=(\S+)', str(pg.get('DS', '')))
+        if m:
+            cpg_recorded, cpg = True, (None if m.group(1) == 'off' else m.group(1))
+        else:
+            use_m5c = True if '--use-m5c' in toks else (False if '--no-use-m5c' in toks else None)
+            policy_flag = _cl_option(toks, '--cpg-mask-policy')
+    try:
+        runs, policy = resolve_daf_run_mask(runs, policy or 'keep-one', enzyme)
+    except ValueError:
+        runs, policy = resolve_daf_run_mask(None, 'keep-one', enzyme)
+    runs = int(runs) if mode == 'daf' else 0
+    if not cpg_recorded:
+        try:
+            cpg = resolve_cpg_mask_policy(use_m5c, policy_flag, enzyme, mode)
+        except ValueError:
+            cpg = None
+    return runs, policy, cpg
 
 
 def _aligned_blocks(read) -> Optional[np.ndarray]:

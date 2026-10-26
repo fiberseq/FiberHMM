@@ -161,6 +161,37 @@ def test_caller_settings_take_the_declared_chemistry_and_daf_run_mask():
         CallerSettings.from_header({'CO': ['FIBERHMM-CHEMISTRY:v1:assay=daf;enzyme=custom;platform=unknown;mode=daf']})
 
 
+def test_decoding_uses_the_masks_the_caller_recorded():
+    """DecodeContext and CallerSettings resolve the same DAF run mask and DddA
+    CpG policy from the call record, defaults and non-default flags alike."""
+    from fiberhmm.nuc.records import DecodeContext
+
+    def hdr(cl, ds=''):
+        return pysam.AlignmentHeader.from_dict({
+            'HD': {'VN': '1.6'}, 'SQ': [{'SN': 'c', 'LN': 10000}],
+            'PG': [{'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call', 'VN': '3.0.0', 'CL': cl, 'DS': ds}]})
+    base = 'fiberhmm-call -i a.bam -o b.bam --enzyme ddda --seq pacbio'
+    cases = [(base, ''), (base + ' --daf-mask-runs 0', 'cpg_mask=off'),
+             (base + ' --daf-mask-runs 3 --daf-run-policy drop', ''),
+             (base + ' --no-use-m5c', ''), (base, 'cpg_mask=methylated-only')]
+    seen = set()
+    for cl, ds in cases:
+        h = hdr(cl, ds)
+        s = CallerSettings.from_header(h)
+        c = DecodeContext(h)
+        assert c.mode == s.mode == 'daf'
+        assert (c.daf_runs, c.daf_policy, c.cpg_policy) == (s.daf_mask_runs, s.daf_run_policy,
+                                                            s.cpg_mask_policy), (cl, ds)
+        seen.add((c.daf_runs, c.cpg_policy))
+    assert (0, None) in seen and (2, 'unmethylated-only') in seen
+    # no call record: the chemistry defaults
+    daf = pysam.AlignmentHeader.from_dict({
+        'HD': {'VN': '1.6'}, 'SQ': [{'SN': 'c', 'LN': 10000}],
+        'CO': ['FIBERHMM-CHEMISTRY:v1:assay=daf;enzyme=ddda;platform=nanopore;mode=daf']})
+    c = DecodeContext(daf)
+    assert (c.daf_runs, c.cpg_policy) == (2, 'unmethylated-only')
+
+
 def test_calibrate_thin_refuses_an_empty_sample(tmp_path):
     path = str(tmp_path / 'empty.bam')
     with pysam.AlignmentFile(path, 'wb', header=header()) as out:

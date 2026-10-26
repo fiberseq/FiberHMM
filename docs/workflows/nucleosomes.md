@@ -70,6 +70,11 @@ cover (footprints outside it are can't tell), and the low-information floor:
 the λ_acc below which the coarse can't-tell rate exceeds 50%. Thinning is a
 degradation model; it never assigns true lengths.
 
+In a scan, each dataset's calibration population comes from up to 40 fixed
+50 kb windows of the scanned territory that hold its records, taken in a
+stable hash order (`calibration_units`), so the sample does not depend on the
+tiling and a genome scan of targeted data calibrates on the target.
+
 ## Tags
 
 With annotation the scan writes three MA groups in molecular coordinates:

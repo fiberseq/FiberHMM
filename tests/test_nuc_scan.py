@@ -261,6 +261,47 @@ def test_calibration_sample_does_not_depend_on_the_grid():
     assert len(a) != len(b) or a[0].unit_id != b[0].unit_id
     assert calibration_regions(a, 40) == calibration_regions(b, 40)
     assert len(calibration_regions(a, 40)) == 40
+    locus = (1_210_000, 1_390_000)
+
+    def probe(chrom, s, e):
+        return s < locus[1] and e > locus[0]
+    got = calibration_regions(a, 40, has_records=probe)
+    assert got == calibration_regions(b, 40, has_records=probe)
+    assert got == [('chrL', 1_200_000, 1_250_000), ('chrL', 1_250_000, 1_300_000),
+                   ('chrL', 1_300_000, 1_350_000), ('chrL', 1_350_000, 1_400_000)]
+
+
+def test_genome_scan_of_targeted_data_calibrates_on_the_target(scan_bam, tmp_path):
+    """A genome scan of a BAM covering one locus samples the windows that hold
+    records, not the first hashed windows of the contig."""
+    import hashlib
+    contig_len = 10_000_000
+    hashed = sorted((hashlib.sha256(f'chrT:{k}'.encode()).hexdigest(), k) for k in range(contig_len // 50_000))
+    first = {k for _h, k in hashed[:40]}
+    k0 = next(k for k in range(contig_len // 50_000 - 5) if not first & set(range(k, k + 5)))
+    shift = k0 * 50_000
+    path = str(tmp_path / 'targeted.bam')
+    with pysam.AlignmentFile(scan_bam) as src:
+        hd = src.header.to_dict()
+        hd['SQ'] = [{'SN': 'chrT', 'LN': contig_len}]
+        new = pysam.AlignmentHeader.from_dict(hd)
+        with pysam.AlignmentFile(path, 'wb', header=new) as out:
+            for r in src.fetch(until_eof=True):
+                d = r.to_dict()
+                d['ref_name'] = 'chrT'
+                d['ref_pos'] = str(int(d['ref_pos']) + shift)
+                out.write(pysam.AlignedSegment.from_dict(d, new))
+    pysam.index(path)
+    units = plan({'chrT': contig_len}, genome=True, contigs=['chrT'])
+    out = tmp_path / 'scan'
+    run_units([{'dataset_id': 'synth', 'paths': [path]}], units, modules=['nuc'],
+              params={'nuc': {'calibration': 'self', 'calibration_population': 400}},
+              out=out, annotate=False, cores=2)
+    rec = json.loads((out / 'nuc' / 'extra' / 'calibration.json').read_text())
+    regions = rec['regions']['synth']
+    assert regions and all(shift <= int(r.split(':')[1].split('-')[0]) < shift + LENGTH for r in regions)
+    assert rec['datasets']['synth']['population']
+    assert read_all(out / 'nuc' / 'molecules.tsv.bgz')
 
 
 def test_cli_scan_unit_equals_direct_api(scan_bam, tmp_path):

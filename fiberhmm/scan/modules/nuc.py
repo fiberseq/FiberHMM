@@ -75,8 +75,9 @@ class NucModule(ScanModuleBase):
             'calibration_population': _p(2000, 'int', 'molecules per dataset in the calibration population'),
             'calibration_seeds': _p(5, 'int', 'thinning repeats'),
             'calibration_targets': _p(8, 'int', 'thinning target lambda values'),
-            'calibration_units': _p(40, 'int', '50 kb windows of the scanned territory sampled (stable hash of '
-                                       'absolute window index) for the calibration population; 0 = all'),
+            'calibration_units': _p(40, 'int', '50 kb windows of the scanned territory that hold records, '
+                                       'taken in stable-hash order of the absolute window index, for the '
+                                       'calibration population (per dataset); 0 = all'),
             'groups': _p('dataset+haplotype', 'str', "observation groups: 'dataset' or 'dataset+haplotype'"),
             'patch_smooth_bp': _p(200, 'int', 'smoothing window for per-base fractions'),
             'patch_tau_regular': _p(0.5, 'float', 'regular patch threshold'),
@@ -182,15 +183,18 @@ class NucModule(ScanModuleBase):
         from fiberhmm.nuc.thinning import calibrate_thin, load_population
         from fiberhmm.scan.reads import passes
         params = self._params(settings)
-        regions = calibration_regions(units, int(settings['calibration_units']))
         filters = inputs.read_policy['filters']
 
         def read_filter(r):
             return passes(r, filters)
-        out = {'schema': CAL_SCHEMA, 'source': settings['calibration'],
-               'regions': [f'{c}:{a}-{b}' for c, a, b in regions], 'datasets': {}}
+        out = {'schema': CAL_SCHEMA, 'source': settings['calibration'], 'regions': {}, 'datasets': {}}
         for ds in inputs.datasets:
             progress.report('nuc', f'calibrating {ds.dataset_id} ({settings["calibration"]})')
+            with _RecordProbe(ds.paths, read_filter) as probe:
+                regions = calibration_regions(units, int(settings['calibration_units']), has_records=probe)
+            if not regions:
+                raise ValueError(f'nuc: no records in the scanned territory for {ds.dataset_id}')
+            out['regions'][ds.dataset_id] = [f'{c}:{a}-{b}' for c, a, b in regions]
             if settings['calibration'] == 'thin':
                 cal = calibrate_thin(list(ds.paths), params, label=ds.dataset_id,
                                      n_population=int(settings['calibration_population']),
@@ -488,11 +492,44 @@ def _smooth(x: np.ndarray, w: int) -> np.ndarray:
 CAL_WINDOW_BP = 50_000
 
 
-def calibration_regions(units, n_windows: int) -> List[Tuple[str, int, int]]:
+class _RecordProbe:
+    """``probe(chrom, start, end)``: does any BAM hold a primary record there
+    that passes the read filter (first 200 records looked at)?"""
+
+    def __init__(self, paths, read_filter=None):
+        self.paths, self.read_filter, self.bams = list(paths), read_filter, []
+
+    def __enter__(self):
+        import pysam
+        self.bams = [pysam.AlignmentFile(p, 'rb') for p in self.paths]
+        return self
+
+    def __exit__(self, *exc):
+        for b in self.bams:
+            b.close()
+        self.bams = []
+
+    def __call__(self, chrom, start, end) -> bool:
+        for bam in self.bams:
+            if chrom not in bam.references:
+                continue
+            for k, r in enumerate(bam.fetch(chrom, start, end)):
+                if k >= 200:
+                    break
+                if r.is_unmapped or r.is_secondary or r.is_supplementary:
+                    continue
+                if self.read_filter is None or self.read_filter(r):
+                    return True
+        return False
+
+
+def calibration_regions(units, n_windows: int, has_records=None) -> List[Tuple[str, int, int]]:
     """Calibration sample independent of the tiling: the scanned territory
     (union of unit spans) cut on fixed 50 kb windows of absolute coordinates,
-    the ``n_windows`` windows with the lowest hash of (contig, window index)
-    (all windows when ``n_windows`` is 0)."""
+    taken in order of a stable hash of (contig, window index); the first
+    ``n_windows`` (all windows when 0). With ``has_records`` only windows for
+    which it returns True count, so a genome scan of targeted data samples the
+    targeted windows."""
     spans: Dict[str, List[Tuple[int, int]]] = {}
     for u in units:
         spans.setdefault(u.chrom, []).append((int(u.start), int(u.end)))
@@ -511,7 +548,15 @@ def calibration_regions(units, n_windows: int) -> List[Tuple[str, int, int]]:
                 if e0 > s0:
                     windows.append((hashlib.sha256(f'{chrom}:{k}'.encode()).hexdigest(), chrom, s0, e0))
     windows.sort()
-    if n_windows:
+    if has_records is not None:
+        keep = []
+        for w in windows:
+            if has_records(w[1], w[2], w[3]):
+                keep.append(w)
+                if n_windows and len(keep) >= n_windows:
+                    break
+        windows = keep
+    elif n_windows:
         windows = windows[:n_windows]
     return sorted((c, s0, e0) for _h, c, s0, e0 in windows)
 
