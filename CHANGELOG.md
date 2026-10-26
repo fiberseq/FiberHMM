@@ -25,9 +25,26 @@
 - `fiberhmm-lift` lifts a soft-clipped supplementary whose primary is not in
   the input (a region slice, say): it carries its own `SEQ`, calls and `MM`.
   Only hard-clipped ones, which have no `SEQ` to fill, are left out.
+- **`fiberhmm.nuc`** (experimental): nucleosome sizes, spacing and array
+  segments per molecule, in molecular coordinates. Each footprint gets a
+  density-matched deviation z and a coarse call (short, mono, long, multi(2),
+  multi(3+), can't tell); named classes need an absolute control. Each
+  molecule gets its repeat length, regularity, gap CV and mark densities, and
+  regular / irregular / low-information segments with a sub-rich flag. Window
+  metrics and phasing (anchor and molecule frames) run per observation. A
+  dataset calibration thins dense molecules and re-calls them with the
+  dataset's caller to set edge noise, the supported density range and the
+  low-information floor. As the `nuc` module of `fiberhmm-scan` it writes MA
+  groups `nucsz`, `nucseg` and `nucmol` and finds regular, irregular,
+  sub-rich and phased patches. See
+  [Nucleosome sizes and arrays](https://fiberseq.github.io/FiberHMM/workflows/nucleosomes/).
 
 ### Changed
 
+- Writers that re-call footprints (`fiberhmm-call`, `-apply`,
+  `-recall-tfs`, `-recall-nucs`, `-merge`) drop the MA groups derived from the
+  old calls (`nucsz`, `nucseg`, `nucmol`, `fpcls`, `nfrvar`, `nfrmol`) and
+  their header declarations. Other tools' groups are still kept.
 - MAPQ filtering is off by default everywhere: `--min-mapq`, `--qc-min-mapq`,
   `-q` and the consensus `input.minimum_mapq` default to 0 (was 20). Pass
   `--min-mapq 20` to restore the old filter. A `fiberhmm-pipeline` run started

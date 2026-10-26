@@ -49,6 +49,24 @@ DddA island groups are kept.
 | `tf_recaller.QQQQQQ` | `tq`, `fi`, `tier`, `q0`, `lr`, `rr` | `fiberhmm-consensus --bam-recaller-layer` | the lattice recaller's own class calls |
 | `tf_cross_consensus.QQQQQQ` | as `tf_consensus` | `fiberhmm-consensus --engine staged_native_families` (XCR) | deprecated staged engine |
 
+### Nucleosome groups
+
+Written by the `nuc` module of `fiberhmm-scan` (and `fiberhmm.nuc.tags`), in
+molecular coordinates ([Nucleosomes](../workflows/nucleosomes.md)). Each is
+declared in `MA-TYPES:v1` and in a `@CO FIBERHMM-SCAN-MA:v1:` contract line.
+
+| Group | `AQ` bytes | One interval per | Meaning |
+|---|---|---|---|
+| `nucsz.QQQQ` | coarse, named, posterior, z | footprint (nucleosome and TF calls) | coarse code in bits 0–3 (0 can't tell, 1 short, 2 mono, 3 long, 4 multi2, 5 multi3+, 6 edge-truncated), +16 for a TF call or a footprint overlapping one; named code (0 none, 1 small, 2 hexasome, 3 octasome, 4 chromatosome; absolute calibration only); posterior ×255; `20 z + 128` (255 = missing) |
+| `nucseg.QQQ` | state, posterior, q̂ − 100 | segment | 1 regular, 2 irregular, 3 low-information, +8 sub-rich |
+| `nucmol` (20 `Q` bytes) | the molecule scalars | record (`1-L`) | `nrl`, `regularity`, `spectral_snr`, `gap_cv`, `lambda_acc`, `rho_read`, `n_dyads`, `n_short`, `n_mono`, `n_long`, `n_multi`, `n_cant_tell`, `reg_fraction`, `sub_rich_fraction`, `flags`; codecs in the contract line |
+
+`nucsz` and `nucseg` AN names are `<group>@<digest>_<index>`: the digest is
+over the call lengths and the gaps between consecutive calls, so it survives
+`fiberhmm-lift`. A reader ignores the groups when the digest no longer matches
+the record's calls. Every writer that regenerates `nuc`/`msp`/`tf` drops
+them.
+
 The strand field of every FiberHMM group is `.`, except the duplex
 coverage groups of `fiberhmm-pair`, whose strand is `+` (`deam+`, CT source)
 or `-` (`deam-`, GA source). `ddda_mcg+`/`-` and
