@@ -100,9 +100,10 @@ def build_peak_thresholds(threshold_strong, threshold_medium, threshold_weak, th
 def _find_threshold_regions(signal, threshold, masked, eligible=None):
     working = signal.copy()
     working[masked] = 0
-    if eligible is not None:
-        working[~eligible] = 0
     above = working >= threshold
+    if eligible is not None:
+        # the local rule: a base without min_reads molecules, or already masked by a higher tier, never qualifies
+        above &= eligible & ~masked
     padded = np.concatenate([[False], above, [False]])
     transitions = np.diff(padded.astype(np.int8))
     return np.where(transitions == 1)[0], np.where(transitions == -1)[0]

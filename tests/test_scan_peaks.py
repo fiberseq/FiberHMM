@@ -272,3 +272,33 @@ def test_empty_zones_do_not_truncate_stitched_peaks(tmp_path):
 def test_msp_only_string_tags_do_not_crash(tmp_path):
     path = _bam(tmp_path / 'a.bam', [dict(tags={'as': '100,700', 'al': '147,147'})])
     assert isinstance(_rows(path), list)
+
+
+def test_wide_smoothing_stitched_peaks_do_not_depend_on_unit_placement(tmp_path):
+    from fiberhmm.scan import plan, run_units
+    path = _bam(tmp_path / 'a.bam', [dict(start=701, cigar='250M', tags={})], {'SQ': [{'SN': 'chrP', 'LN': 4000}]})
+    params = {'peaks': {'smooth_width': 2000}}
+    hits = []
+    for offset in (0, 250):
+        units = plan({'chrP': 4000}, genome=True, unit_bp=500, stride_bp=500, grid_offset=offset)
+        out = tmp_path / f'o{offset}'
+        run_units([{'dataset_id': 'x', 'paths': [path]}], units, modules=['peaks'], params=params, out=out,
+                  annotate=False)
+        hits.append(read_all(out / 'peaks' / 'hits.tsv.bgz'))
+    assert hits[0] == hits[1]
+    with pysam.AlignmentFile(path) as bam:
+        rows = compact_rows(bam, 'chrP', 0, 4000, row_rule='records')
+    num, tot = C.compute_scan_counts(rows, 'accessibility', 4000)
+    whole = C.scan_peaks(num, tot, n_reads=len(rows), rule='local', params={'smooth_width': 2000})
+    assert sorted((p['start'], p['end'], p['layer']) for p in whole['peaks']) == sorted(
+        (int(h['start']), int(h['end']), int(h['tier'])) for h in hits[0] if h['type'] == 'peaks.peak')
+
+
+def test_local_rule_with_zero_rare_threshold_needs_coverage():
+    num = np.zeros(1500, dtype=np.int32)
+    tot = np.zeros(1500, dtype=np.int32)
+    tot[100:1100] = 10
+    res = C.scan_peaks(num, tot, n_reads=10, rule='local', params={'threshold_rare': 0.0})
+    for p in res['peaks']:
+        if p['layer'] == 3:
+            assert tot[p['start']:p['end']].min() >= 5

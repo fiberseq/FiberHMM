@@ -200,7 +200,7 @@ def finalize(out: Path, manifest: dict, datasets, reference: Mapping[str, int], 
                             zones.append((u, None, 'empty'))
                         else:
                             zones.append((u, None, 'missing'))
-                    runs = territory_runs(zones)
+                    runs = territory_runs(zones, mod.stitch_support_bp(settings))
                     territory = [(s, e, lo, ro) for s, e, _a, lo, ro in runs]
                     names = sorted({k for _s, _e, arrays, _l, _r in runs for k in arrays})
                     tracks = {k: [arrays.get(k) for _s, _e, arrays, _l, _r in runs] for k in names}

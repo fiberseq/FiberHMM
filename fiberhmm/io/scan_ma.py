@@ -147,11 +147,61 @@ def with_scan_contracts(header_dict: dict, lines: Sequence[str]) -> dict:
 
 
 # ------------------------------------------------------------------ MA editing
+def _legacy_as_ma(read):
+    """(ma, aq) carrying a record's legacy ns/nl(+nq) and as/al calls as MA nuc/msp groups, or None.
+
+    A record without MA/Ma whose calls are only in legacy tags must not gain an MA that holds only scan
+    groups: readers take MA as authoritative and would stop reading its ns/nl. The legacy tags must already
+    be in molecular frame (the scan writer carries every record into molecular frame first)."""
+    length = int(read.query_length or len(read.query_sequence or ''))
+    parts, aq = [str(length)], []
+
+    def pairs(start_tag, len_tag):
+        if not (read.has_tag(start_tag) and read.has_tag(len_tag)):
+            return None
+        try:
+            starts = [int(x) for x in (read.get_tag(start_tag).split(',') if isinstance(read.get_tag(start_tag), str)
+                                       else read.get_tag(start_tag)) if str(x) != '']
+            lens = [int(x) for x in (read.get_tag(len_tag).split(',') if isinstance(read.get_tag(len_tag), str)
+                                     else read.get_tag(len_tag)) if str(x) != '']
+        except (TypeError, ValueError):
+            return None
+        if len(starts) != len(lens):
+            return None
+        return starts, lens
+
+    nuc = pairs('ns', 'nl')
+    msp = pairs('as', 'al')
+    if nuc is None and msp is None:
+        return None
+    if nuc is not None:
+        q = list(read.get_tag('nq')) if read.has_tag('nq') else None
+        rows = sorted((s0, l0, (int(q[i]) if q is not None and i < len(q) else None))
+                      for i, (s0, l0) in enumerate(zip(*nuc)) if l0 > 0 and 0 <= s0 and s0 + l0 <= length)
+        if rows:
+            with_q = q is not None and len(q) == len(nuc[0])
+            parts.append(('nuc.Q:' if with_q else 'nuc.:') + ','.join(f'{s0 + 1}-{l0}' for s0, l0, _q in rows))
+            if with_q:
+                aq.extend(max(0, min(255, qq)) for _s, _l, qq in rows)
+    if msp is not None:
+        rows = sorted((s0, l0) for s0, l0 in zip(*msp) if l0 > 0 and 0 <= s0 and s0 + l0 <= length)
+        if rows:
+            parts.append('msp.:' + ','.join(f'{s0 + 1}-{l0}' for s0, l0 in rows))
+    if len(parts) == 1:
+        return None
+    return ';'.join(parts), aq
+
+
 def _read_annotations(read):
-    """(ma, aq list, an names, source) of a read: FiberHMM MA, else fibertools Ma, else a bare length."""
+    """(ma, aq list, an names, source) of a read: FiberHMM MA, else fibertools Ma, else its legacy
+    ns/nl/as/al calls as MA groups, else a bare length."""
     from fiberhmm.io.ma_tags import annotation_tags, parse_an_tag
     tags = annotation_tags(read)
     if tags is None:
+        legacy = _legacy_as_ma(read)
+        if legacy is not None:
+            ma, aq = legacy
+            return ma, list(aq), None, 'legacy'
         length = int(read.query_length or len(read.query_sequence or ''))
         return str(length), [], [], None
     ma, aq, an, source = tags

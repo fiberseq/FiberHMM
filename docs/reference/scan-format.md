@@ -31,7 +31,9 @@ named by the zone they own (`chrom:zone_start-zone_end`).
 ## Tables
 
 BGZF, one header line starting with `#`, tabix-indexed on columns 1, 4, 5
-(`tabix -0 -s1 -b4 -e5`), sorted by contig (header order) and position.
+(`tabix -0 -s1 -b4 -e5`; `.tbi`, or `.csi` for a table with positions at or
+beyond 2^29), sorted by contig (header order) and position. Contig names
+starting with `#` are refused.
 Every table starts with `chrom start end idx_start idx_end`, 0-based
 half-open. `idx_start`/`idx_end` are what tabix indexes: equal to
 `start`/`end`, except that a zero-width row at `p` indexes `[p, p + 1)` so a

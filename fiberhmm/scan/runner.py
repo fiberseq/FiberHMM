@@ -446,6 +446,8 @@ def run_units(datasets: Sequence[Mapping[str, Any]], units, *, modules: Sequence
     units_info = dict(units_info or {})
     if not units:
         raise ScanRefused('the plan has no units')
+    if len({u.unit_id for u in units}) != len(units):
+        raise ScanRefused('the plan has duplicate unit ids')
     out = Path(out).expanduser().resolve()
     raw_policy = read_policy or (params or {}).get('read_policy') or {}
     policy = resolve_read_policy(raw_policy)

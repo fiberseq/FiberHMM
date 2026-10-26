@@ -152,6 +152,10 @@ class PeaksModule(ScanModuleBase):
             tracks['nreads'] = np.full(hi - lo, n_reads, dtype=np.int64)
         return UnitResult(tracks=tracks, extra=dict(n_reads=n_reads))
 
+    def stitch_support_bp(self, settings):
+        # the smoothing kernel's reach and length: runs padded by it compute as one whole-contig array
+        return int(settings['smooth_width']) + int(settings['min_width'])
+
     def stitch(self, chrom, territory, tracks, settings, calibration):
         rule = (calibration or {}).get('tier_rule', 'local')
         out = StitchResult()

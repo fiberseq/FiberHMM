@@ -115,6 +115,12 @@ def merge_intervals(rows: Iterable[Tuple[str, int, int, str]]):
     return merged, records
 
 
+def _check_names(reference: Mapping[str, int]) -> None:
+    bad = [c for c in reference if str(c).startswith('#')]
+    if bad:
+        raise PlanError(f'contig name(s) starting with "#" cannot be indexed in tabix tables: {", ".join(bad[:5])}')
+
+
 def plan(reference: Mapping[str, int], *, genome: bool = False, contigs: Optional[Sequence[str]] = None,
          regions: Optional[Sequence[Tuple[str, int, int]]] = None, bed=None,
          unit_bp: int = DEFAULT_UNIT_BP, stride_bp: int = DEFAULT_STRIDE_BP, grid_offset: int = 0,
@@ -130,10 +136,11 @@ def plan(reference: Mapping[str, int], *, genome: bool = False, contigs: Optiona
         raise PlanError(f'grid_offset must be a non-negative multiple of {LATTICE_BP} bp')
     order = {c: i for i, c in enumerate(reference)}
     units: List[ScanUnit] = []
+    _check_names(reference)
     info = dict(unit_bp=unit_bp, stride_bp=stride_bp, grid_offset=grid_offset, contigs=None,
                 regions=None, bed=None, merged=[])
     if genome:
-        chosen = list(contigs) if contigs else list(reference)
+        chosen = list(dict.fromkeys(contigs)) if contigs else list(reference)
         missing = [c for c in chosen if c not in reference]
         if missing:
             raise PlanError(f'contig(s) not in the BAM header: {", ".join(missing)}')

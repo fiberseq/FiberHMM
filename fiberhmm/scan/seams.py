@@ -155,66 +155,93 @@ def reconcile_anchor(results: Sequence[Tuple[ScanUnit, Sequence[Hit]]], *,
     return kept, components, open_seams
 
 
-def territory_runs(zones: Sequence[Tuple[ScanUnit, Optional[Mapping[str, object]], str]]):
+def territory_runs(zones: Sequence[Tuple[ScanUnit, Optional[Mapping[str, object]], str]], pad_bp: Optional[int] = None):
     """Concatenate adjacent computed zones of one contig into runs.
 
     ``zones``: ``(unit, tracks, status)`` in zone order, ``status`` one of ``'ok'`` (tracks over the zone),
-    ``'empty'`` (scanned, no molecules) and ``'missing'`` (planned but not computed). An empty zone next to
-    a computed zone joins the run as zero tracks, so a feature reaching into it (a smoothing tail, a peak
-    edge) is computed as if the whole contig were one array; a run of two or more empty zones separates
-    runs. Returns ``(start, end, {name: array}, left_open, right_open)`` per run; ``*_open`` is True where
-    the run ends next to a missing zone."""
+    ``'empty'`` (scanned, no molecules) and ``'missing'`` (planned but not computed). Each run of computed
+    zones is extended into the scanned empty zones next to it with zero tracks, ``pad_bp`` on each side
+    (``None``: one whole empty zone), so a feature reaching into them (a smoothing tail, a peak edge) is
+    computed as if the contig were one array; runs whose extensions meet are joined, the empty bases between
+    them filled with zeros. Returns ``(start, end, {name: array}, left_open, right_open)`` per run; ``*_open``
+    is True where the run ends next to a missing zone."""
     import numpy as np
+    zones = list(zones)
+    n = len(zones)
+    kind = ['ok' if (st == 'ok' and tr is not None) else ('missing' if st == 'missing' else 'empty')
+            for _u, tr, st in zones]
 
-    def zeros_like(template, length):
-        return {n: np.zeros(length, dtype=np.asarray(a).dtype) for n, a in template.items()}
+    def contiguous(i, j):          # zone i directly followed by zone j
+        return zones[i][0].zone_end == zones[j][0].zone_start
+
+    # 1. data runs: maximal stretches of contiguous ok zones
+    data = []
+    i = 0
+    while i < n:
+        if kind[i] != 'ok':
+            i += 1
+            continue
+        j = i
+        while j + 1 < n and kind[j + 1] == 'ok' and contiguous(j, j + 1):
+            j += 1
+        data.append([i, j])
+        i = j + 1
+    if not data:
+        return []
+    template = zones[data[0][0]][1]
+
+    def extend(i, step):
+        """Zero padding beyond zone i in direction step: (bases, reached_missing, first_zone_index_used)."""
+        got, k, last = 0, i, i
+        limit = pad_bp
+        while True:
+            nxt = k + step
+            if nxt < 0 or nxt >= n or not (contiguous(k, nxt) if step > 0 else contiguous(nxt, k)):
+                return got, False, last
+            if kind[nxt] == 'missing':
+                return got, True, last
+            if kind[nxt] == 'ok':
+                return got, False, last
+            zl = zones[nxt][0].zone_end - zones[nxt][0].zone_start
+            if limit is None:
+                return zl, False, nxt
+            take = min(zl, limit - got)
+            got += take
+            last = nxt
+            if got >= limit:
+                return got, False, last
+            k = nxt
 
     runs = []
-    cur = None
-    prev = None              # (unit, status) of the previous zone
-
-    def close(right_open=False):
-        nonlocal cur
-        if cur is not None:
-            cur['right_open'] = right_open
-            runs.append(cur)
-            cur = None
-
-    for unit, tracks, status in zones:
-        contiguous = prev is not None and prev[0].zone_end == unit.zone_start
-        length = unit.zone_end - unit.zone_start
-        if status == 'ok' and tracks is not None:
-            if cur is not None and contiguous:
-                cur['end'] = unit.zone_end
-                for name, arr in tracks.items():
-                    cur['parts'].setdefault(name, []).append(arr)
-            else:
-                close()
-                cur = dict(start=unit.zone_start, end=unit.zone_end, parts={n: [a] for n, a in tracks.items()},
-                           left_open=bool(contiguous and prev[1] == 'missing'), right_open=False)
-                if contiguous and prev[1] == 'empty':
-                    pu = prev[0]
-                    pad = zeros_like(tracks, pu.zone_end - pu.zone_start)
-                    cur['start'] = pu.zone_start
-                    for n in cur['parts']:
-                        cur['parts'][n].insert(0, pad[n])
-            cur['last'] = 'ok'
-        elif status == 'empty':
-            if cur is not None and contiguous and cur.get('last') == 'ok':
-                template = {n: parts[0] for n, parts in cur['parts'].items()}
-                pad = zeros_like(template, length)
-                cur['end'] = unit.zone_end
-                for n in cur['parts']:
-                    cur['parts'][n].append(pad[n])
-                cur['last'] = 'empty'
-            else:
-                close()
+    for a, b in data:
+        lpad, lmiss, _ = extend(a, -1)
+        rpad, rmiss, _ = extend(b, +1)
+        start = zones[a][0].zone_start - lpad
+        end = zones[b][0].zone_end + rpad
+        runs.append(dict(a=a, b=b, start=start, end=end, left_open=lmiss, right_open=rmiss))
+    # 2. join runs whose padded extents meet across contiguous empty zones
+    joined = [runs[0]]
+    for r in runs[1:]:
+        prev = joined[-1]
+        between = all(kind[k] == 'empty' for k in range(prev['b'] + 1, r['a'])) and all(
+            contiguous(k, k + 1) for k in range(prev['b'], r['a']))
+        if between and r['start'] <= prev['end']:
+            prev['b'], prev['end'], prev['right_open'] = r['b'], r['end'], r['right_open']
         else:
-            close(right_open=bool(cur is not None and contiguous and cur.get('last') == 'ok'))
-        prev = (unit, 'ok' if (status == 'ok' and tracks is not None) else ('empty' if status != 'missing' else 'missing'))
-    close()
+            joined.append(r)
+    # 3. materialise: data zones' arrays, zeros elsewhere
     out = []
-    for r in runs:
-        arrays = {n: np.concatenate(parts) if len(parts) > 1 else parts[0] for n, parts in r['parts'].items()}
-        out.append((r['start'], r['end'], arrays, r['left_open'], r['right_open']))
+    for r in joined:
+        length = r['end'] - r['start']
+        arrays = {name: np.zeros(length, dtype=np.asarray(arr).dtype) for name, arr in template.items()}
+        for k in range(r['a'], r['b'] + 1):
+            if kind[k] != 'ok':
+                continue
+            u, tracks, _st = zones[k]
+            lo = u.zone_start - r['start']
+            for name, arr in tracks.items():
+                if name not in arrays:
+                    arrays[name] = np.zeros(length, dtype=np.asarray(arr).dtype)
+                arrays[name][lo:lo + (u.zone_end - u.zone_start)] = arr
+        out.append((r['start'], r['end'], arrays, bool(r['left_open']), bool(r['right_open'])))
     return out

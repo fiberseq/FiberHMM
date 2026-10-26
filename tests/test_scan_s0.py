@@ -403,3 +403,34 @@ def test_feature_reaching_several_seams_is_kept_once():
             if a != b:
                 assert not (a[0] < b[1] and b[0] < a[1])
     assert len(kept) >= 1
+
+
+def test_scan_groups_keep_legacy_only_calls_readable():
+    import array
+    from fiberhmm.io.scan_ma import replace_scan_groups
+    from fiberhmm.io.ma_tags import parse_ma_tag
+    h = pysam.AlignmentHeader.from_dict({'HD': {'VN': '1.6'}, 'SQ': [{'SN': 'c', 'LN': 5000}]})
+    r = pysam.AlignedSegment(h)
+    r.query_name = 'm/1/ccs'
+    r.query_sequence = 'A' * 1000
+    r.reference_id = 0
+    r.reference_start = 0
+    r.cigarstring = '1000M'
+    r.set_tag('ns', array.array('I', [100, 500]))
+    r.set_tag('nl', array.array('I', [100, 100]))
+    replace_scan_groups(r, {'nfrmol': ('QQQQ', [(0, 1000, [150, 1, 1, 44], 'nfrmol')])})
+    parsed = parse_ma_tag(r.get_tag('MA'))
+    assert parsed['nuc'] == [(100, 100), (500, 100)]
+    assert [t[0] for t in parsed['raw_types']] == ['nuc', 'nfrmol']
+
+
+def test_repeated_contigs_and_large_coordinates(tmp_path):
+    units, _ = plan({'c': 60_000}, genome=True, contigs=['c', 'c'])
+    assert len({u.unit_id for u in units}) == len(units) == 3
+    with pytest.raises(PlanError):
+        plan({'#c': 60_000}, genome=True)
+    w = TableWriter(tmp_path / 'big.tsv.bgz', ['chrom', 'start', 'end', 'idx_start', 'idx_end', 'x'], {'c': 0})
+    w.add('c', 600_000_000, 600_000_010, ['far'])
+    w.close()
+    assert (tmp_path / 'big.tsv.bgz.csi').is_file() and not (tmp_path / 'big.tsv.bgz.tbi').exists()
+    assert [r['x'] for r in Table(tmp_path / 'big.tsv.bgz').fetch('c', 600_000_005, 600_000_006)] == ['far']
