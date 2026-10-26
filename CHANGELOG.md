@@ -51,7 +51,10 @@
   dataset's caller to set edge noise, the supported density range and the
   low-information floor. As the `nuc` module of `fiberhmm-scan` it writes MA
   groups `nucsz`, `nucseg` and `nucmol` and finds regular, irregular,
-  sub-rich and phased patches. See
+  sub-rich and phased patches. Molecules are decoded with the DAF run mask
+  and DddA CpG policy that `fiberhmm-call` recorded, and scan calibration
+  samples windows that hold each dataset's records, so a genome scan of
+  targeted data calibrates on the target. See
   [Nucleosome sizes and arrays](https://fiberseq.github.io/FiberHMM/workflows/nucleosomes/).
 
 ### Changed
