@@ -222,7 +222,8 @@ def _module_block(name, mod, settings, calibration_sha) -> dict:
 def scan_id_of(manifest: Mapping[str, Any]) -> str:
     units = {k: v for k, v in manifest['units'].items() if k != 'count'}
     key = [manifest['schema'], manifest['reference']['contigs_sha256'],
-           [[d['ordinal'], d['chemistry'], [f['content_id'] for f in d['files']]] for d in manifest['datasets']],
+           [[d['ordinal'], d['dataset_id'], d['chemistry'], [f['content_id'] for f in d['files']]]
+            for d in manifest['datasets']],
            manifest['read_policy'], units,
            {n: [m['version'], m['settings_hash'], (m.get('calibration') or {}).get('digest')]
             for n, m in sorted(manifest['modules'].items())}]
