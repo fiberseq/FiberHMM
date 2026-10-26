@@ -256,3 +256,24 @@ def test_msp_only_record_nucmol_is_not_stale(tmp_path):
         assert set(g) == {NUCMOL} and not g[NUCMOL]['stale']
         r.set_tag('MA', f'{L};msp.:1-{L - 10};' + r.get_tag('MA').split(';', 2)[2])
         assert read_nuc_groups(r)[NUCMOL]['stale']
+
+
+def test_recall_nucs_drops_groups_on_reads_without_calls(tmp_path):
+    from fiberhmm.io.ma_tags import drop_derived_groups
+    rng = np.random.default_rng(8)
+    seq, nucs, msps, marks = planted_record_molecule(rng, n_nuc=6)
+    L = len(seq)
+    path = str(tmp_path / 'tfonly.bam')
+    hdr = annotate_header(pysam.AlignmentHeader.from_dict(header()), calls_program='fiberhmm-call')
+    with pysam.AlignmentFile(path, 'wb', header=hdr) as out:
+        r = make_record(out, 'tfonly', seq, 1000, (), (), [(400, 430)], marks,
+                        extra_groups=(('fire.Q:30-10', (77,)), ('nucsz.QQQQ:401-30', (1, 0, 255, 60))))
+        r.set_tag('AN', '.,.,nucsz@deadbeef_0')
+        out.write(r)
+    pysam.index(path)
+    res = _run_cli('fiberhmm.cli.recall_tfs', '-i', path, '-o', tmp_path / 'out.bam', '--recall-nucs',
+                   '--no-legacy-tags', '--enzyme', 'hia5', '--seq', 'pacbio', '--force-seq')
+    assert res.returncode == 0, res.stderr.decode(errors='replace')
+    _assert_no_nuc_groups(tmp_path / 'out.bam')
+    with pysam.AlignmentFile(str(tmp_path / 'out.bam'), check_sq=False) as bam:
+        assert 'fire.Q' in next(bam.fetch(until_eof=True)).get_tag('MA')

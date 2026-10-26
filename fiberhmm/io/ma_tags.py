@@ -93,6 +93,61 @@ def derived_ma_groups() -> frozenset:
     return frozenset(SCAN_MA_GROUPS) | _SCAN_MA_GROUPS_V1
 
 
+def drop_derived_groups(read) -> int:
+    """Remove the call-derived scan groups (:func:`derived_ma_groups`) from a
+    read's FiberHMM ``MA``, with their AQ bytes and AN names; every other group
+    is kept verbatim. Returns the number of intervals removed. A read whose AQ
+    does not match its MA quality specs is left unchanged (its bytes cannot be
+    realigned safely)."""
+    if not hasattr(read, 'has_tag') or not read.has_tag('MA'):
+        return 0
+    derived = derived_ma_groups()
+    ma = str(read.get_tag('MA'))
+    sections = [x for x in ma.split(';')[1:] if x]
+    heads = [x.partition(':')[0] for x in sections]
+
+    def feature(head):
+        for i, ch in enumerate(head):
+            if ch in '.+-':
+                return head[:i], head[i + 1:]
+        return head, ''
+    feats = [feature(h) for h in heads]
+    if not any(f in derived for f, _q in feats):
+        return 0
+    counts = [sum(bool(t) for t in x.partition(':')[2].split(',')) for x in sections]
+    aq = list(read.get_tag('AQ')) if read.has_tag('AQ') else []
+    if len(aq) != sum(len(q) * n for (_f, q), n in zip(feats, counts)):
+        return 0
+    names = parse_an_tag(str(read.get_tag('AN'))) if read.has_tag('AN') else None
+    if names is not None and len(names) != sum(counts):
+        names = None
+    keep_s, keep_q, keep_n, removed = [], [], [], 0
+    qi = ni = 0
+    for sec, (f, q), n in zip(sections, feats, counts):
+        nq = len(q) * n
+        if f in derived:
+            removed += n
+        else:
+            keep_s.append(sec)
+            keep_q.extend(aq[qi:qi + nq])
+            if names is not None:
+                keep_n.extend(names[ni:ni + n])
+        qi += nq
+        ni += n
+    if keep_s:
+        read.set_tag('MA', ';'.join([ma.split(';', 1)[0], *keep_s]), value_type='Z')
+        read.set_tag('AQ', array.array('B', keep_q) if keep_q else None)
+        if names is not None and any(keep_n):
+            read.set_tag('AN', format_an_tag(keep_n), value_type='Z')
+        elif read.has_tag('AN'):
+            read.set_tag('AN', None)
+    else:
+        for tag in ('MA', 'AQ', 'AN'):
+            if read.has_tag(tag):
+                read.set_tag(tag, None)
+    return removed
+
+
 def llr_to_tq(llr: float) -> int:
     """Encode an LLR (nats) into the tq quality byte."""
     return max(0, min(255, int(round(llr * TQ_SCALE))))

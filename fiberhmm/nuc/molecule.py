@@ -82,6 +82,11 @@ def footprint_calls(mol: NucMolecule, params: NucParams = DEFAULT_PARAMS,
     cc = call_coarse(L, lam, cal.curve, cal.nrl_pooled, cal.sigma_gap, cal.sigma_loc_at,
                      nl, nr, trunc, params, lambda_supported=cal.is_supported)
     named, named_post = call_named(L, lam, cal.absolute if cal.named_available else None, nl, nr, params)
+    # names only for footprints with a single-particle coarse call inside the
+    # supported range (no tails, multimers, truncated or can't-tell)
+    ok_named = np.isin(cc.code, (SHORT, MONO)) & ~trunc & cal.is_supported(lam)
+    named = np.where(ok_named, named, 0)
+    named_post = np.where(ok_named, named_post, 0.0)
     # TF calls coinciding with a short nucleosome call, or short calls that are TF calls
     tf_overlap = is_tf.copy()
     if len(tf):
@@ -180,7 +185,7 @@ def molecule_outputs(mol: NucMolecule, params: NucParams = DEFAULT_PARAMS,
             for s in segs:
                 if s.state == REGULAR:
                     ssp, _ = molecule_spacing(mol, cal.nrl_pooled, params, coarse_codes=nuc_codes,
-                                              window=(s.start, s.end + 1))
+                                              window=(s.start - 1, s.end + 1))
                     s.regularity = ssp.regularity
             if segs and not flags['too_short_segments']:
                 cov = sum(s.end - s.start for s in segs)

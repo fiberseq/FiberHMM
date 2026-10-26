@@ -201,6 +201,8 @@ def supported_range(lam_natural, lam_thinned, lam_dense, q: float = 0.025):
 def _bin_edges(values: np.ndarray, n: int) -> np.ndarray:
     v = np.asarray(values, float)
     v = v[np.isfinite(v) & (v > 0)]
+    if len(v) == 0:
+        return np.array([-np.inf, np.inf])
     if len(v) < n * 10:
         n = max(1, len(v) // 10)
     e = np.quantile(np.log(v), np.linspace(0, 1, n + 1))
@@ -235,37 +237,42 @@ def _record_iter(bam, regions):
 
 def load_population(bam_paths, params: NucParams = DEFAULT_PARAMS, n_population: int = 2000,
                     regions: Optional[Sequence[Tuple[str, int, int]]] = None,
-                    stats: Optional[dict] = None):
+                    stats: Optional[dict] = None, read_filter=None, fiber_reads: bool = True):
     """(molecules, fiber_reads, caller settings, chemistry) for the
     hash-ranked calibration population of one dataset (primary records of
-    one or more BAMs, optionally restricted to ``regions``)."""
+    one or more BAMs, optionally restricted to ``regions`` and to records
+    passing ``read_filter``). With ``fiber_reads=False`` (self calibration)
+    no caller input is built and the caller settings are None."""
     import pysam
     from fiberhmm.nuc.recall import CallerSettings, fiber_read_from_record
     if isinstance(bam_paths, (str, os.PathLike)):
         bam_paths = [bam_paths]
+
+    def usable(r):
+        return not (r.is_secondary or r.is_supplementary) and (read_filter is None or read_filter(r))
     names = set()
     settings = chem = None
     for path in bam_paths:
         with pysam.AlignmentFile(str(path), 'rb') as bam:
-            if settings is None:
-                settings = CallerSettings.from_header(bam.header)
+            if chem is None:
                 chem = DecodeContext(bam.header, params).chemistry
-            names.update(r.query_name for r in _record_iter(bam, regions)
-                         if not (r.is_secondary or r.is_supplementary))
+                if fiber_reads:
+                    settings = CallerSettings.from_header(bam.header)
+            names.update(r.query_name for r in _record_iter(bam, regions) if usable(r))
     keep = set(sorted(names, key=molecule_hash)[:n_population * 2])   # density filter trims later
     mols, frs = [], {}
     for path in bam_paths:
         with pysam.AlignmentFile(str(path), 'rb') as bam:
             ctx = DecodeContext(bam.header, params)
             for r in _record_iter(bam, regions):
-                if r.is_secondary or r.is_supplementary or r.query_name not in keep or r.query_name in frs:
+                if not usable(r) or r.query_name not in keep or r.query_name in frs:
                     continue
                 m, why = decode_record(r, ctx)
                 if stats is not None:
                     stats[why] = stats.get(why, 0) + 1
                 if m is None:
                     continue
-                fr = fiber_read_from_record(r, settings)
+                fr = fiber_read_from_record(r, settings) if fiber_reads else {}
                 if fr is None:
                     continue
                 mols.append(m)
@@ -277,7 +284,8 @@ def calibrate_thin(bam_path, params: NucParams = DEFAULT_PARAMS, *, label: str =
                    n_population: int = 2000, seeds: int = 5, n_targets: int = 8,
                    holdout: float = 0.2, cores: int = 1,
                    regions: Optional[Sequence[Tuple[str, int, int]]] = None,
-                   settings_overrides: Optional[dict] = None, progress=None) -> NucCalibration:
+                   settings_overrides: Optional[dict] = None, progress=None,
+                   read_filter=None) -> NucCalibration:
     """Thinning calibration of one dataset (NUC 4.1). ``bam_path`` is a path
     or a list of paths (the dataset's files); ``regions`` restricts the
     population to records overlapping them."""
@@ -285,7 +293,10 @@ def calibrate_thin(bam_path, params: NucParams = DEFAULT_PARAMS, *, label: str =
         if progress is not None:
             progress(msg)
     stats: dict = {}
-    mols, frs, settings, chem = load_population(bam_path, params, n_population, regions, stats)
+    mols, frs, settings, chem = load_population(bam_path, params, n_population, regions, stats,
+                                                read_filter=read_filter)
+    if not mols:
+        raise ValueError('calibrate_thin: no usable molecules in the calibration sample')
     if settings_overrides:
         settings = replace(settings, **settings_overrides)
     # informative-density matching: central 90%
@@ -305,8 +316,13 @@ def calibrate_thin(bam_path, params: NucParams = DEFAULT_PARAMS, *, label: str =
     hold = {i for i in dense_idx if int(molecule_hash(mols[i].name + ':holdout'), 16) / 16 ** 16 < holdout}
     # targets reach well below the natural range so the floor (D8) is found;
     # only lambda covered by natural data too is supported (step 5)
+    if not mols or not np.isfinite(q75) or q75 <= 0:
+        raise ValueError('calibrate_thin: no usable molecules in the calibration sample')
+    # targets from 0.2 x the dense quartile (never below the 0.02 retention
+    # floor of KEEP_GRID) up to 0.9 x the quartile
     lam_lo = min(float(np.quantile(lam, 0.05)), 0.2 * q75)
-    targets = np.exp(np.linspace(np.log(max(lam_lo, 0.02)), np.log(q75 * 0.9), n_targets))
+    lo_t = min(max(lam_lo, 0.02 * q75), 0.85 * q75)
+    targets = np.exp(np.linspace(np.log(lo_t), np.log(q75 * 0.9), n_targets))
     say(f'dense {len(dense_idx)} (held out {len(hold)}), targets {np.round(targets, 3).tolist()}')
     tasks = []
     for i in natural_idx:
@@ -360,6 +376,9 @@ def calibrate_thin(bam_path, params: NucParams = DEFAULT_PARAMS, *, label: str =
         thin_ft[part][1].append(ft['lambda'][kk])
     R = rows
     lam_rows = np.array([r[0] for r in R], float)
+    if len(lam_rows) == 0:
+        raise ValueError('calibrate_thin: thinning produced no matched footprints '
+                         '(too few dense molecules with calls)')
     edges = _bin_edges(lam_rows, 8)
     outcomes = {'log_lambda': [], 'n': [], 'kept': [], 'merged': [], 'split': [], 'dropped': []}
     sl_knots, sl_vals, os_vals = [], [], []
@@ -475,7 +494,8 @@ DEFAULT_T = {'small': 70.0, 'hexasome': 110.0, 'octasome': 147.0, 'chromatosome'
 def calibrate_absolute(base: NucCalibration, control_molecules: Sequence[NucMolecule],
                        control_class: str = 'octasome', T: Optional[Dict[str, float]] = None,
                        params: NucParams = DEFAULT_PARAMS, sigma_struct: float = 5.0,
-                       naked_molecules: Sequence[NucMolecule] = ()) -> NucCalibration:
+                       naked_molecules: Sequence[NucMolecule] = (),
+                       dataset_molecules: Sequence[NucMolecule] = ()) -> NucCalibration:
     """Absolute calibration from a control of known core length.
 
     ``control_molecules`` carry footprints of one known class (601 arrays:
@@ -483,8 +503,10 @@ def calibrate_absolute(base: NucCalibration, control_molecules: Sequence[NucMole
     on the control alone (monotone, over log lambda) and shared by every
     class: mu_k(lambda) = T_k + b(lambda), sigma_k^2 = sigma_struct^2 +
     sigma_b(lambda)^2. Class locations are never fitted jointly with the
-    weights. ``naked_molecules`` (naked DNA) give the false-footprint length
-    distribution per lambda bin, the null for short calls.
+    weights. ``dataset_molecules`` (the dataset's own molecules) fit the class
+    weights pi_k by EM with those locations fixed. ``naked_molecules`` (naked
+    DNA) give the false-footprint length distribution per lambda bin, the null
+    for short calls.
     """
     T = dict(DEFAULT_T if T is None else T)
     if control_class not in T:
@@ -498,6 +520,11 @@ def calibrate_absolute(base: NucCalibration, control_molecules: Sequence[NucMole
     cal.source = 'absolute'
     cal.absolute = AbsoluteClasses(T=T, b_log_lambda=list(curve.log_lambda), b=b,
                                    sigma_b=list(curve.sigma), sigma_struct={k: sigma_struct for k in T})
+    if dataset_molecules:
+        from fiberhmm.nuc.sizes import fit_named_weights
+        ftd = footprint_table(dataset_molecules, base, params)
+        kd = ~ftd['truncated'] & (ftd['length'] <= max(T.values()) + 3 * max(curve.sigma))
+        cal.absolute.weights = fit_named_weights(cal.absolute, ftd['length'][kd], ftd['lambda'][kd])
     if naked_molecules:
         ftn = footprint_table(naked_molecules, base, params)
         Ln, ln = ftn['length'], ftn['lambda']

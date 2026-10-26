@@ -399,3 +399,44 @@ def test_phase_null_of_one_molecule_is_never_significant():
     R, _phi, _n, nm, _null, p = resultant_with_null([x] * 50, 150., 1100., 190., 200,
                                                     np.random.default_rng(0), molecule_ids=[0] * 50)
     assert nm == 1 and p == 1.0 and R > 0.9
+
+
+def test_spectral_snr_needs_2kb_and_8_dyads_not_6_gaps():
+    L = 5000
+    # 10 mono dyads, never adjacent in the call list (a short call between each pair)
+    nucs = []
+    for k in range(10):
+        s = 300 + k * 400
+        nucs += [(s, s + 147), (s + 200, s + 250)]
+    m = make_molecule(L, nucs=nucs, msps=complement_msps(L, nucs), hits=[s - 2 for s, _ in nucs])
+    s1, _ = molecule_spacing(m, 190.0)
+    s2, _ = molecule_spacing(m, 190.0, keep_acf=True)
+    assert s1.n_gaps < 6 and not s1.too_short_snr and np.isfinite(s1.spectral_snr)
+    assert s1.spectral_snr == s2.spectral_snr
+
+
+def test_phasing_corrects_bins_that_are_not_whole_periods():
+    rng = np.random.default_rng(11)
+    mols = _phased_mols(rng, 80, False)
+    fixed = phasing(mols, [('chrS', 50_000, 0)], P=190.0, bins=[(150, 1200)], require_span=False, seed=2)
+    raw = phasing(mols, [('chrS', 50_000, 0)], P=190.0, bins=[(150, 1200)], correct_uniform=False,
+                  require_span=False, seed=2)
+    assert fixed.summary.R <= raw.summary.R + 1e-9
+
+
+def test_window_rows_keep_their_own_phasing_with_shared_names():
+    rng = np.random.default_rng(7)
+    mols = _phased_mols(rng, 6, True)
+    for m in mols:
+        m.name = 'same'
+    w = window_metrics(mols, ('chrS', 49_500, 50_500), anchor=50_000, cal=flat_calibration(nrl=190.0))
+    rows = w.molecules['all']
+    assert len(rows) == 6 and all('r_anchor' in r for r in rows)
+
+
+def test_footprint_model_loader_accepts_scan_annotations():
+    from fiberhmm.io.footprint_bam import _an_linked_footprints
+    from fiberhmm.io.ma_tags import parse_ma_tag
+    ma = parse_ma_tag('3000;nuc.Q:11-147;msp.:158-40,500-60;tf.QQQ:300-30;nucsz.QQQQ:11-147')
+    assert not _an_linked_footprints(ma, '.,.,.,.,nucsz@abcd1234_0')
+    assert _an_linked_footprints(ma, '.,fhw_msp_0,fhw_msp_0,.,.')

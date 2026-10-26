@@ -146,3 +146,47 @@ def test_caller_settings_resolve_ddda_cpg_masking():
                                              'DS': 'cpg_mask=methylated-only hmm_cpg_mask=on'}]})
     assert ds.cpg_mask_policy == 'methylated-only'
     assert CallerSettings.from_header({'PG': []}).cpg_mask_policy is None     # Hia5
+
+
+def test_caller_settings_take_the_declared_chemistry_and_daf_run_mask():
+    daf = {'CO': ['FIBERHMM-CHEMISTRY:v1:assay=daf;enzyme=ddda;platform=nanopore;mode=daf'],
+           'PG': [{'ID': 'fiberhmm-apply', 'PN': 'fiberhmm-apply', 'CL': 'fiberhmm-apply -i a.bam'}]}
+    s = CallerSettings.from_header(daf)
+    assert s.enzyme == 'ddda' and s.mode == 'daf' and s.daf_mask_runs == 2
+    ont = {'CO': ['FIBERHMM-CHEMISTRY:v1:assay=fiber-seq;enzyme=hia5;platform=nanopore;mode=nanopore-fiber'],
+           'PG': [{'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call', 'CL': 'fiberhmm-call -i a.bam --enzyme hia5'}]}
+    o = CallerSettings.from_header(ont)
+    assert o.mode == 'nanopore-fiber' and o.prob_threshold == 248
+    with pytest.raises(ValueError):
+        CallerSettings.from_header({'CO': ['FIBERHMM-CHEMISTRY:v1:assay=daf;enzyme=custom;platform=unknown;mode=daf']})
+
+
+def test_calibrate_thin_refuses_an_empty_sample(tmp_path):
+    path = str(tmp_path / 'empty.bam')
+    with pysam.AlignmentFile(path, 'wb', header=header()) as out:
+        pass
+    pysam.index(path)
+    with pytest.raises(ValueError):
+        calibrate_thin(path, n_population=10, seeds=1, n_targets=2)
+
+
+def test_named_calls_only_for_single_particle_footprints_and_weights_are_fitted():
+    from fiberhmm.nuc.molecule import footprint_calls
+    from fiberhmm.nuc.records import make_molecule
+    from fiberhmm.nuc.sizes import AbsoluteClasses, fit_named_weights
+    model = AbsoluteClasses(T={'hexasome': 110.0, 'octasome': 147.0, 'chromatosome': 167.0},
+                            b_log_lambda=[np.log(0.5)], b=[0.0], sigma_b=[3.0],
+                            sigma_struct={'hexasome': 5.0, 'octasome': 5.0, 'chromatosome': 5.0})
+    nucs = [(300, 447), (700, 950), (1300, 1660), (2000, 2110)]
+    m = make_molecule(4000, nucs=nucs, msps=[(0, 300), (447, 700), (950, 1300), (1660, 2000), (2110, 4000)],
+                      hits=[299, 448, 699, 951, 1299, 1661, 1999, 2111])
+    cal = flat_calibration()
+    cal.source, cal.absolute = 'absolute', model
+    fp = footprint_calls(m, cal=cal)
+    named = dict(zip(fp['length'].tolist(), fp['named'].tolist()))
+    assert named[147] == 3 and named[110] == 2           # octasome, hexasome
+    assert named[250] == 0 and named[360] == 0           # long / multi: never named
+    rng = np.random.default_rng(0)
+    L = np.r_[rng.normal(147, 5, 800), rng.normal(110, 5, 200)]
+    w = fit_named_weights(model, L, np.full(len(L), 0.5))
+    assert abs(w['octasome'] - 0.8) < 0.05 and abs(w['hexasome'] - 0.2) < 0.05

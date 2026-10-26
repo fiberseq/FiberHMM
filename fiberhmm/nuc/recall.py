@@ -57,6 +57,9 @@ class CallerSettings:
     derived_tf_max_edge_ambiguity: Optional[int] = None
     #: DddA CpG-aware calling policy (None = off), as fiberhmm-call resolves it
     cpg_mask_policy: Optional[str] = None
+    #: DAF same-strand run mask (fiberhmm-call --daf-mask-runs / --daf-run-policy)
+    daf_mask_runs: int = 0
+    daf_run_policy: str = 'keep-one'
     source: str = 'defaults'
     notes: tuple = field(default_factory=tuple)
 
@@ -116,6 +119,12 @@ class CallerSettings:
             m = re.search(r'phase_nrl=(\d+)', str(pg.get('DS', '')))
             if m:
                 kw['phase_nrl'] = int(m.group(1))
+            runs = opt('--daf-mask-runs')
+            if runs is not None:
+                kw['_daf_runs'] = int(runs)
+            pol = opt('--daf-run-policy')
+            if pol is not None:
+                kw['daf_run_policy'] = pol
             m = re.search(r'cpg_mask=(\S+)', str(pg.get('DS', '')))
             if m:
                 kw['cpg_mask_policy'] = None if m.group(1) == 'off' else m.group(1)
@@ -126,6 +135,19 @@ class CallerSettings:
             kw['source'] = 'header'
         use_m5c = kw.pop('_use_m5c', None)
         policy_flag = kw.pop('_policy_flag', None)
+        daf_runs = kw.pop('_daf_runs', None)
+        if 'enzyme' not in kw or 'seq' not in kw:
+            # the chemistry declaration (or the call record's mode) when the
+            # command line does not name it
+            from fiberhmm.nuc.records import header_chemistry
+            chem = header_chemistry(header)
+            if 'enzyme' not in kw and chem.get('enzyme'):
+                kw['enzyme'] = chem['enzyme']
+            if 'seq' not in kw and chem.get('platform'):
+                kw['seq'] = chem['platform']
+            if 'enzyme' not in kw and chem.get('mode') not in (None, 'pacbio-fiber'):
+                raise ValueError(f"cannot tell the enzyme for observation mode {chem.get('mode')!r} "
+                                 'from the BAM header; pass CallerSettings overrides')
         kw.update(overrides)
         base = cls(**{k: v for k, v in kw.items() if k in cls.__dataclass_fields__})
         enzyme, seq = base.enzyme, base.seq
@@ -149,6 +171,11 @@ class CallerSettings:
             upd['nuc_model'] = base.nuc_model or get_model_path(enzyme, tool='nuc_refine', seq=seq)
             if base.derived_tf_max_edge_ambiguity is None:
                 upd['derived_tf_max_edge_ambiguity'] = 12
+        if 'daf_mask_runs' not in kw:
+            from fiberhmm.core.bam_reader import resolve_daf_run_mask
+            runs, pol = resolve_daf_run_mask(daf_runs, base.daf_run_policy, enzyme)
+            upd['daf_mask_runs'] = int(runs) if upd['mode'] == 'daf' else 0
+            upd['daf_run_policy'] = pol
         if 'cpg_mask_policy' not in kw:
             from fiberhmm.inference.tf_recaller import resolve_cpg_mask_policy
             try:
@@ -231,6 +258,17 @@ class Caller:
                                                      build_fused_recall_result,
                                                      run_hmm_apply_stage)
         s = self.settings
+        if s.mode == 'daf':
+            from fiberhmm.core.bam_reader import daf_run_mask_scope
+            with daf_run_mask_scope(s.daf_mask_runs, s.daf_run_policy):
+                return self._call(fiber_read)
+        return self._call(fiber_read)
+
+    def _call(self, fiber_read: dict) -> Optional[dict]:
+        from fiberhmm.inference.fused_stages import (apply_result_has_footprints,
+                                                     build_fused_recall_result,
+                                                     run_hmm_apply_stage)
+        s = self.settings
         ar = run_hmm_apply_stage(fiber_read, self.model, s.edge_trim, False, s.mode,
                                  self.context_size, s.msp_min_size, s.nuc_min_size, False)
         if not apply_result_has_footprints(ar):
@@ -258,6 +296,13 @@ def fiber_read_from_record(read, settings: CallerSettings) -> Optional[dict]:
     fr = _extract_fiber_read_from_pysam(read, settings.mode, settings.prob_threshold)
     if fr is None or fr is CHIMERA_SKIP:
         return None
+    if settings.mode == 'daf' and fr.get('_daf_strand') not in ('+', '-'):
+        # MM/ML-encoded DAF reads: fix the strand once, so thinning knows which
+        # base a dropped deamination restores and the strand cannot flip
+        from fiberhmm.core.bam_reader import detect_daf_strand
+        st = detect_daf_strand(fr['query_sequence'], fr['m6a_query_positions'])
+        if st in ('+', '-'):
+            fr['_daf_strand'] = st
     if settings.cpg_mask_policy:
         # the same first-pass HMM and recall CpG mask fiberhmm-call applies (DddA)
         from fiberhmm.inference.engine import attach_hmm_cpg_mask, read_cpg_ma_intervals

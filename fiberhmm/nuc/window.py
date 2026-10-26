@@ -231,13 +231,11 @@ def window_metrics(molecules: Sequence[NucMolecule], window: Tuple[str, int, int
                              side='down' if orientation else 'both', seed=seed, require_span=True)
                 agg['phasing'][frame] = ph.as_dict()
                 # per-molecule theta / r / f
-                by_name = {members[pm['molecule']].name: pm for pm in ph.per_molecule}
-                for r in rows:
-                    pm = by_name.get(r['name'])
-                    if pm is not None:
-                        r[f'theta_{frame}'] = pm['theta'] if pm['reliable'] else None
-                        r[f'r_{frame}'] = pm['r']
-                        r[f'f_{frame}'] = pm['f_bp'] if pm['reliable'] else None
+                for pm in ph.per_molecule:
+                    r = rows[pm['molecule']]           # phasing indexes ``members`` == ``rows``
+                    r[f'theta_{frame}'] = pm['theta'] if pm['reliable'] else None
+                    r[f'r_{frame}'] = pm['r']
+                    r[f'f_{frame}'] = pm['f_bp'] if pm['reliable'] else None
         groups[obs.obs_id] = agg
         per_mol[obs.obs_id] = rows
     return WindowResult((chrom, int(ws), int(we)), anchor, int(orientation), groups, per_mol)

@@ -2,8 +2,10 @@
 
 Wraps :mod:`fiberhmm.nuc` (NUC design; feature-hub CONTRACTS 11):
 
-- ``calibrate``: once per scan, per dataset, on a declared sample of units
-  (stable unit-id hash), by thinning (default) or self calibration. The
+- ``calibrate``: once per scan, per dataset, on a declared sample of the
+  scanned territory (fixed 50 kb windows of absolute coordinates, stable
+  hash; independent of the tiling), records passing the read policy, by
+  thinning (default) or self calibration. The
   record is ``{'schema': 'fiberhmm.nuc.scan_calibration.v1', 'datasets':
   {dataset_id: NucCalibration dict}}``.
 - ``molecule_outputs``: per owned source record, from the complete record:
@@ -73,7 +75,8 @@ class NucModule(ScanModuleBase):
             'calibration_population': _p(2000, 'int', 'molecules per dataset in the calibration population'),
             'calibration_seeds': _p(5, 'int', 'thinning repeats'),
             'calibration_targets': _p(8, 'int', 'thinning target lambda values'),
-            'calibration_units': _p(40, 'int', 'units sampled (stable hash) for the calibration population'),
+            'calibration_units': _p(40, 'int', '50 kb windows of the scanned territory sampled (stable hash of '
+                                       'absolute window index) for the calibration population; 0 = all'),
             'groups': _p('dataset+haplotype', 'str', "observation groups: 'dataset' or 'dataset+haplotype'"),
             'patch_smooth_bp': _p(200, 'int', 'smoothing window for per-base fractions'),
             'patch_tau_regular': _p(0.5, 'float', 'regular patch threshold'),
@@ -177,13 +180,15 @@ class NucModule(ScanModuleBase):
     def calibrate(self, inputs, units, settings, work: Path, progress) -> Optional[dict]:
         from fiberhmm.nuc.calibration import calibrate_self
         from fiberhmm.nuc.thinning import calibrate_thin, load_population
+        from fiberhmm.scan.reads import passes
         params = self._params(settings)
-        n_units = int(settings['calibration_units'])
-        ranked = sorted(units, key=lambda u: hashlib.sha256(u.unit_id.encode()).hexdigest())
-        sample = sorted(ranked[:n_units] if n_units else ranked, key=lambda u: (u.chrom, u.start))
-        regions = [(u.chrom, u.start, u.end) for u in sample]
+        regions = calibration_regions(units, int(settings['calibration_units']))
+        filters = inputs.read_policy['filters']
+
+        def read_filter(r):
+            return passes(r, filters)
         out = {'schema': CAL_SCHEMA, 'source': settings['calibration'],
-               'units': [u.unit_id for u in sample], 'datasets': {}}
+               'regions': [f'{c}:{a}-{b}' for c, a, b in regions], 'datasets': {}}
         for ds in inputs.datasets:
             progress.report('nuc', f'calibrating {ds.dataset_id} ({settings["calibration"]})')
             if settings['calibration'] == 'thin':
@@ -191,10 +196,14 @@ class NucModule(ScanModuleBase):
                                      n_population=int(settings['calibration_population']),
                                      seeds=int(settings['calibration_seeds']),
                                      n_targets=int(settings['calibration_targets']),
-                                     cores=max(1, int(inputs.cores)), regions=regions)
+                                     cores=max(1, int(inputs.cores)), regions=regions,
+                                     read_filter=read_filter)
             else:
                 mols, _frs, _s, chem = load_population(list(ds.paths), params,
-                                                       int(settings['calibration_population']), regions)
+                                                       int(settings['calibration_population']), regions,
+                                                       read_filter=read_filter, fiber_reads=False)
+                if not mols:
+                    raise ValueError(f'nuc: no usable molecules in the calibration sample of {ds.dataset_id}')
                 cal = calibrate_self(mols, params, label=ds.dataset_id, chemistry=chem,
                                      max_molecules=int(settings['calibration_population']))
             out['datasets'][ds.dataset_id] = cal.to_dict()
@@ -341,12 +350,17 @@ class NucModule(ScanModuleBase):
                 if len(xs) < int(settings['patch_min_measured']):
                     continue
                 # P maximising the mean per-molecule resultant (phase-free)
+                # the window is a fixed W bp, generally not whole periods: remove
+                # the uniform expectation over [0, W) per dyad
+                from fiberhmm.nuc.phasing import uniform_expectation
                 best_p, best = None, -1.0
                 for P in qgrid:
-                    r = np.mean([abs(np.exp(2j * np.pi * x / P).sum()) / len(x) for x in xs])
+                    eu = uniform_expectation(0.0, float(W), P)
+                    r = np.mean([abs(np.exp(2j * np.pi * x / P).sum() - eu * len(x)) / len(x) for x in xs])
                     if r > best:
                         best, best_p = r, P
-                V = np.array([np.exp(2j * np.pi * x / best_p).sum() for x in xs])
+                eu = uniform_expectation(0.0, float(W), best_p)
+                V = np.array([np.exp(2j * np.pi * x / best_p).sum() - eu * len(x) for x in xs])
                 N = float(sum(len(x) for x in xs))
                 S = abs(V.sum())
                 var = float(np.sum(np.abs(V) ** 2))
@@ -464,6 +478,37 @@ def _smooth(x: np.ndarray, w: int) -> np.ndarray:
     full = np.convolve(x, np.ones(w) / w, mode='full')
     a = (w - 1) // 2
     return full[a:a + len(x)]
+
+
+CAL_WINDOW_BP = 50_000
+
+
+def calibration_regions(units, n_windows: int) -> List[Tuple[str, int, int]]:
+    """Calibration sample independent of the tiling: the scanned territory
+    (union of unit spans) cut on fixed 50 kb windows of absolute coordinates,
+    the ``n_windows`` windows with the lowest hash of (contig, window index)
+    (all windows when ``n_windows`` is 0)."""
+    spans: Dict[str, List[Tuple[int, int]]] = {}
+    for u in units:
+        spans.setdefault(u.chrom, []).append((int(u.start), int(u.end)))
+    windows = []
+    for chrom, iv in spans.items():
+        iv.sort()
+        merged = []
+        for a, b in iv:
+            if merged and a <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], b)
+            else:
+                merged.append([a, b])
+        for a, b in merged:
+            for k in range(a // CAL_WINDOW_BP, (b - 1) // CAL_WINDOW_BP + 1):
+                s0, e0 = max(a, k * CAL_WINDOW_BP), min(b, (k + 1) * CAL_WINDOW_BP)
+                if e0 > s0:
+                    windows.append((hashlib.sha256(f'{chrom}:{k}'.encode()).hexdigest(), chrom, s0, e0))
+    windows.sort()
+    if n_windows:
+        windows = windows[:n_windows]
+    return sorted((c, s0, e0) for _h, c, s0, e0 in windows)
 
 
 def _runs(mask: np.ndarray) -> List[Tuple[int, int]]:

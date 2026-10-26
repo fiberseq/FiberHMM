@@ -224,7 +224,7 @@ def phasing(molecules: Sequence[NucMolecule], anchors: Sequence[Tuple[str, int, 
             frame: str = 'anchor', P: Optional[float] = None, *,
             nrl_pooled: Optional[float] = None, params: NucParams = DEFAULT_PARAMS,
             dyads: Optional[Dict[int, np.ndarray]] = None, side: str = 'both',
-            bins: Optional[List[Tuple[float, float]]] = None, correct_uniform: bool = False,
+            bins: Optional[List[Tuple[float, float]]] = None, correct_uniform: Optional[bool] = None,
             seed: int = 0, require_span: bool = True) -> PhasingResult:
     """Pooled phasing over molecule appearances at ``anchors``.
 
@@ -232,6 +232,8 @@ def phasing(molecules: Sequence[NucMolecule], anchors: Sequence[Tuple[str, int, 
     an anchor when it is on that contig and (``require_span``) its alignment
     covers the anchor +/- the summary span. ``side`` is ``'both'`` for
     unoriented (folded) analysis, or ``'down'``/``'up'`` for oriented anchors.
+    ``correct_uniform`` (default: automatic, on when a bin is not a whole
+    number of periods) subtracts the uniform expectation per dyad.
     ``dyads`` optionally maps ``id(molecule)`` to precomputed eligible dyads.
     """
     if P is None:
@@ -239,6 +241,9 @@ def phasing(molecules: Sequence[NucMolecule], anchors: Sequence[Tuple[str, int, 
     rng = np.random.default_rng(seed)
     if bins is None:
         bins = period_bins(P, params)
+    if correct_uniform is None:
+        # bins that are not whole periods need the uniform expectation removed
+        correct_uniform = any(abs((hi - lo) / P - round((hi - lo) / P)) > 1e-6 for lo, hi in bins)
     span = params.phase_x0 + params.phase_summary_periods * P
     x_list: List[np.ndarray] = []
     who: List[Tuple[int, int]] = []

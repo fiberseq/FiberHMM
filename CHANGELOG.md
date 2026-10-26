@@ -42,9 +42,14 @@
 ### Changed
 
 - Writers that re-call footprints (`fiberhmm-call`, `-apply`,
-  `-recall-tfs`, `-recall-nucs`, `-merge`) drop the MA groups derived from the
-  old calls (`nucsz`, `nucseg`, `nucmol`, `fpcls`, `nfrvar`, `nfrmol`) and
-  their header declarations. Other tools' groups are still kept.
+  `-recall-tfs`, `-recall-nucs`) drop the MA groups derived from the old calls
+  (`nucsz`, `nucseg`, `nucmol`, `fpcls`, `nfrvar`, `nfrmol`) and their header
+  declarations, on every read they write. Other tools' groups are still kept,
+  and `fiberhmm-merge`/`-pair` keep scan groups on the reads they pass
+  through unmerged.
+- `fiberhmm-footprint-model` reads BAMs annotated by `fiberhmm-scan` (every
+  interval named in `AN`); it still refuses tf/msp pieces linked by a shared
+  AN name.
 - MAPQ filtering is off by default everywhere: `--min-mapq`, `--qc-min-mapq`,
   `-q` and the consensus `input.minimum_mapq` default to 0 (was 20). Pass
   `--min-mapq 20` to restore the old filter. A `fiberhmm-pipeline` run started

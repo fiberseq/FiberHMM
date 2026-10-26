@@ -160,7 +160,8 @@ def spacing_metrics(dyads: DyadSet, span: Tuple[int, int],
         out.gap_cv = float(np.std(g) / mu) if mu > 0 else float('nan')
     start, end = int(span[0]), int(span[1])
     lag_lo, lag_hi = params.acf_lag
-    need_acf = len(g) >= params.min_gaps_regularity or keep_acf
+    need_snr = (end - start) >= params.snr_min_bp and len(dyads.centres) >= params.snr_min_dyads
+    need_acf = len(g) >= params.min_gaps_regularity or need_snr or keep_acf
     if need_acf and end - start > lag_hi * 2 and len(dyads.centres) >= 2:
         x = dyad_indicator(dyads.centres, start, end, params.acf_halfwidth)
         x = x - x.mean()
@@ -172,7 +173,7 @@ def spacing_metrics(dyads: DyadSet, span: Tuple[int, int],
             out.tau = float(tau)
             out.regularity = float(ac[tau] - ac[int(round(tau / 2))])
             out.too_short_regularity = False
-        if (end - start) >= params.snr_min_bp and len(dyads.centres) >= params.snr_min_dyads:
+        if need_snr:
             nfft = 1 << int(np.ceil(np.log2(max(len(x) * 4, 1024))))
             power = np.abs(np.fft.rfft(x, nfft)) ** 2
             freqs = np.fft.rfftfreq(nfft)

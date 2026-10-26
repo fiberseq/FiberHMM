@@ -252,3 +252,12 @@ def test_stitch_handles_territories_shorter_than_the_smoothing_window():
     x = np.zeros(1000)
     x[400:600] = 1.0
     np.testing.assert_allclose(_smooth(x, 200), np.convolve(x, np.ones(200) / 200, mode='same'))
+
+
+def test_calibration_sample_does_not_depend_on_the_grid():
+    from fiberhmm.scan.modules.nuc import calibration_regions
+    a, _ = plan({'chrL': 2_500_000}, genome=True, contigs=['chrL'], grid_offset=0)
+    b, _ = plan({'chrL': 2_500_000}, genome=True, contigs=['chrL'], grid_offset=10_000)
+    assert len(a) != len(b) or a[0].unit_id != b[0].unit_id
+    assert calibration_regions(a, 40) == calibration_regions(b, 40)
+    assert len(calibration_regions(a, 40)) == 40

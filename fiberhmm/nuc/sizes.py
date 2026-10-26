@@ -278,3 +278,26 @@ def call_named(lengths, lambdas, model: Optional[AbsoluteClasses], n_left, n_rig
     codes = np.asarray([NAMED_CODES.get(names[t], NAMED_NONE) for t in top], dtype=np.int64)
     weak = (post < params.named_min_posterior) | (np.minimum(n_left, n_right) < params.min_edge_sites)
     return np.where(weak, NAMED_NONE, codes), post
+
+
+def fit_named_weights(model: AbsoluteClasses, lengths, lambdas, n_iter: int = 200) -> Dict[str, float]:
+    """Class weights pi_k by EM with the locations and widths fixed (NUC 3.2)."""
+    L = np.asarray(lengths, float)
+    names, mu, sd = model.locations(lambdas)
+    if len(L) == 0:
+        return {k: 1.0 / len(names) for k in names}
+    like = norm.pdf(L[:, None], mu, sd)
+    w = np.full(len(names), 1.0 / len(names))
+    for _ in range(n_iter):
+        r = like * w
+        tot = r.sum(axis=1, keepdims=True)
+        ok = tot[:, 0] > 0
+        if not ok.any():
+            break
+        r = r[ok] / tot[ok]
+        w_new = r.mean(axis=0)
+        if np.abs(w_new - w).max() < 1e-8:
+            w = w_new
+            break
+        w = w_new
+    return {k: float(v) for k, v in zip(names, w)}

@@ -277,6 +277,17 @@ class DecodeContext(FrameContext):
                              'declaration or FiberHMM call record); pass NucParams(mode=...)')
         self.mark_threshold = resolve_prob_threshold(
             params.mark_threshold, chem['enzyme'], chem['platform'])
+        # DAF: the call's same-strand run mask and DddA CpG policy, so marks and
+        # informative sites are the ones the caller saw
+        self.daf_runs, self.daf_policy, self.cpg_policy = 0, 'keep-one', None
+        if self.mode == 'daf':
+            from fiberhmm.core.bam_reader import resolve_daf_run_mask
+            from fiberhmm.inference.tf_recaller import resolve_cpg_mask_policy
+            self.daf_runs, self.daf_policy = resolve_daf_run_mask(None, 'keep-one', chem['enzyme'])
+            try:
+                self.cpg_policy = resolve_cpg_mask_policy(None, None, chem['enzyme'], 'daf')
+            except ValueError:
+                self.cpg_policy = None
 
 
 def _aligned_blocks(read) -> Optional[np.ndarray]:
@@ -389,11 +400,25 @@ def decode_record(read, ctx: DecodeContext) -> Tuple[Optional[NucMolecule], str]
         return None, 'no_evidence'
     mode = ctx.mode
     strand = fr.get('_daf_strand') or '.'
-    codes = encode_from_query_sequence(
-        fr['query_sequence'], fr['m6a_query_positions'], ctx.params.edge_trim,
-        mode=mode, strand=strand, context_size=3,
-        is_reverse=bool(read.is_reverse),
-        unknown_positions=fr.get('unknown_query_positions'))
+    def _encode():
+        return encode_from_query_sequence(
+            fr['query_sequence'], fr['m6a_query_positions'], ctx.params.edge_trim,
+            mode=mode, strand=strand, context_size=3,
+            is_reverse=bool(read.is_reverse),
+            unknown_positions=fr.get('unknown_query_positions'))
+    if mode == 'daf':
+        from fiberhmm.core.bam_reader import daf_run_mask_scope
+        with daf_run_mask_scope(ctx.daf_runs, ctx.daf_policy):
+            codes = _encode()
+        if ctx.cpg_policy:
+            from fiberhmm.core.bam_reader import daf_cpg_target_mask
+            from fiberhmm.inference.engine import hide_cpg_observations, hmm_cpg_mask, read_cpg_ma_intervals
+            hide = hmm_cpg_mask(L, ctx.cpg_policy, read_cpg_ma_intervals(read))
+            cpg = daf_cpg_target_mask(fr['query_sequence'], fr['m6a_query_positions'], strand)
+            if len(hide) == len(cpg) == len(codes):
+                codes = hide_cpg_observations(codes, cpg & hide, 3)
+    else:
+        codes = _encode()
     if len(codes) != L:
         return None, 'no_evidence'
     hits = codes < N_CTX

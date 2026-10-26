@@ -77,8 +77,8 @@ With annotation the scan writes three MA groups in molecular coordinates:
 z), `nucseg` (one per segment: state, posterior, q̂) and `nucmol` (one per
 record: the molecule scalars). See [BAM tags](../reference/bam-tags.md#nucleosome-groups).
 They survive `fiberhmm-lift`. Any tool that re-calls footprints
-(`fiberhmm-call`, `-apply`, `-recall-tfs`, `-recall-nucs`, `-merge`) drops
-them, because they describe the old calls.
+(`fiberhmm-call`, `-apply`, `-recall-tfs`, `-recall-nucs`) drops them,
+because they describe the old calls.
 
 ## Python
 

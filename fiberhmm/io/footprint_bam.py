@@ -293,6 +293,25 @@ def _iter_records(bam, regions: Sequence[ReferenceRegion]):
         yield from bam.fetch(region.contig, region.start, region.end)
 
 
+def _an_linked_footprints(parsed_ma, an) -> bool:
+    """Whether two or more tf/msp intervals share a non-empty AN name (the
+    pieces of a circularly wrapped annotation). Unique or '.' names, as scan
+    annotations give every interval, are ordinary footprints."""
+    from collections import Counter
+
+    from .ma_tags import parse_an_tag
+    names = parse_an_tag(str(an))
+    seen: Counter = Counter()
+    k = 0
+    for name, _strand, _spec, intervals in parsed_ma["raw_types"]:
+        for _iv in intervals:
+            nm = names[k] if k < len(names) else ""
+            k += 1
+            if name in {"tf", "msp"} and nm:
+                seen[nm] += 1
+    return any(v > 1 for v in seen.values())
+
+
 def load_footprint_molecules_from_bam(
     input_bam: Union[str, Path],
     *,
@@ -400,10 +419,7 @@ def load_footprint_molecules_from_bam(
                 raise BamFootprintInputError(
                     f"malformed {ma_source} tag on read {read.query_name!r}: {error}"
                 ) from error
-            if an is not None and any(
-                name in {"tf", "msp"} and intervals
-                for name, _strand, _quality_spec, intervals in parsed_ma["raw_types"]
-            ):
+            if an is not None and _an_linked_footprints(parsed_ma, an):
                 raise BamFootprintInputError(
                     f"AN-linked ordinary tf/msp annotations on read "
                     f"{read.query_name!r} are not supported by the linear "
