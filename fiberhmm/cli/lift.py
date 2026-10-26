@@ -4,28 +4,26 @@
 Two engines run between a pre-lift stash and a post-lift repair
 (:mod:`fiberhmm.io.graph_lift`), then sort and index:
 
-``native`` (default with ``--map``)
+``native`` (the primary route; default with ``--map``)
     graphlift's ``liftbam`` lifts the records through a graphlift chain map
     (``gbz2chain`` output, ``X.chain.graphlift.json``) derived from the
     graph. No vg, no container.
-``vg`` (default with ``--graph``)
-    the four stages of ``ft pg-lift --bam`` (``ft pg-pansn`` adding the
-    source panSN prefix, ``vg inject``, ``vg surject`` onto the target
-    sample, ``ft pg-pansn --strip``). The stages are run here rather than
-    through ``ft pg-lift --bam``, which fails on fibertools-rs <= 0.13 (it
-    passes ``--out`` to ``ft pg-pansn``, which takes the output path
-    positionally).
+``vg`` (optional fallback; default with ``--graph`` alone)
+    ``vg inject`` and ``vg surject`` onto the target sample, between
+    fibertools-rs ``ft pg-pansn`` stages that add and strip the source panSN
+    prefix.
 
-``--repair-only`` repairs a BAM lifted with ``ft pg-lift`` (or the same
-stages) directly; it needs the source BAM to recover what the lift lost.
-``--bed`` lifts BED intervals: graphlift's ``liftbed`` through ``--map``
-(native, the default with ``--map``) or ``ft pg-lift``'s BED mode through
-``--graph`` (vg). BED12 rows (``fiberhmm-extract`` output) are lifted block
-by block and reassembled; other BED files row by row.
+``--repair-only`` repairs a BAM lifted by vg-based tools directly; it needs
+the source BAM to recover what the lift lost. ``--bed`` lifts BED intervals:
+graphlift's ``liftbed`` through ``--map`` (native), or, as a fallback,
+``vg inject``/``vg surject`` of reads cut from the source FASTA through
+``--graph`` (vg; no fibertools-rs). BED12 rows (``fiberhmm-extract`` output) are lifted
+block by block and reassembled; other BED files row by row.
 """
 from __future__ import annotations
 
 import argparse
+from collections import defaultdict
 import json
 import os
 import shutil
@@ -34,6 +32,13 @@ import sys
 import tempfile
 
 TOOL = "fiberhmm-lift"
+
+# How to build graphlift's binaries (the same commands as graphlift's README).
+BUILD_HINTS = {
+    "liftbam": "liftbam is built only with graphlift's bam feature: in a graphlift checkout "
+               "run `cargo build --release --locked --features bam`",
+    "liftbed": "build graphlift: in a graphlift checkout run `cargo build --release --locked`",
+}
 
 
 class LiftError(RuntimeError):
@@ -46,7 +51,8 @@ def find_tool(name: str, explicit: str | None, flag: str) -> str:
         path = explicit if os.path.sep in explicit else shutil.which(explicit)
         if path and os.path.isfile(path) and os.access(path, os.X_OK):
             return path
-        raise LiftError(f"{flag} {explicit}: not an executable file")
+        raise LiftError(f"{flag} {explicit}: not an executable file"
+                        + (f" ({BUILD_HINTS[name]})" if name in BUILD_HINTS else ""))
     path = shutil.which(name)
     if path:
         return path
@@ -55,13 +61,18 @@ def find_tool(name: str, explicit: str | None, flag: str) -> str:
               "wrapper script that runs it in a container) and put it on PATH or pass --vg",
         "ft": "install fibertools-rs >= 0.13 (`ft`, with the pg-pansn subcommand) and put it "
               "on PATH or pass --ft",
-        "liftbam": "build graphlift with its bam feature (`cargo build --release --features "
-                   "bam`; the binary is target/release/liftbam) and put it on PATH or pass "
-                   "--liftbam",
-        "liftbed": "build graphlift (`cargo build --release`; the binary is "
-                   "target/release/liftbed) and put it on PATH or pass --liftbed",
+        "liftbam": BUILD_HINTS["liftbam"] + ", then put target/release on PATH or pass "
+                   "--liftbam target/release/liftbam",
+        "liftbed": BUILD_HINTS["liftbed"] + ", then put target/release on PATH or pass "
+                   "--liftbed target/release/liftbed",
     }
-    raise LiftError(f"`{name}` not found: {hints[name]}")
+    message = f"`{name}` not found: {hints[name]}"
+    if name == "liftbam":
+        liftbed = shutil.which("liftbed")
+        if liftbed:
+            message += (f". ({liftbed} is on PATH: that graphlift build lacks the bam feature; "
+                        "rebuild it with --features bam)")
+    raise LiftError(message)
 
 
 def _sample_of(prefix: str | None, delimiter: str) -> str | None:
@@ -299,20 +310,110 @@ def _report(stats, stash_info: dict) -> None:
           file=sys.stderr)
 
 
-def _bed_is_bed12(path: str) -> bool:
-    """Whether the data rows of a BED file are BED12 (blocks); all rows must agree."""
+BED_FORMATS = ("auto", "bed", "bed12", "narrowPeak")
+
+
+def _is_gzip(path: str) -> bool:
+    with open(path, "rb") as handle:
+        return handle.read(2) == b"\x1f\x8b"
+
+
+def materialize_bed(path: str, work_dir: str) -> str:
+    """A plain-text copy of BED input ``path`` in ``work_dir`` when it is ``-`` (stdin) or
+    gzip/bgzip; ``path`` itself otherwise."""
+    import gzip
+
+    if path == "-":
+        raw = os.path.join(work_dir, "stdin.bed")
+        with open(raw, "wb") as handle:
+            shutil.copyfileobj(sys.stdin.buffer, handle)
+        path = raw
+    if not _is_gzip(path):
+        return path
+    plain = os.path.join(work_dir, "input.bed")
+    try:
+        with gzip.open(path, "rb") as src, open(plain, "wb") as dst:
+            shutil.copyfileobj(src, dst)
+    except (OSError, EOFError) as error:
+        raise LiftError(f"-i: cannot decompress the gzip input ({error})") from None
+    return plain
+
+
+def finalize_output(tmp: str, final: str) -> None:
+    """Moves ``tmp`` to ``final``, BGZF-compressed (gzip-readable, tabix-indexable) when
+    ``final`` ends in ``.gz``; through ``final.partial`` so a failure leaves no
+    truncated ``final``."""
+    partial = final + ".partial"
+    try:
+        if final.endswith(".gz"):
+            import pysam
+
+            pysam.tabix_compress(tmp, partial, force=True)
+            os.remove(tmp)
+        else:
+            shutil.move(tmp, partial)
+        os.replace(partial, final)
+    except OSError as error:
+        raise LiftError(f"cannot write {final}: {error}") from None
+
+
+def detect_bed_format(path: str, declared: str, name: str) -> tuple:
+    """``(format, lift_thick)`` of a plain-text BED file.
+
+    ``auto``: BED12 when every data row has 12+ columns (some but not all is an error);
+    narrowPeak when the input name ends in ``.narrowPeak[.gz]`` or a ``track`` line says
+    ``type=narrowPeak``; BED otherwise. Ten columns alone do not make a narrowPeak. A
+    declared format is checked against the rows. For BED, thickStart/thickEnd are lifted
+    when every row has integer columns 7-8 within the row."""
     from fiberhmm.io.graph_lift import _BED_HEADER_PREFIXES
 
-    kinds = set()
+    wide = narrow = 0
+    rows = 0
+    thick = True
+    summit = True
+    track_np = False
     with open(path) as handle:
         for line in handle:
             line = line.rstrip("\n")
-            if not line.strip() or line.startswith(_BED_HEADER_PREFIXES):
+            if not line.strip():
                 continue
-            kinds.add(len(line.split("\t")) >= 12)
-            if len(kinds) > 1:
-                raise LiftError(f"{path}: some rows are BED12 and some are not")
-    return kinds == {True}
+            if line.startswith(_BED_HEADER_PREFIXES):
+                if line.startswith("track") and "type=narrowPeak" in line:
+                    track_np = True
+                continue
+            fields = line.split("\t")
+            rows += 1
+            if len(fields) >= 12:
+                wide += 1
+            else:
+                narrow += 1
+            try:
+                start, end = int(fields[1]), int(fields[2])
+                ts, te = int(fields[6]), int(fields[7])
+                thick = thick and start <= ts <= te <= end
+            except (IndexError, ValueError):
+                thick = False
+            try:
+                int(fields[9])
+            except (IndexError, ValueError):
+                summit = False
+    if declared == "auto":
+        if wide and narrow:
+            raise LiftError(f"{name}: some rows are BED12 and some are not")
+        if rows and wide == rows:
+            fmt = "bed12"
+        elif name.endswith((".narrowPeak", ".narrowPeak.gz")) or track_np:
+            fmt = "narrowPeak"
+        else:
+            fmt = "bed"
+    else:
+        fmt = declared
+        if fmt == "bed12" and narrow:
+            raise LiftError(f"{name}: --bed-format bed12, but {narrow} rows have fewer than "
+                            "12 columns")
+    if fmt == "narrowPeak" and rows and not summit:
+        raise LiftError(f"{name}: narrowPeak rows need an integer summit offset in column 10")
+    return fmt, fmt == "bed" and rows > 0 and thick
 
 
 def run_liftbed(bed_in: str, bed_out: str, *, liftbed: str, lift_map: str, work_dir: str,
@@ -349,7 +450,8 @@ def _read_unlifted_bed(path: str) -> list:
 
 
 def _lift_bed_file(args, work_dir: str, bed_in: str, bed_out: str, unlifted: str | None) -> dict:
-    """Lifts a BED6+ file with the chosen engine; returns the native report (empty for vg)."""
+    """Lifts a BED6+ file with the chosen engine (vg: named rows only, see ``run_vg_bed``);
+    returns the engine's report."""
     if args.engine == "native":
         liftbed = find_tool("liftbed", args.liftbed or _sibling(args.liftbam, "liftbed"),
                             "--liftbed")
@@ -360,16 +462,149 @@ def _lift_bed_file(args, work_dir: str, bed_in: str, bed_out: str, unlifted: str
         raise LiftError("--bed with --engine vg needs --source-fasta (the FASTA of the source "
                         "assembly)")
     vg = find_tool("vg", args.vg, "--vg")
-    ft = find_tool("ft", args.ft, "--ft")
-    cmd = [ft, "pg-lift", "-i", bed_in, "-g", args.graph, "--prefix", args.prefix,
-           "--target", args.target, "--vg-binary", vg, "--vg-threads", str(max(1, args.threads)),
-           "-d", args.delimiter, "-o", bed_out, args.source_fasta]
-    log_path = os.path.join(work_dir, "ft-pg-lift.log")
-    with open(log_path, "wb") as log:
-        code = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=log).returncode
-    if code != 0:
-        raise LiftError(f"ft pg-lift failed (exit {code}): {' '.join(cmd)}\n{_tail(log_path)}")
-    return {}
+    return run_vg_bed(bed_in, bed_out, graph=args.graph, prefix=args.prefix, target=args.target,
+                      delimiter=args.delimiter, vg=vg, threads=args.threads,
+                      source_fasta=args.source_fasta, work_dir=work_dir, unlifted=unlifted,
+                      chunk=VG_BED_CHUNK, flank=VG_BED_FLANK)
+
+
+def strip_pansn(name: str, delimiter: str) -> str:
+    """``GRCh38#0#chr1`` -> ``chr1``: everything after the second delimiter (as
+    ``ft pg-pansn --strip``); a name with fewer delimiters is kept."""
+    parts = name.split(delimiter, 2)
+    return parts[2] if len(parts) == 3 else name
+
+
+VG_BED_CHUNK = 50_000
+VG_BED_FLANK = 2000
+
+
+def run_vg_bed(bed_in: str, bed_out: str, *, graph: str, prefix: str, target: str,
+               delimiter: str, vg: str, threads: int, source_fasta: str, work_dir: str,
+               unlifted: str | None, chunk: int = VG_BED_CHUNK, flank: int = VG_BED_FLANK) -> dict:
+    """Lifts named BED6 rows (``<row>|<unit>``, from ``explode_bed12``/``explode_bed_rows``)
+    through the graph with vg alone. The source contigs are cut into reads of ``chunk``
+    bp overlapping by half (only where rows lie), each aligned end to end on ``prefix +
+    contig``; a row is carried by the read in which it lies most centrally (a row longer
+    than half a chunk gets a read of its own with ``flank`` bp on either side). ``vg
+    inject`` puts the reads on the graph and ``vg surject`` onto the ``target`` sample's
+    paths. A row's lifted interval runs from the first to the last target base aligned
+    to its own bases (bases with no target shrink it), in the surjected record that
+    aligns most of them; a reverse-strand record swaps a ``+``/``-`` strand column. Rows
+    with no aligned base are unlifted (``no_projection``; rows outside the source FASTA
+    ``contig_not_in_fasta``, empty rows ``empty``). Returns a report shaped like
+    liftbed's."""
+    import numpy as np
+    import pysam
+
+    step = max(1, chunk // 2)
+    rows, header_lines, reasons = {}, [], {}
+    carried = defaultdict(list)          # read name -> [(row name, start, end) in read offsets]
+    reads = {}                           # read name -> (contig, start, end)
+    with pysam.FastaFile(source_fasta) as fasta, open(bed_in) as handle:
+        lengths = dict(zip(fasta.references, fasta.lengths))
+        contigs = list(fasta.references)
+        tid = {c: i for i, c in enumerate(contigs)}
+        for line in handle:
+            line = line.rstrip("\n")
+            if not line:
+                continue
+            if line.startswith(("#", "track", "browser")):
+                header_lines.append(line)
+                continue
+            fields = line.split("\t")
+            name = fields[3]
+            rows[name] = fields
+            chrom, start, end = fields[0], int(fields[1]), int(fields[2])
+            if chrom not in tid or end > lengths[chrom]:
+                reasons[name] = "contig_not_in_fasta"
+                continue
+            if end <= start:
+                reasons[name] = "empty"
+                continue
+            if end - start > step:
+                lo, hi = max(0, start - flank), min(lengths[chrom], end + flank)
+                read = f"r{len(reads)}"
+            else:
+                k = max(0, round((start + end) / 2 / step) - 1)
+                lo, hi = k * step, min(lengths[chrom], k * step + chunk)
+                read = f"c{tid[chrom]}_{k}"
+            reads.setdefault(read, (chrom, lo, hi))
+            carried[read].append((name, start - lo, end - lo))
+        bam_header = {"HD": {"VN": "1.6", "SO": "unsorted"},
+                      "SQ": [{"SN": prefix + c, "LN": lengths[c]} for c in contigs]}
+        reads_path = os.path.join(work_dir, "vg_bed.reads.bam")
+        with pysam.AlignmentFile(reads_path, "wb", header=bam_header) as out:
+            for read_name, (chrom, lo, hi) in reads.items():
+                read = pysam.AlignedSegment(out.header)
+                read.query_name = read_name
+                read.flag = 0
+                read.reference_id = tid[chrom]
+                read.reference_start = lo
+                read.mapping_quality = 60
+                read.cigarstring = f"{hi - lo}M"
+                read.query_sequence = fasta.fetch(chrom, lo, hi).upper()
+                out.write(read)
+    surjected = os.path.join(work_dir, "vg_bed.surjected.bam")
+    vg_threads = str(max(1, threads))
+    inject = [vg, "inject", "-t", vg_threads, "-x", graph, "-"]
+    surject = [vg, "surject", "-C", "0", "-t", vg_threads, "-x", graph, "-r", "-b", "-n", target,
+               "-"]
+    logs = [os.path.join(work_dir, "vg_bed.inject.log"), os.path.join(work_dir, "vg_bed.surject.log")]
+    with open(reads_path, "rb") as src, open(surjected, "wb") as dst, \
+            open(logs[0], "wb") as log1, open(logs[1], "wb") as log2:
+        p1 = subprocess.Popen(inject, stdin=src, stdout=subprocess.PIPE, stderr=log1)
+        p2 = subprocess.Popen(surject, stdin=p1.stdout, stdout=dst, stderr=log2)
+        p1.stdout.close()
+        codes = [p1.wait(), p2.wait()]
+    for label, cmd, code, log in zip(("vg inject", "vg surject"), (inject, surject), codes, logs):
+        if code != 0:
+            raise LiftError(f"{label} failed (exit {code}): {' '.join(cmd)}\n{_tail(log)}")
+    best = {}                            # row name -> (aligned bases, contig, start, end, reverse)
+    with pysam.AlignmentFile(surjected, "rb", check_sq=False) as bam:
+        for record in bam.fetch(until_eof=True):
+            if record.is_unmapped or record.is_secondary or record.query_name not in carried:
+                continue
+            chrom, lo, hi = reads[record.query_name]
+            length = hi - lo
+            q2r = np.full(length, -1, dtype=np.int64)
+            pairs = np.array(record.get_aligned_pairs(matches_only=True), dtype=np.int64)
+            if not len(pairs):
+                continue
+            if record.is_reverse:
+                pairs[:, 0] = length - 1 - pairs[:, 0]
+            q2r[pairs[:, 0]] = pairs[:, 1]
+            contig = strip_pansn(record.reference_name, delimiter)
+            for name, a, b in carried[record.query_name]:
+                refs = q2r[a:b]
+                refs = refs[refs >= 0]
+                if len(refs) and (name not in best or len(refs) > best[name][0]):
+                    best[name] = (len(refs), contig, int(refs.min()), int(refs.max()) + 1,
+                                  record.is_reverse)
+    flipped = 0
+    with open(bed_out, "w") as out:
+        out.writelines(line + "\n" for line in header_lines)
+        for name, fields in rows.items():
+            hit = best.get(name)
+            if hit is None:
+                reasons.setdefault(name, "no_projection")
+                continue
+            new = list(fields)
+            new[0], new[1], new[2] = hit[1], str(hit[2]), str(hit[3])
+            if hit[4]:
+                flipped += 1
+                if len(new) > 5 and new[5] in ("+", "-"):
+                    new[5] = "-" if new[5] == "+" else "+"
+            out.write("\t".join(new) + "\n")
+    if unlifted:
+        with open(unlifted, "w") as out:
+            for name, reason in reasons.items():
+                out.write(f"#{reason}\n" + "\t".join(rows[name]) + "\n")
+    by_reason: dict = {}
+    for reason in reasons.values():
+        by_reason[reason] = by_reason.get(reason, 0) + 1
+    return {"rows_in": len(rows), "lifted": len(rows) - len(reasons), "unlifted": len(reasons),
+            "strand_flipped": flipped, "split": 0, "partial": 0, "unlifted_by_reason": by_reason}
 
 
 def _sibling(path: str | None, name: str) -> str | None:
@@ -380,57 +615,156 @@ def _sibling(path: str | None, name: str) -> str | None:
     return candidate if os.path.isfile(candidate) else None
 
 
+def _block_reasons(path: str) -> dict:
+    """``{(row, unit): reason}`` of a liftbed unlifted file of ``<row>|<unit>`` rows."""
+    out = {}
+    for reason, row in _read_unlifted_bed(path):
+        fields = row.split("\t")
+        if len(fields) > 3 and "|" in fields[3]:
+            index, _, unit = fields[3].rpartition("|")
+            if index.isdigit():
+                out.setdefault((int(index), unit), reason)
+    return out
+
+
 def _bed_lift(args, work_dir: str) -> int:
+    bed_in = materialize_bed(args.input, work_dir)
+    fmt, thick = detect_bed_format(bed_in, args.bed_format, args.input)
+    if args.bed12_partial == "keep" and fmt != "bed12":
+        raise LiftError(f"--bed12-partial keep is for BED12 input; {args.input} is read as {fmt}")
+    out_tmp = os.path.join(work_dir, "output.bed")
+    unl_tmp = os.path.join(work_dir, "unlifted.out.bed") if args.unlifted else None
+    try:
+        if fmt == "bed12":
+            code = _bed12_lift(args, work_dir, bed_in, out_tmp, unl_tmp)
+        elif fmt == "narrowPeak" or thick or args.engine != "native":
+            code = _bed_rows_lift(args, work_dir, bed_in, out_tmp, unl_tmp, fmt, thick)
+        else:
+            code = _bed_plain_lift(args, work_dir, bed_in, out_tmp, unl_tmp)
+    except ValueError as error:
+        raise LiftError(f"{args.input}: {error}") from None
+    finalize_output(out_tmp, args.output)
+    if unl_tmp:
+        if not os.path.exists(unl_tmp):
+            open(unl_tmp, "w").close()
+        finalize_output(unl_tmp, args.unlifted)
+    return code
+
+
+def _bed_plain_lift(args, work_dir, bed_in, out_tmp, unl_tmp) -> int:
+    """Native, BED with no coordinate columns of its own: straight through liftbed."""
+    report = _lift_bed_file(args, work_dir, bed_in, out_tmp, unl_tmp)
+    reasons = ", ".join(f"{k}={v}" for k, v in sorted(report.get("unlifted_by_reason", {}).items()))
+    print(f"{TOOL}: liftbed lifted {report.get('lifted', 0)} of {report.get('rows_in', 0)} "
+          f"BED rows ({report.get('split', 0)} split, best placement kept; "
+          f"{report.get('partial', 0)} partly unprojected; "
+          f"{report.get('strand_flipped', 0)} changed strand); "
+          f"{report.get('unlifted', 0)} not lifted" + (f" ({reasons})" if reasons else ""),
+          file=sys.stderr)
+    return 0
+
+
+def _lift_units(args, work_dir, bed6) -> tuple:
+    """Lifts exploded ``<row>|<unit>`` BED6 rows; ``(lifted lines, report,
+    {(row, unit): reason} of the unlifted ones)``."""
+    units_in = os.path.join(work_dir, "units.bed")
+    units_out = os.path.join(work_dir, "units.lifted.bed")
+    units_unlifted = os.path.join(work_dir, "units.unlifted.bed")
+    with open(units_in, "w") as handle:
+        handle.writelines(line + "\n" for line in bed6)
+    report = _lift_bed_file(args, work_dir, units_in, units_out, units_unlifted)
+    with open(units_out) as handle:
+        lifted = handle.readlines()
+    return lifted, report, _block_reasons(units_unlifted)
+
+
+def _write_header_and_rows(path, header, rows) -> None:
+    with open(path, "w") as handle:
+        handle.writelines(line + "\n" for line in header + rows)
+
+
+def _bed12_lift(args, work_dir, bed_in, out_tmp, unl_tmp) -> int:
     from fiberhmm.io import graph_lift as gl
 
     native = args.engine == "native"
-    if not _bed_is_bed12(args.input):
-        unlifted = args.unlifted
-        report = _lift_bed_file(args, work_dir, args.input, args.output, unlifted)
-        if native:
-            reasons = ", ".join(f"{k}={v}" for k, v in sorted(report.get("unlifted_by_reason", {}).items()))
-            print(f"{TOOL}: liftbed lifted {report.get('lifted', 0)} of {report.get('rows_in', 0)} "
-                  f"BED rows ({report.get('split', 0)} split, best placement kept; "
-                  f"{report.get('partial', 0)} partly unprojected; "
-                  f"{report.get('strand_flipped', 0)} changed strand); "
-                  f"{report.get('unlifted', 0)} not lifted" + (f" ({reasons})" if reasons else ""),
-                  file=sys.stderr)
-        else:
-            print(f"{TOOL}: ft pg-lift lifted the BED rows (the vg engine does not count "
-                  "unlifted rows)", file=sys.stderr)
-        return 0
-    with open(args.input) as handle:
-        bed6, rows, header = gl.explode_bed12(handle, unstranded_as="+" if native else None)
-    blocks_in = os.path.join(work_dir, "blocks.bed")
-    blocks_out = os.path.join(work_dir, "blocks.lifted.bed")
-    blocks_unlifted = os.path.join(work_dir, "blocks.unlifted.bed") if native else None
-    with open(blocks_in, "w") as handle:
-        handle.writelines(line + "\n" for line in bed6)
-    report = _lift_bed_file(args, work_dir, blocks_in, blocks_out, blocks_unlifted)
+    with open(bed_in) as handle:
+        bed6, rows, header = gl.explode_bed12(handle, unstranded_as="+")
+    lifted, report, reasons = _lift_units(args, work_dir, bed6)
     dropped: list = []
-    with open(blocks_out) as handle:
-        out, stats = gl.reassemble_bed12(handle, rows, dropped=dropped, explicit_strand=native)
-    with open(args.output, "w") as handle:
-        handle.writelines(line + "\n" for line in header + out)
-    if native:
-        block_reason = {}
-        for reason, row in _read_unlifted_bed(blocks_unlifted):
-            fields = row.split("\t")
-            if len(fields) > 3 and "|" in fields[3]:
-                block_reason.setdefault(int(fields[3].rpartition("|")[0]), reason)
-        if args.unlifted:
-            with open(args.unlifted, "w") as handle:
-                for index, reason in dropped:
-                    if reason == "lost_block" and index in block_reason:
-                        reason = f"block_{block_reason[index]}"
-                    handle.write(f"#{reason}\n" + "\t".join(rows[index]) + "\n")
+    dropped_blocks: list = []
+    out, stats = gl.reassemble_bed12(lifted, rows, dropped=dropped, explicit_strand=True,
+                                     partial=args.bed12_partial, dropped_blocks=dropped_blocks)
+    _write_header_and_rows(out_tmp, header, out)
+    if unl_tmp:
+        row_reason = {}
+        for (index, unit), reason in reasons.items():
+            if unit.isdigit():
+                row_reason.setdefault(index, reason)
+        with open(unl_tmp, "w") as handle:
+            for index, reason in dropped:
+                if reason == "lost_block" and index in row_reason:
+                    reason = f"block_{row_reason[index]}"
+                handle.write(f"#{reason}\n" + "\t".join(rows[index]) + "\n")
+            for index, block in dropped_blocks:
+                fields = rows[index]
+                start = int(fields[1])
+                size = int(fields[10].rstrip(",").split(",")[block])
+                offset = int(fields[11].rstrip(",").split(",")[block])
+                reason = reasons.get((index, str(block)), "lost")
+                handle.write(f"#partial_{reason}\n" + "\t".join(
+                    [fields[0], str(start + offset), str(start + offset + size),
+                     f"{fields[3]}|{block}", fields[4], fields[5]]) + "\n")
     print(f"{TOOL}: {stats.rows_out} of {stats.rows_in} BED12 rows lifted "
           f"({stats.rows_lost_blocks} lost a block, {stats.rows_split} split across contigs, "
           f"{stats.rows_rearranged} rearranged; {stats.rows_flipped} changed strand)"
-          + (f"; liftbed: {report.get('lifted', 0)} of {report.get('rows_in', 0)} blocks lifted, "
-             f"{report.get('split', 0)} split (best placement kept), "
-             f"{report.get('partial', 0)} partly unprojected" if native else "")
-          + (f"; dropped rows written to {args.unlifted}" if native and args.unlifted and dropped else ""),
+          + (f"; {stats.rows_partial} rows kept without {stats.blocks_dropped} unliftable "
+             "blocks (--bed12-partial keep)" if args.bed12_partial == "keep" else "")
+          + (f"; thickStart/thickEnd lifted on {stats.thick_lifted} rows, emptied on "
+             f"{stats.thick_lost}" if stats.thick_lifted or stats.thick_lost else "")
+          + (f"; liftbed: {report.get('lifted', 0)} of {report.get('rows_in', 0)} "
+             + ("blocks" if report.get('rows_in', 0) == stats.blocks_in else "intervals")
+             + f" lifted, {report.get('split', 0)} split (best placement kept), "
+             f"{report.get('partial', 0)} partly unprojected" if native
+             else f"; vg: {report.get('lifted', 0)} of {report.get('rows_in', 0)} intervals "
+                  "lifted")
+          + (f"; dropped rows and blocks written to {args.unlifted}"
+             if unl_tmp and (dropped or dropped_blocks) else ""),
+          file=sys.stderr)
+    return 0
+
+
+def _bed_rows_lift(args, work_dir, bed_in, out_tmp, unl_tmp, fmt, thick) -> int:
+    """BED with thickStart/thickEnd, or narrowPeak: each row with its coordinate columns."""
+    from fiberhmm.io import graph_lift as gl
+
+    native = args.engine == "native"
+    summit = fmt == "narrowPeak"
+    with open(bed_in) as handle:
+        bed6, rows, header = gl.explode_bed_rows(handle, thick=thick, summit=summit,
+                                                 unstranded_as="+")
+    lifted, report, reasons = _lift_units(args, work_dir, bed6)
+    dropped: list = []
+    out, stats = gl.reassemble_bed_rows(lifted, rows, thick=thick, summit=summit,
+                                        dropped=dropped)
+    _write_header_and_rows(out_tmp, header, out)
+    if unl_tmp:
+        with open(unl_tmp, "w") as handle:
+            for index, _reason in dropped:
+                reason = reasons.get((index, "m"), "unlifted")
+                handle.write(f"#{reason}\n" + "\t".join(rows[index]) + "\n")
+    by_reason: dict = {}
+    for index, _reason in dropped:
+        reason = reasons.get((index, "m"), "unlifted")
+        by_reason[reason] = by_reason.get(reason, 0) + 1
+    detail = ", ".join(f"{k}={v}" for k, v in sorted(by_reason.items()))
+    print(f"{TOOL}: {stats.rows_out} of {stats.rows_in} {fmt} rows lifted "
+          f"({stats.rows_flipped} changed strand); {stats.rows_unlifted} not lifted"
+          + (f" ({detail})" if detail else "")
+          + (f"; thickStart/thickEnd lifted on {stats.thick_lifted} rows inside the row, "
+             f"emptied on {stats.thick_lost}" if thick else "")
+          + (f"; summits lifted on {stats.summits_lifted} rows, set to -1 on "
+             f"{stats.summits_lost}" if summit else "")
+          + (f"; unlifted rows written to {args.unlifted}" if unl_tmp and dropped else ""),
           file=sys.stderr)
     return 0
 
@@ -472,7 +806,7 @@ Examples:
     fiberhmm-lift -i calls.hg002_mat.bam -o calls.grch38.bam -g hprc.gbz \\
         --prefix 'HG002#1#' --target GRCh38 --target-fasta GRCh38.fa -t 16
 
-    # Repair a BAM lifted with `ft pg-lift --bam` directly
+    # Repair a BAM lifted by a vg-based tool directly
     fiberhmm-lift --repair-only -i lifted.bam --source calls.hg002_mat.bam \\
         -o lifted.repaired.bam --target-fasta GRCh38.fa
 
@@ -480,18 +814,21 @@ Examples:
     fiberhmm-lift --bed -i calls_nucleosome.bed -o calls_nucleosome.grch38.bed \\
         --map hprc.GRCh38.HG002.chain.graphlift.json --unlifted calls_nucleosome.unlifted.bed
 
-    # The same through vg (ft pg-lift's BED mode)
+    # The same through vg (fallback; needs the source FASTA)
     fiberhmm-lift --bed -i calls_nucleosome.bed -o calls_nucleosome.grch38.bed \\
         -g hprc.gbz --prefix 'HG002#1#' --target GRCh38 --source-fasta hg002.fa
 """,
     )
     parser.add_argument("-i", "--input", required=True,
-                        help="Source BAM (BED12 with --bed; the lifted BAM with --repair-only)")
-    parser.add_argument("-o", "--output", required=True, help="Output BAM (sorted, indexed) or BED")
+                        help="Source BAM (a BED file with --bed: plain, gzip or bgzip, - for "
+                             "stdin; the lifted BAM with --repair-only)")
+    parser.add_argument("-o", "--output", required=True,
+                        help="Output BAM (sorted, indexed) or BED (bgzip-compressed when the "
+                             "name ends in .gz)")
     parser.add_argument("--engine", choices=ENGINES,
                         help="native: graphlift liftbam (liftbed with --bed) through --map (the "
-                             "default when --map is given); vg: vg inject/surject (ft pg-lift's "
-                             "BED mode with --bed) through --graph (the default otherwise)")
+                             "default when --map is given); vg (fallback): vg inject/surject "
+                             "through --graph (the default otherwise)")
     parser.add_argument("-m", "--map",
                         help="graphlift chain map manifest (X.chain.graphlift.json, from "
                              "graphlift gbz2chain) whose sources are the input's contigs")
@@ -507,41 +844,59 @@ Examples:
     parser.add_argument("--unlifted",
                         help="native: write the records that could not be lifted here (source "
                              "coordinates, Yu:Z:<reason>; with --bed the rows, after a "
-                             "#reason line); they are always counted")
+                             "#reason line, bgzip-compressed for a .gz name); they are always "
+                             "counted")
     parser.add_argument("--min-match", type=float, default=0.0, metavar="F",
                         help="native --bed: lift a BED interval (or BED12 block) only if a "
                              "fraction F of its bases project (liftOver's -minMatch; default 0: "
-                             "any projected base, the interval shrinks to them)")
+                             "any projected base, the interval shrinks to them, so a mostly "
+                             "unprojected block can lift as a remnant of a few bp, as with vg; "
+                             "0.5 drops those)")
+    parser.add_argument("--bed-format", choices=BED_FORMATS, default="auto",
+                        help="--bed: how to read the input. bed12: blocks lifted one by one; "
+                             "narrowPeak: the summit (column 10) lifted with the peak (-1 when "
+                             "it does not lift); bed: row by row. thickStart/thickEnd (columns "
+                             "7-8) are lifted for bed and bed12 when they hold coordinates. "
+                             "auto (default): bed12 when every row has 12+ columns, narrowPeak "
+                             "for a .narrowPeak[.gz] input or a 'track type=narrowPeak' line, "
+                             "else bed")
+    parser.add_argument("--bed12-partial", choices=("drop", "keep"), default="drop",
+                        help="--bed: a BED12 row some of whose blocks do not lift. drop "
+                             "(default): drop the row; keep: keep the blocks that lift "
+                             "(blockCount, sizes, starts and bounds recomputed) when at least "
+                             "one does, and list the dropped blocks in --unlifted")
     parser.add_argument("-g", "--graph", help="Pangenome graph (GBZ) with source and target paths")
     parser.add_argument("-p", "--prefix",
                         help="panSN prefix of the source assembly's paths in the graph, "
-                             "e.g. 'HG002#1#' (as ft pg-lift --prefix)")
+                             "e.g. 'HG002#1#' (vg engine)")
     parser.add_argument("--target",
-                        help="Target sample to surject onto, e.g. GRCh38 (as ft pg-lift --target)")
+                        help="vg engine: target sample to surject onto, e.g. GRCh38")
     parser.add_argument("--target-fasta",
                         help="FASTA of the target assembly (contig names as in the lifted "
                              "@SQ). Recomputes MD/NM and rebuilds SA; without it they are "
                              "dropped. Recommended.")
     parser.add_argument("--mapq", default="source", type=_mapq_mode, metavar="{source,fixed:N}",
                         help="MAPQ of lifted records: 'source' (default) keeps the MAPQ of the "
-                             "source alignment, as CrossMap and ft pg-lift do; 'fixed:N' sets "
+                             "source alignment, as CrossMap does; 'fixed:N' sets "
                              "every lifted record to N. Against a diploid source assembly, "
                              "MAPQ is low wherever the haplotypes are identical. Yq keeps the "
                              "source value either way.")
     parser.add_argument("-d", "--delimiter", default="#", help="panSN delimiter (default: #)")
     parser.add_argument("--vg", help="vg binary or wrapper script (default: vg on PATH)")
-    parser.add_argument("--ft", help="fibertools-rs ft binary (default: ft on PATH)")
+    parser.add_argument("--ft", help="vg engine, BAM: fibertools-rs ft binary for its "
+                                     "pg-pansn stages (default: ft on PATH)")
     parser.add_argument("-t", "--threads", type=int, default=4,
                         help="Threads for vg, sorting and BAM I/O (default: 4)")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--repair-only", action="store_true",
-                      help="Only repair -i, a BAM already lifted (ft pg-lift, or the same "
-                           "stages); needs --source unless fiberhmm-lift stashed it")
+                      help="Only repair -i, a BAM already lifted by a vg-based tool (vg "
+                           "inject/surject); needs --source unless fiberhmm-lift stashed it")
     mode.add_argument("--bed", action="store_true",
                       help="-i is a BED file: BED12(+N) rows (fiberhmm-extract) are lifted "
                            "block by block and reassembled, other BED files row by row")
     parser.add_argument("--source", help="--repair-only: the BAM that was lifted")
-    parser.add_argument("--source-fasta", help="--bed --engine vg: FASTA of the source assembly")
+    parser.add_argument("--source-fasta", help="--bed --engine vg: FASTA of the source assembly "
+                                               "(each interval's sequence is surjected)")
     parser.add_argument("--tmp-dir", help="Directory for intermediate files "
                                           "(default: next to the output)")
     parser.add_argument("--keep-intermediate", action="store_true",
@@ -573,11 +928,15 @@ def main(argv=None) -> int:
         if missing:
             parser.error(f"lifting needs {', '.join(missing)}"
                          + (" (or --map for the native engine)" if not args.map else ""))
-    if args.unlifted and (args.engine != "native" or args.repair_only):
-        parser.error("--unlifted is for the native engine")
+    if args.unlifted and (args.repair_only or not (args.bed or args.engine == "native")):
+        parser.error("--unlifted is for the native engine, or --bed")
     if args.source and not args.repair_only:
         parser.error("--source is for --repair-only")
-    for flag, path in (("-i", args.input), ("--graph", args.graph), ("--map", args.map),
+    if not args.bed and (args.bed_format != "auto" or args.bed12_partial != "drop"):
+        parser.error("--bed-format and --bed12-partial are for --bed")
+    if args.input == "-" and not args.bed:
+        parser.error("-i - (stdin) is for --bed")
+    for flag, path in (("-i", None if args.input == "-" else args.input), ("--graph", args.graph), ("--map", args.map),
                        ("--source", args.source),
                        ("--target-fasta", args.target_fasta),
                        ("--source-fasta", args.source_fasta)):

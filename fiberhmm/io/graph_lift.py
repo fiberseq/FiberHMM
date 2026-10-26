@@ -1,7 +1,7 @@
 """Lift FiberHMM BAMs through a pangenome graph and repair what the lift breaks.
 
-``ft pg-lift`` (fibertools-rs) moves reads from one assembly to another
-through a GBZ graph: ``ft pg-pansn`` adds the panSN prefix, ``vg inject``
+The vg route (fiberhmm-lift's fallback engine) moves reads from one assembly
+to another through a GBZ graph: ``ft pg-pansn`` adds the panSN prefix, ``vg inject``
 places the alignments on the graph, ``vg surject`` projects them onto the
 target paths, and ``ft pg-pansn --strip`` removes the prefix again. SEQ, QUAL
 and every aux tag are copied verbatim, so molecular-frame footprints stay
@@ -28,7 +28,7 @@ split and drops MD/NM/SA, and leaves records carrying the ``Yf`` stash to this
 repair (``st`` swap, MAPQ mode, calmd, SA, @PG). The repair accepts both
 outputs: 0x800 is kept from the lift, and hard clips are re-added only when
 the lifted record has none.
-For a BAM lifted without the stash (``ft pg-lift`` run directly),
+For a BAM lifted without the stash (by a vg-based tool run directly),
 :func:`stash_from_source` rebuilds the same tags by matching each lifted
 record with its source record, so one repair serves both routes.
 
@@ -52,7 +52,7 @@ latest lift, and the @PG chain records every lift.
 
 Decisions:
 
-- MAPQ stays the source value by default (as CrossMap and ft pg-lift do):
+- MAPQ stays the source value by default (as CrossMap does):
   how uniquely the read placed on the source assembly. Against a diploid
   assembly that is low wherever the haplotypes are identical.
   ``mapq='fixed:N'`` sets every lifted record to N instead; ``Yq`` keeps the
@@ -1345,17 +1345,20 @@ def repair_bam(lifted_path: str, out_path: str, *, work_dir: str,
 
 
 # ---------------------------------------------------------------------------
-# BED12 block by block
+# BED files: BED12 block by block, coordinate columns as sub-intervals
 # ---------------------------------------------------------------------------
 #
-# ft pg-lift's BED mode and graphlift's liftbed lift each row's start/end
-# only; BED12 thickStart/thickEnd and blocks would stay in source offsets.
-# explode_bed12 writes one BED6 row per block (name "<row>|<block>"), the
-# engine lifts those, and reassemble_bed12 rebuilds each BED12 row from its
-# lifted blocks.
+# The engines (liftbed, vg inject/surject of one read per row) lift each row's start/end
+# only; BED12 blocks, thickStart/thickEnd and narrowPeak summits would stay
+# in source offsets. explode_bed12 writes one BED6 row per block (name
+# "<row>|<block>") plus a thick interval when it lies inside the row
+# ("<row>|t"); explode_bed_rows writes each plain row ("<row>|m") with its
+# thick interval and a 1 bp summit ("<row>|s"). The engine lifts those, and
+# reassemble_bed12 / reassemble_bed_rows rebuild the rows.
 
 _BED_HEADER_PREFIXES = ("#", "track", "browser")
 _FLIP_STRAND = {"+": "-", "-": "+"}
+BED12_PARTIAL = ("drop", "keep")
 
 
 @dataclass
@@ -1367,9 +1370,51 @@ class BedStats:
     rows_split: int = 0
     rows_rearranged: int = 0
     rows_flipped: int = 0
+    rows_partial: int = 0
+    blocks_dropped: int = 0
+    rows_unlifted: int = 0
+    thick_lifted: int = 0
+    thick_lost: int = 0
+    summits_lifted: int = 0
+    summits_lost: int = 0
 
     def as_dict(self) -> dict:
         return asdict(self)
+
+
+def _int_field(fields: list, col: int) -> Optional[int]:
+    try:
+        return int(fields[col])
+    except (IndexError, ValueError):
+        return None
+
+
+def thick_inside(fields: list) -> bool:
+    """Whether a row's thickStart/thickEnd (columns 7-8) form a non-empty interval that
+    lies inside the row without spanning it, i.e. one that has to be lifted on its own."""
+    start, end = int(fields[1]), int(fields[2])
+    ts, te = _int_field(fields, 6), _int_field(fields, 7)
+    return ts is not None and te is not None and start <= ts < te <= end and (ts > start or te < end)
+
+
+def _lifted_thick(fields: list, start: int, end: int, chrom: str, unit, stats: "BedStats"):
+    """``(thickStart, thickEnd)`` of a row lifted to ``chrom:[start, end)``. An empty
+    thick interval stays empty (at the new start), one spanning the row spans the lifted
+    row, one inside it takes its own lifted interval ``unit`` clamped to the row (empty
+    at the new start when it did not lift or landed elsewhere)."""
+    ts, te = int(fields[6]), int(fields[7])
+    s0, e0 = int(fields[1]), int(fields[2])
+    if te <= ts:
+        return start, start
+    if ts <= s0 and te >= e0:
+        return start, end
+    if unit is not None and unit[0] == chrom:
+        a, b = max(start, unit[1]), min(end, unit[2])
+        if a < b:
+            stats.thick_lifted += 1
+            return a, b
+    stats.thick_lost += 1
+    return start, start
 
 
 def explode_bed12(lines: Iterable[str], unstranded_as: Optional[str] = None
@@ -1378,7 +1423,9 @@ def explode_bed12(lines: Iterable[str], unstranded_as: Optional[str] = None
 
     ``unstranded_as`` (``"+"``) gives the blocks of rows without a ``+``/``-``
     strand that strand, so an engine that swaps the strand column on a ``-``
-    chain (liftbed) reports their flips too (see ``reassemble_bed12``)."""
+    chain (liftbed) reports their flips too (see ``reassemble_bed12``). A
+    thickStart/thickEnd inside the row (not spanning it, not empty) is written
+    as one more interval, ``<row>|t``."""
     bed6, rows, header = [], [], []
     for line in lines:
         line = line.rstrip("\n")
@@ -1392,34 +1439,71 @@ def explode_bed12(lines: Iterable[str], unstranded_as: Optional[str] = None
             raise ValueError(f"not a BED12 row ({len(fields)} columns): {line[:80]}")
         index = len(rows)
         rows.append(fields)
-        start = int(fields[1])
-        sizes = [int(v) for v in fields[10].rstrip(",").split(",") if v != ""]
-        offsets = [int(v) for v in fields[11].rstrip(",").split(",") if v != ""]
-        if len(sizes) != int(fields[9]) or len(offsets) != len(sizes):
+        try:
+            start = int(fields[1])
+            sizes = [int(v) for v in fields[10].rstrip(",").split(",") if v != ""]
+            offsets = [int(v) for v in fields[11].rstrip(",").split(",") if v != ""]
+            count = int(fields[9])
+            int(fields[6]), int(fields[7])
+        except ValueError:
+            raise ValueError(f"BED12 row {index + 1}: a coordinate column is not an "
+                             "integer") from None
+        if len(sizes) != count or len(offsets) != len(sizes):
             raise ValueError(f"BED12 row {index + 1}: blockCount does not match its blocks")
+        strand = fields[5]
+        if unstranded_as and strand not in _FLIP_STRAND:
+            strand = unstranded_as
         for block, (size, offset) in enumerate(zip(sizes, offsets)):
-            strand = fields[5]
-            if unstranded_as and strand not in _FLIP_STRAND:
-                strand = unstranded_as
             bed6.append((fields[0], start + offset, start + offset + size,
                          f"{index}|{block}", fields[4], strand))
+        if thick_inside(fields):
+            bed6.append((fields[0], int(fields[6]), int(fields[7]), f"{index}|t", fields[4],
+                         strand))
     bed6.sort(key=lambda r: (r[0], r[1], r[2]))
     return ["\t".join(str(v) for v in r) for r in bed6], rows, header
 
 
+def _parse_lifted_units(lifted: Iterable[str]):
+    """``{row: {unit: (chrom, start, end, strand)}}`` of lifted ``<row>|<unit>`` rows
+    (a unit seen twice is kept as a list under ``(unit, 'dup')``)."""
+    units: Dict[int, dict] = defaultdict(dict)
+    for line in lifted:
+        fields = line.rstrip("\n").split("\t")
+        if len(fields) < 4 or "|" not in fields[3]:
+            continue
+        row, _, unit = fields[3].rpartition("|")
+        try:
+            value = (fields[0], int(fields[1]), int(fields[2]),
+                     fields[5] if len(fields) > 5 else ".")
+            row = int(row)
+        except ValueError:
+            continue
+        if unit in units[row]:
+            units[row].setdefault((unit, "dup"), True)
+        units[row][unit] = value
+    return units
+
+
 def reassemble_bed12(lifted: Iterable[str], rows: List[list],
                      dropped: Optional[list] = None, *,
-                     explicit_strand: bool = False) -> Tuple[List[str], BedStats]:
+                     explicit_strand: bool = False, partial: str = "drop",
+                     dropped_blocks: Optional[list] = None) -> Tuple[List[str], BedStats]:
     """BED12 rows rebuilt from lifted BED6 blocks (named ``<row>|<block>``).
 
     A row is dropped (counted) when a block did not lift, its blocks land on
     different contigs or overlap, or their order is neither kept nor
-    reversed. The segment changed strand when the lifted blocks carry the
+    reversed. With ``partial="keep"`` a row whose blocks did not all lift is
+    rebuilt from the blocks that did (blockCount, sizes, starts and the row
+    bounds recomputed, per-block columns subset) when at least one lifted;
+    ``dropped_blocks`` receives ``(row index, block index)`` of the blocks it
+    left out. The segment changed strand when the lifted blocks carry the
     opposite strand or come back in reversed order (ft's BED mode copies the
     strand column): the row takes the opposite strand and per-block
     comma-list columns (13+) are reversed with the blocks. Blocks with
     disagreeing strands, or a strand change whose blocks kept their order,
-    are dropped as rearranged. thickStart/thickEnd span the lifted row.
+    are dropped as rearranged. thickStart/thickEnd span the lifted row when
+    they spanned the source row, stay empty when empty, and otherwise take
+    their own lifted interval (``<row>|t``) clamped to the row.
     ``dropped``, when given, receives ``(row index, reason)`` for every dropped
     row (``lost_block``, ``split_contigs``, ``rearranged``). ft's BED mode
     copies the strand column, so a flip is inferred from reversed block
@@ -1427,31 +1511,33 @@ def reassemble_bed12(lifted: Iterable[str], rows: List[list],
     ``-`` chain; explode with ``unstranded_as="+"``) takes the flip from the
     lifted strand alone and drops a multi-block row whose block order does
     not agree with it as rearranged."""
+    if partial not in BED12_PARTIAL:
+        raise ValueError(f"partial must be one of {BED12_PARTIAL}")
+
     def drop(index, reason):
         if dropped is not None:
             dropped.append((index, reason))
 
     stats = BedStats(rows_in=len(rows))
-    blocks: Dict[int, list] = defaultdict(list)
-    for line in lifted:
-        fields = line.rstrip("\n").split("\t")
-        if len(fields) < 4 or "|" not in fields[3]:
-            continue
-        row, _, block = fields[3].rpartition("|")
-        try:
-            blocks[int(row)].append((int(block), fields[0], int(fields[1]), int(fields[2]),
-                                     fields[5] if len(fields) > 5 else "."))
-        except ValueError:
-            continue
+    units = _parse_lifted_units(lifted)
     out = []
     for index, fields in enumerate(rows):
         count = int(fields[9])
         stats.blocks_in += count
-        lifted_blocks = blocks.get(index, [])
-        if len({b[0] for b in lifted_blocks}) != count or len(lifted_blocks) != count:
+        row_units = units.get(index, {})
+        lifted_blocks, bad = [], False
+        for key, value in row_units.items():
+            if isinstance(key, tuple):
+                bad |= key[0].isdigit()
+            elif key.isdigit():
+                block = int(key)
+                bad |= block >= count
+                lifted_blocks.append((block,) + value)
+        if bad or not lifted_blocks or (len(lifted_blocks) != count and partial != "keep"):
             stats.rows_lost_blocks += 1
             drop(index, "lost_block")
             continue
+        n = len(lifted_blocks)
         if len({b[1] for b in lifted_blocks}) != 1:
             stats.rows_split += 1
             drop(index, "split_contigs")
@@ -1478,13 +1564,13 @@ def reassemble_bed12(lifted: Iterable[str], rows: List[list],
             stats.rows_rearranged += 1
             drop(index, "rearranged")
             continue
-        if count > 1 and (reversed_order != strand_flipped if explicit_strand
-                          else strand_flipped and not reversed_order):
+        if n > 1 and (reversed_order != strand_flipped if explicit_strand
+                      else strand_flipped and not reversed_order):
             stats.rows_rearranged += 1
             drop(index, "rearranged")
             continue
         flipped = strand_flipped if explicit_strand else strand_flipped or reversed_order
-        if any(by_position[i][3] > by_position[i + 1][2] for i in range(count - 1)):
+        if any(by_position[i][3] > by_position[i + 1][2] for i in range(n - 1)):
             stats.rows_rearranged += 1
             drop(index, "rearranged")
             continue
@@ -1492,17 +1578,117 @@ def reassemble_bed12(lifted: Iterable[str], rows: List[list],
         start, end = by_position[0][2], by_position[-1][3]
         new = list(fields)
         new[0], new[1], new[2] = chrom, str(start), str(end)
-        new[6], new[7] = str(start), str(end)
+        ts, te = _lifted_thick(fields, start, end, chrom, row_units.get("t"), stats)
+        new[6], new[7] = str(ts), str(te)
+        new[9] = str(n)
         new[10] = ",".join(str(b[3] - b[2]) for b in by_position)
         new[11] = ",".join(str(b[2] - start) for b in by_position)
+        kept = sorted(order)
+        if n != count:
+            stats.rows_partial += 1
+            stats.blocks_dropped += count - n
+            if dropped_blocks is not None:
+                dropped_blocks.extend((index, k) for k in sorted(set(range(count)) - set(kept)))
+        for col in range(12, len(new)):
+            values = new[col].split(",")
+            if count > 1 and len(values) == count:
+                values = [values[k] for k in kept]
+                if flipped and n > 1:
+                    values.reverse()
+                new[col] = ",".join(values)
         if flipped:
             stats.rows_flipped += 1
             new[5] = _FLIP_STRAND.get(original, original)
-            if count > 1:
-                for col in range(12, len(new)):
-                    values = new[col].split(",")
-                    if len(values) == count:
-                        new[col] = ",".join(reversed(values))
+        out.append("\t".join(new))
+        stats.rows_out += 1
+    return out, stats
+
+
+def explode_bed_rows(lines: Iterable[str], *, thick: bool = False, summit: bool = False,
+                     unstranded_as: Optional[str] = None
+                     ) -> Tuple[List[str], List[list], List[str]]:
+    """``(bed6_rows, rows, header_lines)`` of a BED3+ file whose coordinate columns are
+    lifted with the row: each row as ``<row>|m``; with ``thick``, a thickStart/thickEnd
+    (columns 7-8) inside the row as ``<row>|t``; with ``summit`` (narrowPeak), the 1 bp
+    summit (column 10, an offset from the start; -1 = none) as ``<row>|s``."""
+    bed6, rows, header = [], [], []
+    for line in lines:
+        line = line.rstrip("\n")
+        if not line:
+            continue
+        if line.startswith(_BED_HEADER_PREFIXES):
+            header.append(line)
+            continue
+        fields = line.split("\t")
+        index = len(rows) + 1
+        if len(fields) < 3:
+            raise ValueError(f"BED row {index}: fewer than 3 columns: {line[:80]}")
+        try:
+            start, end = int(fields[1]), int(fields[2])
+        except ValueError:
+            raise ValueError(f"BED row {index}: start/end are not integers: {line[:80]}") from None
+        if thick and (len(fields) < 8 or _int_field(fields, 6) is None
+                      or _int_field(fields, 7) is None):
+            raise ValueError(f"BED row {index}: thickStart/thickEnd (columns 7-8) are not "
+                             f"integers: {line[:80]}")
+        if summit and (len(fields) < 10 or _int_field(fields, 9) is None):
+            raise ValueError(f"narrowPeak row {index}: the summit (column 10) is not an "
+                             f"integer: {line[:80]}")
+        index = len(rows)
+        rows.append(fields)
+        strand = fields[5] if len(fields) > 5 else "."
+        if unstranded_as and strand not in _FLIP_STRAND:
+            strand = unstranded_as
+        score = fields[4] if len(fields) > 4 else "0"
+        bed6.append((fields[0], start, end, f"{index}|m", score, strand))
+        if thick and thick_inside(fields):
+            bed6.append((fields[0], int(fields[6]), int(fields[7]), f"{index}|t", score, strand))
+        if summit:
+            offset = int(fields[9])
+            if 0 <= offset < end - start:
+                bed6.append((fields[0], start + offset, start + offset + 1, f"{index}|s", score,
+                             strand))
+    bed6.sort(key=lambda r: (r[0], r[1], r[2]))
+    return ["\t".join(str(v) for v in r) for r in bed6], rows, header
+
+
+def reassemble_bed_rows(lifted: Iterable[str], rows: List[list], *, thick: bool = False,
+                        summit: bool = False, dropped: Optional[list] = None
+                        ) -> Tuple[List[str], BedStats]:
+    """Rows of ``explode_bed_rows`` rebuilt from their lifted units: chrom, start and end
+    from ``<row>|m`` (a ``+``/``-`` strand column from it too: liftbed swaps it on a
+    ``-`` chain, ft copies it), thickStart/thickEnd as in ``reassemble_bed12``, the
+    summit as its lifted base's offset from the new start (-1 when it did not lift or
+    landed outside the row; -1 stays -1). Other columns are copied. ``dropped`` receives
+    ``(row index, 'unlifted')`` for rows whose interval did not lift."""
+    stats = BedStats(rows_in=len(rows))
+    units = _parse_lifted_units(lifted)
+    out = []
+    for index, fields in enumerate(rows):
+        row_units = units.get(index, {})
+        main = row_units.get("m")
+        if main is None:
+            stats.rows_unlifted += 1
+            if dropped is not None:
+                dropped.append((index, "unlifted"))
+            continue
+        chrom, start, end, strand = main
+        new = list(fields)
+        new[0], new[1], new[2] = chrom, str(start), str(end)
+        if len(new) > 5 and new[5] in _FLIP_STRAND and strand in _FLIP_STRAND and strand != new[5]:
+            new[5] = strand
+            stats.rows_flipped += 1
+        if thick:
+            ts, te = _lifted_thick(fields, start, end, chrom, row_units.get("t"), stats)
+            new[6], new[7] = str(ts), str(te)
+        if summit and int(fields[9]) >= 0:
+            point = row_units.get("s")
+            if point is not None and point[0] == chrom and start <= point[1] < end:
+                new[9] = str(point[1] - start)
+                stats.summits_lifted += 1
+            else:
+                new[9] = "-1"
+                stats.summits_lost += 1
         out.append("\t".join(new))
         stats.rows_out += 1
     return out, stats

@@ -1306,3 +1306,234 @@ def test_bed12_explicit_strand_does_not_invent_flips_from_block_order():
     out, stats = gl.reassemble_bed12(["tgt\t1000\t1050\t0|0\t0\t-", "tgt\t2000\t2050\t0|1\t0\t-"],
                                      parsed[:1], explicit_strand=True)
     assert out == [] and stats.rows_rearranged == 1
+
+
+def test_cli_bed_reads_gzip_bgzip_and_stdin_and_writes_gz(tmp_path, capsys, monkeypatch):
+    import gzip
+    import io
+
+    from fiberhmm.cli import lift
+
+    text = ("srcA\t100\t300\tr0\t10\t+\t100\t300\t0\t2\t50,100\t0,100\t1,2\n"
+            "srcA\t500\t700\tr1\t0\t+\t500\t700\t0\t2\t50,50\t0,150\t1,2\n")
+    liftbed, lift_map = _stub_liftbed(tmp_path / "bin"), _lift_map(tmp_path)
+    plain = tmp_path / "in.bed"
+    plain.write_text(text)
+    base = ["--bed", "--map", lift_map, "--liftbed", liftbed]
+    assert lift.main(base + ["-i", str(plain), "-o", str(tmp_path / "ref.bed")]) == 0
+    ref = (tmp_path / "ref.bed").read_text()
+    gz = tmp_path / "in.bed.gz"
+    with gzip.open(gz, "wt") as handle:
+        handle.write(text)
+    pysam.tabix_compress(str(plain), str(tmp_path / "in.bgz.gz"), force=True)
+    for src in (gz, tmp_path / "in.bgz.gz"):
+        out, unl = tmp_path / "out.bed.gz", tmp_path / "unl.bed.gz"
+        assert lift.main(base + ["-i", str(src), "-o", str(out), "--unlifted", str(unl)]) == 0
+        with open(out, "rb") as handle:
+            assert handle.read(4) == b"\x1f\x8b\x08\x04"        # BGZF (gzip + extra field)
+        assert gzip.open(out, "rt").read() == ref
+        assert gzip.open(unl, "rt").read().startswith("#block_no_projection\n")
+    monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(gz.read_bytes())))
+    assert lift.main(base + ["-i", "-", "-o", str(tmp_path / "stdin.bed")]) == 0
+    assert (tmp_path / "stdin.bed").read_text() == ref
+    capsys.readouterr()
+    with pytest.raises(SystemExit):
+        lift.main(["-i", "-", "-o", str(tmp_path / "x.bam"), "--map", lift_map])
+    assert "stdin) is for --bed" in capsys.readouterr().err
+
+
+def test_cli_bed12_partial_keep_keeps_lifted_blocks(tmp_path, capsys):
+    from fiberhmm.cli import lift
+
+    bed = tmp_path / "in.bed"
+    bed.write_text("srcA\t100\t300\tr0\t10\t+\t100\t300\t0\t2\t50,100\t0,100\t1,2\n"
+                   "srcA\t500\t700\tr1\t0\t+\t500\t700\t0\t2\t50,50\t0,150\t1,2\n"
+                   "srcB\t1\t50\tr2\t0\t+\t1\t50\t0\t1\t49\t0\t1\n")
+    out, unl = tmp_path / "out.bed", tmp_path / "unl.bed"
+    argv = ["--bed", "-i", str(bed), "-o", str(out), "--map", _lift_map(tmp_path),
+            "--liftbed", _stub_liftbed(tmp_path / "bin"), "--unlifted", str(unl)]
+    assert lift.main(argv + ["--bed12-partial", "keep"]) == 0
+    err = capsys.readouterr().err
+    assert "2 of 3 BED12 rows lifted (1 lost a block" in err
+    assert "1 rows kept without 1 unliftable blocks" in err
+    rows = out.read_text().splitlines()
+    assert rows[0].split("\t") == ["tgt", "4700", "4900", "r0", "10", "-", "4700", "4900", "0",
+                                   "2", "100,50", "0,150", "2,1"]
+    # r1 keeps block 0 ([500, 550) -> [4450, 4500)); its per-block column is subset.
+    assert rows[1].split("\t") == ["tgt", "4450", "4500", "r1", "0", "-", "4450", "4500", "0",
+                                   "1", "50", "0", "1"]
+    assert unl.read_text() == ("#block_no_projection\n"
+                               "srcB\t1\t50\tr2\t0\t+\t1\t50\t0\t1\t49\t0\t1\n"
+                               "#partial_no_projection\nsrcA\t650\t700\tr1|1\t0\t+\n")
+    # The default still drops r1, and keep is for BED12 only.
+    assert lift.main(argv) == 0
+    assert [l.split("\t")[3] for l in out.read_text().splitlines()] == ["r0"]
+    peaks = tmp_path / "p.bed"
+    peaks.write_text("srcA\t1\t20\n")
+    capsys.readouterr()
+    assert lift.main(["--bed", "-i", str(peaks), "-o", str(out), "--map", _lift_map(tmp_path),
+                      "--liftbed", _stub_liftbed(tmp_path / "bin"), "--bed12-partial", "keep"]) == 2
+    assert "--bed12-partial keep is for BED12" in capsys.readouterr().err
+
+
+def test_cli_bed_lifts_narrowpeak_summits_and_thick(tmp_path, capsys):
+    from fiberhmm.cli import lift
+
+    liftbed, lift_map = _stub_liftbed(tmp_path / "bin"), _lift_map(tmp_path)
+    np_ = tmp_path / "peaks.narrowPeak"
+    np_.write_text("srcA\t100\t200\tp1\t0\t.\t5\t3\t2\t30\n"
+                   "srcA\t300\t400\tp2\t0\t.\t5\t3\t2\t-1\n"
+                   "srcB\t1\t50\tp3\t0\t.\t5\t3\t2\t10\n")
+    out, unl = tmp_path / "out.narrowPeak", tmp_path / "unl.bed"
+    assert lift.main(["--bed", "-i", str(np_), "-o", str(out), "--map", lift_map,
+                      "--liftbed", liftbed, "--unlifted", str(unl)]) == 0
+    err = capsys.readouterr().err
+    assert "2 of 3 narrowPeak rows lifted" in err and "summits lifted on 1 rows" in err
+    # summit base 130 -> 4869, offset 69 from the new start 4800; -1 stays -1.
+    assert out.read_text() == ("tgt\t4800\t4900\tp1\t0\t.\t5\t3\t2\t69\n"
+                               "tgt\t4600\t4700\tp2\t0\t.\t5\t3\t2\t-1\n")
+    assert unl.read_text() == "#no_projection\nsrcB\t1\t50\tp3\t0\t.\t5\t3\t2\t10\n"
+    # A narrowPeak under a .bed name is read as BED (columns copied) unless declared.
+    plain = tmp_path / "peaks.bed"
+    plain.write_text(np_.read_text().splitlines()[0] + "\n")
+    assert lift.main(["--bed", "-i", str(plain), "-o", str(out), "--map", lift_map,
+                      "--liftbed", liftbed]) == 0
+    assert out.read_text().split("\t")[9] == "30\n"
+    assert lift.main(["--bed", "-i", str(plain), "-o", str(out), "--map", lift_map,
+                      "--liftbed", liftbed, "--bed-format", "narrowPeak"]) == 0
+    assert out.read_text().split("\t")[9] == "69\n"
+    # BED9: thick inside the row lifted, spanning thick spans, empty stays empty.
+    b9 = tmp_path / "t.bed"
+    b9.write_text("srcA\t100\t200\tt1\t0\t+\t120\t150\t0,0,0\n"
+                  "srcA\t300\t400\tt2\t0\t+\t300\t400\t0,0,0\n"
+                  "srcA\t500\t600\tt3\t0\t+\t500\t500\t0,0,0\n")
+    assert lift.main(["--bed", "-i", str(b9), "-o", str(out), "--map", lift_map,
+                      "--liftbed", liftbed]) == 0
+    assert out.read_text() == ("tgt\t4800\t4900\tt1\t0\t-\t4850\t4880\t0,0,0\n"
+                               "tgt\t4600\t4700\tt2\t0\t-\t4600\t4700\t0,0,0\n"
+                               "tgt\t4400\t4500\tt3\t0\t-\t4400\t4400\t0,0,0\n")
+    capsys.readouterr()
+    assert lift.main(["--bed", "-i", str(b9), "-o", str(out), "--map", lift_map,
+                      "--liftbed", liftbed, "--bed-format", "bed12"]) == 2
+    assert "--bed-format bed12, but 3 rows" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        lift.main(["-i", str(b9), "-o", str(out), "--map", lift_map, "--bed-format", "bed"])
+    assert "are for --bed" in capsys.readouterr().err
+
+
+def test_bed12_reassembly_keep_subsets_and_thick_inside():
+    rows = ["srcA\t100\t400\tr\t0\t+\t150\t260\t0\t3\t50,50,50\t0,100,250\ta,b,c\tx"]
+    bed6, parsed, _ = gl.explode_bed12(rows, unstranded_as="+")
+    assert "srcA\t150\t260\t0|t\t0\t+" in bed6
+    lifted = ["tgt\t1000\t1050\t0|0\t0\t+", "tgt\t1100\t1150\t0|1\t0\t+",
+              "tgt\t1040\t1160\t0|t\t0\t+"]
+    dropped_blocks = []
+    out, stats = gl.reassemble_bed12(lifted, parsed, explicit_strand=True, partial="keep",
+                                     dropped_blocks=dropped_blocks)
+    f = out[0].split("\t")
+    assert f[1:3] == ["1000", "1150"] and f[6:8] == ["1040", "1150"]
+    assert f[9:] == ["2", "50,50", "0,100", "a,b", "x"]
+    assert dropped_blocks == [(0, 2)] and stats.rows_partial == 1 and stats.blocks_dropped == 1
+    out, stats = gl.reassemble_bed12(lifted, parsed, explicit_strand=True)
+    assert out == [] and stats.rows_lost_blocks == 1
+
+
+def test_missing_liftbam_says_how_to_build_it(tmp_path, monkeypatch):
+    from fiberhmm.cli import lift
+
+    monkeypatch.setenv("PATH", str(tmp_path))
+    with pytest.raises(lift.LiftError) as error:
+        lift.find_tool("liftbam", None, "--liftbam")
+    assert "cargo build --release --locked --features bam" in str(error.value)
+    (tmp_path / "liftbed").write_text("#!/bin/sh\n")
+    (tmp_path / "liftbed").chmod(0o755)
+    with pytest.raises(lift.LiftError) as error:
+        lift.find_tool("liftbam", None, "--liftbam")
+    assert "lacks the bam feature" in str(error.value)
+    with pytest.raises(lift.LiftError) as error:
+        lift.find_tool("liftbam", str(tmp_path / "nope" / "liftbam"), "--liftbam")
+    assert "not an executable file" in str(error.value) and "--features bam" in str(error.value)
+
+
+def test_strip_pansn():
+    from fiberhmm.cli.lift import strip_pansn
+
+    assert strip_pansn("GRCh38#0#chr1", "#") == "chr1"
+    assert strip_pansn("HG002#1#chr1#alt", "#") == "chr1#alt"
+    assert strip_pansn("chr1", "#") == "chr1"
+
+
+def _stub_vg(tmp_path, *, flip=False):
+    """A stand-in ``vg``: ``inject`` passes the BAM through; ``surject`` renames each
+    source contig ``<prefix><c>`` to ``T#0#<c>`` and keeps positions, or with ``flip``
+    puts every read on the reverse strand of a contig of the same length (x -> L - x)."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    script = tmp_path / "vg"
+    script.write_text(f"""#!{__import__('sys').executable}
+import shutil, sys
+import pysam
+if sys.argv[1] == "inject":
+    shutil.copyfileobj(sys.stdin.buffer, sys.stdout.buffer); sys.exit(0)
+assert sys.argv[1] == "surject" and "-n" in sys.argv
+src = pysam.AlignmentFile(sys.stdin.buffer, "rb")
+sq = [dict(SN="T#0#" + s["SN"].split("#")[-1], LN=s["LN"]) for s in src.header.to_dict()["SQ"]]
+out = pysam.AlignmentFile(sys.stdout.buffer, "wb", header=dict(HD=dict(VN="1.6"), SQ=sq))
+comp = str.maketrans("ACGTN", "TGCAN")
+for r in src:
+    a = pysam.AlignedSegment(out.header)
+    a.query_name, a.reference_id, a.mapping_quality = r.query_name, r.reference_id, 60
+    a.cigarstring = r.cigarstring
+    if {flip}:
+        a.flag = 16
+        a.reference_start = sq[r.reference_id]["LN"] - r.reference_end
+        a.query_sequence = r.query_sequence.translate(comp)[::-1]
+    else:
+        a.flag, a.reference_start, a.query_sequence = 0, r.reference_start, r.query_sequence
+    out.write(a)
+out.close()
+""")
+    script.chmod(0o755)
+    return str(script)
+
+
+@pytest.mark.parametrize("flip", [False, True])
+def test_cli_bed_vg_engine_lifts_without_fibertools(tmp_path, capsys, flip):
+    from fiberhmm.cli import lift
+
+    fasta = tmp_path / "src.fa"
+    fasta.write_text(">srcA\n" + "ACGT" * 30_000 + "\n")        # 120 kb
+    pysam.faidx(str(fasta))
+    bed = tmp_path / "in.bed"
+    bed.write_text("srcA\t100\t300\tr0\t0\t+\t100\t300\t0\t2\t50,100\t0,100\n"
+                   "srcA\t2000\t90000\tbig\t0\t+\t2000\t90000\t0\t1\t88000\t0\n"
+                   "srcA\t119900\t120000\tend\t0\t-\t119900\t120000\t0\t1\t100\t0\n"
+                   "srcB\t1\t50\tnone\t0\t+\t1\t50\t0\t1\t49\t0\n")
+    out, unl = tmp_path / "out.bed", tmp_path / "unl.bed"
+    code = lift.main(["--bed", "-i", str(bed), "-o", str(out), "-g", str(fasta), "--prefix",
+                      "S#0#", "--target", "T", "--source-fasta", str(fasta),
+                      "--vg", _stub_vg(tmp_path / "bin", flip=flip), "--unlifted", str(unl)])
+    err = capsys.readouterr().err
+    assert code == 0, err
+    L = 120_000
+    got = {f[3]: f for f in (l.split("\t") for l in out.read_text().splitlines())}
+    assert set(got) == {"r0", "big", "end"}
+    if not flip:
+        assert got["r0"][:3] == ["srcA", "100", "300"] and got["r0"][5] == "+"
+        assert got["r0"][10:12] == ["50,100", "0,100"]
+        assert got["big"][1:3] == ["2000", "90000"] and got["end"][1:3] == ["119900", "120000"]
+    else:
+        assert got["r0"][:3] == ["srcA", str(L - 300), str(L - 100)] and got["r0"][5] == "-"
+        assert got["r0"][10:12] == ["100,50", "0,150"]
+        assert got["big"][1:3] == [str(L - 90000), str(L - 2000)] and got["big"][5] == "-"
+        assert got["end"][1:3] == ["0", "100"] and got["end"][5] == "+"
+    assert unl.read_text() == ("#block_contig_not_in_fasta\n"
+                               "srcB\t1\t50\tnone\t0\t+\t1\t50\t0\t1\t49\t0\n")
+    # narrowPeak through vg: the summit is lifted too.
+    np_ = tmp_path / "p.narrowPeak"
+    np_.write_text("srcA\t60000\t60400\tp1\t0\t.\t5\t3\t2\t150\n")
+    assert lift.main(["--bed", "-i", str(np_), "-o", str(out), "-g", str(fasta), "--prefix",
+                      "S#0#", "--target", "T", "--source-fasta", str(fasta),
+                      "--vg", _stub_vg(tmp_path / "bin", flip=flip)]) == 0
+    f = out.read_text().split("\t")
+    summit = int(f[1]) + int(f[9])
+    assert summit == (60150 if not flip else L - 60151)

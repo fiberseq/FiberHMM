@@ -3,7 +3,8 @@
 `fiberhmm-lift` moves a called BAM from the assembly it was aligned to (a
 personal or haplotype assembly, say) to another assembly in the same
 pangenome graph, keeping every footprint on the same bases of the molecule,
-and repairs what a lift leaves stale. It has two engines.
+and repairs what a lift leaves stale. The primary route is native: graphlift's
+`liftbam` (BAM) and `liftbed` (BED). vg is an optional fallback.
 
 **Native** (the default when a map is given): graphlift's `liftbam` lifts the
 records through a graphlift chain map, which graphlift's `gbz2chain` derives
@@ -32,11 +33,28 @@ record through an alternative chain when no primary chain projects it. A
 second placement of mostly the same read bases (a duplication) is written as
 a secondary alignment. Paired-end records are not lifted
 (`paired_end_unsupported`).
-`liftbam` must be on the `PATH` or named with `--liftbam`; build it with
-graphlift's `bam` feature (`cargo build --release --features bam`).
 
-**vg**: the stages of fibertools-rs `ft pg-lift --bam` (`ft pg-pansn`,
-`vg inject`, `vg surject`, `ft pg-pansn --strip`) on the graph itself.
+### Installing graphlift
+
+graphlift (<https://github.com/mtcicero26/graphlift>) is built from source
+with Rust (the version is pinned in its `rust-toolchain.toml`) and a C
+compiler. `liftbam` is built only with graphlift's `bam` feature:
+
+```bash
+git clone https://github.com/mtcicero26/graphlift
+cd graphlift
+cargo build --release --locked --features bam   # gbz2chain, liftbed and liftbam
+```
+
+The binaries land in `target/release/`. Put that directory on the `PATH`, or
+name the binaries with `--liftbam` and `--liftbed` (`liftbed` is also found
+next to an explicit `--liftbam`). A build without `--features bam` has
+`liftbed` and `gbz2chain` but no `liftbam`; `fiberhmm-lift` then stops with
+the command above.
+
+**vg** (optional fallback, without a map): `vg inject` and `vg surject` on
+the graph itself, with fibertools-rs `ft pg-pansn` adding the source panSN
+prefix before and stripping it after.
 
 ```bash
 fiberhmm-lift -i calls.hg002_mat.bam -o calls.grch38.bam \
@@ -45,8 +63,8 @@ fiberhmm-lift -i calls.hg002_mat.bam -o calls.grch38.bam \
 ```
 
 `--prefix` is the panSN prefix of the source assembly's paths in the graph
-and `--target` the sample to surject onto, as for `ft pg-lift`. `vg` and `ft`
-(fibertools-rs ≥ 0.13) must be on the `PATH`, or named with `--vg`/`--ft`;
+and `--target` the sample to surject onto. `vg` and `ft` (fibertools-rs ≥
+0.13, for `pg-pansn`) must be on the `PATH`, or named with `--vg`/`--ft`;
 `--vg` may be a wrapper script that runs vg in a container.
 
 On the same graph the two engines place 99.95–99.97% of footprint intervals
@@ -103,7 +121,7 @@ Each lifted record carries `Yq:i` (source `MAPQ`) and `Yp:Z` (source locus,
 ## MAPQ
 
 A lifted record keeps the `MAPQ` of its source alignment (`--mapq source`,
-the default, as CrossMap and `ft pg-lift` do): it says how uniquely the read
+the default, as CrossMap does): it says how uniquely the read
 placed on the source assembly, not on the target. Reads aligned to a diploid
 assembly (both haplotypes in one reference) get low `MAPQ` wherever the two
 haplotypes are identical, and keep it after the lift: in one HG002 data set
@@ -115,9 +133,11 @@ or set a fixed value with `--mapq fixed:N` (for example `fixed:60`). The
 source `MAPQ` stays in `Yq` either way, and the `fiberhmm-lift` `@PG` records
 the mode (`mapq=source` or `mapq=fixed:N`).
 
-## A BAM lifted with `ft pg-lift`
+## A BAM lifted by another vg-based tool
 
-`fiberhmm-check` reports such a BAM (`graph-lift-unrepaired`). Repair it from
+A BAM lifted with `vg inject`/`vg surject` outside `fiberhmm-lift` (for
+example with fibertools-rs `ft pg-pansn` around them) has the stale fields in
+the table above. `fiberhmm-check` reports such a BAM (`graph-lift-unrepaired`). Repair it from
 the BAM it was lifted from:
 
 ```bash
@@ -141,45 +161,85 @@ correct value. On a diploid source, blocks of the two haplotypes can share a
 
 ## BED files
 
-`fiberhmm-lift --bed` lifts BED files with either engine. With `--map` it
-runs graphlift's `liftbed`, which lifts each interval as `liftbam` would lift
-a read aligned over the same bases (same chains, same primary net, same
-splitting rules), so a lifted BED and a lifted BAM agree.
+`fiberhmm-lift --bed` lifts BED files. With `--map` it runs graphlift's
+`liftbed`, which lifts each interval as `liftbam` would lift a read aligned
+over the same bases (same chains, same primary net, same splitting rules),
+so a lifted BED and a lifted BAM agree.
 
 ```bash
-# fiberhmm-extract BED12 rows, natively
-fiberhmm-lift --bed -i calls_nucleosome.bed -o calls_nucleosome.grch38.bed \
+# fiberhmm-extract BED12 rows
+fiberhmm-lift --bed -i calls_nucleosome.bed.gz -o calls_nucleosome.grch38.bed.gz \
     --map hprc.GRCh38.HG002.chain.graphlift.json --unlifted calls_nucleosome.unlifted.bed
 
-# a peak BED (BED3/BED6 and extra columns), natively
-fiberhmm-lift --bed -i peaks.hg002.bed -o peaks.grch38.bed \
+# narrowPeak (summits lifted too)
+fiberhmm-lift --bed -i peaks.hg002.narrowPeak -o peaks.grch38.narrowPeak \
     --map hprc.GRCh38.HG002.chain.graphlift.json
 
-# the same through vg (ft pg-lift's BED mode)
+# from stdin
+zcat peaks.hg002.bed.gz | fiberhmm-lift --bed -i - -o peaks.grch38.bed \
+    --map hprc.GRCh38.HG002.chain.graphlift.json
+
+# vg fallback, without a map (needs the source FASTA)
 fiberhmm-lift --bed -i calls_nucleosome.bed -o calls_nucleosome.grch38.bed \
     -g hprc.gbz --prefix 'HG002#1#' --target GRCh38 --source-fasta hg002.fa
 ```
 
-- **BED12 rows** (`fiberhmm-extract` output) are lifted block by block and
-  rebuilt, since both engines move only an interval's start and end. A row
-  is dropped when one of its blocks does not lift, or its blocks land on
-  different contigs or out of order; with `--unlifted` the native engine
-  writes the dropped rows after a `#reason` line (`block_no_projection`,
-  `split_contigs`, `rearranged`, ...).
-- **Other BED files** are lifted row by row. Columns after the third are
-  copied; columns that hold coordinates of their own (a narrowPeak summit
-  offset) are not lifted.
-- **Native rules**: an interval runs from its first to its last projected
+- **Input and output.** The input may be plain, gzip or bgzip, or `-` for
+  stdin. An output (and an `--unlifted` file) whose name ends in `.gz` is
+  written bgzip-compressed. Rows keep the input order; sort them before
+  `tabix`.
+- **Formats** (`--bed-format`, default `auto`):
+  - `bed12`: rows are lifted block by block and rebuilt, since the engines
+    move only an interval's start and end. `auto` picks it when every row has
+    12 or more columns.
+  - `narrowPeak`: the summit (column 10, an offset from the start) is lifted
+    as a 1 bp interval and rewritten as an offset from the new start. A
+    summit that does not lift, or lands outside the lifted peak, becomes -1;
+    -1 stays -1. `auto` picks it for a `.narrowPeak` or `.narrowPeak.gz`
+    input or a `track type=narrowPeak` line, not from the column count.
+  - `bed`: rows are lifted one by one; columns after the third are copied.
+  - thickStart/thickEnd (columns 7–8, `bed` and `bed12`): a thick interval
+    that spans the row spans the lifted row, an empty one stays empty, and
+    one inside the row is lifted on its own and clipped to the lifted row (it
+    becomes empty if it does not lift). For `bed` this applies when every row
+    has integer columns 7–8 within the row.
+- **BED12 rows with unliftable blocks** (`--bed12-partial`). By default
+  (`drop`) a row is dropped when one of its blocks does not lift. `keep`
+  keeps the blocks that lift, recomputes blockCount, sizes, starts and the
+  row bounds (per-block columns are subset too), and writes each dropped
+  block to `--unlifted` as a BED6 row in source coordinates, named
+  `<row name>|<block index>`, after a `#partial_<reason>` line. Either way a
+  row is dropped when no block lifts, its blocks land on different contigs,
+  or they come back out of order (`block_no_projection`, `split_contigs`,
+  `rearranged`, ...). Lifting the BAM and running `fiberhmm-extract` on it
+  gives the same blocks as `keep`, except where the BAM lift splits a
+  molecule into a primary and a supplementary (across a large target-only
+  gap, say): `keep` writes the blocks of both pieces in one row, while
+  `fiberhmm-extract` writes the primary only.
+- **Native rules.** An interval runs from its first to its last projected
   base, so bases with no target counterpart (an insertion in the source)
-  shrink it. `--min-match F` drops intervals (or blocks) of which less than a
-  fraction F projects (liftOver's `-minMatch`; default 0). An interval that
-  lands in several pieces (across an inversion breakpoint, say) keeps the
-  piece with the most projected bases. On a `-` chain the strand column is
-  swapped. Unlifted rows are counted by reason and, with `--unlifted`,
-  written liftOver style.
-- **vg**: `ft pg-lift`'s BED mode copies the strand column, lifts nothing
-  on segments that change strand (fibertools-rs 0.13), and does not report
-  the rows it could not lift.
+  shrink it. An interval that lands in several pieces (across an inversion
+  breakpoint, say) keeps the piece with the most projected bases. On a `-`
+  chain the strand column is swapped. Unlifted rows are counted by reason
+  and, with `--unlifted`, written liftOver style.
+- **`--min-match`.** The default, 0, lifts any interval with a projected
+  base, as vg does. An interval or block that is mostly an insertion in the
+  source then lifts as a remnant of a few bp: in HG002 → GRCh38 test tracks
+  0.07–0.5% of nucleosome blocks lifted to less than half their size, and
+  1 in 2,000–15,000 to 10 bp or less. `--min-match 0.5` drops intervals of which
+  less than half projects, so those remnants are not written; they count as
+  unlifted, and with `--bed12-partial drop` their whole row goes with them.
+  With `--bed12-partial keep`, `--min-match 0.5` drops only the remnant
+  blocks.
+- **vg** (fallback: `--engine vg`, or `--graph` without `--map`). The
+  source contigs (from `--source-fasta`) are cut into 50 kb reads that
+  overlap by half, where intervals lie; `vg inject` puts them on the graph
+  and `vg surject` onto the target. Each interval takes the target span of
+  its own bases in the read where it lies most centrally (an interval longer
+  than 25 kb gets a read of its own). A reverse-strand surjection swaps the
+  strand column. fibertools-rs is not needed. Intervals that do not surject are
+  counted and, with `--unlifted`, written out (`no_projection`,
+  `contig_not_in_fasta`).
 
-Lifting the BAM and extracting from the lifted BAM gives the same intervals
-and is the better route when the BAM is at hand.
+Lifting the BAM and extracting from the lifted BAM is the better route when
+the BAM is at hand.

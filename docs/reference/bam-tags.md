@@ -115,6 +115,7 @@ Written by [`fiberhmm-lift`](../workflows/lifting.md) (SAM user space).
 | `Yq` | `i` | `MAPQ` of the source alignment (kept as the record's `MAPQ`) |
 | `Yp` | `Z` | source locus, `<contig>:<1-based POS>:<+/->`; marks a lifted record |
 | `Yf`, `Yh` | `i`, `Z` | source `FLAG` and hard clips, between the stash and the repair only; never in a repaired BAM |
+| `Yu` | `Z` | why a record could not be lifted (`no_projection`, `contig_not_in_map`, ...); only in the `--unlifted` BAM, whose records keep their source coordinates |
 
 ## Tags FiberHMM reads
 
