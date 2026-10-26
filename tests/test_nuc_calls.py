@@ -213,3 +213,33 @@ def test_calls_digest_is_shift_invariant():
     moved[3] += 5
     other = make_molecule(m.length, nucs=moved, msps=m.msps)
     assert calls_digest(other) != calls_digest(m)
+
+
+def test_virtual_dyads_give_continuity_not_regularity():
+    rng = np.random.default_rng(9)
+    L = 20_000
+    # a molecule of unresolved 6-nucleosome footprints only: no regular segment
+    nucs, pos = [], 300
+    while pos + 1150 < L - 300:
+        nucs.append((pos, pos + 1100))
+        pos += 1150
+    occ = np.zeros(L, bool)
+    for s_, e_ in nucs:
+        occ[s_:e_] = True
+    m = make_molecule(L, nucs=nucs, msps=complement_msps(L, nucs),
+                      hits=np.flatnonzero(~occ & (rng.random(L) < 0.6)))
+    r = molecule_outputs(m, cal=flat_calibration())
+    assert (r.footprints['coarse'][~r.footprints['truncated']] == MULTI3).all()
+    assert all(s.state != REGULAR for s in r.segments)
+    # a regular array interrupted by one multi2 call stays one regular segment
+    m2 = array_molecule([('reg', 15, 190)], rng)
+    iv = m2.nucs.tolist()
+    merged = iv[:7] + [(iv[7][0], iv[8][1])] + iv[9:]
+    occ = np.zeros(m2.length, bool)
+    for s_, e_ in merged:
+        occ[s_:e_] = True
+    m3 = make_molecule(m2.length, nucs=merged, msps=complement_msps(m2.length, merged),
+                       hits=np.flatnonzero(~occ & (rng.random(m2.length) < 0.5)))
+    r3 = molecule_outputs(m3, cal=flat_calibration())
+    regs = [s for s in r3.segments if s.state == REGULAR]
+    assert len(regs) == 1 and regs[0].start < merged[7][0] and regs[0].end > merged[7][1]

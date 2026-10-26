@@ -283,6 +283,8 @@ def _footprints_from_ma(read, ctx: DecodeContext, read_length: int):
         return None
     ma, aq, _an, source = tags
     parsed = parse_ma_tag(str(ma))
+    if not any(t[0] in ('nuc', 'msp', 'tf') and t[3] for t in parsed['raw_types']):
+        return None          # no footprint groups: the calls (if any) are in ns/nl/as/al
     if parsed['read_length'] != read_length:
         return 'length_mismatch'
     specs = [t[2] for t in parsed['raw_types']]

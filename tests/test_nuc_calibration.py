@@ -12,7 +12,7 @@ from fiberhmm.nuc.calibration import NucCalibration
 from fiberhmm.nuc.molecule import molecule_outputs
 from fiberhmm.nuc.recall import CallerSettings, rescale_emissions, thin_fiber_read
 from fiberhmm.nuc.thinning import (KEEP_GRID, calibrate_thin, edge_sigma, match_outcomes,
-                                   quantise_keep)
+                                   quantise_keep, supported_range)
 
 
 def test_rescale_emissions_scales_hits_and_keeps_context_mass(benchmark_model_path):
@@ -100,3 +100,14 @@ def test_calibrate_thin_end_to_end(called_bam):
     again = calibrate_thin(called_bam, label='synthetic', n_population=36, seeds=1, n_targets=4, cores=1)
     strip = lambda c: {k: v for k, v in c.to_dict().items() if k not in ('notes', 'validation')}  # noqa: E731
     assert strip(again) == strip(cal)
+
+
+def test_supported_range_ends_at_the_dense_references():
+    rng = np.random.default_rng(3)
+    nat = rng.uniform(0.1, 0.7, 5000)
+    thin = rng.uniform(0.05, 0.45, 50_000)         # many thinned footprints
+    dense = rng.uniform(0.45, 0.7, 2000)
+    lo, hi = supported_range(nat, thin, dense)
+    assert abs(lo - np.quantile(nat, 0.025)) < 1e-9
+    assert hi > 0.68                                # not cut at the thinned pool's top
+    assert supported_range(nat, [], dense) is None

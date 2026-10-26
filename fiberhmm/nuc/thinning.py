@@ -29,8 +29,9 @@ biased. Named classes need an absolute control (:func:`calibrate_absolute`).
 4. **Validate**: 20% of the dense molecules (by hash) are held out. The
    training thinning predicts mu_mono(lambda); the mismatch against the
    natural curve, and against the held-out thinning, is reported per bin.
-5. **Restrict**: only lambda covered by both natural and thinned footprints
-   (2.5-97.5 percentiles) is supported; outside it footprints are can't-tell.
+5. **Restrict**: only lambda covered by both natural and thinning data
+   (2.5-97.5 percentiles; the thinning series ends at the dense references)
+   is supported; outside it footprints are can't-tell.
 6. **Floor (D8)**: the lambda_acc below which held-out thinned molecules have
    a coarse can't-tell rate above 50%.
 """
@@ -175,6 +176,24 @@ def edge_sigma(shifts) -> float:
     lo, hi = np.quantile(v, [0.025, 0.975])
     v = v[(v >= lo) & (v <= hi)]
     return float(np.sqrt(np.mean(v ** 2))) if len(v) else 0.0
+
+
+def supported_range(lam_natural, lam_thinned, lam_dense, q: float = 0.025):
+    """[lo, hi] of lambda covered by natural and thinning data (NUC 4.1 step 5).
+
+    The thinned series runs from the lowest target up to the unthinned dense
+    references, so its low end is the thinned footprints' and its high end the
+    dense references' (pooling them would let the far more numerous thinned
+    footprints pull the top quantile down and cut off the densest natural
+    footprints, which are measured directly)."""
+    nat = np.asarray(lam_natural, float)
+    thin = np.asarray(lam_thinned, float)
+    dense = np.asarray(lam_dense, float)
+    if not (len(nat) and len(thin) and len(dense)):
+        return None
+    lo = max(np.quantile(nat, q), np.quantile(thin, q))
+    hi = min(np.quantile(nat, 1 - q), np.quantile(dense, 1 - q))
+    return [float(lo), float(hi)] if hi > lo else None
 
 
 def _bin_edges(values: np.ndarray, n: int) -> np.ndarray:
@@ -350,10 +369,7 @@ def calibrate_thin(bam_path: str, params: NucParams = DEFAULT_PARAMS, *, label: 
     if len(lam_thin) and len(lam_nat):
         dense_lams = np.concatenate([footprint_table([recalled[('nat', i, 0, 0)]], cal, params)['lambda']
                                      for i in dense_idx if ('nat', i, 0, 0) in recalled])
-        thin_all = np.concatenate([lam_thin, dense_lams])
-        lo = max(np.quantile(lam_nat, 0.025), np.quantile(thin_all, 0.025))
-        hi = min(np.quantile(lam_nat, 0.975), np.quantile(thin_all, 0.975))
-        cal.supported = [float(lo), float(hi)] if hi > lo else None
+        cal.supported = supported_range(lam_nat, lam_thin, dense_lams)
     if 'train' in curves and cal.supported:
         grid = np.exp(np.linspace(np.log(cal.supported[0]), np.log(cal.supported[1]), 8))
         out_val['lambda_grid'] = grid.tolist()

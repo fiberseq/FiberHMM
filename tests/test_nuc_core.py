@@ -313,3 +313,27 @@ def test_calibrate_self_round_trip():
     again = NucCalibration.from_dict(cal.to_dict())
     assert again.digest() == cal.digest()
     assert calibrate_self(list(reversed(mols)), label='synthetic').digest() == cal.digest()
+
+
+def test_ma_without_footprint_groups_falls_back_to_legacy_calls(tmp_path):
+    """A record whose calls live in ns/nl keeps them after nuc groups are added to MA."""
+    import array as _array
+    rng = np.random.default_rng(13)
+    seq, nucs, msps, marks = planted_record_molecule(rng, n_nuc=10)
+    path = str(tmp_path / 'leg.bam')
+    with pysam.AlignmentFile(path, 'wb', header=header()) as out:
+        r = make_record(out, 'leg', seq, 1000, (), (), (), marks)
+        r.set_tag('MA', None)
+        r.set_tag('ns', _array.array('I', [s for s, _ in nucs]))
+        r.set_tag('nl', _array.array('I', [e - s for s, e in nucs]))
+        out.write(r)
+    from fiberhmm.nuc.molecule import molecule_outputs
+    from fiberhmm.nuc.tags import annotate_record, read_nuc_groups
+    with pysam.AlignmentFile(path) as bam:
+        r = next(bam.fetch(until_eof=True))
+        mol, why = decode_record(r, DecodeContext(bam.header))
+        assert mol is not None and mol.source == 'legacy' and len(mol.nucs) == 10
+        annotate_record(r, molecule_outputs(mol, cal=flat_calibration()))
+        again, _ = decode_record(r, DecodeContext(bam.header))
+        assert again.source == 'legacy' and len(again.nucs) == 10
+        assert not any(g['stale'] for g in read_nuc_groups(r).values())

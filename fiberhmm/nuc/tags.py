@@ -208,10 +208,11 @@ def record_calls_digest(read) -> Optional[str]:
         return None
     ctx = DecodeContext(hdr)
     tags = annotation_tags(read)
+    fp = None
     if tags is not None:
         length = int(str(tags[0]).split(';', 1)[0])
         fp = _footprints_from_ma(read, ctx, length)
-    else:
+    if fp is None:          # no MA, or an MA without footprint groups
         fp = _footprints_from_legacy(read, ctx, int(read.query_length or 0))
     if fp is None or isinstance(fp, str):
         return None

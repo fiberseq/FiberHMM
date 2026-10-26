@@ -24,7 +24,8 @@ must end on a chain's last sub-state.
 
 1. gap: R_q N(g; q, sigma_R^2 + 2 sigma_loc^2); I the calibration's empirical
    gap density (gaps < ``seg_max_gap``); X uniform on [0, 2000). Gaps touching
-   a virtual dyad mix the state density with the uniform by the dyad weight.
+   a virtual dyad carry no gap evidence (continuity only: virtual dyads are
+   equally spaced by construction).
 2. composition: multinomial over {mono, short, long, multi, TF} (can't-tell
    and edge-truncated are missing) with the composition's frequencies, times
    a Poisson on the step's total count scaled by its length. X uses the
@@ -422,16 +423,20 @@ def emissions(steps: List[Step], space: StateSpace, cal, params: NucParams = DEF
     q = space.q_grid
     comp = cal.composition if (cal is not None and cal.composition) else default_composition()
     gap = np.array([st.gap for st in steps])
-    w = np.array([st.weight for st in steps])
     has_gap = np.isfinite(gap)
     g = np.where(has_gap, gap, 0.0)
     var = params.seg_sigma_r ** 2 + 2.0 * sigma_loc ** 2
     dens_R = np.exp(-0.5 * (g[:, None] - q[None, :]) ** 2 / var) / np.sqrt(2 * np.pi * var)
     dens_I = _gap_density_fn(cal)(g)
     dens_X = np.full(T, _X_UNIFORM)
-    gR = np.where(has_gap[:, None], np.log(np.maximum(w[:, None] * dens_R + (1 - w[:, None]) * _X_UNIFORM, 1e-300)), 0.0)
-    gI = np.where(has_gap, np.log(w * dens_I + (1 - w) * _X_UNIFORM), 0.0)
-    gX = np.where(has_gap, np.log(dens_X), 0.0)
+    # Steps touching a virtual dyad (from a multi(m) call) carry no gap
+    # evidence: virtual dyads are equally spaced by construction, so they give
+    # array continuity only and never regularity.
+    observed = np.array([st.observed_left and st.observed_right for st in steps], dtype=bool)
+    informative = has_gap & observed
+    gR = np.where(informative[:, None], np.log(np.maximum(dens_R, 1e-300)), 0.0)
+    gI = np.where(informative, np.log(np.maximum(dens_I, 1e-300)), 0.0)
+    gX = np.where(informative, np.log(dens_X), 0.0)
     cl = _comp_loglik(steps, comp)
     low = np.array([st.low_info for st in steps])
     iX = np.where(low, np.log(0.8), np.log(0.2))
