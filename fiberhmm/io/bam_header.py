@@ -292,24 +292,16 @@ def drop_derived_ma_contracts(header):
 
     Writers that regenerate nuc/msp/tf drop those groups from every read, so
     their declarations go too. Other comments are kept in order."""
-    import json as _json
     from fiberhmm.io.ma_tags import derived_ma_groups
+    from fiberhmm.io.scan_ma import strip_scan_contracts
     derived = derived_ma_groups()
-    d = _header_to_dict(header)
-    comments = list(d.get("CO", []))
+    d0 = _header_to_dict(header)
+    d = strip_scan_contracts(d0, derived)          # the scan contract lines
+    changed = len(d.get("CO", [])) != len(d0.get("CO", []))
     kept = []
-    changed = False
-    for raw in comments:
+    for raw in d.get("CO", []):
         comment = str(raw)
-        if comment.startswith(SCAN_MA_CONTRACT_PREFIX):
-            try:
-                group = _json.loads(comment[len(SCAN_MA_CONTRACT_PREFIX):]).get("group")
-            except ValueError:
-                group = None
-            if group in derived:
-                changed = True
-                continue
-        elif comment.startswith(MA_TYPES_PREFIX):
+        if comment.startswith(MA_TYPES_PREFIX):
             fields = comment[len(MA_TYPES_PREFIX):].split(",")
             keep_fields = [f for f in fields if f not in derived]
             if len(keep_fields) != len(fields):

@@ -335,7 +335,8 @@ def test_ma_without_footprint_groups_falls_back_to_legacy_calls(tmp_path):
         assert mol is not None and mol.source == 'legacy' and len(mol.nucs) == 10
         annotate_record(r, molecule_outputs(mol, cal=flat_calibration()))
         again, _ = decode_record(r, DecodeContext(bam.header))
-        assert again.source == 'legacy' and len(again.nucs) == 10
+        # the scan appender promotes legacy-only calls to MA groups (contract v1.5)
+        assert len(again.nucs) == 10 and again.nucs.tolist() == mol.nucs.tolist()
         assert not any(g['stale'] for g in read_nuc_groups(r).values())
 
 

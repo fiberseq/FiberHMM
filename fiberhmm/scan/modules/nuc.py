@@ -382,6 +382,11 @@ class NucModule(ScanModuleBase):
         return UnitResult(status='ok', tracks=tracks, extra={'groups': groups_seen})
 
     # ------------------------------------------------------------------ stitching
+    def stitch_support_bp(self, settings) -> int:
+        """Zero context a stitch run needs: the smoothing window plus one
+        phased window (a phased patch extends a window past its start)."""
+        return int(settings['patch_smooth_bp']) + int(settings['phase_window_bp'])
+
     def stitch(self, chrom, territory, tracks, settings, calibration) -> StitchResult:
         out = StitchResult()
         groups = sorted({name.split(':', 1)[1] for name in tracks if name.startswith('measured:')})

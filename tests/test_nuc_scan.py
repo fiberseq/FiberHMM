@@ -261,3 +261,40 @@ def test_calibration_sample_does_not_depend_on_the_grid():
     assert len(a) != len(b) or a[0].unit_id != b[0].unit_id
     assert calibration_regions(a, 40) == calibration_regions(b, 40)
     assert len(calibration_regions(a, 40)) == 40
+
+
+def test_cli_scan_unit_equals_direct_api(scan_bam, tmp_path):
+    """fiberhmm-scan --modules nuc (the CLI) against molecule_outputs (the API)."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    params = tmp_path / 'params.json'
+    params.write_text(json.dumps({'nuc': {'calibration': 'self', 'calibration_population': 400}}))
+    out = tmp_path / 'cli_scan'
+    repo = Path(__file__).resolve().parents[1]
+    env = dict(os.environ, PYTHONPATH=str(repo) + os.pathsep + os.environ.get('PYTHONPATH', ''),
+               FIBERHMM_NO_UPDATE_CHECK='1')
+    res = subprocess.run([sys.executable, '-m', 'fiberhmm.scan.cli', '--bam', scan_bam, '--genome',
+                          '--modules', 'nuc', '--parameters', str(params), '--no-annotate', '--cores', '1',
+                          '-o', str(out)], capture_output=True, text=True, env=env, cwd=repo, timeout=900)
+    assert res.returncode == 0, res.stderr[-2000:]
+    rec = json.loads((out / 'nuc' / 'extra' / 'calibration.json').read_text())
+    (cal_d,) = rec['datasets'].values()          # the CLI names the dataset by --bam position
+    cal = NucCalibration.from_dict(cal_d)
+    direct = _direct(scan_bam, cal)
+    rows = read_all(out / 'nuc' / 'molecules.tsv.bgz')
+    assert {r['qname'] for r in rows} == set(direct)
+    for row in rows:
+        _mol, r = direct[row['qname']]
+        for name, v in r.scalars.items():
+            if v is None or not np.isfinite(v):
+                assert row[name] == ''
+            else:
+                assert float(row[name]) == pytest.approx(v, rel=0, abs=1e-12), name
+    marks = read_all(out / 'nuc' / 'marks.tsv.bgz')
+    got = sorted((m['qname'], m['group'], int(m['mol_start']), int(m['mol_len']), m['q']) for m in marks)
+    want = sorted((q, g, s, n, ','.join(str(int(x)) for x in qb))
+                  for q, (_m, r) in direct.items() for g, (_spec, items) in group_rows(r).items()
+                  if g != NUCMOL for s, n, qb, _a in items)
+    assert got == want
