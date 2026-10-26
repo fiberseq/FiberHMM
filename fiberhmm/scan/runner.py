@@ -583,7 +583,7 @@ def _run_locked(out, resolved, reference, contigs, units, units_info, mods, poli
     _dispatch(specs, jobs, progress, cancel)
     from .finalize import finalize
     summary = finalize(out, manifest, resolved, reference, units, mods, unit_keys, annotate, progress,
-                       command=command)
+                       command=command, calibrations=calibrations)
     run = dict(attempts=_attempts(out, cores, window_jobs, time.monotonic() - started, len(pending), reused))
     _write_json(out / RUN_JSON, run, indent=1)
     return summary

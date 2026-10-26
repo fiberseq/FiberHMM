@@ -1,0 +1,162 @@
+"""fiberhmm-scan S2: the peaks module, ported from FiberBrowser's peak scan.
+
+Gates:
+- per-position scores (numerator, total, smoothed signal) and peaks identical to FiberBrowser's on three
+  chemistry fixtures (golden values generated from FiberBrowser's own loader and scoring code; a live
+  comparison runs when FIBERHMM_TEST_FIBERBROWSER points at a FiberBrowser 'browser' directory);
+- the old (window) rare-tier rule stays reachable; grid scans use the local rule; tiers 0-2 never depend
+  on the rule.
+"""
+from __future__ import annotations
+
+import hashlib
+import io
+import json
+import os
+import sys
+from contextlib import redirect_stdout
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+pysam = pytest.importorskip('pysam')
+
+from fiberhmm.scan import peaks_core as C
+from fiberhmm.scan.peaks_reads import compact_rows, read_deletion_cuts, split_at_deletions
+from fiberhmm.scan.tables import read_all
+from fiberhmm.scan.testing import write_peaks_fixture_bam
+
+GOLDEN = Path(__file__).parent / 'fixtures' / 'scan_peaks' / 'browser_golden.json'
+CHEMISTRIES = ('hia5-pacbio', 'ddda', 'hia5-nanopore')
+
+
+def _sha(a):
+    return hashlib.sha256(np.ascontiguousarray(a).tobytes()).hexdigest()
+
+
+@pytest.fixture(scope='module')
+def fixtures(tmp_path_factory):
+    d = tmp_path_factory.mktemp('peaks')
+    return {chem: write_peaks_fixture_bam(d / f'{chem}.bam', chem) for chem in CHEMISTRIES}
+
+
+def _fh(path, chrom, start, end, source, rule='window', params=None, row_rule='view'):
+    with pysam.AlignmentFile(path) as bam:
+        rows = compact_rows(bam, chrom, start, end, row_rule=row_rule)
+    num, tot = C.compute_scan_counts(rows, source, end - start)
+    res = C.scan_peaks(num, tot, n_reads=len(rows), rule=rule, params=params)
+    return rows, num, tot, res
+
+
+@pytest.mark.parametrize('chem', CHEMISTRIES)
+def test_per_position_scores_identical_to_browser_golden(fixtures, chem):
+    golden = json.loads(GOLDEN.read_text())
+    views = golden['fixtures'][chem]
+    assert len(views) >= 8
+    for key, want in views.items():
+        chrom, span, source = key.split(':')
+        start, end = map(int, span.split('-'))
+        rows, num, tot, res = _fh(fixtures[chem], chrom, start, end, source, params=golden['params'])
+        assert len(rows) == want['n_reads'], key
+        assert _sha(num) == want['numerator'], key
+        assert _sha(tot) == want['total'], key
+        assert res['smoothed'].dtype == np.float32 and _sha(res['smoothed']) == want['score'], key
+        assert res['peaks'] == want['peaks'], key
+        assert res['broad'] == want['broad'], key
+
+
+def _browser():
+    base = os.environ.get('FIBERHMM_TEST_FIBERBROWSER')
+    if not base or not Path(base, 'services', 'compact_read_loader.py').is_file():
+        return None
+    if base not in sys.path:
+        sys.path.insert(0, base)
+    from services.compact_read_loader import build_compact_reads_from_bam
+    from services import peak_scanning
+    return build_compact_reads_from_bam, peak_scanning
+
+
+@pytest.mark.parametrize('chem', CHEMISTRIES)
+def test_live_browser_parity(fixtures, chem):
+    fb = _browser()
+    if fb is None:
+        pytest.skip('set FIBERHMM_TEST_FIBERBROWSER to a FiberBrowser browser/ directory')
+    build, PS = fb
+    for start, end in ((0, 30_000), (7_000, 9_000), (21_000, 23_000)):
+        for source in C.TILING_SOURCES:
+            rows = build(fixtures[chem], 'chrP', start, end, spanning_only=False, include_layers=False,
+                         short_terminal_footprint_bp=90, hide_terminal_gaps=True, terminal_gap_threshold=500)
+            n1, t1 = PS.compute_scan_counts(rows, source, end - start)
+            s1 = PS.smooth_scan_signal(PS.scan_signal_from_counts(n1, t1), 100)
+            _rows, n2, t2, res = _fh(fixtures[chem], 'chrP', start, end, source)
+            assert len(rows) == len(_rows)
+            assert np.array_equal(n1, n2) and np.array_equal(t1, t2) and np.array_equal(s1, res['smoothed'])
+
+
+def test_deletion_cuts_split_every_call():
+    class R:
+        cigartuples = [(0, 100), (2, 60), (0, 50), (2, 15), (0, 4), (2, 20), (0, 30), (2, 5), (0, 10)]
+        reference_start = 1000
+    assert read_deletion_cuts(R()) == [(1100, 1160)]           # 15 + 20 joined over 4 bp = 35 < 50: not cut
+    R.cigartuples = [(0, 10), (2, 30), (0, 6), (2, 25), (0, 10)]
+    assert read_deletion_cuts(R()) == [(1010, 1040), (1046, 1071)]   # joined event of 55 bp: both pieces cut
+    assert split_at_deletions([[0, 100, 147], [100, 120, -20]], [(50, 60)]) == [[0, 50, 147], [60, 100, 147],
+                                                                               [100, 120, -20]]
+
+
+def _scan(argv):
+    from fiberhmm.scan.cli import main
+    with redirect_stdout(io.StringIO()) as out:
+        assert main(argv) == 0
+    return json.loads(out.getvalue().strip().splitlines()[-1])
+
+
+def test_bed_unit_scan_equals_browser_window(tmp_path, fixtures):
+    bam = fixtures['hia5-pacbio']
+    _scan(['--bam', bam, '--region', 'chrP:5000-15000', '--modules', 'peaks', '-o', str(tmp_path / 's')])
+    hits = read_all(tmp_path / 's' / 'peaks' / 'hits.tsv.bgz')
+    _rows, _n, _t, res = _fh(bam, 'chrP', 5000, 15000, 'accessibility')
+    want = sorted((5000 + p['start'], 5000 + p['end'], p['layer'], p['score']) for p in res['peaks'])
+    got = sorted((int(h['start']), int(h['end']), int(h['tier']), float(h['score'])) for h in hits
+                 if h['type'] == 'peaks.peak')
+    assert want and got == want
+    assert {h['tier_rule'] for h in hits} == {'window'}
+    cal = json.loads((tmp_path / 's' / 'peaks' / 'extra' / 'calibration.json').read_text())
+    assert cal['tier_rule'] == 'window'
+
+
+def test_grid_scan_local_rule_stitched_across_offsets(tmp_path, fixtures):
+    bam = fixtures['ddda']
+    common = ['--bam', bam, '--genome', '--modules', 'peaks', '--unit-bp', '5000', '--stride-bp', '2500',
+              '--no-annotate']
+    _scan(common + ['-o', str(tmp_path / 'g0')])
+    _scan(common + ['--grid-offset', '1250', '-o', str(tmp_path / 'g1')])
+    a = (tmp_path / 'g0' / 'peaks' / 'hits.tsv.bgz').read_bytes()
+    b = (tmp_path / 'g1' / 'peaks' / 'hits.tsv.bgz').read_bytes()
+    assert a == b
+    hits = read_all(tmp_path / 'g0' / 'peaks' / 'hits.tsv.bgz')
+    assert hits and {h['tier_rule'] for h in hits} == {'local'} and {h['row_rule'] for h in hits} == {'records'}
+    # the stitched contig equals one whole-contig computation with the local rule
+    _rows, _n, _t, res = _fh(bam, 'chrP', 0, 30_000, 'accessibility', rule='local', row_rule='records')
+    assert sorted((p['start'], p['end'], p['layer']) for p in res['peaks']) == sorted(
+        (int(h['start']), int(h['end']), int(h['tier'])) for h in hits if h['type'] == 'peaks.peak')
+
+
+def test_window_rule_refused_for_grid_scans(tmp_path, fixtures):
+    p = tmp_path / 'p.json'
+    p.write_text(json.dumps({'peaks': {'tier_rule': 'window'}}))
+    from fiberhmm.scan.cli import main
+    with pytest.raises((SystemExit, ValueError)):
+        with redirect_stdout(io.StringIO()):
+            main(['--bam', fixtures['ddda'], '--genome', '--modules', 'peaks', '--unit-bp', '5000',
+                  '--stride-bp', '2500', '--parameters', str(p), '-o', str(tmp_path / 'x')])
+
+
+@pytest.mark.parametrize('chem', CHEMISTRIES)
+def test_rules_differ_only_in_the_rare_tier(fixtures, chem):
+    for start, end in ((0, 30_000), (5_000, 15_000), (20_000, 30_000)):
+        _r, num, tot, w = _fh(fixtures[chem], 'chrP', start, end, 'accessibility', rule='window')
+        loc = C.scan_peaks(num, tot, n_reads=len(_r), rule='local')
+        assert [p for p in w['peaks'] if p['layer'] < 3] == [p for p in loc['peaks'] if p['layer'] < 3]
+        assert all(int(tot[p['start']:p['end']].min()) >= 5 for p in loc['peaks'] if p['layer'] == 3)

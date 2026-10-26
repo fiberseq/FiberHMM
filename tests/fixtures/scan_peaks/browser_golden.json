@@ -1,0 +1,3135 @@
+{
+ "fiberbrowser_commit": "872112cc4",
+ "fixtures": {
+  "ddda": {
+   "chrP:0-30000:accessibility": {
+    "broad": [],
+    "n_reads": 74,
+    "numerator": "4884b1260bd28427528778bfc6d719ad29fe34bac8c3c0b8f911b122699dab6a",
+    "peaks": [
+     {
+      "end": 1079,
+      "layer": 0,
+      "score": 0.9999999403953552,
+      "start": 202,
+      "threshold": 0.5
+     },
+     {
+      "end": 1270,
+      "layer": 0,
+      "score": 0.7249999642372131,
+      "start": 1126,
+      "threshold": 0.5
+     },
+     {
+      "end": 1730,
+      "layer": 0,
+      "score": 0.8166666030883789,
+      "start": 1291,
+      "threshold": 0.5
+     },
+     {
+      "end": 2715,
+      "layer": 0,
+      "score": 0.7333333492279053,
+      "start": 1896,
+      "threshold": 0.5
+     },
+     {
+      "end": 2871,
+      "layer": 0,
+      "score": 0.5435713529586792,
+      "start": 2718,
+      "threshold": 0.5
+     },
+     {
+      "end": 3176,
+      "layer": 0,
+      "score": 0.5414444208145142,
+      "start": 3065,
+      "threshold": 0.5
+     },
+     {
+      "end": 3326,
+      "layer": 0,
+      "score": 0.5999999642372131,
+      "start": 3179,
+      "threshold": 0.5
+     },
+     {
+      "end": 3494,
+      "layer": 0,
+      "score": 0.5900000333786011,
+      "start": 3365,
+      "threshold": 0.5
+     },
+     {
+      "end": 4017,
+      "layer": 0,
+      "score": 0.5233333110809326,
+      "start": 3923,
+      "threshold": 0.5
+     },
+     {
+      "end": 6447,
+      "layer": 0,
+      "score": 0.878333330154419,
+      "start": 5811,
+      "threshold": 0.5
+     },
+     {
+      "end": 6619,
+      "layer": 0,
+      "score": 0.6516666412353516,
+      "start": 6496,
+      "threshold": 0.5
+     },
+     {
+      "end": 13646,
+      "layer": 0,
+      "score": 0.528181791305542,
+      "start": 13566,
+      "threshold": 0.5
+     },
+     {
+      "end": 13853,
+      "layer": 0,
+      "score": 0.5966665744781494,
+      "start": 13729,
+      "threshold": 0.5
+     },
+     {
+      "end": 14248,
+      "layer": 0,
+      "score": 0.8232575058937073,
+      "start": 13869,
+      "threshold": 0.5
+     },
+     {
+      "end": 21315,
+      "layer": 0,
+      "score": 0.5875245332717896,
+      "start": 21222,
+      "threshold": 0.5
+     },
+     {
+      "end": 22053,
+      "layer": 0,
+      "score": 0.9478332996368408,
+      "start": 21347,
+      "threshold": 0.5
+     },
+     {
+      "end": 26091,
+      "layer": 0,
+      "score": 0.5915384888648987,
+      "start": 25843,
+      "threshold": 0.5
+     },
+     {
+      "end": 28802,
+      "layer": 0,
+      "score": 0.7294999957084656,
+      "start": 28153,
+      "threshold": 0.5
+     },
+     {
+      "end": 28971,
+      "layer": 0,
+      "score": 0.6175000071525574,
+      "start": 28810,
+      "threshold": 0.5
+     },
+     {
+      "end": 29140,
+      "layer": 0,
+      "score": 0.6874999403953552,
+      "start": 28981,
+      "threshold": 0.5
+     },
+     {
+      "end": 29325,
+      "layer": 0,
+      "score": 0.7524999976158142,
+      "start": 29179,
+      "threshold": 0.5
+     },
+     {
+      "end": 29511,
+      "layer": 0,
+      "score": 0.8699999451637268,
+      "start": 29401,
+      "threshold": 0.5
+     },
+     {
+      "end": 1871,
+      "layer": 1,
+      "score": 0.5149999856948853,
+      "start": 1755,
+      "threshold": 0.3
+     },
+     {
+      "end": 3040,
+      "layer": 1,
+      "score": 0.5074999928474426,
+      "start": 2896,
+      "threshold": 0.3
+     },
+     {
+      "end": 3898,
+      "layer": 1,
+      "score": 0.5399999618530273,
+      "start": 3519,
+      "threshold": 0.3
+     },
+     {
+      "end": 5786,
+      "layer": 1,
+      "score": 0.535454511642456,
+      "start": 4042,
+      "threshold": 0.3
+     },
+     {
+      "end": 7638,
+      "layer": 1,
+      "score": 0.5615384578704834,
+      "start": 6644,
+      "threshold": 0.3
+     },
+     {
+      "end": 7774,
+      "layer": 1,
+      "score": 0.3423636555671692,
+      "start": 7680,
+      "threshold": 0.3
+     },
+     {
+      "end": 7962,
+      "layer": 1,
+      "score": 0.3869696855545044,
+      "start": 7875,
+      "threshold": 0.3
+     },
+     {
+      "end": 8199,
+      "layer": 1,
+      "score": 0.36538460850715637,
+      "start": 8086,
+      "threshold": 0.3
+     },
+     {
+      "end": 8360,
+      "layer": 1,
+      "score": 0.3500000238418579,
+      "start": 8224,
+      "threshold": 0.3
+     },
+     {
+      "end": 8493,
+      "layer": 1,
+      "score": 0.35087913274765015,
+      "start": 8386,
+      "threshold": 0.3
+     },
+     {
+      "end": 8675,
+      "layer": 1,
+      "score": 0.375,
+      "start": 8593,
+      "threshold": 0.3
+     },
+     {
+      "end": 9604,
+      "layer": 1,
+      "score": 0.4531617760658264,
+      "start": 8752,
+      "threshold": 0.3
+     },
+     {
+      "end": 9776,
+      "layer": 1,
+      "score": 0.4180000424385071,
+      "start": 9669,
+      "threshold": 0.3
+     },
+     {
+      "end": 10053,
+      "layer": 1,
+      "score": 0.32600000500679016,
+      "start": 9919,
+      "threshold": 0.3
+     },
+     {
+      "end": 11954,
+      "layer": 1,
+      "score": 0.3957619071006775,
+      "start": 11840,
+      "threshold": 0.3
+     },
+     {
+      "end": 12105,
+      "layer": 1,
+      "score": 0.38214290142059326,
+      "start": 11998,
+      "threshold": 0.3
+     },
+     {
+      "end": 12293,
+      "layer": 1,
+      "score": 0.42000001668930054,
+      "start": 12189,
+      "threshold": 0.3
+     },
+     {
+      "end": 13541,
+      "layer": 1,
+      "score": 0.5235714316368103,
+      "start": 12351,
+      "threshold": 0.3
+     },
+     {
+      "end": 15901,
+      "layer": 1,
+      "score": 0.5287120938301086,
+      "start": 14273,
+      "threshold": 0.3
+     },
+     {
+      "end": 16086,
+      "layer": 1,
+      "score": 0.4746153950691223,
+      "start": 15932,
+      "threshold": 0.3
+     },
+     {
+      "end": 16303,
+      "layer": 1,
+      "score": 0.42750000953674316,
+      "start": 16129,
+      "threshold": 0.3
+     },
+     {
+      "end": 16472,
+      "layer": 1,
+      "score": 0.44170162081718445,
+      "start": 16364,
+      "threshold": 0.3
+     },
+     {
+      "end": 16835,
+      "layer": 1,
+      "score": 0.5024999976158142,
+      "start": 16729,
+      "threshold": 0.3
+     },
+     {
+      "end": 17013,
+      "layer": 1,
+      "score": 0.4206410050392151,
+      "start": 16920,
+      "threshold": 0.3
+     },
+     {
+      "end": 18337,
+      "layer": 1,
+      "score": 0.33933335542678833,
+      "start": 18236,
+      "threshold": 0.3
+     },
+     {
+      "end": 18739,
+      "layer": 1,
+      "score": 0.406000018119812,
+      "start": 18658,
+      "threshold": 0.3
+     },
+     {
+      "end": 22263,
+      "layer": 1,
+      "score": 0.4368382692337036,
+      "start": 22078,
+      "threshold": 0.3
+     },
+     {
+      "end": 23041,
+      "layer": 1,
+      "score": 0.3696841895580292,
+      "start": 22895,
+      "threshold": 0.3
+     },
+     {
+      "end": 23222,
+      "layer": 1,
+      "score": 0.3700000047683716,
+      "start": 23084,
+      "threshold": 0.3
+     },
+     {
+      "end": 23380,
+      "layer": 1,
+      "score": 0.41403505206108093,
+      "start": 23251,
+      "threshold": 0.3
+     },
+     {
+      "end": 23576,
+      "layer": 1,
+      "score": 0.49170345067977905,
+      "start": 23446,
+      "threshold": 0.3
+     },
+     {
+      "end": 23733,
+      "layer": 1,
+      "score": 0.3424975872039795,
+      "start": 23634,
+      "threshold": 0.3
+     },
+     {
+      "end": 24222,
+      "layer": 1,
+      "score": 0.38281047344207764,
+      "start": 23752,
+      "threshold": 0.3
+     },
+     {
+      "end": 24578,
+      "layer": 1,
+      "score": 0.41874998807907104,
+      "start": 24269,
+      "threshold": 0.3
+     },
+     {
+      "end": 24741,
+      "layer": 1,
+      "score": 0.3918749690055847,
+      "start": 24598,
+      "threshold": 0.3
+     },
+     {
+      "end": 25082,
+      "layer": 1,
+      "score": 0.37400001287460327,
+      "start": 24792,
+      "threshold": 0.3
+     },
+     {
+      "end": 26621,
+      "layer": 1,
+      "score": 0.4976923167705536,
+      "start": 26116,
+      "threshold": 0.3
+     },
+     {
+      "end": 26999,
+      "layer": 1,
+      "score": 0.38999998569488525,
+      "start": 26876,
+      "threshold": 0.3
+     },
+     {
+      "end": 27167,
+      "layer": 1,
+      "score": 0.37541663646698,
+      "start": 27030,
+      "threshold": 0.3
+     },
+     {
+      "end": 27721,
+      "layer": 1,
+      "score": 0.4899999797344208,
+      "start": 27203,
+      "threshold": 0.3
+     },
+     {
+      "end": 28128,
+      "layer": 1,
+      "score": 0.5505356788635254,
+      "start": 27760,
+      "threshold": 0.3
+     },
+     {
+      "end": 9894,
+      "layer": 2,
+      "score": 0.27714285254478455,
+      "start": 9801,
+      "threshold": 0.15
+     },
+     {
+      "end": 11815,
+      "layer": 2,
+      "score": 0.35235294699668884,
+      "start": 10078,
+      "threshold": 0.15
+     },
+     {
+      "end": 16704,
+      "layer": 2,
+      "score": 0.3681817650794983,
+      "start": 16556,
+      "threshold": 0.15
+     },
+     {
+      "end": 17514,
+      "layer": 2,
+      "score": 0.36642858386039734,
+      "start": 17038,
+      "threshold": 0.15
+     },
+     {
+      "end": 18211,
+      "layer": 2,
+      "score": 0.3712637424468994,
+      "start": 17528,
+      "threshold": 0.15
+     },
+     {
+      "end": 18633,
+      "layer": 2,
+      "score": 0.3226666748523712,
+      "start": 18362,
+      "threshold": 0.15
+     },
+     {
+      "end": 18950,
+      "layer": 2,
+      "score": 0.2981249988079071,
+      "start": 18801,
+      "threshold": 0.15
+     },
+     {
+      "end": 19097,
+      "layer": 2,
+      "score": 0.29249995946884155,
+      "start": 18972,
+      "threshold": 0.15
+     },
+     {
+      "end": 19332,
+      "layer": 2,
+      "score": 0.29277777671813965,
+      "start": 19154,
+      "threshold": 0.15
+     },
+     {
+      "end": 21197,
+      "layer": 2,
+      "score": 0.37529414892196655,
+      "start": 19356,
+      "threshold": 0.15
+     },
+     {
+      "end": 22870,
+      "layer": 2,
+      "score": 0.33713239431381226,
+      "start": 22288,
+      "threshold": 0.15
+     },
+     {
+      "end": 25818,
+      "layer": 2,
+      "score": 0.4252564311027527,
+      "start": 25107,
+      "threshold": 0.15
+     },
+     {
+      "end": 26851,
+      "layer": 2,
+      "score": 0.301730751991272,
+      "start": 26646,
+      "threshold": 0.15
+     }
+    ],
+    "score": "8fa99964252042952cc09261bfd572c0d1cdffd00bb2979b5217546b529c76e8",
+    "total": "6b7481676495f1f7e626940f23ba1b960444eb5bb75cda1f133dc4dd68522de1"
+   },
+   "chrP:0-30000:tf_density": {
+    "broad": [],
+    "n_reads": 74,
+    "numerator": "9cf0767f899f7d42cd6163e31d7774188048ffec4cb2db62ab582956837db467",
+    "peaks": [],
+    "score": "af89329ee5b2f455815d9a535bb86280f1d1269384e676e5a9b1912fb51872a8",
+    "total": "6b7481676495f1f7e626940f23ba1b960444eb5bb75cda1f133dc4dd68522de1"
+   },
+   "chrP:13950-14250:accessibility": {
+    "broad": [],
+    "n_reads": 14,
+    "numerator": "c54cc44a7b288e635dc6e60d6833933f70311cec453d62d41d4fc59db49261a1",
+    "peaks": [
+     {
+      "end": 265,
+      "layer": 0,
+      "score": 0.8358333110809326,
+      "start": 7,
+      "threshold": 0.5
+     }
+    ],
+    "score": "3d2ebee505d1fd401ce7eed0bfdad967885ef8ba41755efefc93fe0cd4108143",
+    "total": "40b8ad2a69df0ff4d50aba45d02b4c407275c7a5542812d7529f1328842dd91a"
+   },
+   "chrP:13950-14250:tf_density": {
+    "broad": [],
+    "n_reads": 14,
+    "numerator": "c52f4647b161c8f7a29324541c51be6c7e669e9d98274daabd9ff73f64816423",
+    "peaks": [],
+    "score": "58d36d4a01b8c467384b4a3a4b82fd6df5af63e98770b586b861e54a0993399f",
+    "total": "40b8ad2a69df0ff4d50aba45d02b4c407275c7a5542812d7529f1328842dd91a"
+   },
+   "chrP:20000-30000:accessibility": {
+    "broad": [],
+    "n_reads": 37,
+    "numerator": "1c6208080423ee584772894fe1396793c5ea322f399149ed685d72257087fc24",
+    "peaks": [
+     {
+      "end": 1315,
+      "layer": 0,
+      "score": 0.5875245332717896,
+      "start": 1222,
+      "threshold": 0.5
+     },
+     {
+      "end": 2053,
+      "layer": 0,
+      "score": 0.9478332996368408,
+      "start": 1347,
+      "threshold": 0.5
+     },
+     {
+      "end": 6147,
+      "layer": 0,
+      "score": 0.6227473020553589,
+      "start": 5829,
+      "threshold": 0.5
+     },
+     {
+      "end": 8802,
+      "layer": 0,
+      "score": 0.7294999957084656,
+      "start": 8153,
+      "threshold": 0.5
+     },
+     {
+      "end": 8971,
+      "layer": 0,
+      "score": 0.6175000071525574,
+      "start": 8810,
+      "threshold": 0.5
+     },
+     {
+      "end": 9140,
+      "layer": 0,
+      "score": 0.6874999403953552,
+      "start": 8981,
+      "threshold": 0.5
+     },
+     {
+      "end": 9325,
+      "layer": 0,
+      "score": 0.7524999976158142,
+      "start": 9179,
+      "threshold": 0.5
+     },
+     {
+      "end": 9511,
+      "layer": 0,
+      "score": 0.8699999451637268,
+      "start": 9401,
+      "threshold": 0.5
+     },
+     {
+      "end": 2263,
+      "layer": 1,
+      "score": 0.4368382692337036,
+      "start": 2078,
+      "threshold": 0.3
+     },
+     {
+      "end": 3041,
+      "layer": 1,
+      "score": 0.3696841895580292,
+      "start": 2895,
+      "threshold": 0.3
+     },
+     {
+      "end": 3222,
+      "layer": 1,
+      "score": 0.3700000047683716,
+      "start": 3084,
+      "threshold": 0.3
+     },
+     {
+      "end": 3380,
+      "layer": 1,
+      "score": 0.41403505206108093,
+      "start": 3251,
+      "threshold": 0.3
+     },
+     {
+      "end": 3576,
+      "layer": 1,
+      "score": 0.49170345067977905,
+      "start": 3446,
+      "threshold": 0.3
+     },
+     {
+      "end": 3733,
+      "layer": 1,
+      "score": 0.3424975872039795,
+      "start": 3634,
+      "threshold": 0.3
+     },
+     {
+      "end": 4222,
+      "layer": 1,
+      "score": 0.38281047344207764,
+      "start": 3752,
+      "threshold": 0.3
+     },
+     {
+      "end": 4578,
+      "layer": 1,
+      "score": 0.41874998807907104,
+      "start": 4269,
+      "threshold": 0.3
+     },
+     {
+      "end": 4741,
+      "layer": 1,
+      "score": 0.3918749690055847,
+      "start": 4598,
+      "threshold": 0.3
+     },
+     {
+      "end": 5088,
+      "layer": 1,
+      "score": 0.37400001287460327,
+      "start": 4792,
+      "threshold": 0.3
+     },
+     {
+      "end": 5340,
+      "layer": 1,
+      "score": 0.37412089109420776,
+      "start": 5173,
+      "threshold": 0.3
+     },
+     {
+      "end": 5513,
+      "layer": 1,
+      "score": 0.36142855882644653,
+      "start": 5403,
+      "threshold": 0.3
+     },
+     {
+      "end": 5804,
+      "layer": 1,
+      "score": 0.41846156120300293,
+      "start": 5597,
+      "threshold": 0.3
+     },
+     {
+      "end": 6621,
+      "layer": 1,
+      "score": 0.47999995946884155,
+      "start": 6172,
+      "threshold": 0.3
+     },
+     {
+      "end": 6999,
+      "layer": 1,
+      "score": 0.38999998569488525,
+      "start": 6876,
+      "threshold": 0.3
+     },
+     {
+      "end": 7167,
+      "layer": 1,
+      "score": 0.37541663646698,
+      "start": 7030,
+      "threshold": 0.3
+     },
+     {
+      "end": 7721,
+      "layer": 1,
+      "score": 0.4899999797344208,
+      "start": 7203,
+      "threshold": 0.3
+     },
+     {
+      "end": 8128,
+      "layer": 1,
+      "score": 0.5505356788635254,
+      "start": 7760,
+      "threshold": 0.3
+     },
+     {
+      "end": 1197,
+      "layer": 2,
+      "score": 0.37529414892196655,
+      "start": 12,
+      "threshold": 0.15
+     },
+     {
+      "end": 2870,
+      "layer": 2,
+      "score": 0.33713239431381226,
+      "start": 2288,
+      "threshold": 0.15
+     },
+     {
+      "end": 6851,
+      "layer": 2,
+      "score": 0.301730751991272,
+      "start": 6646,
+      "threshold": 0.15
+     }
+    ],
+    "score": "0eea9a39128b862ed4745fc865c07027ba39d4ca7887b42d56aff795f2078073",
+    "total": "aa0cccc233ba37c4742952fedac3327045d262269d84e14a647bb761298b2e25"
+   },
+   "chrP:20000-30000:tf_density": {
+    "broad": [],
+    "n_reads": 37,
+    "numerator": "798f64f5f0ca375d10ec322043ead2ac5f49bdfac60d88e4b1080bb763d59dd5",
+    "peaks": [],
+    "score": "0da34dd75391edb33cd1df8d92184649e7584f60e3d3ad3ba03b6b596ec96387",
+    "total": "aa0cccc233ba37c4742952fedac3327045d262269d84e14a647bb761298b2e25"
+   },
+   "chrP:5000-15000:accessibility": {
+    "broad": [],
+    "n_reads": 42,
+    "numerator": "d5e09cbc0ec16cbeadfd6fa2d877b93773138f6440b5efe406f266ed80897451",
+    "peaks": [
+     {
+      "end": 750,
+      "layer": 0,
+      "score": 0.544166624546051,
+      "start": 661,
+      "threshold": 0.5
+     },
+     {
+      "end": 1468,
+      "layer": 0,
+      "score": 0.8876922726631165,
+      "start": 766,
+      "threshold": 0.5
+     },
+     {
+      "end": 1619,
+      "layer": 0,
+      "score": 0.6516666412353516,
+      "start": 1479,
+      "threshold": 0.5
+     },
+     {
+      "end": 8522,
+      "layer": 0,
+      "score": 0.5514285564422607,
+      "start": 8431,
+      "threshold": 0.5
+     },
+     {
+      "end": 8659,
+      "layer": 0,
+      "score": 0.5674999356269836,
+      "start": 8551,
+      "threshold": 0.5
+     },
+     {
+      "end": 9248,
+      "layer": 0,
+      "score": 0.8374999761581421,
+      "start": 8715,
+      "threshold": 0.5
+     },
+     {
+      "end": 636,
+      "layer": 1,
+      "score": 0.5339393615722656,
+      "start": 21,
+      "threshold": 0.3
+     },
+     {
+      "end": 2638,
+      "layer": 1,
+      "score": 0.5615384578704834,
+      "start": 1644,
+      "threshold": 0.3
+     },
+     {
+      "end": 2774,
+      "layer": 1,
+      "score": 0.3423636555671692,
+      "start": 2680,
+      "threshold": 0.3
+     },
+     {
+      "end": 2962,
+      "layer": 1,
+      "score": 0.3869696855545044,
+      "start": 2875,
+      "threshold": 0.3
+     },
+     {
+      "end": 3199,
+      "layer": 1,
+      "score": 0.36538460850715637,
+      "start": 3086,
+      "threshold": 0.3
+     },
+     {
+      "end": 3360,
+      "layer": 1,
+      "score": 0.3500000238418579,
+      "start": 3224,
+      "threshold": 0.3
+     },
+     {
+      "end": 3493,
+      "layer": 1,
+      "score": 0.35087913274765015,
+      "start": 3386,
+      "threshold": 0.3
+     },
+     {
+      "end": 3675,
+      "layer": 1,
+      "score": 0.375,
+      "start": 3593,
+      "threshold": 0.3
+     },
+     {
+      "end": 4604,
+      "layer": 1,
+      "score": 0.4531617760658264,
+      "start": 3752,
+      "threshold": 0.3
+     },
+     {
+      "end": 4776,
+      "layer": 1,
+      "score": 0.4180000424385071,
+      "start": 4669,
+      "threshold": 0.3
+     },
+     {
+      "end": 5053,
+      "layer": 1,
+      "score": 0.32600000500679016,
+      "start": 4919,
+      "threshold": 0.3
+     },
+     {
+      "end": 6954,
+      "layer": 1,
+      "score": 0.3957619071006775,
+      "start": 6840,
+      "threshold": 0.3
+     },
+     {
+      "end": 7105,
+      "layer": 1,
+      "score": 0.38214290142059326,
+      "start": 6998,
+      "threshold": 0.3
+     },
+     {
+      "end": 7293,
+      "layer": 1,
+      "score": 0.42000001668930054,
+      "start": 7189,
+      "threshold": 0.3
+     },
+     {
+      "end": 8406,
+      "layer": 1,
+      "score": 0.5235714316368103,
+      "start": 7351,
+      "threshold": 0.3
+     },
+     {
+      "end": 9983,
+      "layer": 1,
+      "score": 0.5287120938301086,
+      "start": 9273,
+      "threshold": 0.3
+     },
+     {
+      "end": 4894,
+      "layer": 2,
+      "score": 0.27714285254478455,
+      "start": 4801,
+      "threshold": 0.15
+     },
+     {
+      "end": 6815,
+      "layer": 2,
+      "score": 0.35235294699668884,
+      "start": 5078,
+      "threshold": 0.15
+     }
+    ],
+    "score": "5099ac5c09e2f0afeacf792121fd7f926a80bbd754f58a668a2b720736b693a2",
+    "total": "790fb2a9803b531e80c664ffccf0407f0f9a129c8a85bdd8f7396cad2e7d4af0"
+   },
+   "chrP:5000-15000:tf_density": {
+    "broad": [],
+    "n_reads": 42,
+    "numerator": "dd1c09a539feedae78961151063b4c3c85d8410d17c21d9884aaca0708828dd0",
+    "peaks": [],
+    "score": "c4de5252a402f76da6fe738fa5d37ccabaf3660ab7a4e5079bf9440a6401bf2e",
+    "total": "790fb2a9803b531e80c664ffccf0407f0f9a129c8a85bdd8f7396cad2e7d4af0"
+   }
+  },
+  "hia5-nanopore": {
+   "chrP:0-30000:accessibility": {
+    "broad": [
+     {
+      "end": 19664,
+      "layer": 1,
+      "score": 0.4923529624938965,
+      "start": 16947,
+      "threshold": 0.3
+     },
+     {
+      "end": 25102,
+      "layer": 2,
+      "score": 0.35507893562316895,
+      "start": 22303,
+      "threshold": 0.15
+     }
+    ],
+    "n_reads": 82,
+    "numerator": "2d75d9993383cc5f6f98459bfd2af499cfd106fd2f721bc889fe14ffdb310ef3",
+    "peaks": [
+     {
+      "end": 6160,
+      "layer": 0,
+      "score": 0.7791666984558105,
+      "start": 5722,
+      "threshold": 0.5
+     },
+     {
+      "end": 14082,
+      "layer": 0,
+      "score": 0.638181746006012,
+      "start": 13816,
+      "threshold": 0.5
+     },
+     {
+      "end": 22047,
+      "layer": 0,
+      "score": 0.8936191201210022,
+      "start": 21407,
+      "threshold": 0.5
+     },
+     {
+      "end": 26150,
+      "layer": 0,
+      "score": 0.6603636741638184,
+      "start": 25843,
+      "threshold": 0.5
+     },
+     {
+      "end": 27456,
+      "layer": 0,
+      "score": 0.5249999761581421,
+      "start": 27363,
+      "threshold": 0.5
+     },
+     {
+      "end": 27617,
+      "layer": 0,
+      "score": 0.5746666193008423,
+      "start": 27482,
+      "threshold": 0.5
+     },
+     {
+      "end": 28003,
+      "layer": 0,
+      "score": 0.6135714054107666,
+      "start": 27898,
+      "threshold": 0.5
+     },
+     {
+      "end": 28172,
+      "layer": 0,
+      "score": 0.5857142210006714,
+      "start": 28067,
+      "threshold": 0.5
+     },
+     {
+      "end": 29126,
+      "layer": 0,
+      "score": 0.8666666746139526,
+      "start": 28255,
+      "threshold": 0.5
+     },
+     {
+      "end": 29311,
+      "layer": 0,
+      "score": 0.675000011920929,
+      "start": 29177,
+      "threshold": 0.5
+     },
+     {
+      "end": 29473,
+      "layer": 0,
+      "score": 0.574999988079071,
+      "start": 29359,
+      "threshold": 0.5
+     },
+     {
+      "end": 29786,
+      "layer": 0,
+      "score": 0.9999999403953552,
+      "start": 29494,
+      "threshold": 0.5
+     },
+     {
+      "end": 5504,
+      "layer": 1,
+      "score": 0.40371793508529663,
+      "start": 5407,
+      "threshold": 0.3
+     },
+     {
+      "end": 5697,
+      "layer": 1,
+      "score": 0.43320512771606445,
+      "start": 5574,
+      "threshold": 0.3
+     },
+     {
+      "end": 6336,
+      "layer": 1,
+      "score": 0.46196967363357544,
+      "start": 6185,
+      "threshold": 0.3
+     },
+     {
+      "end": 7346,
+      "layer": 1,
+      "score": 0.4074999690055847,
+      "start": 7254,
+      "threshold": 0.3
+     },
+     {
+      "end": 7563,
+      "layer": 1,
+      "score": 0.4023076891899109,
+      "start": 7466,
+      "threshold": 0.3
+     },
+     {
+      "end": 7971,
+      "layer": 1,
+      "score": 0.3308333456516266,
+      "start": 7889,
+      "threshold": 0.3
+     },
+     {
+      "end": 8449,
+      "layer": 1,
+      "score": 0.3555494546890259,
+      "start": 8367,
+      "threshold": 0.3
+     },
+     {
+      "end": 8907,
+      "layer": 1,
+      "score": 0.3298571705818176,
+      "start": 8810,
+      "threshold": 0.3
+     },
+     {
+      "end": 9054,
+      "layer": 1,
+      "score": 0.3882083296775818,
+      "start": 8933,
+      "threshold": 0.3
+     },
+     {
+      "end": 9402,
+      "layer": 1,
+      "score": 0.41397058963775635,
+      "start": 9295,
+      "threshold": 0.3
+     },
+     {
+      "end": 9725,
+      "layer": 1,
+      "score": 0.34988969564437866,
+      "start": 9626,
+      "threshold": 0.3
+     },
+     {
+      "end": 10035,
+      "layer": 1,
+      "score": 0.3505263328552246,
+      "start": 9817,
+      "threshold": 0.3
+     },
+     {
+      "end": 10269,
+      "layer": 1,
+      "score": 0.38587719202041626,
+      "start": 10067,
+      "threshold": 0.3
+     },
+     {
+      "end": 10983,
+      "layer": 1,
+      "score": 0.42923811078071594,
+      "start": 10369,
+      "threshold": 0.3
+     },
+     {
+      "end": 11146,
+      "layer": 1,
+      "score": 0.439047634601593,
+      "start": 11022,
+      "threshold": 0.3
+     },
+     {
+      "end": 11707,
+      "layer": 1,
+      "score": 0.4554678201675415,
+      "start": 11217,
+      "threshold": 0.3
+     },
+     {
+      "end": 12180,
+      "layer": 1,
+      "score": 0.4081617593765259,
+      "start": 11757,
+      "threshold": 0.3
+     },
+     {
+      "end": 12466,
+      "layer": 1,
+      "score": 0.3631249964237213,
+      "start": 12375,
+      "threshold": 0.3
+     },
+     {
+      "end": 12647,
+      "layer": 1,
+      "score": 0.40587496757507324,
+      "start": 12549,
+      "threshold": 0.3
+     },
+     {
+      "end": 12821,
+      "layer": 1,
+      "score": 0.39400002360343933,
+      "start": 12726,
+      "threshold": 0.3
+     },
+     {
+      "end": 12987,
+      "layer": 1,
+      "score": 0.4158571660518646,
+      "start": 12903,
+      "threshold": 0.3
+     },
+     {
+      "end": 13206,
+      "layer": 1,
+      "score": 0.3806043863296509,
+      "start": 13101,
+      "threshold": 0.3
+     },
+     {
+      "end": 13555,
+      "layer": 1,
+      "score": 0.34602564573287964,
+      "start": 13457,
+      "threshold": 0.3
+     },
+     {
+      "end": 13791,
+      "layer": 1,
+      "score": 0.4229545295238495,
+      "start": 13625,
+      "threshold": 0.3
+     },
+     {
+      "end": 14514,
+      "layer": 1,
+      "score": 0.4262121319770813,
+      "start": 14107,
+      "threshold": 0.3
+     },
+     {
+      "end": 14708,
+      "layer": 1,
+      "score": 0.3692307472229004,
+      "start": 14576,
+      "threshold": 0.3
+     },
+     {
+      "end": 15244,
+      "layer": 1,
+      "score": 0.446363627910614,
+      "start": 14759,
+      "threshold": 0.3
+     },
+     {
+      "end": 15584,
+      "layer": 1,
+      "score": 0.4145454466342926,
+      "start": 15291,
+      "threshold": 0.3
+     },
+     {
+      "end": 15742,
+      "layer": 1,
+      "score": 0.347912073135376,
+      "start": 15643,
+      "threshold": 0.3
+     },
+     {
+      "end": 15928,
+      "layer": 1,
+      "score": 0.3568571209907532,
+      "start": 15806,
+      "threshold": 0.3
+     },
+     {
+      "end": 16128,
+      "layer": 1,
+      "score": 0.3835703134536743,
+      "start": 15957,
+      "threshold": 0.3
+     },
+     {
+      "end": 16549,
+      "layer": 1,
+      "score": 0.3606249690055847,
+      "start": 16378,
+      "threshold": 0.3
+     },
+     {
+      "end": 16921,
+      "layer": 1,
+      "score": 0.37303513288497925,
+      "start": 16633,
+      "threshold": 0.3
+     },
+     {
+      "end": 20578,
+      "layer": 1,
+      "score": 0.36764705181121826,
+      "start": 20492,
+      "threshold": 0.3
+     },
+     {
+      "end": 20747,
+      "layer": 1,
+      "score": 0.37758171558380127,
+      "start": 20664,
+      "threshold": 0.3
+     },
+     {
+      "end": 20919,
+      "layer": 1,
+      "score": 0.3888888955116272,
+      "start": 20834,
+      "threshold": 0.3
+     },
+     {
+      "end": 21103,
+      "layer": 1,
+      "score": 0.3871568739414215,
+      "start": 21013,
+      "threshold": 0.3
+     },
+     {
+      "end": 22278,
+      "layer": 1,
+      "score": 0.44823533296585083,
+      "start": 22072,
+      "threshold": 0.3
+     },
+     {
+      "end": 25237,
+      "layer": 1,
+      "score": 0.3825714588165283,
+      "start": 25127,
+      "threshold": 0.3
+     },
+     {
+      "end": 25431,
+      "layer": 1,
+      "score": 0.3453846275806427,
+      "start": 25350,
+      "threshold": 0.3
+     },
+     {
+      "end": 25818,
+      "layer": 1,
+      "score": 0.48846152424812317,
+      "start": 25683,
+      "threshold": 0.3
+     },
+     {
+      "end": 27338,
+      "layer": 1,
+      "score": 0.5363636016845703,
+      "start": 26175,
+      "threshold": 0.3
+     },
+     {
+      "end": 27873,
+      "layer": 1,
+      "score": 0.5322222113609314,
+      "start": 27642,
+      "threshold": 0.3
+     },
+     {
+      "end": 80,
+      "layer": 2,
+      "score": 0.25,
+      "start": 0,
+      "threshold": 0.15
+     },
+     {
+      "end": 235,
+      "layer": 2,
+      "score": 0.15000000596046448,
+      "start": 149,
+      "threshold": 0.15
+     },
+     {
+      "end": 400,
+      "layer": 2,
+      "score": 0.15000000596046448,
+      "start": 314,
+      "threshold": 0.15
+     },
+     {
+      "end": 571,
+      "layer": 2,
+      "score": 0.25,
+      "start": 475,
+      "threshold": 0.15
+     },
+     {
+      "end": 753,
+      "layer": 2,
+      "score": 0.34999996423721313,
+      "start": 647,
+      "threshold": 0.15
+     },
+     {
+      "end": 925,
+      "layer": 2,
+      "score": 0.25,
+      "start": 829,
+      "threshold": 0.15
+     },
+     {
+      "end": 1045,
+      "layer": 2,
+      "score": 0.25,
+      "start": 949,
+      "threshold": 0.15
+     },
+     {
+      "end": 1251,
+      "layer": 2,
+      "score": 0.30000001192092896,
+      "start": 1132,
+      "threshold": 0.15
+     },
+     {
+      "end": 1504,
+      "layer": 2,
+      "score": 0.3500000238418579,
+      "start": 1275,
+      "threshold": 0.15
+     },
+     {
+      "end": 1688,
+      "layer": 2,
+      "score": 0.26749998331069946,
+      "start": 1590,
+      "threshold": 0.15
+     },
+     {
+      "end": 1860,
+      "layer": 2,
+      "score": 0.2499999850988388,
+      "start": 1766,
+      "threshold": 0.15
+     },
+     {
+      "end": 2036,
+      "layer": 2,
+      "score": 0.3499999940395355,
+      "start": 1930,
+      "threshold": 0.15
+     },
+     {
+      "end": 2216,
+      "layer": 2,
+      "score": 0.3724999725818634,
+      "start": 2086,
+      "threshold": 0.15
+     },
+     {
+      "end": 2573,
+      "layer": 2,
+      "score": 0.29600000381469727,
+      "start": 2423,
+      "threshold": 0.15
+     },
+     {
+      "end": 2754,
+      "layer": 2,
+      "score": 0.3500000238418579,
+      "start": 2600,
+      "threshold": 0.15
+     },
+     {
+      "end": 2932,
+      "layer": 2,
+      "score": 0.2433333396911621,
+      "start": 2810,
+      "threshold": 0.15
+     },
+     {
+      "end": 3096,
+      "layer": 2,
+      "score": 0.32099997997283936,
+      "start": 2981,
+      "threshold": 0.15
+     },
+     {
+      "end": 3284,
+      "layer": 2,
+      "score": 0.3020000159740448,
+      "start": 3173,
+      "threshold": 0.15
+     },
+     {
+      "end": 3650,
+      "layer": 2,
+      "score": 0.2919999957084656,
+      "start": 3355,
+      "threshold": 0.15
+     },
+     {
+      "end": 3855,
+      "layer": 2,
+      "score": 0.22386904060840607,
+      "start": 3736,
+      "threshold": 0.15
+     },
+     {
+      "end": 3987,
+      "layer": 2,
+      "score": 0.22499999403953552,
+      "start": 3878,
+      "threshold": 0.15
+     },
+     {
+      "end": 4154,
+      "layer": 2,
+      "score": 0.2755357325077057,
+      "start": 4033,
+      "threshold": 0.15
+     },
+     {
+      "end": 4336,
+      "layer": 2,
+      "score": 0.3387500047683716,
+      "start": 4201,
+      "threshold": 0.15
+     },
+     {
+      "end": 4541,
+      "layer": 2,
+      "score": 0.2875000238418579,
+      "start": 4389,
+      "threshold": 0.15
+     },
+     {
+      "end": 4869,
+      "layer": 2,
+      "score": 0.32100003957748413,
+      "start": 4548,
+      "threshold": 0.15
+     },
+     {
+      "end": 5382,
+      "layer": 2,
+      "score": 0.34999996423721313,
+      "start": 4916,
+      "threshold": 0.15
+     },
+     {
+      "end": 6951,
+      "layer": 2,
+      "score": 0.3311060667037964,
+      "start": 6361,
+      "threshold": 0.15
+     },
+     {
+      "end": 7160,
+      "layer": 2,
+      "score": 0.35527271032333374,
+      "start": 7021,
+      "threshold": 0.15
+     },
+     {
+      "end": 7864,
+      "layer": 2,
+      "score": 0.3046153783798218,
+      "start": 7588,
+      "threshold": 0.15
+     },
+     {
+      "end": 8342,
+      "layer": 2,
+      "score": 0.34333333373069763,
+      "start": 7996,
+      "threshold": 0.15
+     },
+     {
+      "end": 8785,
+      "layer": 2,
+      "score": 0.31080952286720276,
+      "start": 8474,
+      "threshold": 0.15
+     },
+     {
+      "end": 9270,
+      "layer": 2,
+      "score": 0.33139705657958984,
+      "start": 9079,
+      "threshold": 0.15
+     },
+     {
+      "end": 9601,
+      "layer": 2,
+      "score": 0.33058828115463257,
+      "start": 9427,
+      "threshold": 0.15
+     },
+     {
+      "end": 12350,
+      "layer": 2,
+      "score": 0.29763737320899963,
+      "start": 12205,
+      "threshold": 0.15
+     },
+     {
+      "end": 13432,
+      "layer": 2,
+      "score": 0.2861538529396057,
+      "start": 13231,
+      "threshold": 0.15
+     },
+     {
+      "end": 16353,
+      "layer": 2,
+      "score": 0.3399999737739563,
+      "start": 16153,
+      "threshold": 0.15
+     },
+     {
+      "end": 20467,
+      "layer": 2,
+      "score": 0.35553568601608276,
+      "start": 19689,
+      "threshold": 0.15
+     },
+     {
+      "end": 21382,
+      "layer": 2,
+      "score": 0.4439583420753479,
+      "start": 21128,
+      "threshold": 0.15
+     },
+     {
+      "end": 25658,
+      "layer": 2,
+      "score": 0.3514835238456726,
+      "start": 25456,
+      "threshold": 0.15
+     }
+    ],
+    "score": "a3bceb1d66eebe5588853814541616b17b655083fe215413a2eadf22aa2fff3b",
+    "total": "70b22b24c5e185035158b81a44b99ceb8cbaafcbdf1810167f5a63bf92d147a8"
+   },
+   "chrP:0-30000:tf_density": {
+    "broad": [],
+    "n_reads": 82,
+    "numerator": "815f2869eb9f765472ff00bef818d870e0ea0cfbcf64c5168ca728d888215156",
+    "peaks": [
+     {
+      "end": 21840,
+      "layer": 3,
+      "score": 0.10199999809265137,
+      "start": 21757,
+      "threshold": 0.08
+     }
+    ],
+    "score": "737fcd58bc50dc5d70ab3f7172ff3720af237f7d545927d7f0de98ad8320413b",
+    "total": "70b22b24c5e185035158b81a44b99ceb8cbaafcbdf1810167f5a63bf92d147a8"
+   },
+   "chrP:13950-14250:accessibility": {
+    "broad": [],
+    "n_reads": 13,
+    "numerator": "27e5efb2ac9956694bcd7f8843ef080ffd9ed9ecf5bc9142b7c272d9466e5f6b",
+    "peaks": [
+     {
+      "end": 132,
+      "layer": 0,
+      "score": 0.6254545450210571,
+      "start": 36,
+      "threshold": 0.5
+     },
+     {
+      "end": 259,
+      "layer": 1,
+      "score": 0.4262121319770813,
+      "start": 157,
+      "threshold": 0.3
+     }
+    ],
+    "score": "84a8e64b8a05785374a1618c3063063c8499d4b0f44b951ae805f3cc7491a345",
+    "total": "3fddfe2163da3d314209d2b1148182a12fb26c180c4f91753c6980adbdd84121"
+   },
+   "chrP:13950-14250:tf_density": {
+    "broad": [],
+    "n_reads": 13,
+    "numerator": "5cfe94b63457b500130195f877f881c4c3725fef341de6808632808f6783a2a8",
+    "peaks": [],
+    "score": "7174ad9d9de0b09f13ddcd22b972b4ff0d488a784d10a89e48398897457c79ba",
+    "total": "3fddfe2163da3d314209d2b1148182a12fb26c180c4f91753c6980adbdd84121"
+   },
+   "chrP:20000-30000:accessibility": {
+    "broad": [],
+    "n_reads": 37,
+    "numerator": "068b7e1b2a7e4cea4acecee14e0f52fbd03b1520b6ef3277ea153596ea0f1b45",
+    "peaks": [
+     {
+      "end": 2047,
+      "layer": 0,
+      "score": 0.8936191201210022,
+      "start": 1407,
+      "threshold": 0.5
+     },
+     {
+      "end": 6150,
+      "layer": 0,
+      "score": 0.6603636741638184,
+      "start": 5843,
+      "threshold": 0.5
+     },
+     {
+      "end": 7456,
+      "layer": 0,
+      "score": 0.5249999761581421,
+      "start": 7363,
+      "threshold": 0.5
+     },
+     {
+      "end": 7617,
+      "layer": 0,
+      "score": 0.5746666193008423,
+      "start": 7482,
+      "threshold": 0.5
+     },
+     {
+      "end": 8003,
+      "layer": 0,
+      "score": 0.6135714054107666,
+      "start": 7898,
+      "threshold": 0.5
+     },
+     {
+      "end": 8172,
+      "layer": 0,
+      "score": 0.5857142210006714,
+      "start": 8067,
+      "threshold": 0.5
+     },
+     {
+      "end": 9126,
+      "layer": 0,
+      "score": 0.8666666746139526,
+      "start": 8255,
+      "threshold": 0.5
+     },
+     {
+      "end": 9311,
+      "layer": 0,
+      "score": 0.675000011920929,
+      "start": 9177,
+      "threshold": 0.5
+     },
+     {
+      "end": 9473,
+      "layer": 0,
+      "score": 0.574999988079071,
+      "start": 9359,
+      "threshold": 0.5
+     },
+     {
+      "end": 9786,
+      "layer": 0,
+      "score": 0.9999999403953552,
+      "start": 9494,
+      "threshold": 0.5
+     },
+     {
+      "end": 578,
+      "layer": 1,
+      "score": 0.36764705181121826,
+      "start": 492,
+      "threshold": 0.3
+     },
+     {
+      "end": 747,
+      "layer": 1,
+      "score": 0.37758171558380127,
+      "start": 664,
+      "threshold": 0.3
+     },
+     {
+      "end": 919,
+      "layer": 1,
+      "score": 0.3888888955116272,
+      "start": 834,
+      "threshold": 0.3
+     },
+     {
+      "end": 1103,
+      "layer": 1,
+      "score": 0.3871568739414215,
+      "start": 1013,
+      "threshold": 0.3
+     },
+     {
+      "end": 2278,
+      "layer": 1,
+      "score": 0.44823533296585083,
+      "start": 2072,
+      "threshold": 0.3
+     },
+     {
+      "end": 2984,
+      "layer": 1,
+      "score": 0.35777777433395386,
+      "start": 2862,
+      "threshold": 0.3
+     },
+     {
+      "end": 3175,
+      "layer": 1,
+      "score": 0.32555556297302246,
+      "start": 3080,
+      "threshold": 0.3
+     },
+     {
+      "end": 5237,
+      "layer": 1,
+      "score": 0.3825714588165283,
+      "start": 5127,
+      "threshold": 0.3
+     },
+     {
+      "end": 5431,
+      "layer": 1,
+      "score": 0.3453846275806427,
+      "start": 5350,
+      "threshold": 0.3
+     },
+     {
+      "end": 5818,
+      "layer": 1,
+      "score": 0.48846152424812317,
+      "start": 5683,
+      "threshold": 0.3
+     },
+     {
+      "end": 7338,
+      "layer": 1,
+      "score": 0.5363636016845703,
+      "start": 6175,
+      "threshold": 0.3
+     },
+     {
+      "end": 7873,
+      "layer": 1,
+      "score": 0.5322222113609314,
+      "start": 7642,
+      "threshold": 0.3
+     },
+     {
+      "end": 467,
+      "layer": 2,
+      "score": 0.32115474343299866,
+      "start": 0,
+      "threshold": 0.15
+     },
+     {
+      "end": 1382,
+      "layer": 2,
+      "score": 0.4439583420753479,
+      "start": 1128,
+      "threshold": 0.15
+     },
+     {
+      "end": 2837,
+      "layer": 2,
+      "score": 0.3230701684951782,
+      "start": 2303,
+      "threshold": 0.15
+     },
+     {
+      "end": 5102,
+      "layer": 2,
+      "score": 0.35507893562316895,
+      "start": 3200,
+      "threshold": 0.15
+     },
+     {
+      "end": 5658,
+      "layer": 2,
+      "score": 0.3514835238456726,
+      "start": 5456,
+      "threshold": 0.15
+     }
+    ],
+    "score": "544835899d7621cfda7a1dbad16e34a83e73e5455df5dccea9946db74f5a9d74",
+    "total": "775bff8bdb5f5581a7a5041c1de5fb0c981d1da0e27d3f22bcd84d68294223cc"
+   },
+   "chrP:20000-30000:tf_density": {
+    "broad": [],
+    "n_reads": 37,
+    "numerator": "4e002b5ffb502e6cd5288b49d46936ac87cb6ec26222ca069f3dd6af8c2f9df4",
+    "peaks": [],
+    "score": "90c31ad0ec1964d509f0f925d3896e2dcc9776611365a151c2458c3590115526",
+    "total": "775bff8bdb5f5581a7a5041c1de5fb0c981d1da0e27d3f22bcd84d68294223cc"
+   },
+   "chrP:5000-15000:accessibility": {
+    "broad": [],
+    "n_reads": 41,
+    "numerator": "c88ff949939d997eb501ecb845407d90c96ad78cf142c5c8a0d31e6f1fdeaad1",
+    "peaks": [
+     {
+      "end": 1160,
+      "layer": 0,
+      "score": 0.7791666984558105,
+      "start": 722,
+      "threshold": 0.5
+     },
+     {
+      "end": 9082,
+      "layer": 0,
+      "score": 0.638181746006012,
+      "start": 8816,
+      "threshold": 0.5
+     },
+     {
+      "end": 504,
+      "layer": 1,
+      "score": 0.40371793508529663,
+      "start": 407,
+      "threshold": 0.3
+     },
+     {
+      "end": 697,
+      "layer": 1,
+      "score": 0.43320512771606445,
+      "start": 574,
+      "threshold": 0.3
+     },
+     {
+      "end": 1336,
+      "layer": 1,
+      "score": 0.46196967363357544,
+      "start": 1185,
+      "threshold": 0.3
+     },
+     {
+      "end": 2346,
+      "layer": 1,
+      "score": 0.4074999690055847,
+      "start": 2254,
+      "threshold": 0.3
+     },
+     {
+      "end": 2563,
+      "layer": 1,
+      "score": 0.4023076891899109,
+      "start": 2466,
+      "threshold": 0.3
+     },
+     {
+      "end": 2971,
+      "layer": 1,
+      "score": 0.3308333456516266,
+      "start": 2889,
+      "threshold": 0.3
+     },
+     {
+      "end": 3449,
+      "layer": 1,
+      "score": 0.3555494546890259,
+      "start": 3367,
+      "threshold": 0.3
+     },
+     {
+      "end": 3907,
+      "layer": 1,
+      "score": 0.3298571705818176,
+      "start": 3810,
+      "threshold": 0.3
+     },
+     {
+      "end": 4054,
+      "layer": 1,
+      "score": 0.3882083296775818,
+      "start": 3933,
+      "threshold": 0.3
+     },
+     {
+      "end": 4402,
+      "layer": 1,
+      "score": 0.41397058963775635,
+      "start": 4295,
+      "threshold": 0.3
+     },
+     {
+      "end": 4725,
+      "layer": 1,
+      "score": 0.34988969564437866,
+      "start": 4626,
+      "threshold": 0.3
+     },
+     {
+      "end": 5035,
+      "layer": 1,
+      "score": 0.3505263328552246,
+      "start": 4817,
+      "threshold": 0.3
+     },
+     {
+      "end": 5269,
+      "layer": 1,
+      "score": 0.38587719202041626,
+      "start": 5067,
+      "threshold": 0.3
+     },
+     {
+      "end": 5983,
+      "layer": 1,
+      "score": 0.42923811078071594,
+      "start": 5369,
+      "threshold": 0.3
+     },
+     {
+      "end": 6146,
+      "layer": 1,
+      "score": 0.439047634601593,
+      "start": 6022,
+      "threshold": 0.3
+     },
+     {
+      "end": 6707,
+      "layer": 1,
+      "score": 0.4554678201675415,
+      "start": 6217,
+      "threshold": 0.3
+     },
+     {
+      "end": 7180,
+      "layer": 1,
+      "score": 0.4081617593765259,
+      "start": 6757,
+      "threshold": 0.3
+     },
+     {
+      "end": 7466,
+      "layer": 1,
+      "score": 0.3631249964237213,
+      "start": 7375,
+      "threshold": 0.3
+     },
+     {
+      "end": 7647,
+      "layer": 1,
+      "score": 0.40587496757507324,
+      "start": 7549,
+      "threshold": 0.3
+     },
+     {
+      "end": 7821,
+      "layer": 1,
+      "score": 0.39400002360343933,
+      "start": 7726,
+      "threshold": 0.3
+     },
+     {
+      "end": 7987,
+      "layer": 1,
+      "score": 0.4158571660518646,
+      "start": 7903,
+      "threshold": 0.3
+     },
+     {
+      "end": 8206,
+      "layer": 1,
+      "score": 0.3806043863296509,
+      "start": 8101,
+      "threshold": 0.3
+     },
+     {
+      "end": 8555,
+      "layer": 1,
+      "score": 0.34602564573287964,
+      "start": 8457,
+      "threshold": 0.3
+     },
+     {
+      "end": 8791,
+      "layer": 1,
+      "score": 0.4229545295238495,
+      "start": 8625,
+      "threshold": 0.3
+     },
+     {
+      "end": 9514,
+      "layer": 1,
+      "score": 0.4262121319770813,
+      "start": 9107,
+      "threshold": 0.3
+     },
+     {
+      "end": 9708,
+      "layer": 1,
+      "score": 0.3692307472229004,
+      "start": 9576,
+      "threshold": 0.3
+     },
+     {
+      "end": 9973,
+      "layer": 1,
+      "score": 0.41924238204956055,
+      "start": 9759,
+      "threshold": 0.3
+     },
+     {
+      "end": 382,
+      "layer": 2,
+      "score": 0.34999996423721313,
+      "start": 37,
+      "threshold": 0.15
+     },
+     {
+      "end": 1951,
+      "layer": 2,
+      "score": 0.3311060667037964,
+      "start": 1361,
+      "threshold": 0.15
+     },
+     {
+      "end": 2160,
+      "layer": 2,
+      "score": 0.35527271032333374,
+      "start": 2021,
+      "threshold": 0.15
+     },
+     {
+      "end": 2864,
+      "layer": 2,
+      "score": 0.3046153783798218,
+      "start": 2588,
+      "threshold": 0.15
+     },
+     {
+      "end": 3342,
+      "layer": 2,
+      "score": 0.34333333373069763,
+      "start": 2996,
+      "threshold": 0.15
+     },
+     {
+      "end": 3785,
+      "layer": 2,
+      "score": 0.31080952286720276,
+      "start": 3474,
+      "threshold": 0.15
+     },
+     {
+      "end": 4270,
+      "layer": 2,
+      "score": 0.33139705657958984,
+      "start": 4079,
+      "threshold": 0.15
+     },
+     {
+      "end": 4601,
+      "layer": 2,
+      "score": 0.33058828115463257,
+      "start": 4427,
+      "threshold": 0.15
+     },
+     {
+      "end": 7350,
+      "layer": 2,
+      "score": 0.29763737320899963,
+      "start": 7205,
+      "threshold": 0.15
+     },
+     {
+      "end": 8432,
+      "layer": 2,
+      "score": 0.2861538529396057,
+      "start": 8231,
+      "threshold": 0.15
+     }
+    ],
+    "score": "14520062a22a87ffb1582059ac3d550c78b33af08c61851d4aa371f004b89f01",
+    "total": "f7e5bdcb933e4c8af61ea290963bb3d895804a7c06f09303795d4a742b1b5ed8"
+   },
+   "chrP:5000-15000:tf_density": {
+    "broad": [],
+    "n_reads": 41,
+    "numerator": "9af790484d2c4430dbb636cb5a39bcb0626005ff2c11187267788c3673214fb4",
+    "peaks": [],
+    "score": "2eb27e148047123d72d80e02e80a2fea2d3ae7a6f6aaab0f55eacab7bf7ec12e",
+    "total": "f7e5bdcb933e4c8af61ea290963bb3d895804a7c06f09303795d4a742b1b5ed8"
+   }
+  },
+  "hia5-pacbio": {
+   "chrP:0-30000:accessibility": {
+    "broad": [
+     {
+      "end": 20768,
+      "layer": 1,
+      "score": 0.5202381014823914,
+      "start": 17224,
+      "threshold": 0.3
+     }
+    ],
+    "n_reads": 79,
+    "numerator": "fe8c88ca663b5dd4afeace6c78409256c15040babb4d2d43866d25595eb70afd",
+    "peaks": [
+     {
+      "end": 6387,
+      "layer": 0,
+      "score": 0.879505455493927,
+      "start": 5711,
+      "threshold": 0.5
+     },
+     {
+      "end": 14237,
+      "layer": 0,
+      "score": 0.7385714054107666,
+      "start": 13896,
+      "threshold": 0.5
+     },
+     {
+      "end": 22141,
+      "layer": 0,
+      "score": 0.8223202228546143,
+      "start": 21514,
+      "threshold": 0.5
+     },
+     {
+      "end": 25980,
+      "layer": 0,
+      "score": 0.528749942779541,
+      "start": 25880,
+      "threshold": 0.5
+     },
+     {
+      "end": 743,
+      "layer": 1,
+      "score": 0.5499999523162842,
+      "start": 647,
+      "threshold": 0.3
+     },
+     {
+      "end": 2530,
+      "layer": 1,
+      "score": 0.4062499701976776,
+      "start": 2440,
+      "threshold": 0.3
+     },
+     {
+      "end": 2705,
+      "layer": 1,
+      "score": 0.41624996066093445,
+      "start": 2606,
+      "threshold": 0.3
+     },
+     {
+      "end": 2876,
+      "layer": 1,
+      "score": 0.3999999761581421,
+      "start": 2788,
+      "threshold": 0.3
+     },
+     {
+      "end": 3060,
+      "layer": 1,
+      "score": 0.45124998688697815,
+      "start": 2960,
+      "threshold": 0.3
+     },
+     {
+      "end": 3420,
+      "layer": 1,
+      "score": 0.41111111640930176,
+      "start": 3139,
+      "threshold": 0.3
+     },
+     {
+      "end": 3996,
+      "layer": 1,
+      "score": 0.47555556893348694,
+      "start": 3440,
+      "threshold": 0.3
+     },
+     {
+      "end": 4188,
+      "layer": 1,
+      "score": 0.5177778005599976,
+      "start": 4056,
+      "threshold": 0.3
+     },
+     {
+      "end": 4743,
+      "layer": 1,
+      "score": 0.4628181457519531,
+      "start": 4241,
+      "threshold": 0.3
+     },
+     {
+      "end": 5504,
+      "layer": 1,
+      "score": 0.44083333015441895,
+      "start": 4936,
+      "threshold": 0.3
+     },
+     {
+      "end": 5686,
+      "layer": 1,
+      "score": 0.40909090638160706,
+      "start": 5536,
+      "threshold": 0.3
+     },
+     {
+      "end": 7617,
+      "layer": 1,
+      "score": 0.5174999833106995,
+      "start": 6412,
+      "threshold": 0.3
+     },
+     {
+      "end": 7798,
+      "layer": 1,
+      "score": 0.5230416059494019,
+      "start": 7659,
+      "threshold": 0.3
+     },
+     {
+      "end": 7949,
+      "layer": 1,
+      "score": 0.41671428084373474,
+      "start": 7837,
+      "threshold": 0.3
+     },
+     {
+      "end": 9361,
+      "layer": 1,
+      "score": 0.4713333249092102,
+      "start": 7979,
+      "threshold": 0.3
+     },
+     {
+      "end": 9688,
+      "layer": 1,
+      "score": 0.41327470541000366,
+      "start": 9446,
+      "threshold": 0.3
+     },
+     {
+      "end": 10303,
+      "layer": 1,
+      "score": 0.5109090805053711,
+      "start": 9728,
+      "threshold": 0.3
+     },
+     {
+      "end": 10483,
+      "layer": 1,
+      "score": 0.5080127716064453,
+      "start": 10319,
+      "threshold": 0.3
+     },
+     {
+      "end": 11854,
+      "layer": 1,
+      "score": 0.5040971040725708,
+      "start": 10502,
+      "threshold": 0.3
+     },
+     {
+      "end": 12368,
+      "layer": 1,
+      "score": 0.39081698656082153,
+      "start": 11863,
+      "threshold": 0.3
+     },
+     {
+      "end": 12612,
+      "layer": 1,
+      "score": 0.4072222113609314,
+      "start": 12457,
+      "threshold": 0.3
+     },
+     {
+      "end": 12922,
+      "layer": 1,
+      "score": 0.39722222089767456,
+      "start": 12615,
+      "threshold": 0.3
+     },
+     {
+      "end": 13094,
+      "layer": 1,
+      "score": 0.4629043936729431,
+      "start": 12948,
+      "threshold": 0.3
+     },
+     {
+      "end": 13255,
+      "layer": 1,
+      "score": 0.3865416646003723,
+      "start": 13146,
+      "threshold": 0.3
+     },
+     {
+      "end": 13626,
+      "layer": 1,
+      "score": 0.42538461089134216,
+      "start": 13320,
+      "threshold": 0.3
+     },
+     {
+      "end": 13871,
+      "layer": 1,
+      "score": 0.4811428189277649,
+      "start": 13631,
+      "threshold": 0.3
+     },
+     {
+      "end": 14661,
+      "layer": 1,
+      "score": 0.4738571047782898,
+      "start": 14262,
+      "threshold": 0.3
+     },
+     {
+      "end": 14873,
+      "layer": 1,
+      "score": 0.33801281452178955,
+      "start": 14672,
+      "threshold": 0.3
+     },
+     {
+      "end": 16487,
+      "layer": 1,
+      "score": 0.48416668176651,
+      "start": 14918,
+      "threshold": 0.3
+     },
+     {
+      "end": 17178,
+      "layer": 1,
+      "score": 0.5085898041725159,
+      "start": 16490,
+      "threshold": 0.3
+     },
+     {
+      "end": 21249,
+      "layer": 1,
+      "score": 0.43437498807907104,
+      "start": 20964,
+      "threshold": 0.3
+     },
+     {
+      "end": 21489,
+      "layer": 1,
+      "score": 0.4265441298484802,
+      "start": 21342,
+      "threshold": 0.3
+     },
+     {
+      "end": 23611,
+      "layer": 1,
+      "score": 0.43653595447540283,
+      "start": 22166,
+      "threshold": 0.3
+     },
+     {
+      "end": 23843,
+      "layer": 1,
+      "score": 0.3789338171482086,
+      "start": 23691,
+      "threshold": 0.3
+     },
+     {
+      "end": 24066,
+      "layer": 1,
+      "score": 0.35374996066093445,
+      "start": 23865,
+      "threshold": 0.3
+     },
+     {
+      "end": 24281,
+      "layer": 1,
+      "score": 0.3956249952316284,
+      "start": 24099,
+      "threshold": 0.3
+     },
+     {
+      "end": 24472,
+      "layer": 1,
+      "score": 0.3928333520889282,
+      "start": 24322,
+      "threshold": 0.3
+     },
+     {
+      "end": 24622,
+      "layer": 1,
+      "score": 0.3682499825954437,
+      "start": 24486,
+      "threshold": 0.3
+     },
+     {
+      "end": 24805,
+      "layer": 1,
+      "score": 0.3503333330154419,
+      "start": 24679,
+      "threshold": 0.3
+     },
+     {
+      "end": 25039,
+      "layer": 1,
+      "score": 0.36125001311302185,
+      "start": 24930,
+      "threshold": 0.3
+     },
+     {
+      "end": 25394,
+      "layer": 1,
+      "score": 0.3740808665752411,
+      "start": 25218,
+      "threshold": 0.3
+     },
+     {
+      "end": 25586,
+      "layer": 1,
+      "score": 0.3764706254005432,
+      "start": 25479,
+      "threshold": 0.3
+     },
+     {
+      "end": 25855,
+      "layer": 1,
+      "score": 0.5182353258132935,
+      "start": 25653,
+      "threshold": 0.3
+     },
+     {
+      "end": 26367,
+      "layer": 1,
+      "score": 0.5040109753608704,
+      "start": 26005,
+      "threshold": 0.3
+     },
+     {
+      "end": 26728,
+      "layer": 1,
+      "score": 0.36000001430511475,
+      "start": 26457,
+      "threshold": 0.3
+     },
+     {
+      "end": 26918,
+      "layer": 1,
+      "score": 0.37339743971824646,
+      "start": 26753,
+      "threshold": 0.3
+     },
+     {
+      "end": 27951,
+      "layer": 1,
+      "score": 0.5271428227424622,
+      "start": 26972,
+      "threshold": 0.3
+     },
+     {
+      "end": 28133,
+      "layer": 1,
+      "score": 0.40833336114883423,
+      "start": 28016,
+      "threshold": 0.3
+     },
+     {
+      "end": 28262,
+      "layer": 1,
+      "score": 0.3616666793823242,
+      "start": 28176,
+      "threshold": 0.3
+     },
+     {
+      "end": 28607,
+      "layer": 1,
+      "score": 0.37833333015441895,
+      "start": 28469,
+      "threshold": 0.3
+     },
+     {
+      "end": 29320,
+      "layer": 1,
+      "score": 0.5874999165534973,
+      "start": 28698,
+      "threshold": 0.3
+     },
+     {
+      "end": 29419,
+      "layer": 1,
+      "score": 0.4625000059604645,
+      "start": 29334,
+      "threshold": 0.3
+     },
+     {
+      "end": 903,
+      "layer": 2,
+      "score": 0.3499999940395355,
+      "start": 797,
+      "threshold": 0.15
+     },
+     {
+      "end": 1045,
+      "layer": 2,
+      "score": 0.3499999940395355,
+      "start": 940,
+      "threshold": 0.15
+     },
+     {
+      "end": 1213,
+      "layer": 2,
+      "score": 0.3499999940395355,
+      "start": 1109,
+      "threshold": 0.15
+     },
+     {
+      "end": 1412,
+      "layer": 2,
+      "score": 0.34999996423721313,
+      "start": 1298,
+      "threshold": 0.15
+     },
+     {
+      "end": 1717,
+      "layer": 2,
+      "score": 0.31583333015441895,
+      "start": 1597,
+      "threshold": 0.15
+     },
+     {
+      "end": 2149,
+      "layer": 2,
+      "score": 0.33400002121925354,
+      "start": 1789,
+      "threshold": 0.15
+     },
+     {
+      "end": 2415,
+      "layer": 2,
+      "score": 0.2628571391105652,
+      "start": 2208,
+      "threshold": 0.15
+     },
+     {
+      "end": 4911,
+      "layer": 2,
+      "score": 0.2865908741950989,
+      "start": 4768,
+      "threshold": 0.15
+     },
+     {
+      "end": 20939,
+      "layer": 2,
+      "score": 0.31345832347869873,
+      "start": 20793,
+      "threshold": 0.15
+     },
+     {
+      "end": 25193,
+      "layer": 2,
+      "score": 0.3231250047683716,
+      "start": 25064,
+      "threshold": 0.15
+     },
+     {
+      "end": 28444,
+      "layer": 2,
+      "score": 0.31166666746139526,
+      "start": 28287,
+      "threshold": 0.15
+     },
+     {
+      "end": 29615,
+      "layer": 2,
+      "score": 0.19999998807907104,
+      "start": 29529,
+      "threshold": 0.15
+     },
+     {
+      "end": 29795,
+      "layer": 2,
+      "score": 0.3499999940395355,
+      "start": 29690,
+      "threshold": 0.15
+     }
+    ],
+    "score": "cbb6fb2881df0d2fbdb24b32068e06f4f4a54dec768712262d0966c904dfc721",
+    "total": "0067cd1327c53c2f7a4439ea1b365dcfc8b80f1d5800b7d969133fe61fc67154"
+   },
+   "chrP:0-30000:tf_density": {
+    "broad": [],
+    "n_reads": 79,
+    "numerator": "7d7d5829185b2c0b3ac7f357d15827ffb9942222a5a524e7114eb1d04c1d95a4",
+    "peaks": [
+     {
+      "end": 6137,
+      "layer": 3,
+      "score": 0.09895604848861694,
+      "start": 6021,
+      "threshold": 0.08
+     }
+    ],
+    "score": "6e9a6ba596523de3f5700807d0f174026b9781e075184d3ddceb8b7b03b9b2a6",
+    "total": "0067cd1327c53c2f7a4439ea1b365dcfc8b80f1d5800b7d969133fe61fc67154"
+   },
+   "chrP:13950-14250:accessibility": {
+    "broad": [],
+    "n_reads": 15,
+    "numerator": "1d88b88d7e6c9fc53686a15afada8296d8e17e5c65717a4da888db45ed32ec2d",
+    "peaks": [
+     {
+      "end": 269,
+      "layer": 0,
+      "score": 0.7335714101791382,
+      "start": 19,
+      "threshold": 0.5
+     }
+    ],
+    "score": "db12464ee870ec4d1c37fea60383aabfaffe9f84fc7eb66f83789bab40e434bd",
+    "total": "b81fbe55aba903687dca8a65aaf96278dc2552a68d302b0a0a64787bb2ed65d5"
+   },
+   "chrP:13950-14250:tf_density": {
+    "broad": [],
+    "n_reads": 15,
+    "numerator": "9b8e5af28351838a11382b50be3ae53c4777e744a05407f8ef0b477e6e5eae19",
+    "peaks": [],
+    "score": "9884f4ef70505a8de37e124d3dad9172c92b7ab81b77cd2ead6c8f6cc20a88fb",
+    "total": "b81fbe55aba903687dca8a65aaf96278dc2552a68d302b0a0a64787bb2ed65d5"
+   },
+   "chrP:20000-30000:accessibility": {
+    "broad": [],
+    "n_reads": 33,
+    "numerator": "bb03c3bfddf2c39354e4f95e7cc09101bfcbc1b4949746220fd5cd9b0c43cf1d",
+    "peaks": [
+     {
+      "end": 2141,
+      "layer": 0,
+      "score": 0.8223202228546143,
+      "start": 1514,
+      "threshold": 0.5
+     },
+     {
+      "end": 5980,
+      "layer": 0,
+      "score": 0.528749942779541,
+      "start": 5880,
+      "threshold": 0.5
+     },
+     {
+      "end": 768,
+      "layer": 1,
+      "score": 0.4105514585971832,
+      "start": 26,
+      "threshold": 0.3
+     },
+     {
+      "end": 1249,
+      "layer": 1,
+      "score": 0.43437498807907104,
+      "start": 964,
+      "threshold": 0.3
+     },
+     {
+      "end": 1489,
+      "layer": 1,
+      "score": 0.4265441298484802,
+      "start": 1342,
+      "threshold": 0.3
+     },
+     {
+      "end": 3611,
+      "layer": 1,
+      "score": 0.43653595447540283,
+      "start": 2166,
+      "threshold": 0.3
+     },
+     {
+      "end": 3843,
+      "layer": 1,
+      "score": 0.3789338171482086,
+      "start": 3691,
+      "threshold": 0.3
+     },
+     {
+      "end": 4066,
+      "layer": 1,
+      "score": 0.35374996066093445,
+      "start": 3865,
+      "threshold": 0.3
+     },
+     {
+      "end": 4281,
+      "layer": 1,
+      "score": 0.3956249952316284,
+      "start": 4099,
+      "threshold": 0.3
+     },
+     {
+      "end": 4472,
+      "layer": 1,
+      "score": 0.3928333520889282,
+      "start": 4322,
+      "threshold": 0.3
+     },
+     {
+      "end": 4622,
+      "layer": 1,
+      "score": 0.3682499825954437,
+      "start": 4486,
+      "threshold": 0.3
+     },
+     {
+      "end": 4805,
+      "layer": 1,
+      "score": 0.3503333330154419,
+      "start": 4679,
+      "threshold": 0.3
+     },
+     {
+      "end": 5039,
+      "layer": 1,
+      "score": 0.36125001311302185,
+      "start": 4930,
+      "threshold": 0.3
+     },
+     {
+      "end": 5394,
+      "layer": 1,
+      "score": 0.3740808665752411,
+      "start": 5218,
+      "threshold": 0.3
+     },
+     {
+      "end": 5586,
+      "layer": 1,
+      "score": 0.3764706254005432,
+      "start": 5479,
+      "threshold": 0.3
+     },
+     {
+      "end": 5855,
+      "layer": 1,
+      "score": 0.5182353258132935,
+      "start": 5653,
+      "threshold": 0.3
+     },
+     {
+      "end": 6367,
+      "layer": 1,
+      "score": 0.5040109753608704,
+      "start": 6005,
+      "threshold": 0.3
+     },
+     {
+      "end": 6728,
+      "layer": 1,
+      "score": 0.36000001430511475,
+      "start": 6457,
+      "threshold": 0.3
+     },
+     {
+      "end": 6918,
+      "layer": 1,
+      "score": 0.37339743971824646,
+      "start": 6753,
+      "threshold": 0.3
+     },
+     {
+      "end": 7951,
+      "layer": 1,
+      "score": 0.5271428227424622,
+      "start": 6972,
+      "threshold": 0.3
+     },
+     {
+      "end": 8133,
+      "layer": 1,
+      "score": 0.40833336114883423,
+      "start": 8016,
+      "threshold": 0.3
+     },
+     {
+      "end": 8262,
+      "layer": 1,
+      "score": 0.3616666793823242,
+      "start": 8176,
+      "threshold": 0.3
+     },
+     {
+      "end": 8607,
+      "layer": 1,
+      "score": 0.37833333015441895,
+      "start": 8469,
+      "threshold": 0.3
+     },
+     {
+      "end": 9320,
+      "layer": 1,
+      "score": 0.5874999165534973,
+      "start": 8698,
+      "threshold": 0.3
+     },
+     {
+      "end": 9419,
+      "layer": 1,
+      "score": 0.4625000059604645,
+      "start": 9334,
+      "threshold": 0.3
+     },
+     {
+      "end": 939,
+      "layer": 2,
+      "score": 0.31345832347869873,
+      "start": 793,
+      "threshold": 0.15
+     },
+     {
+      "end": 5193,
+      "layer": 2,
+      "score": 0.3231250047683716,
+      "start": 5064,
+      "threshold": 0.15
+     },
+     {
+      "end": 8444,
+      "layer": 2,
+      "score": 0.31166666746139526,
+      "start": 8287,
+      "threshold": 0.15
+     },
+     {
+      "end": 9615,
+      "layer": 2,
+      "score": 0.19999998807907104,
+      "start": 9529,
+      "threshold": 0.15
+     },
+     {
+      "end": 9795,
+      "layer": 2,
+      "score": 0.3499999940395355,
+      "start": 9690,
+      "threshold": 0.15
+     }
+    ],
+    "score": "e902b410eebea8c89ebda0fd918395831a0b4a558391a14e45f3ea4f1d84c72e",
+    "total": "0beaa59441e8b1a6d48088d8745cb8ba3c224fc9c53956daefaeba7a2ea3ca86"
+   },
+   "chrP:20000-30000:tf_density": {
+    "broad": [],
+    "n_reads": 33,
+    "numerator": "45221906fa1e2b96ca45a6d404d6e2e90dfca88c1e8e3cb9528835d60e77ec20",
+    "peaks": [],
+    "score": "326b7f68c02527bc1946ffc88ead522e12fe0efb19a1e8fd96c4f3248c5c8c01",
+    "total": "0beaa59441e8b1a6d48088d8745cb8ba3c224fc9c53956daefaeba7a2ea3ca86"
+   },
+   "chrP:5000-15000:accessibility": {
+    "broad": [],
+    "n_reads": 46,
+    "numerator": "fbe675971d8722853f4a487a1cbfa7ff2645b9c7e58bcda76b335710b11d2249",
+    "peaks": [
+     {
+      "end": 1387,
+      "layer": 0,
+      "score": 0.879505455493927,
+      "start": 711,
+      "threshold": 0.5
+     },
+     {
+      "end": 9237,
+      "layer": 0,
+      "score": 0.7385714054107666,
+      "start": 8896,
+      "threshold": 0.5
+     },
+     {
+      "end": 504,
+      "layer": 1,
+      "score": 0.4050000011920929,
+      "start": 14,
+      "threshold": 0.3
+     },
+     {
+      "end": 686,
+      "layer": 1,
+      "score": 0.40909090638160706,
+      "start": 536,
+      "threshold": 0.3
+     },
+     {
+      "end": 2617,
+      "layer": 1,
+      "score": 0.5174999833106995,
+      "start": 1412,
+      "threshold": 0.3
+     },
+     {
+      "end": 2798,
+      "layer": 1,
+      "score": 0.5230416059494019,
+      "start": 2659,
+      "threshold": 0.3
+     },
+     {
+      "end": 2949,
+      "layer": 1,
+      "score": 0.41671428084373474,
+      "start": 2837,
+      "threshold": 0.3
+     },
+     {
+      "end": 4361,
+      "layer": 1,
+      "score": 0.4713333249092102,
+      "start": 2979,
+      "threshold": 0.3
+     },
+     {
+      "end": 4688,
+      "layer": 1,
+      "score": 0.41327470541000366,
+      "start": 4446,
+      "threshold": 0.3
+     },
+     {
+      "end": 5303,
+      "layer": 1,
+      "score": 0.5109090805053711,
+      "start": 4728,
+      "threshold": 0.3
+     },
+     {
+      "end": 6854,
+      "layer": 1,
+      "score": 0.536911129951477,
+      "start": 5319,
+      "threshold": 0.3
+     },
+     {
+      "end": 8108,
+      "layer": 1,
+      "score": 0.4932352900505066,
+      "start": 6863,
+      "threshold": 0.3
+     },
+     {
+      "end": 8255,
+      "layer": 1,
+      "score": 0.3865416646003723,
+      "start": 8133,
+      "threshold": 0.3
+     },
+     {
+      "end": 8626,
+      "layer": 1,
+      "score": 0.42538461089134216,
+      "start": 8320,
+      "threshold": 0.3
+     },
+     {
+      "end": 8871,
+      "layer": 1,
+      "score": 0.4811428189277649,
+      "start": 8631,
+      "threshold": 0.3
+     },
+     {
+      "end": 9661,
+      "layer": 1,
+      "score": 0.4738571047782898,
+      "start": 9262,
+      "threshold": 0.3
+     },
+     {
+      "end": 9873,
+      "layer": 1,
+      "score": 0.33801281452178955,
+      "start": 9672,
+      "threshold": 0.3
+     },
+     {
+      "end": 10000,
+      "layer": 2,
+      "score": 0.3399999737739563,
+      "start": 9898,
+      "threshold": 0.15
+     }
+    ],
+    "score": "9da5d45dce3d28028786f4d6af25b7bf7570ac2466f5b4463c77359bb0747e15",
+    "total": "ff7b4c24b1baa43a21f47684d46102d29e23071a473d44bee864debdd9e8ad24"
+   },
+   "chrP:5000-15000:tf_density": {
+    "broad": [],
+    "n_reads": 46,
+    "numerator": "a794b34ea0aba54ad747a66ba5e54ea0b2a77a114a71e002ce836c37922c5232",
+    "peaks": [],
+    "score": "bfc9fc30a7c0293f13e130044118c99ce3a4de8f5a420ce04bb1cca8c0620aeb",
+    "total": "ff7b4c24b1baa43a21f47684d46102d29e23071a473d44bee864debdd9e8ad24"
+   }
+  }
+ },
+ "params": {
+  "max_peak_width": 2000,
+  "min_reads": 5,
+  "min_width": 80,
+  "smooth_width": 100,
+  "threshold_medium": 0.3,
+  "threshold_rare": 0.08,
+  "threshold_strong": 0.5,
+  "threshold_weak": 0.15
+ },
+ "source": "FiberBrowser services/peak_scanning.py + compact_read_loader.py"
+}

@@ -56,7 +56,7 @@ class _Annotations:
 
 
 def finalize(out: Path, manifest: dict, datasets, reference: Mapping[str, int], units: Sequence[ScanUnit],
-             mods, unit_keys, annotate: bool, progress, *, command=None) -> dict:
+             mods, unit_keys, annotate: bool, progress, *, command=None, calibrations=None) -> dict:
     order = {c: i for i, c in enumerate(reference)}
     contigs_in_plan = sorted({u.chrom for u in units}, key=lambda c: order[c])
     units_by_chrom = defaultdict(list)
@@ -196,7 +196,7 @@ def finalize(out: Path, manifest: dict, datasets, reference: Mapping[str, int], 
                     territory = [(s, e, lo, ro) for s, e, _a, lo, ro in runs]
                     names = sorted({k for _s, _e, arrays, _l, _r in runs for k in arrays})
                     tracks = {k: [arrays.get(k) for _s, _e, arrays, _l, _r in runs] for k in names}
-                    stitched = mod.stitch(chrom, territory, tracks, settings, None)
+                    stitched = mod.stitch(chrom, territory, tracks, settings, (calibrations or {}).get(name))
                     skey = {}
                     for h in stitched.hits:
                         skey[h.key] = I.hit_id(name, h.type, h.chrom, h.anchor, h.start, h.end, h.key, 'stitch',
