@@ -53,6 +53,7 @@ COMMANDS: list[tuple[str, str, str]] = [
     ("fiberhmm-consensus", "fiberhmm.inference.consensus.cli", "main"),
     ("fiberhmm-transfer", "fiberhmm.inference.consensus.transfer_cli", "main"),
     ("fiberhmm-nfr", "fiberhmm.inference.accessibility.cli", "main"),
+    ("fiberhmm-scan", "fiberhmm.scan.cli", "main"),
     ("fiberhmm-footprint-model", "fiberhmm.cli.footprint_model", "main"),
     ("fiberhmm-strand-rescue", "fiberhmm.cli.strand_rescue", "main"),
     ("fiberhmm-strand-rescue-annotate", "fiberhmm.cli.strand_rescue_annotate", "main"),

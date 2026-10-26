@@ -4,6 +4,21 @@
 
 ### Added
 
+- **`fiberhmm-scan`** scans called BAMs genome-wide (50 kb units at a 25 kb
+  stride, each owning its central 25 kb), over `--region` windows or over
+  BED units, with three modules: `fp` (footprint classes, the lattice
+  recaller as `fiberhmm-consensus` runs it), `nfr` (NFRs and NFR variants,
+  EXPERIMENTAL, as `fiberhmm-nfr`) and `peaks` (FiberBrowser's accessibility
+  peaks, ported with identical per-position scores). It writes one scan
+  directory: `manifest.json` and bgzip + tabix tables of pooled hits and
+  values. Per-molecule results go into annotated BAMs as `MA` groups
+  (`fpcls`, `nfrvar`, `nfrmol`) that survive `fiberhmm-lift`; BED-scoped
+  scans and `--no-annotate` write them as tables instead. Seams between
+  units are reconciled so each feature is reported once, `--continue`
+  resumes an interrupted scan, and reruns are byte-identical. `--schema`
+  lists every parameter; `--inspect` validates a scan directory. See
+  [Scanning features genome-wide](https://fiberseq.github.io/FiberHMM/workflows/scanning/)
+  and the [scan format](https://fiberseq.github.io/FiberHMM/reference/scan-format/).
 - **`fiberhmm-lift`** lifts a called BAM, or a BED file, to another assembly
   through a pangenome graph, with footprints in molecular coordinates. The
   primary route is native: graphlift's `liftbam` and `liftbed`
