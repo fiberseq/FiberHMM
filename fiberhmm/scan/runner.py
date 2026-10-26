@@ -256,7 +256,8 @@ def _marker_valid(folder: Path, key: str) -> Optional[dict]:
 def _publish_marker(folder: Path, key: str, extra: dict) -> dict:
     files = {}
     for p in sorted(folder.rglob('*')):
-        if p.is_file() and p.name != 'marker.json':
+        # engine/ holds the wrapped engine's own run directory (kept for inspection, never read back)
+        if p.is_file() and p.name != 'marker.json' and p.relative_to(folder).parts[0] != 'engine':
             files[p.relative_to(folder).as_posix()] = dict(size=p.stat().st_size, sha256=_sha(p))
     marker = dict(schema=UNIT_MARKER_SCHEMA, key=key, files=files, **extra)
     _write_json(folder / 'marker.json', marker)
@@ -316,6 +317,9 @@ def run_unit_task(spec: dict) -> dict:
             marker = _publish_marker(survey_dir, survey_key, {})
         survey = _read_json(survey_dir / 'survey.json')
         empty = survey['records'] == 0
+        if empty:
+            # An empty unit (no record in its span) runs no module; the survey marker records it.
+            return dict(unit=unit.unit_id, index=unit.index, records=0, status='empty', modules={})
         registry = spec.get('registry')
         upstream_results: Dict[str, Any] = {}
         module_status = {}
@@ -333,30 +337,25 @@ def run_unit_task(spec: dict) -> dict:
             mod = load_module(name, registry)
             settings = m['settings']
             calibration = m.get('calibration')
-            if empty:
-                from .types import UnitResult
-                result = UnitResult(status='empty')
-                molecules = []
-            else:
-                progress.report(name, f'{unit.unit_id}: running')
-                upstream = {}
-                for dep in m['needs']:
-                    if dep not in upstream_results:
-                        upstream_results[dep] = unit_result_from_json(
-                            _read_json(_unit_dir(out, dep, unit) / 'result.json.gz'))
-                    upstream[dep] = upstream_results[dep]
-                scratch = folder / 'engine'
-                scratch.mkdir()
-                result = mod.run_unit(unit, inputs, settings, calibration, upstream, scratch, progress)
-                molecules = []
-                if mod.wants_molecules:
-                    for ds, i, read, sha, occ in owned_records(datasets, unit, index, inputs.read_policy):
-                        rec = record_ref(read, ds, i, sha, occ, unit.chrom)
-                        mr = mod.molecule_outputs(FullMolecule(rec, read, ds), settings, calibration)
-                        if mr is not None:
-                            molecules.append(mr)
-                if scratch.exists() and not m.get('keep_engine', True):
-                    shutil.rmtree(scratch)
+            progress.report(name, f'{unit.unit_id}: running')
+            upstream = {}
+            for dep in m['needs']:
+                if dep not in upstream_results:
+                    upstream_results[dep] = unit_result_from_json(
+                        _read_json(_unit_dir(out, dep, unit) / 'result.json.gz'))
+                upstream[dep] = upstream_results[dep]
+            scratch = folder / 'engine'
+            scratch.mkdir()
+            result = mod.run_unit(unit, inputs, settings, calibration, upstream, scratch, progress)
+            molecules = []
+            if mod.wants_molecules:
+                for ds, i, read, sha, occ in owned_records(datasets, unit, index, inputs.read_policy):
+                    rec = record_ref(read, ds, i, sha, occ, unit.chrom)
+                    mr = mod.molecule_outputs(FullMolecule(rec, read, ds), settings, calibration)
+                    if mr is not None:
+                        molecules.append(mr)
+            if scratch.exists() and not m.get('keep_engine', True):
+                shutil.rmtree(scratch)
             if result.tracks is not None:
                 _save_tracks(folder, result.tracks)
             _write_json(folder / 'result.json.gz', unit_result_to_json(result))
@@ -566,8 +565,11 @@ def _run_locked(out, resolved, reference, contigs, units, units_info, mods, poli
     core = I.digest([manifest['reference']['contigs_sha256'], manifest['datasets'], policy])
     pending, reused = [], 0
     for u in units:
-        all_ok = all(_marker_valid(_unit_dir(out, n, u), unit_keys[n][u.unit_id]) is not None for n, _m, _s in mods) \
-            and _marker_valid(out / WORK / '_unit' / I.safe_name(u.unit_id), I.digest([core, u.to_json()])) is not None
+        survey_dir = out / WORK / '_unit' / I.safe_name(u.unit_id)
+        surveyed = _marker_valid(survey_dir, I.digest([core, u.to_json()])) is not None
+        empty = surveyed and _read_json(survey_dir / 'survey.json')['records'] == 0
+        all_ok = surveyed and (empty or all(_marker_valid(_unit_dir(out, n, u), unit_keys[n][u.unit_id]) is not None
+                                            for n, _m, _s in mods))
         if all_ok:
             reused += 1
         else:
