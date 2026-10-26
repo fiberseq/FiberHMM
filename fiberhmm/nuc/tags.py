@@ -26,8 +26,6 @@ reader ignores a group whose digest no longer matches the record's calls.
 """
 from __future__ import annotations
 
-import array
-import json
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -62,26 +60,9 @@ FLAG_BITS = ('too_short_nrl', 'too_short_regularity', 'too_short_snr',
 SPECS = {NUCSZ: 'QQQQ', NUCSEG: 'QQQ', NUCMOL: NUCMOL_SPEC}
 
 
-# --- scalar codec (CONTRACTS 6.4) ---------------------------------------------
+# --- scalar codec (CONTRACTS 6.4, shared with fiberhmm.io.scan_ma) ----------------
 
-def encode_scalar(value, nbytes: int, scale: float, offset: float) -> List[int]:
-    top = 254 if nbytes == 1 else 65534
-    if value is None or not np.isfinite(value):
-        q = top + 1
-    else:
-        q = int(round((float(value) - offset) / scale))
-        q = max(0, min(top, q))
-    if nbytes == 1:
-        return [q]
-    return [q >> 8, q & 0xFF]
-
-
-def decode_scalar(qbytes: Sequence[int], nbytes: int, scale: float, offset: float) -> Optional[float]:
-    if nbytes == 1:
-        q = int(qbytes[0])
-        return None if q == 255 else offset + scale * q
-    q = 256 * int(qbytes[0]) + int(qbytes[1])
-    return None if q == 65535 else offset + scale * q
+from fiberhmm.io.scan_ma import decode_scalar, encode_scalar  # noqa: E402,F401
 
 
 def encode_nucmol(scalars: Dict[str, float], flags: Dict[str, bool]) -> List[int]:
@@ -141,76 +122,10 @@ def group_rows(result) -> Dict[str, Tuple[str, List[Tuple[int, int, List[int], s
 # --- writing ----------------------------------------------------------------------
 
 def replace_groups(read, groups: Dict[str, Tuple[str, Sequence[Tuple[int, int, Sequence[int], str]]]]) -> int:
-    """Replace (or add) MA groups on ``read`` in place; other groups are kept
-    verbatim with their AQ bytes and AN names. Every interval gets an AN name
-    ('.' for previously unnamed ones). Uses the scan module's shared appender
-    when it is available."""
-    try:
-        from fiberhmm.io.scan_ma import replace_scan_groups
-    except ImportError:
-        replace_scan_groups = None
-    if replace_scan_groups is not None:
-        return replace_scan_groups(read, groups)
-    from fiberhmm.io.ma_tags import annotation_tags, format_an_tag, parse_an_tag, parse_ma_tag
-    tags = annotation_tags(read)
-    if tags is None:
-        ma, aq, names = str(read.query_length or len(read.query_sequence or '')), [], None
-    else:
-        ma, aq_raw, an, _src = tags
-        aq = [int(v) for v in aq_raw] if aq_raw is not None else []
-        names = parse_an_tag(str(an)) if an is not None else None
-    parsed = parse_ma_tag(ma) if ';' in ma else {'read_length': int(ma), 'raw_types': []}
-    length = int(parsed['read_length'])
-    sections = [s for s in ma.split(';')[1:] if s]
-    types = parsed['raw_types']
-    if len(sections) != len(types):
-        raise ValueError(f'read {read.query_name!r}: unparsable MA')
-    if len(aq) != sum(len(t[2]) * len(t[3]) for t in types):
-        raise ValueError(f'read {read.query_name!r}: MA/AQ length mismatch')
-    count = sum(len(t[3]) for t in types)
-    names = names if names is not None else [''] * count
-    if len(names) != count:
-        raise ValueError(f'read {read.query_name!r}: MA/AN length mismatch')
-    keep_s, keep_q, keep_n = [], [], []
-    qi = ni = 0
-    for section, (name, _st, spec, iv) in zip(sections, types):
-        nq, n = len(spec) * len(iv), len(iv)
-        if name not in groups:
-            keep_s.append(section)
-            keep_q.extend(aq[qi:qi + nq])
-            keep_n.extend(names[ni:ni + n])
-        qi += nq
-        ni += n
-    written = 0
-    for name in sorted(groups):
-        spec, items = groups[name]
-        rows = []
-        for start, size, qb, an_name in items:
-            if size <= 0 or start < 0 or start + size > length:
-                continue
-            if len(qb) != len(spec):
-                raise ValueError(f'MA group {name}: {len(qb)} bytes for spec {spec!r}')
-            rows.append((int(start), int(size), [max(0, min(255, int(v))) for v in qb], str(an_name or '.')))
-        rows.sort(key=lambda r: (r[0], r[1], r[3]))
-        if not rows:
-            continue
-        keep_s.append(f'{name}.{spec}:' + ','.join(f'{s + 1}-{n}' for s, n, _q, _a in rows))
-        for _s, _n, q, a in rows:
-            keep_q.extend(q)
-            keep_n.append(a)
-        written += len(rows)
-    if keep_s:
-        read.set_tag('MA', ';'.join([str(length), *keep_s]), value_type='Z')
-        read.set_tag('AQ', array.array('B', keep_q) if keep_q else None)
-        if any(keep_n):
-            read.set_tag('AN', format_an_tag(keep_n), value_type='Z')
-        elif read.has_tag('AN'):
-            read.set_tag('AN', None)
-    else:
-        for tag in ('MA', 'AQ', 'AN'):
-            if read.has_tag(tag):
-                read.set_tag(tag, None)
-    return written
+    """Replace (or add) MA groups on ``read`` in place (the scan appender:
+    other groups are kept verbatim with their AQ bytes and AN names)."""
+    from fiberhmm.io.scan_ma import replace_scan_groups
+    return replace_scan_groups(read, groups)
 
 
 def annotate_record(read, result) -> int:
@@ -245,42 +160,27 @@ def ma_group_declarations() -> List[dict]:
     ]
 
 
-CONTRACT_PREFIX = 'FIBERHMM-SCAN-MA:v1:'
-
-
 def contract_lines(calibration_digest: str = '', params_digest: str = '',
                    calls_program: str = '', module_version: str = '1.0',
                    scan_id: str = '') -> List[str]:
     """``@CO FIBERHMM-SCAN-MA:v1:`` lines for the three groups."""
-    lines = []
-    for d in ma_group_declarations():
-        rec = dict(d)
-        rec.update({'module': 'nuc', 'module_version': module_version, 'scan_id': scan_id,
-                    'settings_hash': params_digest[:16], 'calibration': calibration_digest[:16],
-                    'coordinates': 'molecular', 'calls_program': calls_program})
-        lines.append(CONTRACT_PREFIX + json.dumps(rec, sort_keys=True, separators=(',', ':')))
-    return lines
+    from fiberhmm.io.scan_ma import scan_contract_line
+    return [scan_contract_line(d, module='nuc', module_version=module_version, scan_id=scan_id,
+                               settings_hash=params_digest[:16], calibration=calibration_digest[:16],
+                               coordinates='molecular', calls_program=calls_program)
+            for d in ma_group_declarations()]
 
 
 def annotate_header(header, calibration_digest: str = '', params_digest: str = '',
                     calls_program: str = ''):
     """Header with the groups declared (MA-TYPES and contract lines) and the
-    molecular-frame marker; stale nuc contract lines are replaced."""
+    molecular-frame marker; earlier nuc contract lines are replaced."""
     import pysam
     from fiberhmm.io.bam_header import append_coord_marker, append_ma_types
-    header = append_ma_types(header, NUC_GROUPS)
-    header = append_coord_marker(header)
-    d = header.to_dict()
-    keep = []
-    for co in d.get('CO', []):
-        if co.startswith(CONTRACT_PREFIX):
-            try:
-                if json.loads(co[len(CONTRACT_PREFIX):]).get('group') in NUC_GROUPS:
-                    continue
-            except ValueError:
-                pass
-        keep.append(co)
-    d['CO'] = keep + contract_lines(calibration_digest, params_digest, calls_program)
+    from fiberhmm.io.scan_ma import with_scan_contracts
+    header = append_coord_marker(append_ma_types(header, NUC_GROUPS))
+    d = with_scan_contracts(header.to_dict(), contract_lines(calibration_digest, params_digest,
+                                                             calls_program))
     return pysam.AlignmentHeader.from_dict(d)
 
 
