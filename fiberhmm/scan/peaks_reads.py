@@ -580,6 +580,16 @@ def _pg_writer_frame(pg, header_marker):
     return None
 
 
+def footprint_writer_id(header) -> str:
+    """ID of the last footprint-writing @PG (FiberHMM apply/call/recall, fibertools nucleosome commands),
+    following the @PG chains as the legacy-frame rule does; '' when there is none."""
+    hdr = header.to_dict() if hasattr(header, 'to_dict') else dict(header or {})
+    pgs = [pg for pg in (hdr.get('PG', []) or []) if isinstance(pg, dict)]
+    marker = any(_COORD_MOLECULAR in str(c).lower() for c in (hdr.get('CO', []) or []))
+    writers = [i for i, pg in enumerate(pgs) if _pg_writer_frame(pg, marker) is not None]
+    return str(pgs[writers[-1]].get('ID', '')) if writers else ''
+
+
 def legacy_frame(header):
     """``(molecular, unknown)`` for a BAM's legacy ns/nl/as/al (FiberBrowser ``bam_legacy_frame``): the @PG
     chains vote; merged files with conflicting votes resolve to molecular when coord=molecular is declared

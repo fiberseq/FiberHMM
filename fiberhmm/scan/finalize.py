@@ -108,6 +108,7 @@ def finalize(out: Path, manifest: dict, datasets, reference: Mapping[str, int], 
     tables['callable.tsv.bgz'] = cw.close()
 
     tsv_mode = not annotate
+    _remove_stale_outputs(out, mods, annotate)
     writers: Dict[str, Dict[str, TableWriter]] = {}
     decls: Dict[str, dict] = {}
     seam_components: Dict[str, int] = {}
@@ -280,6 +281,24 @@ def finalize(out: Path, manifest: dict, datasets, reference: Mapping[str, int], 
                 annotated=[a['path'] for a in annotated_outputs])
 
 
+def _remove_stale_outputs(out: Path, mods, annotate: bool) -> None:
+    """A continued or extended scan rewrites every output; remove what this run will not write (per-molecule
+    tables in annotated mode, annotated BAMs in tables mode, directories of modules no longer in the scan)."""
+    names = {n for n, _m, _s in mods}
+    for entry in sorted(out.iterdir()):
+        if entry.is_dir() and entry.name not in names | {'work', 'annotated'} and (entry / 'hits.tsv.bgz').exists():
+            shutil.rmtree(entry)
+    if not annotate and (out / 'annotated').exists():
+        shutil.rmtree(out / 'annotated')
+    if annotate:
+        for n in names:
+            for t in ('states', 'marks', 'molecules', 'units'):
+                for suffix in ('.tsv.bgz', '.tsv.bgz.tbi', '.tsv.bgz.csi'):
+                    path = out / n / (t + suffix)
+                    if path.exists():
+                        path.unlink()
+
+
 # ------------------------------------------------------------------ table rows
 def _write_hit(writer, h, hid, unit_id, parent_id, columns):
     flags = list(h.flags)
@@ -357,8 +376,9 @@ def _annotated_name(ds, input_index: int, path: str) -> str:
 
 def _open_annotated(out: Path, manifest, datasets, mods, decls, command):
     import pysam
-    from fiberhmm.io.bam_header import append_coord_marker, append_ma_types, append_pg_record
+    from fiberhmm.io.bam_header import append_ma_types, append_pg_record
     from fiberhmm.io.scan_ma import scan_contract_line, with_scan_contracts
+    from .peaks_reads import footprint_writer_id
     target_dir = out / 'annotated'
     if target_dir.exists():
         shutil.rmtree(target_dir)
@@ -368,22 +388,18 @@ def _open_annotated(out: Path, manifest, datasets, mods, decls, command):
     for name, mod, settings in mods:
         for g in mod.ma_groups():
             groups.append(g.group)
-            lines.append(scan_contract_line(g.to_json(), module=name, module_version=mod.version,
-                                            scan_id=manifest['scan_id'], settings_hash=I.settings_hash(settings)))
+            lines.append(dict(g.to_json(), module=name, module_version=mod.version, scan_id=manifest['scan_id'],
+                              settings_hash=I.settings_hash(settings)))
     handles = {}
     for ds in datasets:
-        calls = next((d['fiberhmm_calls'] for d in manifest['datasets'] if d['dataset_id'] == ds.dataset_id), {})
         for i, path in enumerate(ds.paths):
             src = pysam.AlignmentFile(path, 'rb')
-            from fiberhmm.io.annotation_frame import ma_annotation_frame
-            input_molecular = ma_annotation_frame(src.header) == 'molecular'
             header = src.header
             if groups:
                 header = append_ma_types(header, groups)
-            header = append_coord_marker(header)
             hd = header.to_dict()
-            hd = with_scan_contracts(hd, [l[:-1] + ',"calls_program":' + json.dumps(calls.get('id', '')) + '}'
-                                          for l in lines])
+            program = footprint_writer_id(src.header)
+            hd = with_scan_contracts(hd, [scan_contract_line(decl, calls_program=program) for decl in lines])
             header = pysam.AlignmentHeader.from_dict(hd)
             header = append_pg_record(header, dict(PN='fiberhmm-scan', VN=manifest['fiberhmm']['version'],
                                                    DS=f"scan_id={manifest['scan_id']} groups={','.join(groups)}",
@@ -393,18 +409,24 @@ def _open_annotated(out: Path, manifest, datasets, mods, decls, command):
             dest = pysam.AlignmentFile(str(tmp), 'wb', header=header)
             handles[(ds.dataset_id, i)] = dict(src=src, dest=dest, tmp=tmp, final=target_dir / name, dataset=ds,
                                                owned={g.group: g.spec for _n, m, _s in mods for g in m.ma_groups()},
-                                               input_index=i, source=path, written=0, marked=0, done_contigs=set(),
-                                               input_molecular=input_molecular, written_keys=set())
+                                               input_index=i, source=path, written=0, marked=0, skipped=0)
     return handles
 
 
-def _annotate_read(read, entries, input_molecular, owned):
+def _annotate_read(read, entries, owned):
     """Write this scan's groups on one record. ``owned``: group -> spec of every group the scan writes;
-    each is replaced, so a record with no new entry loses an older scan's marks of the same group."""
-    from fiberhmm.io.frame_carry import carry_to_molecular
+    each is replaced, so a record with no new entry loses an older scan's marks of the same group. Inputs
+    are molecular frame (checked before annotating), so no other annotation is touched. A record whose legacy
+    calls cannot be expressed as MA keeps its tags and gets no scan group (returns -1)."""
+    from fiberhmm.io.scan_ma import LegacyScopeError, ma_read_length, project_to_molecule, replace_scan_groups
+    try:
+        return _annotate_read_inner(read, entries, owned)
+    except LegacyScopeError:
+        return -1
+
+
+def _annotate_read_inner(read, entries, owned):
     from fiberhmm.io.scan_ma import ma_read_length, project_to_molecule, replace_scan_groups
-    if not input_molecular:
-        carry_to_molecular(read)
     stale = False
     if owned and read.has_tag('MA'):
         ma = str(read.get_tag('MA'))
@@ -452,8 +474,11 @@ def _write_annotated_contig(handles, chrom, ann, cunits, full_copy):
                 occ = seen.get(sha, 0)
                 seen[sha] = occ + 1
                 entries = planned.get((sha, occ))
-            if _annotate_read(read, entries, h['input_molecular'], h['owned']):
+            n = _annotate_read(read, entries, h['owned'])
+            if n > 0:
                 h['marked'] += 1
+            elif n < 0:
+                h['skipped'] += 1
             dest.write(read)
             h['written'] += 1
 
@@ -481,7 +506,7 @@ def _close_annotated(out, handles, full_copy):
         src, dest = h['src'], h['dest']
         if full_copy:
             for read in src.fetch('*'):          # unplaced unmapped records, last as in the input
-                _annotate_read(read, None, h['input_molecular'], h['owned'])
+                _annotate_read(read, None, h['owned'])
                 dest.write(read)
                 h['written'] += 1
         dest.close()
@@ -492,7 +517,7 @@ def _close_annotated(out, handles, full_copy):
         outputs.append(dict(dataset_id=h['dataset'].dataset_id, input_index=h['input_index'],
                             source=Path(h['source']).name, path=str(h['final'].relative_to(out)),
                             content_id=I.content_id(h['final']), records=h['written'], marked_records=h['marked'],
-                            scope='full' if full_copy else 'units'))
+                            unannotatable_records=h['skipped'], scope='full' if full_copy else 'units'))
     outputs.sort(key=lambda o: o['path'])
     return outputs
 

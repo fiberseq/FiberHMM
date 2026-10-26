@@ -147,44 +147,69 @@ def with_scan_contracts(header_dict: dict, lines: Sequence[str]) -> dict:
 
 
 # ------------------------------------------------------------------ MA editing
+class LegacyScopeError(ValueError):
+    """A record's legacy calls fit neither its stored sequence nor its whole molecule."""
+
+
+def _ints(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return [int(x) for x in value.split(',') if x]
+    return [int(x) for x in value]
+
+
 def _legacy_as_ma(read):
     """(ma, aq) carrying a record's legacy ns/nl(+nq) and as/al calls as MA nuc/msp groups, or None.
 
     A record without MA/Ma whose calls are only in legacy tags must not gain an MA that holds only scan
-    groups: readers take MA as authoritative and would stop reading its ns/nl. The legacy tags must already
-    be in molecular frame (the scan writer carries every record into molecular frame first)."""
-    length = int(read.query_length or len(read.query_sequence or ''))
-    parts, aq = [str(length)], []
+    groups: readers take MA as authoritative and would stop reading its ns/nl. The tags must be in
+    molecular frame (scans annotate only inputs that declare it). Like fiberhmm-lift's annotation scope, the
+    calls describe the stored sequence when they fit it, else the whole molecule (hard clips included);
+    calls that fit neither raise :class:`LegacyScopeError`."""
+    stored = int(read.query_length or len(read.query_sequence or ''))
+    cigar = read.cigartuples or []
+    hard = sum(n for op, n in (cigar[:1] + cigar[-1:] if len(cigar) > 1 else cigar[:1]) if op == 5)
 
     def pairs(start_tag, len_tag):
         if not (read.has_tag(start_tag) and read.has_tag(len_tag)):
             return None
         try:
-            starts = [int(x) for x in (read.get_tag(start_tag).split(',') if isinstance(read.get_tag(start_tag), str)
-                                       else read.get_tag(start_tag)) if str(x) != '']
-            lens = [int(x) for x in (read.get_tag(len_tag).split(',') if isinstance(read.get_tag(len_tag), str)
-                                     else read.get_tag(len_tag)) if str(x) != '']
+            starts, lens = _ints(read.get_tag(start_tag)), _ints(read.get_tag(len_tag))
         except (TypeError, ValueError):
-            return None
+            raise LegacyScopeError(f'unreadable {start_tag}/{len_tag}') from None
         if len(starts) != len(lens):
-            return None
+            raise LegacyScopeError(f'{start_tag}/{len_tag} lengths differ')
         return starts, lens
 
     nuc = pairs('ns', 'nl')
     msp = pairs('as', 'al')
     if nuc is None and msp is None:
         return None
+    ends = [s0 + l0 for p_ in (nuc, msp) if p_ for s0, l0 in zip(*p_)]
+    if any(s0 < 0 for p_ in (nuc, msp) if p_ for s0 in p_[0]):
+        raise LegacyScopeError('negative legacy start')
+    top = max(ends) if ends else 0
+    if top <= stored:
+        length = stored
+    elif hard and top <= stored + hard:
+        length = stored + hard
+    else:
+        raise LegacyScopeError('legacy calls extend past the molecule')
+    parts, aq = [str(length)], []
     if nuc is not None:
-        q = list(read.get_tag('nq')) if read.has_tag('nq') else None
-        rows = sorted((s0, l0, (int(q[i]) if q is not None and i < len(q) else None))
-                      for i, (s0, l0) in enumerate(zip(*nuc)) if l0 > 0 and 0 <= s0 and s0 + l0 <= length)
+        try:
+            q = _ints(read.get_tag('nq')) if read.has_tag('nq') else None
+        except (TypeError, ValueError):
+            q = None
+        with_q = q is not None and len(q) == len(nuc[0])
+        rows = sorted((s0, l0, q[i] if with_q else None) for i, (s0, l0) in enumerate(zip(*nuc)) if l0 > 0)
         if rows:
-            with_q = q is not None and len(q) == len(nuc[0])
             parts.append(('nuc.Q:' if with_q else 'nuc.:') + ','.join(f'{s0 + 1}-{l0}' for s0, l0, _q in rows))
             if with_q:
                 aq.extend(max(0, min(255, qq)) for _s, _l, qq in rows)
     if msp is not None:
-        rows = sorted((s0, l0) for s0, l0 in zip(*msp) if l0 > 0 and 0 <= s0 and s0 + l0 <= length)
+        rows = sorted((s0, l0) for s0, l0 in zip(*msp) if l0 > 0)
         if rows:
             parts.append('msp.:' + ','.join(f'{s0 + 1}-{l0}' for s0, l0 in rows))
     if len(parts) == 1:

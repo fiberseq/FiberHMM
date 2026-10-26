@@ -106,17 +106,22 @@ def _bam_reference(path) -> List[Tuple[str, int]]:
 
 
 def _calls_program(path) -> dict:
-    """The last footprint-writing @PG of a BAM (program name and version)."""
+    """The last footprint-writing @PG of a BAM (FiberHMM apply/call/recall, fibertools nucleosome commands)."""
     import pysam
-    writers = ('fiberhmm-call', 'fiberhmm-apply', 'fiberhmm-recall-tfs', 'fiberhmm-recall-nucs', 'fiberhmm-pipeline',
-               'fiberhmm', 'ft', 'fibertools')
+    from .peaks_reads import footprint_writer_id
     with pysam.AlignmentFile(str(path), 'rb', check_sq=False) as bam:
-        found = {}
+        ident = footprint_writer_id(bam.header)
         for pg in bam.header.to_dict().get('PG', []):
-            name = str(pg.get('PN') or pg.get('ID') or '')
-            if name.startswith(writers) and name not in ('fiberhmm-lift', 'fiberhmm-scan'):
-                found = dict(program=name, version=str(pg.get('VN', '')), id=str(pg.get('ID', '')))
-        return found
+            if ident and str(pg.get('ID', '')) == ident:
+                return dict(program=str(pg.get('PN') or pg.get('ID') or ''), version=str(pg.get('VN', '')), id=ident)
+    return {}
+
+
+def _declares_molecular(path) -> bool:
+    import pysam
+    from fiberhmm.io.annotation_frame import ma_annotation_frame
+    with pysam.AlignmentFile(str(path), 'rb', check_sq=False) as bam:
+        return ma_annotation_frame(bam.header) == 'molecular'
 
 
 def resolve_datasets(datasets: Sequence[Mapping[str, Any]]):
@@ -331,6 +336,7 @@ def run_unit_task(spec: dict) -> dict:
             return dict(unit=unit.unit_id, index=unit.index, records=0, status='empty', modules={})
         registry = spec.get('registry')
         upstream_results: Dict[str, Any] = {}
+        molecular_input: Dict[str, bool] = {}
         module_status = {}
         index = UnitIndex(plan_units)
         for m in spec['modules']:
@@ -363,6 +369,13 @@ def run_unit_task(spec: dict) -> dict:
                 # (so a scan extended with new units never reports a record twice).
                 for ds, i, read, sha, occ in overlapping_records(datasets, unit, inputs.read_policy):
                     rec = record_ref(read, ds, i, sha, occ, unit.chrom)
+                    if not molecular_input.setdefault(ds.paths[i], _declares_molecular(ds.paths[i])):
+                        # FullMolecule.read carries molecular-frame annotations (the contract)
+                        try:
+                            from fiberhmm.io.frame_carry import carry_to_molecular
+                            carry_to_molecular(read)
+                        except (ValueError, OverflowError):
+                            continue
                     mr = mod.molecule_outputs(FullMolecule(rec, read, ds), settings, calibration)
                     if mr is not None:
                         molecules.append(mr)
@@ -481,8 +494,9 @@ def _manifest_core(resolved, contigs, units, units_info, mods, policy, cal_shas)
     for d in resolved:
         files = [dict(name=Path(p).name, path=p, input_index=i, content_id=cid, size=os.stat(p).st_size)
                  for i, (p, cid) in enumerate(zip(d.paths, d.content_ids))]
-        datasets.append(dict(dataset_id=d.dataset_id, ordinal=d.ordinal, chemistry=d.chemistry, files=files,
-                             fiberhmm_calls=_calls_program(d.paths[0])))
+        for f in files:
+            f['fiberhmm_calls'] = _calls_program(f['path'])
+        datasets.append(dict(dataset_id=d.dataset_id, ordinal=d.ordinal, chemistry=d.chemistry, files=files))
     from fiberhmm import __version__
     manifest = dict(schema=SCHEMA, fiberhmm=dict(version=__version__),
                     reference=dict(contigs=[[c, n] for c, n in contigs], contigs_sha256=I.contigs_sha256(contigs)),
@@ -629,6 +643,14 @@ def _run_locked(out, resolved, reference, contigs, units, units_info, mods, poli
     from .finalize import finalize
     # No module writes per-molecule MA groups (a peaks-only scan): nothing to annotate.
     annotate = bool(annotate) and any(m.ma_groups() for _n, m, _s in mods)
+    if annotate:
+        foreign = [p for d in resolved for p in d.paths if not _declares_molecular(p)]
+        if foreign:
+            # Scan groups are molecular; writing them into a file whose header does not declare molecular
+            # coordinates would need its other annotations carried too. Such inputs get the tables instead.
+            progress.report('scan', f'{len(foreign)} input(s) do not declare molecular coordinates (FiberHMM >= 2.13.2 '
+                                    'or fibertools): per-molecule results are written as tables, not annotated BAMs')
+            annotate = False
     summary = finalize(out, manifest, resolved, reference, units, mods, unit_keys, annotate, progress,
                        command=command, calibrations=calibrations)
     run = dict(attempts=_attempts(out, cores, window_jobs, time.monotonic() - started, len(pending), reused))

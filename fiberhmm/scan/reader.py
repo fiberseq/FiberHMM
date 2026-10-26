@@ -32,7 +32,8 @@ class ScanDir:
         return self._tables[rel]
 
     def has(self, rel: str) -> bool:
-        return (self.path / rel).is_file()
+        """A table this scan wrote (listed in the manifest) and present on disk."""
+        return rel in (self.manifest.get('outputs', {}).get('tables') or {}) and (self.path / rel).is_file()
 
     def _fetch(self, rel, chrom, start, end) -> List[dict]:
         if not self.has(rel):

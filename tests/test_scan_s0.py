@@ -27,11 +27,16 @@ REG = {'plant': 'fiberhmm.scan.testing:PlantedAnchorModule',
        'molly': 'fiberhmm.scan.testing:PlantedMoleculeModule'}
 
 
+SYNTH_PATH = []
+
+
 @pytest.fixture(scope='module')
 def synth_bam(tmp_path_factory):
     from fiberhmm.scan.testing import write_synthetic_bam
     d = tmp_path_factory.mktemp('synth')
-    return write_synthetic_bam(d / 'synth.bam', length=200_000)
+    path = write_synthetic_bam(d / 'synth.bam', length=200_000)
+    SYNTH_PATH[:] = [path]
+    return path
 
 
 # ------------------------------------------------------------------ planning
@@ -434,3 +439,78 @@ def test_repeated_contigs_and_large_coordinates(tmp_path):
     w.close()
     assert (tmp_path / 'big.tsv.bgz.csi').is_file() and not (tmp_path / 'big.tsv.bgz.tbi').exists()
     assert [r['x'] for r in Table(tmp_path / 'big.tsv.bgz').fetch('c', 600_000_005, 600_000_006)] == ['far']
+
+
+# ------------------------------------------------------------------ review findings (agy)
+def test_whole_molecule_legacy_calls_on_hard_clipped_records():
+    import array
+    from fiberhmm.io.scan_ma import LegacyScopeError, replace_scan_groups
+    from fiberhmm.io.ma_tags import parse_ma_tag
+    h = pysam.AlignmentHeader.from_dict({'HD': {'VN': '1.6'}, 'SQ': [{'SN': 'c', 'LN': 5000}]})
+
+    def rec(ns, nl, nq=None):
+        r = pysam.AlignedSegment(h)
+        r.query_name, r.flag = 'm/1/ccs', 0x800
+        r.query_sequence = 'A' * 1000
+        r.reference_id, r.reference_start, r.cigarstring = 0, 100, '500H1000M200H'
+        r.set_tag('ns', array.array('I', ns))
+        r.set_tag('nl', array.array('I', nl))
+        if nq is not None:
+            r.set_tag('nq', nq)
+        return r
+    r = rec([600, 1200], [147, 147], '10,20')
+    replace_scan_groups(r, {'nfrmol': ('QQQQ', [(0, 1700, [1, 2, 3, 4], 'nfrmol')])})
+    parsed = parse_ma_tag(r.get_tag('MA'))
+    assert parsed['read_length'] == 1700 and parsed['nuc'] == [(600, 147), (1200, 147)]
+    assert list(r.get_tag('AQ'))[:2] == [10, 20]
+    with pytest.raises(LegacyScopeError):
+        replace_scan_groups(rec([600, 1900], [147, 147]), {'nfrmol': ('QQQQ', [])})
+
+
+def test_inputs_without_molecular_declaration_get_tables(tmp_path, synth_bam):
+    from fiberhmm.scan import run_units
+    src = tmp_path / 'seq.bam'
+    with pysam.AlignmentFile(SYNTH_PATH[0]) as bam:
+        hd = bam.header.to_dict()
+        hd['CO'] = [c for c in hd.get('CO', []) if 'coord=molecular' not in c]
+        hd['PG'] = [{'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call', 'VN': '2.10.0'}]
+        with pysam.AlignmentFile(str(src), 'wb', header=hd) as out:
+            for r in bam.fetch(until_eof=True):
+                out.write(r)
+    pysam.index(str(src))
+    units = plan({'chrS': 200_000}, genome=True)
+    run_units([{'dataset_id': 'x', 'paths': [str(src)]}], units, modules=['molly'], out=tmp_path / 's',
+              annotate=True, registry=REG)
+    m = json.loads((tmp_path / 's' / 'manifest.json').read_text())
+    assert m['outputs']['annotate'] is False and (tmp_path / 's' / 'molly' / 'molecules.tsv.bgz').is_file()
+
+
+def test_continue_switching_annotation_removes_stale_outputs(tmp_path, synth_bam):
+    from fiberhmm.scan import open_scan, run_units
+    units = plan({'chrS': 200_000}, genome=True)
+    out = tmp_path / 's'
+    run_units([{'dataset_id': 'x', 'paths': [synth_bam]}], units, modules=['molly'], out=out, annotate=False,
+              registry=REG)
+    assert (out / 'molly' / 'molecules.tsv.bgz').is_file()
+    run_units([{'dataset_id': 'x', 'paths': [synth_bam]}], units, modules=['molly'], out=out, annotate=True,
+              registry=REG, continue_run=True)
+    assert not (out / 'molly' / 'molecules.tsv.bgz').exists() and list((out / 'annotated').glob('*.scan.bam'))
+    scan = open_scan(out)
+    assert scan.validate() == [] and not scan.has('molly/molecules.tsv.bgz')
+
+
+def test_contract_names_each_files_last_footprint_writer(tmp_path, synth_bam):
+    from fiberhmm.io.scan_ma import scan_contracts
+    from fiberhmm.scan import run_units
+    units = plan({'chrS': 200_000}, genome=True)
+    run_units([{'dataset_id': 'x', 'paths': [synth_bam]}], units, modules=['molly'], out=tmp_path / 's',
+              annotate=True, registry=REG)
+    bam = next((tmp_path / 's' / 'annotated').glob('*.scan.bam'))
+    with pysam.AlignmentFile(str(bam)) as f:
+        assert scan_contracts(f.header)['mollymol']['calls_program'] == 'fiberhmm-call'
+
+
+def test_grid_offset_applies_to_long_regions():
+    a, _ = plan({'c': 500_000}, regions=[('c', 0, 100_000)])
+    b, _ = plan({'c': 500_000}, regions=[('c', 0, 100_000)], grid_offset=5_000)
+    assert [(u.zone_start, u.zone_end) for u in a] != [(u.zone_start, u.zone_end) for u in b]

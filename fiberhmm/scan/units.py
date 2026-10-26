@@ -176,7 +176,7 @@ def plan(reference: Mapping[str, int], *, genome: bool = False, contigs: Optiona
                                   zone_end=b, mode='bed', index=len(units), name=name))
         else:
             gridded = True
-            sub = _grid_units(chrom, a, b, unit_bp, stride_bp, 0, len(units))
+            sub = _grid_units(chrom, a, b, unit_bp, stride_bp, grid_offset, len(units))
             units.extend(ScanUnit(**{**u.to_json(), 'name': name}) for u in sub)
     # A --region longer than one unit is a grid scan restricted to it; a BED file stays a BED scan.
     info['mode'] = 'grid' if (regions and gridded) else 'bed'

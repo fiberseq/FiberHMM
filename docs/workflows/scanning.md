@@ -64,7 +64,10 @@ values per dataset and channel.
 | `--bed`, or a `--region` that fits one unit | tables (`<module>/states.tsv.bgz`, `molecules.tsv.bgz`, ...) |
 
 `--annotate` and `--no-annotate` override the default. A scan whose modules
-write no per-molecule results (`--modules peaks`) writes no annotated BAM. An annotated BAM of
+write no per-molecule results (`--modules peaks`) writes no annotated BAM.
+Annotated BAMs are written only for inputs whose header declares molecular
+coordinates (FiberHMM 2.13.2 or later, fibertools); older inputs get the
+tables. The scan touches no other annotation of a record. An annotated BAM of
 a genome scan holds every record of its input; one of a BED or window scan
 holds the records overlapping the units. The scan's `MA` groups:
 
