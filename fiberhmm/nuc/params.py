@@ -91,6 +91,10 @@ class NucParams:
     seg_irregular: str = 'broad'
     #: whether a can't-tell footprint flags its step low-information
     seg_cant_tell_low_info: bool = False
+    #: segment labels from the 'viterbi' path (default: lowest false-call rate
+    #: on planted arrays) or 'posterior' marginals summed over repeat and
+    #: tightness (more sensitive on sparse data, about 7% false calls)
+    seg_decode: str = 'viterbi'
     seg_min_steps_regular: int = 5
     seg_min_steps_sub: int = 5
     seg_min_steps_irregular: int = 3

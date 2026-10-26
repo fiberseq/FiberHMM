@@ -45,8 +45,10 @@ must end on a chain's last sub-state.
 over the neighbours); other switches (order or composition) cost
 ``seg_switch_prob`` each.
 
-**Decoding**: forward-backward marginals and Viterbi. Runs of one (order,
-composition) become segments; a regular run's q-hat is the ML q over its
+**Decoding**: forward-backward marginals and the Viterbi path, whose runs of
+one (order, composition) become segments (``seg_decode='posterior'`` labels
+each step by its highest order marginal, summed over repeat and tightness:
+more sensitive on sparse molecules, more false calls); a regular run's q-hat is the ML q over its
 gaps. Order with LLR < ``seg_merge_llr`` nats against the best alternative
 single order becomes irregular; a sub-rich flag with LLR below it is dropped;
 regular and sub-rich segments need ``seg_min_dyads`` dyads and
@@ -603,13 +605,19 @@ def segment_steps(steps: List[Step], cal, params: NucParams = DEFAULT_PARAMS,
                                    space.pred_logp, end_mask)
     if not np.isfinite(logZ):
         return []
-    path, _ = _viterbi(E, space.log_init, space.pred_ptr, space.pred_idx, space.pred_logp, end_mask)
     post = np.exp(F + B - logZ)                       # (T, S)
-    base = space.exp_base[path]
-    order, comp = _class_of(space, base)
     exp_order, exp_comp = _class_of(space, space.exp_base)
     p_order = np.stack([post[:, exp_order == k].sum(axis=1) for k in (REGULAR, IRREGULAR, LOWINFO)], axis=1)
     p_sub = post[:, exp_comp == 1].sum(axis=1)
+    if params.seg_decode == 'viterbi':
+        path, _ = _viterbi(E, space.log_init, space.pred_ptr, space.pred_idx, space.pred_logp, end_mask)
+        order, comp = _class_of(space, space.exp_base[path])
+    else:
+        # posterior decoding: order class with the highest marginal (summed over
+        # repeat and tightness), composition by its marginal; the run rules
+        # below then apply the minimum sizes and the LLR test
+        order = np.array([REGULAR, IRREGULAR, LOWINFO])[np.argmax(p_order, axis=1)]
+        comp = (p_sub > 0.5).astype(np.int64)
     change = _change_probs(F, B, E, logZ, space, exp_order, exp_comp)
 
     runs = []

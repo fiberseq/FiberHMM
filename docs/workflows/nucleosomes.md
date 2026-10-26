@@ -38,7 +38,14 @@ below their minimum window (4 gaps for NRL, 6 for S) are marked too short.
 irregular stretches and low-information stretches, with a sub-rich flag for
 runs dense in short and TF footprints. A factorial HMM over dyad gaps and
 footprint composition decodes them; regular segments need 5 dyads and
-800 bp. Long MSPs (> 300 bp) split molecules: they belong to the NFR module.
+800 bp. Gaps are read on the dyad grid: a can't-tell, short or long call
+between two mono calls hides a dyad, and the run stays regular when the gap
+fits two or three repeats. The regular jitter, the irregular spread and the
+share of hidden dyads come from the dataset's calibration (real arrays jitter
+by 14–17 bp, so the design's 8 bp is kept as a second, tight regular state).
+Low-information segments are where marking is below the calibrated floor or
+nothing can be measured. Long MSPs (> 300 bp) split molecules: they belong to
+the NFR module.
 
 **Window metrics** (a peak, hit, BED row or selection, with an optional
 anchor): class mix, NRL, S, phasing in the anchor frame and in the
