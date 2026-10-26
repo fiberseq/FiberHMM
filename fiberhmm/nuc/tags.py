@@ -12,13 +12,14 @@ Three groups, molecular coordinates, each self-contained:
 ``nucseg.QQQ``  one interval per segment. Q1 = state (1 regular,
     2 irregular, 3 low-information; +8 sub-rich); Q2 = round(255 x
     posterior); Q3 = q-hat - 100 for regular segments, else 0.
-``nucmol.Q x 20``  one whole-molecule interval with the per-molecule scalars
+``nucmol.Q x 20``  one whole-molecule interval (AN ``nucmol``) with the per-molecule scalars
     (:data:`NUCMOL_CODECS`, CONTRACTS 6.4 codec: 1 byte value = offset +
     scale x q with 255 missing; 2 bytes big-endian with 65535 missing).
 
 **Provenance.** Every AN name carries the digest of the calls the group was
-computed from: ``nucsz@<digest8>_<i>``, ``nucseg@<digest8>_<i>``,
-``nucmol@<digest8>``. Names are unique per interval (readers use AN names as
+computed from: ``nucsz@<digest8>_<i>`` and ``nucseg@<digest8>_<i>``;
+``nucmol`` (a scalar group, AN = its name) follows the record's ``nucsz``
+digest. Names are unique per interval (readers use AN names as
 circular-piece ids). The digest is over call lengths and the gaps between
 consecutive call starts (:func:`fiberhmm.nuc.molecule.calls_digest`), so it
 survives lift (hard-clip fill rebases every group by the same offset). A
@@ -114,8 +115,10 @@ def group_rows(result) -> Dict[str, Tuple[str, List[Tuple[int, int, List[int], s
         seg_rows.append((int(s.start), int(s.end - s.start),
                          [int(s.code), int(round(255 * float(s.posterior))), q3], f'{NUCSEG}@{dg}_{k}'))
     out[NUCSEG] = (SPECS[NUCSEG], seg_rows)
+    # scalar groups carry their group name as AN (CONTRACTS 6.4); nucmol's
+    # staleness follows the nucsz digest of the same record
     out[NUCMOL] = (SPECS[NUCMOL], [(0, int(result.length), encode_nucmol(result.scalars, result.flags),
-                                    f'{NUCMOL}@{dg}')])
+                                    NUCMOL)])
     return out
 
 
@@ -156,7 +159,7 @@ def ma_group_declarations() -> List[dict]:
          'state_codes': {},
          'codecs': [{'name': n, 'nbytes': nb, 'scale': sc, 'offset': off, 'unit': u}
                     for n, nb, sc, off, u in NUCMOL_CODECS],
-         'an': 'nucmol@<calls digest8>'},
+         'an': 'group'},
     ]
 
 
@@ -251,6 +254,9 @@ def read_nuc_groups(read, mol=None, check_digest: bool = True) -> Dict[str, dict
                      'stale': False}
     if not out:
         return out
+    inherited = next((out[g]['digest'] for g in (NUCSZ, NUCSEG) if g in out and out[g]['digest']), None)
+    if NUCMOL in out and out[NUCMOL]['digest'] is None:
+        out[NUCMOL]['digest'] = inherited
     if check_digest:
         current = record_calls_digest(read) if mol is None else _digest(mol)
         for g in out.values():

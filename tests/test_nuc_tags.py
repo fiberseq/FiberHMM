@@ -73,9 +73,10 @@ def test_annotate_and_read_back(tmp_path, reverse):
     assert heads[:5] == ['nuc.QQQ', 'msp.', 'tf.QQQ', 'ddda_ucg.', 'fire.Q']
     assert {h.split('.')[0] for h in heads[5:]} == set(NUC_GROUPS)
     names = read.get_tag('AN').split(',')
-    nuc_names = [n for n in names if n.startswith(('nucsz@', 'nucseg@', 'nucmol@'))]
+    nuc_names = [n for n in names if n.startswith(('nucsz@', 'nucseg@'))]
     assert len(nuc_names) == len(set(nuc_names))                 # unique per interval
     assert all(f'@{res.digest}' in n for n in nuc_names)
+    assert names.count('nucmol') == 1
     g = read_nuc_groups(read)
     assert not any(v['stale'] for v in g.values())
     assert len(g[NUCSZ]['intervals']) == len(mol.nucs) + len(mol.tfs)
@@ -208,7 +209,7 @@ def _assert_no_nuc_groups(path):
             heads = {g.partition(':')[0].split('.')[0] for g in r.get_tag('MA').split(';')[1:]}
             assert not heads & set(NUC_GROUPS), heads
         if r.has_tag('AN'):
-            assert '@' not in r.get_tag('AN')
+            assert '@' not in r.get_tag('AN') and 'nucmol' not in r.get_tag('AN')
 
 
 def test_call_drops_nuc_groups(annotated_bam, tmp_path, benchmark_model_path):

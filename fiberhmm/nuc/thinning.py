@@ -215,48 +215,75 @@ def _curve_mismatch(a, b, lam_grid) -> List[float]:
 # calibrate_thin
 # ---------------------------------------------------------------------------
 
-def load_population(bam_path: str, params: NucParams = DEFAULT_PARAMS, n_population: int = 2000,
-                    region: Optional[str] = None, stats: Optional[dict] = None):
+def _record_iter(bam, regions):
+    if regions is None:
+        yield from bam.fetch(until_eof=True)
+        return
+    seen = set()
+    for chrom, start, end in regions:
+        if chrom not in bam.references:
+            continue
+        for r in bam.fetch(chrom, max(0, int(start)), int(end)):
+            key = (r.query_name, r.flag, r.reference_id, r.reference_start)
+            if key in seen:
+                continue
+            seen.add(key)
+            yield r
+
+
+def load_population(bam_paths, params: NucParams = DEFAULT_PARAMS, n_population: int = 2000,
+                    regions: Optional[Sequence[Tuple[str, int, int]]] = None,
+                    stats: Optional[dict] = None):
     """(molecules, fiber_reads, caller settings, chemistry) for the
-    hash-ranked calibration population of one BAM (primary records)."""
+    hash-ranked calibration population of one dataset (primary records of
+    one or more BAMs, optionally restricted to ``regions``)."""
     import pysam
     from fiberhmm.nuc.recall import CallerSettings, fiber_read_from_record
-    with pysam.AlignmentFile(bam_path, 'rb') as bam:
-        ctx = DecodeContext(bam.header, params)
-        settings = CallerSettings.from_header(bam.header)
-        it = bam.fetch(region=region) if region else bam.fetch(until_eof=True)
-        names = sorted({r.query_name for r in it if not (r.is_secondary or r.is_supplementary)},
-                       key=molecule_hash)
-        keep = set(names[:n_population * 2])           # density filter trims later
-        bam.reset() if region is None else None
-        it = bam.fetch(region=region) if region else bam.fetch(until_eof=True)
-        mols, frs = [], {}
-        for r in it:
-            if r.is_secondary or r.is_supplementary or r.query_name not in keep:
-                continue
-            m, why = decode_record(r, ctx)
-            if stats is not None:
-                stats[why] = stats.get(why, 0) + 1
-            if m is None:
-                continue
-            fr = fiber_read_from_record(r, settings)
-            if fr is None:
-                continue
-            mols.append(m)
-            frs[m.name] = fr
-    return mols, frs, settings, ctx.chemistry
+    if isinstance(bam_paths, (str, os.PathLike)):
+        bam_paths = [bam_paths]
+    names = set()
+    settings = chem = None
+    for path in bam_paths:
+        with pysam.AlignmentFile(str(path), 'rb') as bam:
+            if settings is None:
+                settings = CallerSettings.from_header(bam.header)
+                chem = DecodeContext(bam.header, params).chemistry
+            names.update(r.query_name for r in _record_iter(bam, regions)
+                         if not (r.is_secondary or r.is_supplementary))
+    keep = set(sorted(names, key=molecule_hash)[:n_population * 2])   # density filter trims later
+    mols, frs = [], {}
+    for path in bam_paths:
+        with pysam.AlignmentFile(str(path), 'rb') as bam:
+            ctx = DecodeContext(bam.header, params)
+            for r in _record_iter(bam, regions):
+                if r.is_secondary or r.is_supplementary or r.query_name not in keep or r.query_name in frs:
+                    continue
+                m, why = decode_record(r, ctx)
+                if stats is not None:
+                    stats[why] = stats.get(why, 0) + 1
+                if m is None:
+                    continue
+                fr = fiber_read_from_record(r, settings)
+                if fr is None:
+                    continue
+                mols.append(m)
+                frs[m.name] = fr
+    return mols, frs, settings, chem
 
 
-def calibrate_thin(bam_path: str, params: NucParams = DEFAULT_PARAMS, *, label: str = '',
+def calibrate_thin(bam_path, params: NucParams = DEFAULT_PARAMS, *, label: str = '',
                    n_population: int = 2000, seeds: int = 5, n_targets: int = 8,
-                   holdout: float = 0.2, cores: int = 1, region: Optional[str] = None,
+                   holdout: float = 0.2, cores: int = 1,
+                   regions: Optional[Sequence[Tuple[str, int, int]]] = None,
                    settings_overrides: Optional[dict] = None, progress=None) -> NucCalibration:
-    """Thinning calibration of one dataset (NUC 4.1)."""
+    """Thinning calibration of one dataset (NUC 4.1). ``bam_path`` is a path
+    or a list of paths (the dataset's files); ``regions`` restricts the
+    population to records overlapping them."""
     def say(msg):
         if progress is not None:
             progress(msg)
     stats: dict = {}
-    mols, frs, settings, chem = load_population(bam_path, params, n_population, region, stats)
+    mols, frs, settings, chem = load_population(bam_path, params, n_population, regions, stats)
     if settings_overrides:
         settings = replace(settings, **settings_overrides)
     # informative-density matching: central 90%

@@ -20,6 +20,7 @@ MODULES: Dict[str, str] = {
     'peaks': 'fiberhmm.scan.modules.peaks:PeaksModule',
     'fp': 'fiberhmm.scan.modules.fp:FpModule',
     'nfr': 'fiberhmm.scan.modules.nfr:NfrModule',
+    'nuc': 'fiberhmm.scan.modules.nuc:NucModule',
 }
 # Order within a unit when several modules run (dependencies first).
 ORDER = ('peaks', 'fp', 'nfr', 'nuc')
