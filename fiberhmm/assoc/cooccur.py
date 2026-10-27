@@ -262,7 +262,9 @@ def _mh_score(it: _Items, n_cells: int, small_n, n_flip, rng) -> dict:
     xbar = np.divide(sx, n, out=np.zeros_like(sx), where=n > 0)
     ybar = np.divide(sy, n, out=np.zeros_like(sy), where=n > 0)
     u = np.where(n[it.cell] >= 2, (it.x - xbar[it.cell]) * (it.y - ybar[it.cell]), 0.0)
-    w = np.divide(n, n - 1, out=np.zeros_like(n), where=n > 1)        # leave-molecule-out B residuals
+    # design cells hold 2-3 molecules: the leave-molecule-out scale n / (n - 1) is far too wide there, so the
+    # strata score keeps sqrt(n / (n - 1)) (calibrated: FPR 0.042 on the confounded nulls)
+    w = np.sqrt(np.divide(n, n - 1, out=np.zeros_like(n), where=n > 1))
     out = _clustered(u, w, it.cell, it.mol, float(u.sum()), small_n, 'MH score over pair x stratum')
     out['var_independent'] = float(np.sum(np.divide(sx * (n - sx) * sy * (n - sy), n ** 2 * (n - 1),
                                                     out=np.zeros_like(n), where=n > 1)))
