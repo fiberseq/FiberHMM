@@ -3,9 +3,12 @@
 A grid unit computes ``unit_bp`` and owns its central ``stride_bp``; zones
 partition the scanned territory, and every owned base has at least
 ``(unit_bp - stride_bp) / 2`` bp of context on each side inside its unit
-(clipped at contig and region ends). BED intervals are merged when they
-overlap or touch; a merged interval longer than ``unit_bp`` is planned like a
-grid restricted to it. BED and grid units are never mixed in one plan.
+(clipped at contig and region ends). ``zones`` restricts a genome plan to the
+genome-grid units whose zones meet the given windows: the units keep their
+genome-grid ids, spans and zones (nothing is clipped), so their results are
+the genome scan's. BED intervals are merged when they overlap or touch; a
+merged interval longer than ``unit_bp`` is planned like a grid restricted to
+it. BED and grid units are never mixed in one plan.
 """
 from __future__ import annotations
 
@@ -124,12 +127,20 @@ def _check_names(reference: Mapping[str, int]) -> None:
 def plan(reference: Mapping[str, int], *, genome: bool = False, contigs: Optional[Sequence[str]] = None,
          regions: Optional[Sequence[Tuple[str, int, int]]] = None, bed=None,
          unit_bp: int = DEFAULT_UNIT_BP, stride_bp: int = DEFAULT_STRIDE_BP, grid_offset: int = 0,
-         max_unit_bp: int = 50_000):
+         max_unit_bp: int = 50_000, zones: Optional[Sequence[Tuple[str, int, int]]] = None):
     """Plan units. Returns ``(units, info)``; ``info`` is the manifest's ``units`` block (minus count).
 
     ``reference`` maps contig -> length in header order. Exactly one of
-    ``genome``, ``regions`` and ``bed`` selects the territory."""
+    ``genome``, ``regions`` and ``bed`` selects the territory. ``zones`` (with
+    ``genome``, or alone) keeps the genome-grid units whose zones meet any of
+    the ``(chrom, start, end)`` windows, with their genome-grid ids, spans and
+    zones unchanged; their ``left``/``right`` still name their genome-grid
+    neighbours, planned or not."""
     check_grid(unit_bp, stride_bp, max_unit_bp)
+    if zones:
+        if regions or bed or contigs:
+            raise PlanError('zones select genome-grid units: use them with genome only (no regions, bed or contigs)')
+        genome = True
     if sum(bool(x) for x in (genome, regions, bed)) != 1:
         raise PlanError('choose exactly one of genome, regions and bed')
     if grid_offset < 0 or grid_offset % LATTICE_BP:
@@ -139,6 +150,25 @@ def plan(reference: Mapping[str, int], *, genome: bool = False, contigs: Optiona
     _check_names(reference)
     info = dict(unit_bp=unit_bp, stride_bp=stride_bp, grid_offset=grid_offset, contigs=None,
                 regions=None, bed=None, merged=[])
+    if genome and zones:
+        wanted: dict = {}
+        for chrom, a, b in zones:
+            if chrom not in reference:
+                raise PlanError(f'--zones {chrom}:{a}-{b}: contig not in the BAM header')
+            if a < 0 or b <= a or b > int(reference[chrom]):
+                raise PlanError(f'--zones {chrom}:{a}-{b}: need 0 <= start < end <= contig length')
+            wanted.setdefault(chrom, []).append((int(a), int(b)))
+        info.update(mode='grid', zones=[[c, int(a), int(b)] for c, a, b in
+                                        sorted(set((c, int(a), int(b)) for c, a, b in zones),
+                                               key=lambda z: (order[z[0]], z[1], z[2]))])
+        for chrom in sorted(wanted, key=lambda c: order[c]):
+            grid = _grid_units(chrom, 0, int(reference[chrom]), unit_bp, stride_bp, grid_offset, 0)
+            for u in grid:
+                if any(u.zone_start < b and a < u.zone_end for a, b in wanted[chrom]):
+                    units.append(ScanUnit(**{**u.to_json(), 'index': len(units)}))
+        if not units:
+            raise PlanError('--zones selected no unit')
+        return tuple(units), info
     if genome:
         chosen = list(dict.fromkeys(contigs)) if contigs else list(reference)
         missing = [c for c in chosen if c not in reference]

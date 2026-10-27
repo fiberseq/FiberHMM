@@ -164,7 +164,9 @@ def territory_runs(zones: Sequence[Tuple[ScanUnit, Optional[Mapping[str, object]
     (``None``: one whole empty zone), so a feature reaching into them (a smoothing tail, a peak edge) is
     computed as if the contig were one array; runs whose extensions meet are joined, the empty bases between
     them filled with zeros. Returns ``(start, end, {name: array}, left_open, right_open)`` per run; ``*_open``
-    is True where the run ends next to a missing zone."""
+    is True where the run ends next to a missing zone, or at the edge of the plan where the last zone's unit
+    has a grid neighbour that is not planned (a ``zones`` subset of the genome grid): the territory goes on
+    there, unscanned."""
     import numpy as np
     zones = list(zones)
     n = len(zones)
@@ -196,7 +198,9 @@ def territory_runs(zones: Sequence[Tuple[ScanUnit, Optional[Mapping[str, object]
         while True:
             nxt = k + step
             if nxt < 0 or nxt >= n or not (contiguous(k, nxt) if step > 0 else contiguous(nxt, k)):
-                return got, False, last
+                # the plan stops here; open when the unit has an unplanned grid neighbour on this side
+                u = zones[k][0]
+                return got, (u.right if step > 0 else u.left) is not None, last
             if kind[nxt] == 'missing':
                 return got, True, last
             if kind[nxt] == 'ok':

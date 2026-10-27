@@ -9,12 +9,15 @@ Per-base counts are position-local, so per-position scores equal the browser's
 for any view; at a territory edge the smoothing pads with zeros as the
 browser does at a view edge.
 
-Tier rules (``tier_rule``): ``window`` is FiberBrowser's rare tier (it uses the
-window's read count, so it is accepted only when every unit is one BED/region
-unit, i.e. the browser's view); ``local`` needs ``min_reads`` molecules at each
-base; ``auto`` (default) picks ``window`` for BED scans and ``local`` for grid
-scans. The effective rule is recorded in ``peaks/extra/calibration.json`` and
-in every hit.
+Tier rules (``tier_rule``): ``local`` (default; owner decision 26 Oct 2026)
+needs ``min_reads`` molecules at each base, for every scan; ``window`` is
+FiberBrowser's earlier rare tier (it uses the window's read count, so it is
+accepted only when every unit is one BED/region unit, i.e. the browser's view);
+``auto`` is the pre-decision default, kept for one release: ``window`` for
+scans of lone BED/region units, ``local`` for grid scans. Row rules
+(``row_rule``) likewise: ``records`` (default; every primary and supplementary
+record), ``view`` (BED/region units only) or ``auto``. The effective rules are
+recorded in ``peaks/extra/calibration.json`` and in every hit.
 """
 from __future__ import annotations
 
@@ -47,18 +50,20 @@ class PeaksModule(ScanModuleBase):
         schema['signal_source'] = {'default': 'accessibility', 'type': 'str',
                                    'help': "accessibility (gaps and sub-90 bp footprints among all tiles) or "
                                            "tf_density (20-64 bp footprints among footprint tiles)"}
-        schema['tier_rule'] = {'default': 'auto', 'type': 'str',
-                               'help': "rare tier: window (FiberBrowser's: max(threshold_rare, min_reads / reads in "
-                                       "the window); BED/region units only), local (min_reads molecules at each "
-                                       "base) or auto (window for BED scans, local for grid scans)"}
+        schema['tier_rule'] = {'default': 'local', 'type': 'str',
+                               'help': "rare tier: local (default: min_reads molecules at each base), window "
+                                       "(FiberBrowser's earlier rule: max(threshold_rare, min_reads / reads in the "
+                                       "window); BED/region units only) or auto (the earlier default, kept for one "
+                                       "release: window for scans of lone BED/region units, local for grid scans)"}
         for k, v in READ_OPTIONS.items():
             schema[k] = {'default': v, 'type': type(v).__name__,
                          'help': f'FiberBrowser read loading option {k} (its working-set default)'}
-        schema['row_rule'] = {'default': 'auto', 'type': 'str',
-                              'help': "view (FiberBrowser's rows: a supplementary counts only when its primary is "
-                                      "out of the view, so it depends on the view's extent; BED/region units only), "
-                                      "records (every primary and supplementary record) or auto (view for BED "
-                                      "scans, records for grid scans)"}
+        schema['row_rule'] = {'default': 'records', 'type': 'str',
+                              'help': "records (default: every primary and supplementary record), view "
+                                      "(FiberBrowser's earlier rows: a supplementary counts only when its primary "
+                                      "is out of the view, so it depends on the view's extent; BED/region units "
+                                      "only) or auto (the earlier default, kept for one release: view for scans of "
+                                      "lone BED/region units, records for grid scans)"}
         return schema
 
     def resolve(self, params):
@@ -92,9 +97,12 @@ class PeaksModule(ScanModuleBase):
                                 ('hit',), 'summit', scores=scores, columns=cols)]
 
     def load_policy(self, settings):
+        rows = {'records': 'one per primary and supplementary record',
+                'view': 'one per primary record; a supplementary only when its primary is not in view',
+                'auto': 'view rule for scans of lone BED/region units, records rule for grid scans'}
         return dict(loader='fiberhmm.scan.peaks_reads.compact_rows (FiberBrowser compact reads, BAM path)',
                     **{k: settings[k] for k in READ_OPTIONS}, spanning_only=False, min_fp_quality=0,
-                    rows='one per primary record; a supplementary only when its primary is not in view')
+                    rows=rows[settings['row_rule']])
 
     def calibrate(self, inputs, units, settings, work, progress):
         single = all(u.mode == 'bed' and u.left is None and u.right is None for u in units)
@@ -119,8 +127,10 @@ class PeaksModule(ScanModuleBase):
                 with pysam.AlignmentFile(path, 'rb', check_sq=False) as bam:
                     circular.update(sq['SN'] for sq in bam.header.to_dict().get('SQ', [])
                                     if str(sq.get('TP', '')).lower() == 'circular')
+        # every circular contig of the headers, not only the plan's: the record does not depend on the plan, so
+        # a scan extended to other contigs keeps its calibration (and its unit keys)
         return dict(tier_rule=rule, row_rule=rows, datasets={str(d.ordinal): d.dataset_id for d in inputs.datasets},
-                    circular_contigs_skipped=sorted(circular & {u.chrom for u in units}))
+                    circular_contigs_skipped=sorted(circular))
 
     def run_unit(self, unit, inputs, settings, calibration, upstream, work, progress):
         import pysam

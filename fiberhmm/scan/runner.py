@@ -127,7 +127,9 @@ def _declares_molecular(path) -> bool:
 def resolve_datasets(datasets: Sequence[Mapping[str, Any]]):
     """Datasets in canonical order and the shared reference (contig -> length, header order).
 
-    Every input must carry the same reference (same contig names and lengths)."""
+    Every input must carry the same reference (same contig names and lengths). A dataset given without a
+    ``dataset_id`` is labelled by its canonical ordinal, ``dataset_<ordinal + 1>``, so the same files give the
+    same labels (and the same unit keys) whatever order they are listed in."""
     if not datasets:
         raise ScanRefused('no datasets')
     items = []
@@ -148,12 +150,15 @@ def resolve_datasets(datasets: Sequence[Mapping[str, Any]]):
             elif ref != reference:
                 raise ScanRefused(f'{p}: its reference (@SQ names and lengths) differs from the first input; '
                                   'a scan needs one reference')
-        items.append(dict(dataset_id=str(d.get('dataset_id') or f'dataset_{i + 1}'), paths=paths,
+        items.append(dict(dataset_id=str(d['dataset_id']) if d.get('dataset_id') else None, paths=paths,
                           chemistry=d.get('chemistry'), content_ids=[I.content_id(p) for p in paths]))
+    ordinals = I.canonical_order([x['content_ids'] for x in items])
+    for x, o in zip(items, ordinals):
+        if x['dataset_id'] is None:
+            x['dataset_id'] = f'dataset_{o + 1}'
     ids = [x['dataset_id'] for x in items]
     if len(set(ids)) != len(ids):
-        raise ScanRefused('dataset ids must be unique')
-    ordinals = I.canonical_order([x['content_ids'] for x in items])
+        raise ScanRefused('dataset ids must be unique (an unlabelled dataset is dataset_<canonical ordinal + 1>)')
     out = [Dataset(dataset_id=x['dataset_id'], ordinal=o, chemistry=x['chemistry'], paths=tuple(x['paths']),
                    content_ids=tuple(x['content_ids'])) for x, o in zip(items, ordinals)]
     out.sort(key=lambda d: d.ordinal)
@@ -243,6 +248,13 @@ def base_key(contigs_sha: str, resolved, policy: Mapping[str, Any]) -> str:
                      policy])
 
 
+def _survey_key(base, unit: ScanUnit) -> str:
+    """The unit survey's key: the unit's own geometry, not its place in the plan (index, neighbours), so a
+    unit planned again in another plan (an extended browser scan, a --zones subset) keeps its survey."""
+    return I.digest([base, unit.unit_id, unit.chrom, unit.start, unit.end, unit.zone_start, unit.zone_end,
+                     unit.mode])
+
+
 def _unit_key(base, module, version, settings_hash, cal_sha, unit: ScanUnit, upstream_keys) -> str:
     return I.digest([base, module, version, settings_hash, cal_sha, unit.unit_id, unit.start, unit.end,
                      unit.zone_start, unit.zone_end, upstream_keys])
@@ -320,7 +332,7 @@ def run_unit_task(spec: dict) -> dict:
         progress = _LogProgress(handle)
         # Unit survey: emptiness and callable territory (orchestrator-owned, independent of modules).
         survey_dir = out / WORK / '_unit' / I.unit_dir_name(unit.unit_id)
-        survey_key = I.digest([spec['scan_id_core'], unit.to_json()])
+        survey_key = _survey_key(spec['scan_id_core'], unit)
         marker = _marker_valid(survey_dir, survey_key)
         if marker is None:
             if survey_dir.exists():
@@ -625,7 +637,7 @@ def _run_locked(out, resolved, reference, contigs, units, units_info, mods, poli
     pending, reused = [], 0
     for u in units:
         survey_dir = out / WORK / '_unit' / I.unit_dir_name(u.unit_id)
-        surveyed = _marker_valid(survey_dir, I.digest([core, u.to_json()])) is not None
+        surveyed = _marker_valid(survey_dir, _survey_key(core, u)) is not None
         empty = surveyed and _read_json(survey_dir / 'survey.json')['records'] == 0
         all_ok = surveyed and (empty or all(_marker_valid(_unit_dir(out, n, u), unit_keys[n][u.unit_id]) is not None
                                             for n, _m, _s in mods))

@@ -178,7 +178,8 @@ def test_territory_runs():
                            (us[3], t(us[3]), 'ok')])
     assert [(s, e, lo, ro) for s, e, _a, lo, ro in runs] == [(0, 25_000, False, True), (50_000, 100_000, True, False)]
     runs = territory_runs([(us[0], t(us[0]), 'ok'), (us[1], None, 'empty'), (us[2], t(us[2]), 'ok')])
-    assert [(s, e, lo, ro) for s, e, _a, lo, ro in runs] == [(0, 75_000, False, False)]     # zeros between
+    # zeros between; the plan stops at us[2], whose grid neighbour us[3] is not planned: open there
+    assert [(s, e, lo, ro) for s, e, _a, lo, ro in runs] == [(0, 75_000, False, True)]
     assert runs[0][2]['x'][25_000:50_000].sum() == 0 and runs[0][2]['x'][:25_000].sum() == 25_000
     runs = territory_runs([(us[0], None, 'empty'), (us[1], t(us[1]), 'ok'), (us[2], None, 'empty'),
                            (us[3], None, 'empty')])

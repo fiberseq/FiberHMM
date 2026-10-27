@@ -112,18 +112,43 @@ def _scan(argv):
     return json.loads(out.getvalue().strip().splitlines()[-1])
 
 
-def test_bed_unit_scan_equals_browser_window(tmp_path, fixtures):
+@pytest.mark.parametrize('rules', [{'tier_rule': 'window', 'row_rule': 'view'}, {'tier_rule': 'auto', 'row_rule': 'auto'}])
+def test_bed_unit_scan_equals_browser_window(tmp_path, fixtures, rules):
+    """The earlier browser rules stay reachable for BED/region units: explicitly, or through 'auto' (the
+    pre-decision default, kept for one release)."""
     bam = fixtures['hia5-pacbio']
-    _scan(['--bam', bam, '--region', 'chrP:5000-15000', '--modules', 'peaks', '-o', str(tmp_path / 's')])
+    p = tmp_path / 'p.json'
+    p.write_text(json.dumps({'peaks': rules}))
+    _scan(['--bam', bam, '--region', 'chrP:5000-15000', '--modules', 'peaks', '--parameters', str(p),
+           '-o', str(tmp_path / 's')])
     hits = read_all(tmp_path / 's' / 'peaks' / 'hits.tsv.bgz')
     _rows, _n, _t, res = _fh(bam, 'chrP', 5000, 15000, 'accessibility')
     want = sorted((5000 + p['start'], 5000 + p['end'], p['layer'], p['score']) for p in res['peaks'])
     got = sorted((int(h['start']), int(h['end']), int(h['tier']), float(h['score'])) for h in hits
                  if h['type'] == 'peaks.peak')
     assert want and got == want
-    assert {h['tier_rule'] for h in hits} == {'window'}
+    assert {h['tier_rule'] for h in hits} == {'window'} and {h['row_rule'] for h in hits} == {'view'}
     cal = json.loads((tmp_path / 's' / 'peaks' / 'extra' / 'calibration.json').read_text())
-    assert cal['tier_rule'] == 'window'
+    assert cal['tier_rule'] == 'window' and cal['row_rule'] == 'view'
+
+
+def test_bed_unit_scan_defaults_to_the_local_rules(tmp_path, fixtures):
+    """Owner decision (26 Oct, after the S2 comparison): BED/region units default to the local rare tier and
+    every record, as grid scans do, so a CLI BED scan equals the browser's without parameters."""
+    bam = fixtures['hia5-pacbio']
+    bed = tmp_path / 'u.bed'
+    bed.write_text('chrP\t5000\t15000\tu1\n')
+    _scan(['--bam', bam, '--bed', str(bed), '--modules', 'peaks', '-o', str(tmp_path / 's')])
+    hits = read_all(tmp_path / 's' / 'peaks' / 'hits.tsv.bgz')
+    _rows, _n, _t, res = _fh(bam, 'chrP', 5000, 15000, 'accessibility', rule='local', row_rule='records')
+    want = sorted((5000 + p['start'], 5000 + p['end'], p['layer'], p['score']) for p in res['peaks'])
+    got = sorted((int(h['start']), int(h['end']), int(h['tier']), float(h['score'])) for h in hits
+                 if h['type'] == 'peaks.peak')
+    assert want and got == want
+    assert {h['tier_rule'] for h in hits} == {'local'} and {h['row_rule'] for h in hits} == {'records'}
+    m = json.loads((tmp_path / 's' / 'manifest.json').read_text())
+    assert m['modules']['peaks']['settings']['tier_rule'] == 'local'
+    assert m['modules']['peaks']['settings']['row_rule'] == 'records'
 
 
 def test_grid_scan_local_rule_stitched_across_offsets(tmp_path, fixtures):

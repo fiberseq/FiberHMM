@@ -27,13 +27,19 @@ def _parser():
                                                     '(MA tags from fiberhmm-call/apply). Chemistry from @CO metadata')
     src.add_argument('--datasets', help='JSON list of {dataset_id, paths: [BAMs], chemistry?}')
     where = p.add_mutually_exclusive_group()
-    where.add_argument('--genome', action='store_true', help='Scan whole contigs on the fixed grid (see --contigs)')
+    where.add_argument('--genome', action='store_true', help='Scan whole contigs on the fixed grid (see --contigs '
+                                                             'and --zones)')
     where.add_argument('--region', action='append', metavar='CHROM:START-END',
                        help='Scan a window (0-based, half-open; repeatable). A window longer than --unit-bp is '
                             'grid-planned restricted to it')
     where.add_argument('--bed', help='BED units (overlapping or touching intervals are merged; longer than '
                                      '--unit-bp: grid-planned inside)')
     p.add_argument('--contigs', help='With --genome: comma-separated contigs (default: every contig in the header)')
+    p.add_argument('--zones', action='append', metavar='CHROM:START-END',
+                   help='Scan only the genome-grid units whose owned zones meet this window (0-based, half-open; '
+                        'repeatable; implies --genome). Units keep their genome-grid spans (not clipped to the '
+                        'window), so their results are the genome scan\'s and a --genome scan can reuse them. '
+                        'FiberBrowser\'s view scans print this form')
     p.add_argument('--modules', default=DEFAULT_MODULES,
                    help=f'Comma-separated modules (default {DEFAULT_MODULES}; nfr is an EXPERIMENTAL preview)')
     p.add_argument('--parameters', help='JSON {"fp": {...}, "nfr": {...}, "peaks": {...}, "read_policy": {...}}; '
@@ -76,15 +82,15 @@ def main(argv=None):
     return run_reporting_input_errors('fiberhmm-scan', lambda: _main(argv))
 
 
-def _parse_region(parser, value):
+def _parse_region(parser, value, flag='--region'):
     chrom, sep, span = value.rpartition(':')
     a, dash, b = span.replace(',', '').partition('-')
     try:
         a, b = int(a), int(b)
     except ValueError:
-        parser.error(f'--region {value!r}: expected CHROM:START-END (0-based, half-open)')
+        parser.error(f'{flag} {value!r}: expected CHROM:START-END (0-based, half-open)')
     if not (sep and chrom and dash) or a < 0 or b <= a:
-        parser.error(f'--region {value!r}: expected CHROM:START-END with 0 <= START < END')
+        parser.error(f'{flag} {value!r}: expected CHROM:START-END with 0 <= START < END')
     return chrom, a, b
 
 
@@ -137,8 +143,11 @@ def _main(argv=None):
         return 1 if problems else 0
     if not args.output or not (args.bam or args.datasets):
         p.error('give --bam or --datasets, a territory (--genome, --region or --bed) and -o/--output')
-    if not (args.genome or args.region or args.bed):
-        p.error('choose the territory: --genome, --region or --bed')
+    if args.zones and (args.region or args.bed or args.contigs):
+        p.error('--zones selects genome-grid units: use it alone or with --genome, not with --region, --bed or '
+                '--contigs')
+    if not (args.genome or args.region or args.bed or args.zones):
+        p.error('choose the territory: --genome, --zones, --region or --bed')
     if args.contigs and not args.genome:
         p.error('--contigs applies to --genome')
     if args.window_jobs < 0 or args.cores < 1:
@@ -155,8 +164,9 @@ def _main(argv=None):
     if args.datasets:
         datasets = json.loads(Path(args.datasets).read_text())
     else:
-        datasets = [dict(dataset_id=f'dataset_{i + 1}', paths=[str(Path(b).expanduser().resolve())],
-                         chemistry=args.chemistry) for i, b in enumerate(args.bam)]
+        # labelled by canonical order (dataset_<ordinal + 1>, ordinal = rank by content id), not by --bam
+        # position, so a scan with the BAMs listed in another order has the same keys and rows
+        datasets = [dict(paths=[str(Path(b).expanduser().resolve())], chemistry=args.chemistry) for b in args.bam]
     read_policy = dict(params.pop('read_policy', {}) or {})
     from fiberhmm.inference.depth_cap import NAMES
     caps = dict(read_policy.get('caps', {}))
@@ -167,15 +177,16 @@ def _main(argv=None):
         read_policy['caps'] = caps
     if any(m in ('fp', 'nfr') for m in modules):
         from fiberhmm.inference.consensus.cli import check_chemistry
-        check_chemistry(p, datasets)
+        check_chemistry(p, [dict(d, dataset_id=d.get('dataset_id') or Path(d['paths'][0]).name) for d in datasets])
     from fiberhmm.scan.runner import ScanRefused, resolve_datasets
     from fiberhmm.scan.units import PlanError, plan
     try:
         _resolved, reference = resolve_datasets(datasets)
-        units = plan(reference, genome=args.genome,
+        units = plan(reference, genome=args.genome or bool(args.zones),
                      contigs=[c.strip() for c in args.contigs.split(',')] if args.contigs else None,
                      regions=[_parse_region(p, r) for r in args.region] if args.region else None, bed=args.bed,
-                     unit_bp=args.unit_bp, stride_bp=args.stride_bp, grid_offset=args.grid_offset)
+                     unit_bp=args.unit_bp, stride_bp=args.stride_bp, grid_offset=args.grid_offset,
+                     zones=[_parse_region(p, z, '--zones') for z in args.zones] if args.zones else None)
     except (PlanError, ScanRefused) as error:
         p.exit(2, f'fiberhmm-scan: error: {error}\n')
     from fiberhmm.inference.consensus.cli import Progress

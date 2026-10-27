@@ -21,10 +21,11 @@ STATE_CODES = {'1': 1, '0': 2, '.': 3}
 COMMON = ['chrom', 'start', 'end', 'idx_start', 'idx_end']
 HIT_COLUMNS = ['hit_id', 'type', 'anchor', 'strand', 'unit_id', 'score', 'label', 'flags', 'parent_id']
 VALUE_COLUMNS = ['hit_id', 'group', 'group_kind', 'value_name', 'value', 'lo', 'hi', 'n_molecules', 'n_callable']
-STATE_COLUMNS = ['hit_id', 'dataset_id', 'qname', 'record', 'molecule', 'state']
-MARK_COLUMNS = ['group', 'dataset_id', 'qname', 'record', 'molecule', 'mol_start', 'mol_len', 'q', 'name']
-MOLECULE_COLUMNS = ['dataset_id', 'qname', 'record', 'molecule']
-EVIDENCE_COLUMNS = ['evidence_unit', 'dataset_id', 'qname', 'record', 'molecule']
+STATE_COLUMNS = ['hit_id', 'dataset_id', 'input_index', 'qname', 'record', 'molecule', 'state']
+MARK_COLUMNS = ['group', 'dataset_id', 'input_index', 'qname', 'record', 'molecule', 'mol_start', 'mol_len', 'q',
+                'name']
+MOLECULE_COLUMNS = ['dataset_id', 'input_index', 'qname', 'record', 'molecule']
+EVIDENCE_COLUMNS = ['evidence_unit', 'dataset_id', 'input_index', 'qname', 'record', 'molecule']
 UNIT_COLUMNS = ['unit_id', 'zone_start', 'zone_end', 'mode', 'status', 'records']
 CALLABLE_COLUMNS = ['dataset_id', 'min_molecules']
 
@@ -189,7 +190,8 @@ def finalize(out: Path, manifest: dict, datasets, reference: Mapping[str, int], 
                                     continue
                                 seen_evidence[name].add(ekey)
                                 w['units'].add(rec.chrom, rec.ref_start, rec.ref_end,
-                                               [e.evidence_unit, rec.dataset_id, rec.qname, rec.record, rec.molecule])
+                                               [e.evidence_unit, rec.dataset_id, rec.input_index, rec.qname,
+                                                rec.record, rec.molecule])
                 else:
                     zones = []
                     for u in cunits:
@@ -333,8 +335,8 @@ def _emit_states(name, mod, groups, result, unit, keymap, w, ann, tsv_mode):
         a, b = s.interval if s.interval is not None else (hs, he)
         rec = s.record
         if tsv_mode:
-            w['states'].add(chrom, a, b, [hid, rec.dataset_id, rec.qname, rec.record, rec.molecule, s.state]
-                            + [s.columns.get(c) for c in mod.state_columns()])
+            w['states'].add(chrom, a, b, [hid, rec.dataset_id, rec.input_index, rec.qname, rec.record, rec.molecule,
+                                          s.state] + [s.columns.get(c) for c in mod.state_columns()])
         else:
             group = mod.state_groups.get(htype)
             if group is None:
@@ -350,11 +352,12 @@ def _emit_molecule(name, mod, groups, mr, w, ann, tsv_mode):
     if tsv_mode:
         if mr.scalars and 'molecules' in w:
             w['molecules'].add(rec.chrom, rec.ref_start, rec.ref_end,
-                               [rec.dataset_id, rec.qname, rec.record, rec.molecule]
+                               [rec.dataset_id, rec.input_index, rec.qname, rec.record, rec.molecule]
                                + [mr.scalars.get(n) for n in mod.scalar_names()])
         for m in mr.marks:
-            w['marks'].add(m.chrom, m.start, m.end, [m.group, rec.dataset_id, rec.qname, rec.record, rec.molecule,
-                                                     m.mol[0] if m.mol else '', m.mol[1] if m.mol else '',
+            w['marks'].add(m.chrom, m.start, m.end, [m.group, rec.dataset_id, rec.input_index, rec.qname, rec.record,
+                                                     rec.molecule, m.mol[0] if m.mol else '',
+                                                     m.mol[1] if m.mol else '',
                                                      ','.join(str(int(x)) for x in m.q), m.name])
         return
     for g in scalar_groups:
