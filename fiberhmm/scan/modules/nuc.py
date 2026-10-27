@@ -74,7 +74,7 @@ def _p(default, typ, help_):
 
 class NucModule(ScanModuleBase):
     name = 'nuc'
-    version = '2.1'
+    version = '2.2'
     experimental = True
     reconcile = 'stitch'
     max_support_bp = 12_500
