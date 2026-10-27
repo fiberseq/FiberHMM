@@ -404,3 +404,22 @@ def test_padded_empty_zones_are_never_tested_windows():
     runs = territory_runs([(units[0], t, 'ok'), (units[1], None, 'empty')], m.stitch_support_bp(s))
     out = m.stitch('c', [(a, b, lo, hi) for a, b, _x, lo, hi in runs], {k: [x[2][k] for x in runs] for k in t}, s, None)
     assert not out.hits
+
+
+def test_read_ends_outside_segments_are_not_measured(tmp_path):
+    """Reads regular from their first to their last dyad, all at one place:
+    their unsegmented ends must not count as measured-but-not-regular, or the
+    shift null would call the shared middle recurrent (review case)."""
+    from nuc_synth import planted_record_molecule
+    rng = np.random.default_rng(1)
+    path = str(tmp_path / 'ends.bam')
+    with pysam.AlignmentFile(path, 'wb', header=header('c', 30_000)) as out:
+        for i, st in enumerate(sorted(5000 + rng.integers(0, 300, 25))):
+            seq, nucs, msps, marks = planted_record_molecule(rng, 28)
+            out.write(make_record(out, f'r{i}', seq, int(st), nucs, msps, (), marks))
+    pysam.index(path)
+    units = plan({'c': 30_000}, regions=[('c', 5000, 11_000)])
+    run_units([{'dataset_id': 'd', 'paths': [path]}], units, modules=['nuc'],
+              params={'nuc': {'calibration': 'self'}}, out=tmp_path / 'o', annotate=False)
+    hits = read_all(tmp_path / 'o' / 'nuc' / 'hits.tsv.bgz')
+    assert not [h for h in hits if h['type'] == 'nuc.patch.regular']

@@ -1,7 +1,7 @@
 """Regular-rule overlay and disrupted nucleosomes per molecule (NUC 13.1).
 
 **Model-free regular rule.** On the molecule's eligible mono dyads (at least
-8), spacings g, the molecule's NRL (median spacing within 0.7-1.3 x
+7), spacings g, the molecule's NRL (median spacing within 0.7-1.3 x
 NRL_pooled, else NRL_pooled), k = max(1, round(g / NRL)): a spacing fits when
 |g - k NRL| <= ``seg_rule_tol_bp`` and k <= ``seg_rule_max_k`` and no MSP
 longer than ``long_msp_bp`` (NFR territory) lies between its dyads. Runs of
@@ -87,7 +87,7 @@ def rule_runs(mol, fp, nrl_pooled: float, params: NucParams = DEFAULT_PARAMS):
         return np.zeros(0), []
     d = eligible_dyads(mol, nrl_pooled, params, coarse_codes=_nuc_codes(mol, fp))
     cen = d.centres
-    if len(cen) < params.seg_rule_min_spacings + 2:
+    if len(cen) < params.seg_rule_min_spacings + 1:
         return cen, []
     g = np.diff(cen)
     near = g[(g > 0.7 * nrl_pooled) & (g < 1.3 * nrl_pooled)]
@@ -105,7 +105,8 @@ def rule_runs(mol, fp, nrl_pooled: float, params: NucParams = DEFAULT_PARAMS):
             j += 1
         if ok[i] and j - i + 1 >= params.seg_rule_min_spacings:
             q = float(np.mean(g[i:j + 1] / k[i:j + 1]))
-            out.append((int(cen[i]), int(cen[j + 1]), round(q, 1), j - i + 2))
+            # dyad positions rounded as the decoder's steps round them
+            out.append((int(round(cen[i])), int(round(cen[j + 1])), round(q, 1), j - i + 2))
         i = j + 1
     return cen, out
 
@@ -180,7 +181,9 @@ def overlay_rule(segs: List[Segment], runs, dyads: np.ndarray, track=(),
     if not runs:
         return segs
     low = [(s.start, s.end) for s in segs if s.state == LOWINFO]
-    rule = _union(_subtract([(a, b) for a, b, _q, _n in runs], low))
+    covered = _union((s.start, s.end) for s in segs)
+    # inside the segmented (measurable) stretches only, outside low information
+    rule = _union(_subtract(_subtract([(a, b) for a, b, _q, _n in runs], _subtract([(0, 1 << 40)], covered)), low))
     if not rule:
         return segs
     rule_q = [(a, b, q) for a, b, q, _n in runs]

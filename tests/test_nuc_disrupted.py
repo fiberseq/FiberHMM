@@ -343,3 +343,74 @@ def test_matched_percentile_counts_numerical_ties():
     def ph(c):
         return AnchorPhase('c', 0, 0, 'anchor', 190.0, 10, 50, 0.9, 0.1, 0.8, c, 0.9, 0.0, 0.5)
     assert matched_percentile(ph(0.9999999999999997), [ph(0.9999999999999999)] * 20)['p_dephased'] > 0.9
+
+
+# --- review regressions, round 2 ------------------------------------------------------
+
+def _offset_molecules(n, rng, offset, jitter, anchor=50_000, q=190.0, L=6_000):
+    mols = []
+    for i in range(n):
+        off = offset + rng.normal(0, jitter)
+        start = anchor - L // 2
+        dy = anchor + off + q * np.arange(-(L // 2 - 200) // q, (L // 2 - 200) // q + 1)
+        nucs = [(int(d - 73), int(d + 74)) for d in dy if start + 10 <= d - 73 and d + 74 <= start + L - 10]
+        occ = np.zeros(L, bool)
+        for s, e in nucs:
+            occ[s - start:e - start] = True
+        hits = np.flatnonzero(~occ & (rng.random(L) < 0.5))
+        nn = [(s - start, e - start) for s, e in nucs]
+        mols.append(make_molecule(L, nucs=nn, msps=complement_msps(L, nn), hits=hits, name=f'o{anchor}_{i}',
+                                  chrom='c1', ref_start=start, ref_end=start + L, blocks=np.array([[0, start, L]])))
+    return mols
+
+
+def test_quarter_period_offset_arrays_stay_phased_at_unoriented_anchors():
+    """Folding both sides into one vector cancels an array a quarter period off
+    the anchor; the sides are kept apart (review case)."""
+    from fiberhmm.nuc.dephasing import anchor_phase, dephasing_test
+    from fiberhmm.nuc.phasing import phasing
+    rng = np.random.default_rng(0)
+    cal = flat_calibration()
+    crisp = [anchor_phase(_offset_molecules(20, rng, 47.5, 2, anchor=50_000 + 20_000 * k), ('c1', 50_000 + 20_000 * k, 0), cal)
+             for k in range(8)]
+    noisy = [anchor_phase(_offset_molecules(20, rng, 0.0, 45, anchor=400_000 + 20_000 * k), ('c1', 400_000 + 20_000 * k, 0), cal)
+             for k in range(8)]
+    assert min(a.coherence for a in crisp) > 0.9
+    t = dephasing_test(crisp, noisy, n_perm=500)
+    assert t['p_dephased'] > 0.5 and t['p_more_phased'] < 0.05
+    mols = _offset_molecules(20, rng, 47.5, 2)
+    ph = phasing(mols, [('c1', 50_000, 0)], nrl_pooled=190.0, side='both', seed=1)
+    assert ph.summary.null_p < 0.01 and ph.summary.R > 0.5
+
+
+def test_unoriented_phase_null_is_calibrated():
+    """Molecules with random array offsets: the shift null gives p >= 0.01 in
+    about 99% of loci (a rotation null on folded vectors over-rejected)."""
+    from fiberhmm.nuc.phasing import phasing
+    rng = np.random.default_rng(3)
+    small = 0
+    for k in range(60):
+        mols = []
+        for i in range(12):
+            mols += _offset_molecules(1, rng, rng.uniform(0, 190), 0, anchor=50_000 + 20_000 * k)
+        ph = phasing(mols, [('c1', 50_000 + 20_000 * k, 0)], nrl_pooled=190.0, side='both', seed=k)
+        small += ph.summary.null_p <= 0.05
+    assert small <= 8                              # 3 expected at 5%
+
+
+def test_rule_needs_seven_dyads_and_stays_inside_segments():
+    """Six fitting spacings (seven dyads) make a rule run; its ends sit on the
+    decoder's rounded dyads (no 1 bp slivers); nothing outside the segmented
+    stretches becomes regular."""
+    nucs = [(200 + k * 200, 315 + k * 200) for k in range(7)]
+    L = 2000
+    ms = complement_msps(L, nucs)
+    hits = np.setdiff1d(np.arange(0, L, 2), [x for a, b in nucs for x in range(a, b)])
+    m = make_molecule(L, nucs=nucs, msps=ms, hits=hits)
+    cal = flat_calibration(nrl=200.0, mu=115.0)
+    r = molecule_outputs(m, NucParams(seg_posterior_min=1.01), cal)
+    regs = [s for s in r.segments if s.state == REGULAR]
+    assert regs and all(s.source == 'rule' for s in regs)
+    assert all(s.end - s.start > 2 for s in r.segments)
+    cover = (min(s.start for s in r.segments), max(s.end for s in r.segments))
+    assert all(cover[0] <= s.start and s.end <= cover[1] for s in regs)

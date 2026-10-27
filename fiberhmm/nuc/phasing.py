@@ -14,7 +14,10 @@ Distances are measured along the molecule (molecular bp), before any
 projection. With an orientation, x = o * s_read * (d - a), where s_read is -1
 for reverse reads (molecular coordinates run against the reference); the
 downstream side is x > 0 and the upstream side is reported separately.
-Unoriented anchors fold to |d - a|.
+Unoriented anchors keep the two sides apart: each side's distances |d - a|
+give its own resultant, and the pooled statistic is the sum of the sides'
+resultant magnitudes (folding both sides into one vector would cancel them
+when the array sits a quarter period off the anchor).
 
 **Bins span whole periods**: B_k = [x0 + kP, x0 + (k + K)P) plus a summary of
 ``phase_summary_periods`` periods, so a uniform dyad distribution has zero
@@ -22,9 +25,10 @@ expected resultant. Bins fixed in bp get the uniform expectation subtracted
 instead (:func:`uniform_expectation`).
 
 **Null**: no Rayleigh test (dyads within a molecule are dependent). Each
-molecule gets one uniform phase shift, shared by its appearances at several
-anchors; ``phase_n_null`` draws give
-E_null[R] and the exceedance p. **Period sensitivity** reports the maximum R
+molecule gets one uniform shift of its dyads, shared by its appearances at
+several anchors (it turns the downstream side's vector by +delta and the
+upstream side's by -delta); ``phase_n_null`` draws give E_null[R] and the
+exceedance p. **Period sensitivity** reports the maximum R
 over P +/- ``phase_period_window`` bp.
 """
 from __future__ import annotations
@@ -191,6 +195,35 @@ def resultant_with_null(x_list: Sequence[np.ndarray], lo: float, hi: float, P: f
     return R, phi, int(tot), int(len(uniq)), float(Rn.mean()), float(p)
 
 
+def resultant_with_null_sides(xr_list: Sequence[np.ndarray], xl_list: Sequence[np.ndarray], lo: float,
+                              hi: float, P: float, n_null: int, rng: np.random.Generator, correct: bool = False,
+                              molecule_ids: Optional[Sequence[int]] = None):
+    """Unoriented anchors: R = (|sum V_down| + |sum V_up|) / N with the
+    molecule-level shift null (a shift delta turns V_down by +delta and V_up by
+    -delta). Returns the same tuple as :func:`resultant_with_null`; the phase
+    is the downstream side's."""
+    Vr, Nr = _resultant(xr_list, lo, hi, P, correct)
+    Vl, Nl = _resultant(xl_list, lo, hi, P, correct)
+    tot = Nr.sum() + Nl.sum()
+    if tot == 0:
+        return float('nan'), float('nan'), 0, 0, float('nan'), float('nan')
+    ids = np.arange(len(Vr)) if molecule_ids is None else np.asarray(molecule_ids)
+    use = (Nr + Nl) > 0
+    uniq, inv = np.unique(ids[use], return_inverse=True)
+    Vrm = np.zeros(len(uniq), dtype=complex)
+    Vlm = np.zeros(len(uniq), dtype=complex)
+    np.add.at(Vrm, inv, Vr[use])
+    np.add.at(Vlm, inv, Vl[use])
+    R = (abs(Vrm.sum()) + abs(Vlm.sum())) / tot
+    phi = float(np.angle(Vrm.sum())) if abs(Vrm.sum()) > 0 else float(np.angle(np.conj(Vlm.sum())))
+    shifts = rng.uniform(0, 2 * np.pi, size=(n_null, len(uniq)))
+    rot = np.exp(1j * shifts)
+    Rn = (np.abs((Vrm[None, :] * rot).sum(axis=1)) + np.abs((Vlm[None, :] * np.conj(rot)).sum(axis=1))) / tot
+    tol = 1e-9 * max(1.0, R)
+    p = (1 + int(np.sum(Rn >= R - tol))) / (n_null + 1)
+    return R, phi, int(tot), int(len(uniq)), float(Rn.mean()), float(p)
+
+
 def _osc_fit(x_all: np.ndarray, lo: float, hi: float, P: float) -> Dict[str, float]:
     from scipy.optimize import curve_fit
     if len(x_all) < 50:
@@ -251,6 +284,7 @@ def phasing(molecules: Sequence[NucMolecule], anchors: Sequence[Tuple[str, int, 
     by_chrom: Dict[str, List[int]] = {}
     for i, m in enumerate(molecules):
         by_chrom.setdefault(m.chrom, []).append(i)
+    sided = side == 'both'                 # unoriented: keep the two sides apart
     for ai, (chrom, pos, orient) in enumerate(anchors):
         o = int(orient) if side != 'both' else 0
         for i in by_chrom.get(chrom, []):
@@ -262,7 +296,9 @@ def phasing(molecules: Sequence[NucMolecule], anchors: Sequence[Tuple[str, int, 
             d = dyads.get(id(m)) if dyads is not None else None
             if d is None:
                 d = eligible_dyads(m, nrl_pooled, params).centres
-            x, why = anchor_offsets(m, d, pos, o if o else 0, frame, params)
+            # signed (read strand applied) for unoriented anchors, so the sides
+            # stay apart; oriented anchors as before
+            x, why = anchor_offsets(m, d, pos, 1 if sided else (o if o else 0), frame, params)
             if x is None:
                 excluded[why] = excluded.get(why, 0) + 1
                 continue
@@ -274,19 +310,32 @@ def phasing(molecules: Sequence[NucMolecule], anchors: Sequence[Tuple[str, int, 
             who.append((i, ai))
     results = []
     mol_ids = [i for i, _ai in who]
+    if sided:
+        xr_list = [x[x > 0] for x in x_list]
+        xl_list = [-x[x < 0] for x in x_list]
+        x_list = [np.abs(x) for x in x_list]       # folded, for the oscillation fit and per-molecule theta
     for lo, hi in bins:
-        R, phi, nd, nm, null, p = resultant_with_null(x_list, lo, hi, P, params.phase_n_null, rng,
-                                                      correct_uniform, molecule_ids=mol_ids)
+        if sided:
+            R, phi, nd, nm, null, p = resultant_with_null_sides(xr_list, xl_list, lo, hi, P, params.phase_n_null,
+                                                                rng, correct_uniform, molecule_ids=mol_ids)
+        else:
+            R, phi, nd, nm, null, p = resultant_with_null(x_list, lo, hi, P, params.phase_n_null, rng,
+                                                          correct_uniform, molecule_ids=mol_ids)
         best_R, best_P = R, P
         for Pp in np.arange(P - params.phase_period_window, P + params.phase_period_window + 1, 1.0):
             k = (hi - lo) / P
             lo2 = lo if correct_uniform else params.phase_x0 + (lo - params.phase_x0) / P * Pp
             hi2 = lo2 + k * Pp if not correct_uniform else hi
-            V, N = _resultant(x_list, lo2, hi2, Pp, correct_uniform)
-            if N.sum() > 0:
-                r = abs(V.sum()) / N.sum()
-                if r > best_R:
-                    best_R, best_P = r, float(Pp)
+            if sided:
+                Vr, Nr = _resultant(xr_list, lo2, hi2, Pp, correct_uniform)
+                Vl, Nl = _resultant(xl_list, lo2, hi2, Pp, correct_uniform)
+                Ntot = Nr.sum() + Nl.sum()
+                r = (abs(Vr.sum()) + abs(Vl.sum())) / Ntot if Ntot > 0 else -1.0
+            else:
+                V, N = _resultant(x_list, lo2, hi2, Pp, correct_uniform)
+                r = abs(V.sum()) / N.sum() if N.sum() > 0 else -1.0
+            if r > best_R:
+                best_R, best_P = r, float(Pp)
         results.append(BinResult(lo, hi, R, phi, nd, nm, null, p,
                                  R - null if np.isfinite(R) else float('nan'), best_R, best_P))
     summ = bins[-1]

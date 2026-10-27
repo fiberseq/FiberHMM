@@ -4,18 +4,20 @@ Phasing at an anchor needs two things: molecules that are periodic near the
 anchor, and molecules that share a phase. This module separates them.
 
 For one anchor, each molecule spanning the anchor's summary span (``phase_x0``
-to ``phase_x0 + phase_summary_periods`` periods on either side, folded, or
-downstream when oriented) contributes V_m = sum exp(2 pi i x / P) over its
-observed mono dyads in that span (whole periods, so a uniform dyad
-distribution has zero expectation):
+to ``phase_x0 + phase_summary_periods`` periods on each side of an unoriented
+anchor, or downstream when oriented) contributes per side s a vector
+V_m,s = sum exp(2 pi i x / P) over its observed mono dyads at distance x in
+that span (whole periods, so a uniform dyad distribution has zero
+expectation). The sides are kept apart (folding them into one vector cancels
+them when the array sits a quarter period off the anchor):
 
-- ``R`` = |sum V_m| / N (N dyads), with the large-sample molecule-level phase
-  null E[R] = sqrt(pi/4 sum |V_m|^2) / N, and ``excess`` = R - null;
-- ``coherence`` = |sum V_m| / sum |V_m|: 1 when every molecule has the same
-  phase, about 1/sqrt(n) when phases are random;
-- ``rbar`` = mean over molecules of (|V_m,left| + |V_m,right|) / n_m, the
-  two sides taken separately: within-molecule periodicity, whatever the
-  phase (folding mixes the sides' phases, so it is not used here);
+- ``R`` = sum_s |sum_m V_m,s| / N (N dyads), with the large-sample
+  molecule-level phase null E[R] = sum_s sqrt(pi/4 sum_m |V_m,s|^2) / N, and
+  ``excess`` = R - null;
+- ``coherence`` = sum_s |sum_m V_m,s| / sum_{m,s} |V_m,s|: 1 when every
+  molecule has the same phase, about 1/sqrt(n) when phases are random;
+- ``rbar`` = mean over molecules of sum_s |V_m,s| / n_m: within-molecule
+  periodicity, whatever the phase;
 - ``dispersion_bp`` = P / (2 pi) sqrt(-2 ln coherence): the positional
   spread the coherence implies.
 
@@ -78,7 +80,7 @@ def anchor_phase(molecules, anchor: Tuple[str, int, int], cal, params: NucParams
     P = float(P or (cal.nrl_pooled if cal is not None else 189.0))
     x0 = params.phase_x0
     hi = x0 + params.phase_summary_periods * P
-    V, ns, lams, side_mag = [], [], [], []
+    Vr, Vl, ns, lams = [], [], [], []
     for m in molecules:
         if m.chrom != chrom or not (m.ref_start <= pos - hi and m.ref_end >= pos + hi):
             continue
@@ -96,31 +98,30 @@ def anchor_phase(molecules, anchor: Tuple[str, int, int], cal, params: NucParams
         x, _why = anchor_offsets(m, d, pos, int(orient) or 1, frame, params)
         if x is None:
             continue
-        sides = [x[(x >= x0) & (x < hi)]]
-        if not orient:
-            sides.append(-x[(-x >= x0) & (-x < hi)])
-        sel = np.concatenate(sides)
-        if not len(sel):
+        down = x[(x >= x0) & (x < hi)]
+        up = -x[(-x >= x0) & (-x < hi)] if not orient else np.zeros(0)
+        if not (len(down) + len(up)):
             continue
-        V.append(np.exp(2j * np.pi * sel / P).sum())
-        ns.append(len(sel))
-        side_mag.append(sum(abs(np.exp(2j * np.pi * s_ / P).sum()) for s_ in sides if len(s_)))
+        Vr.append(np.exp(2j * np.pi * down / P).sum())
+        Vl.append(np.exp(2j * np.pi * up / P).sum())
+        ns.append(len(down) + len(up))
         lams.append(float(res.scalars.get('lambda_acc', float('nan'))))
     nan = float('nan')
-    if not V:
+    if not ns:
         return AnchorPhase(chrom, int(pos), int(orient), frame, P, 0, 0, nan, nan, nan, nan, nan, nan, nan)
-    V = np.asarray(V)
+    Vr, Vl = np.asarray(Vr), np.asarray(Vl)
     ns = np.asarray(ns, float)
     N = float(ns.sum())
-    S = float(abs(V.sum()))
-    tot = float(np.abs(V).sum())
-    var = float(np.sum(np.abs(V) ** 2))
+    S = float(abs(Vr.sum()) + abs(Vl.sum()))
+    mags = np.abs(Vr) + np.abs(Vl)
+    tot = float(mags.sum())
     R = S / N
-    null = float(np.sqrt(np.pi / 4.0 * var) / N)
+    null = float((np.sqrt(np.pi / 4.0 * np.sum(np.abs(Vr) ** 2)) +
+                  np.sqrt(np.pi / 4.0 * np.sum(np.abs(Vl) ** 2))) / N)
     coh = min(1.0, S / tot) if tot > 0 else nan            # rounding can push S / tot past 1
     disp = float(P / (2 * np.pi) * np.sqrt(-2 * np.log(coh))) if 0 < coh < 1 else (0.0 if coh == 1 else nan)
-    return AnchorPhase(chrom, int(pos), int(orient), frame, P, len(V), int(N), R, null, R - null, coh,
-                       float(np.mean(np.asarray(side_mag) / ns)), disp, float(np.nanmedian(lams)))
+    return AnchorPhase(chrom, int(pos), int(orient), frame, P, len(ns), int(N), R, null, R - null, coh,
+                       float(np.mean(mags / ns)), disp, float(np.nanmedian(lams)))
 
 
 def _strata(values: np.ndarray, n: int) -> np.ndarray:

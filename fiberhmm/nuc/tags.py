@@ -190,7 +190,7 @@ def ma_group_declarations() -> List[dict]:
 
 
 def contract_lines(calibration_digest: str = '', params_digest: str = '',
-                   calls_program: str = '', module_version: str = '1.0',
+                   calls_program: str = '', module_version: str = '2.0',
                    scan_id: str = '') -> List[str]:
     """``@CO FIBERHMM-SCAN-MA:v1:`` lines for the three groups."""
     from fiberhmm.io.scan_ma import scan_contract_line
@@ -243,6 +243,9 @@ def record_calls_digest(read) -> Optional[str]:
         fp = _footprints_from_ma(read, ctx, length)
     if fp is None:          # no MA, or an MA without footprint groups
         fp = _footprints_from_legacy(read, ctx, int(read.query_length or 0))
+        if fp is None and tags is not None:
+            # an MA with no calls at all: the digest of no calls
+            return _digest(_Calls(np.zeros((0, 2)), np.zeros((0, 2)), np.zeros((0, 2))))
     if fp is None or isinstance(fp, str):
         return None
     return _digest(_Calls(fp['nuc'], fp['tf'], fp['msp']))

@@ -303,3 +303,23 @@ def test_reader_refuses_other_group_versions_and_lengths():
     r2.set_tag('AN', '.,nucmol')
     g2 = read_nuc_groups(r2)['nucmol']
     assert g2['unsupported'] and g2['stale'] and 'scalars' not in g2
+
+
+def test_records_without_calls_read_back_current_and_contracts_declare_v2():
+    import pysam
+    import tempfile
+    import os
+    from nuc_synth import flat_calibration, header, make_record
+    from fiberhmm.nuc.molecule import molecule_outputs
+    from fiberhmm.nuc.records import make_molecule
+    from fiberhmm.nuc.tags import annotate_header, annotate_record, contract_lines, read_nuc_groups
+    assert all('"module_version":"2.0"' in line for line in contract_lines())
+    h = annotate_header(pysam.AlignmentHeader.from_dict(header('c', 5000)), 'a' * 64, 'b' * 64)
+    path = os.path.join(tempfile.mkdtemp(), 'none.bam')
+    with pysam.AlignmentFile(path, 'wb', header=h) as out:
+        r = make_record(out, 'r0', 'ACGT' * 500, 0, (), (), (), [20, 60])
+        annotate_record(r, molecule_outputs(make_molecule(2000, hits=[20, 60]), cal=flat_calibration()))
+        out.write(r)
+    with pysam.AlignmentFile(path, 'rb') as inp:
+        g = read_nuc_groups(next(inp))
+    assert not g['nucmol']['stale']

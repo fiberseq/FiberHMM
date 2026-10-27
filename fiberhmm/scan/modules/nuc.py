@@ -15,8 +15,9 @@ Wraps :mod:`fiberhmm.nuc` (NUC design; feature-hub CONTRACTS 11):
   group (``all``, each dataset, each dataset haplotype): molecules with a
   regular / disordered / undetermined / low-information segment and with an
   undersized run or a missing nucleosome at each base, the measured
-  denominator (aligned and not low-information) and the summed q-hat of
-  regular segments. Two fixed genome grids, each window written by the zone
+  denominator (aligned, inside a decoded segment, not low-information: read
+  ends beyond the outer dyads and NFR-length MSPs are not measured) and the
+  summed q-hat of regular segments. Two fixed genome grids, each window written by the zone
   holding its start: phased windows (``phase_window_bp`` every
   ``phase_step_bp``, from molecular distances to the window start, so indels
   never stretch a phase; resultant, null, p, period and the coherence of the
@@ -342,7 +343,12 @@ class NucModule(ScanModuleBase):
                             env = mol.mol_interval_to_ref(ev.start, ev.end)
                             if env is not None and env[1] > env[0]:
                                 kind_ref['uds' if ev.kind == 16 else 'mis'].append((int(env[0]), int(env[1])))
-                        measured = _subtract_iv(blocks, kind_ref['low'])
+                        # measured: aligned bases inside decoded segments, outside
+                        # low information (read ends beyond the outer dyads and
+                        # NFR-length MSPs are not segmented, so not measured)
+                        seg_cov = _union_iv(kind_ref['reg'] + kind_ref['dis'] + kind_ref['und'])
+                        measured = _intersect_iv(_union_iv(blocks), seg_cov)
+                        measured = _subtract_iv(measured, kind_ref['low'])
                         cov = mask(blocks)
                         meas = mask(measured)
                         kmask = {k: mask(kind_ref[k]) for k in SEG_METRICS}
@@ -683,6 +689,32 @@ def calibration_regions(units, n_windows: int, has_records=None) -> List[Tuple[s
     elif n_windows:
         windows = windows[:n_windows]
     return sorted((c, s0, e0) for _h, c, s0, e0 in windows)
+
+
+def _union_iv(iv) -> List[Tuple[int, int]]:
+    out: List[List[int]] = []
+    for a, b in sorted((int(a), int(b)) for a, b in iv if b > a):
+        if out and a <= out[-1][1]:
+            out[-1][1] = max(out[-1][1], b)
+        else:
+            out.append([a, b])
+    return [(a, b) for a, b in out]
+
+
+def _intersect_iv(a_iv, b_iv) -> List[Tuple[int, int]]:
+    """Intersection of two sorted disjoint interval lists."""
+    out, i, j = [], 0, 0
+    while i < len(a_iv) and j < len(b_iv):
+        a0, a1 = a_iv[i]
+        b0, b1 = b_iv[j]
+        lo, hi = max(a0, b0), min(a1, b1)
+        if hi > lo:
+            out.append((lo, hi))
+        if a1 < b1:
+            i += 1
+        else:
+            j += 1
+    return out
 
 
 def _subtract_iv(iv, cut) -> List[Tuple[int, int]]:
