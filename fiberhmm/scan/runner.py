@@ -369,7 +369,9 @@ def run_unit_task(spec: dict) -> dict:
                 # (so a scan extended with new units never reports a record twice).
                 for ds, i, read, sha, occ in overlapping_records(datasets, unit, inputs.read_policy):
                     rec = record_ref(read, ds, i, sha, occ, unit.chrom)
-                    if not molecular_input.setdefault(ds.paths[i], _declares_molecular(ds.paths[i])):
+                    if ds.paths[i] not in molecular_input:
+                        molecular_input[ds.paths[i]] = _declares_molecular(ds.paths[i])
+                    if not molecular_input[ds.paths[i]]:
                         # FullMolecule.read carries molecular-frame annotations (the contract)
                         try:
                             from fiberhmm.io.frame_carry import carry_to_molecular

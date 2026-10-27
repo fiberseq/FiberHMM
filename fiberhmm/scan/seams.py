@@ -188,7 +188,6 @@ def territory_runs(zones: Sequence[Tuple[ScanUnit, Optional[Mapping[str, object]
         i = j + 1
     if not data:
         return []
-    template = zones[data[0][0]][1]
 
     def extend(i, step):
         """Zero padding beyond zone i in direction step: (bases, reached_missing, first_zone_index_used)."""
@@ -233,15 +232,18 @@ def territory_runs(zones: Sequence[Tuple[ScanUnit, Optional[Mapping[str, object]
     out = []
     for r in joined:
         length = r['end'] - r['start']
-        arrays = {name: np.zeros(length, dtype=np.asarray(arr).dtype) for name, arr in template.items()}
-        for k in range(r['a'], r['b'] + 1):
-            if kind[k] != 'ok':
-                continue
+        ok = [k for k in range(r['a'], r['b'] + 1) if kind[k] == 'ok']
+        # each track's common dtype over the run's zones (as concatenation would promote), zero-filled
+        dtypes = {}
+        for k in ok:
+            for name, arr in zones[k][1].items():
+                a = np.asarray(arr)
+                dtypes[name] = a.dtype if name not in dtypes else np.result_type(dtypes[name], a.dtype)
+        arrays = {name: np.zeros(length, dtype=dt) for name, dt in dtypes.items()}
+        for k in ok:
             u, tracks, _st = zones[k]
             lo = u.zone_start - r['start']
             for name, arr in tracks.items():
-                if name not in arrays:
-                    arrays[name] = np.zeros(length, dtype=np.asarray(arr).dtype)
                 arrays[name][lo:lo + (u.zone_end - u.zone_start)] = arr
         out.append((r['start'], r['end'], arrays, bool(r['left_open']), bool(r['right_open'])))
     return out
