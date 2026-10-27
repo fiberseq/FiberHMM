@@ -114,6 +114,7 @@ def finalize(out: Path, manifest: dict, datasets, reference: Mapping[str, int], 
     decls: Dict[str, dict] = {}
     seam_components: Dict[str, int] = {}
     open_ends: Dict[str, int] = {}
+    not_carried: Dict[str, int] = {}
     seams_open = 0
     for name, mod, settings in mods:
         hit_cols = mod.hit_columns()
@@ -235,6 +236,14 @@ def finalize(out: Path, manifest: dict, datasets, reference: Mapping[str, int], 
                 for u in cunits:
                     if status[u.unit_id] != 'done':
                         continue
+                    sk = _unit_dir(out, name, u) / 'skipped.json.gz'
+                    if sk.is_file():
+                        from .types import RecordRef
+                        for item in _read_json(sk):
+                            rec = RecordRef.from_json(item)
+                            owner = index.owner_of_record(rec.chrom, rec.ref_start, max(rec.ref_end, rec.ref_start + 1))
+                            if owner is not None and owner.unit_id == u.unit_id:
+                                not_carried[name] = not_carried.get(name, 0) + 1
                     p = _unit_dir(out, name, u) / 'molecules.json.gz'
                     if not p.is_file():
                         continue
@@ -280,6 +289,10 @@ def finalize(out: Path, manifest: dict, datasets, reference: Mapping[str, int], 
     manifest['status'] = dict(units_total=len(units), units_done=done, units_empty=empty,
                               units_failed=sorted(k for k, v in status.items() if v in ('failed', 'planned')),
                               seams_open=seams_open, seam_components=seam_components, open_ends=open_ends)
+    if not_carried:
+        # records of inputs without a molecular-coordinate declaration whose calls could not be carried into
+        # molecular frame: no molecule-wide output (per module)
+        manifest['status']['records_not_carried'] = dict(sorted(not_carried.items()))
     text = json.dumps(manifest, sort_keys=True, indent=1, default=I._json_default) + '\n'
     tmp = out / '.manifest.json.tmp'
     tmp.write_text(text)

@@ -79,9 +79,12 @@ are listed, so listing the BAMs in another order gives the same scan.
 
 `--annotate` and `--no-annotate` override the default. A scan whose modules
 write no per-molecule results (`--modules peaks`) writes no annotated BAM.
-Annotated BAMs are written only for inputs whose header declares molecular
-coordinates (FiberHMM 2.13.2 or later, fibertools); older inputs get the
-tables. The scan touches no other annotation of a record. An annotated BAM of
+Annotated BAMs are written only when every input's header declares molecular
+coordinates (`coord=molecular`, written by FiberHMM 2.13.2 or later); when one
+does not (older FiberHMM output, or fibertools output that FiberHMM has not
+re-called), the whole scan writes tables. Records whose calls cannot be put
+into molecular frame are counted in the manifest
+(`status.records_not_carried`). The scan touches no other annotation of a record. An annotated BAM of
 a genome scan holds every record of its input; one of a BED or window scan
 holds the records overlapping the units. The scan's `MA` groups:
 

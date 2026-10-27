@@ -287,3 +287,51 @@ def test_short_territories_flag_every_peak_open():
     out = m.stitch('c', [(1000, 1750, True, True)], {'num.0': [num], 'den.0': [den]}, s,
                    {'tier_rule': 'local', 'row_rule': 'records', 'datasets': {'0': 'd'}})
     assert out.hits and all('open_end' in h.flags for h in out.hits)
+
+
+def _seq_frame_bam(path, records):
+    import array
+    import pysam
+    hd = {'HD': {'VN': '1.6', 'SO': 'coordinate'}, 'SQ': [{'SN': 'chrS', 'LN': 20_000}],
+          'PG': [{'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call', 'VN': '2.12.0'}]}     # SEQ frame, no declaration
+    h = pysam.AlignmentHeader.from_dict(hd)
+    out = []
+    for name, flag, start, cigar, seqlen, ns, nl in records:
+        r = pysam.AlignedSegment(h)
+        r.query_name, r.flag, r.reference_id, r.reference_start = name, flag, 0, start
+        r.cigarstring, r.mapping_quality, r.query_sequence = cigar, 60, 'A' * seqlen
+        r.set_tag('ns', array.array('I', ns))
+        r.set_tag('nl', array.array('I', nl))
+        out.append(r)
+    with pysam.AlignmentFile(str(path), 'wb', header=h) as f:
+        for r in sorted(out, key=lambda r: r.reference_start):
+            f.write(r)
+    pysam.index(str(path))
+    return str(path)
+
+
+def test_whole_molecule_legacy_calls_of_reverse_supplementaries_are_carried(tmp_path):
+    """A reverse hard-clipped record of an undeclared (SEQ-frame) input whose legacy calls cover the whole
+    molecule is mirrored against the molecule's length, not dropped (review case); a record whose calls fit
+    neither scope is counted in status.records_not_carried."""
+    import pysam
+    from fiberhmm.scan.runner import _carry_record
+    bam = _seq_frame_bam(tmp_path / 's.bam', [
+        ('m1/1/ccs', 0, 1000, '1000M', 1000, [100, 500], [147, 147]),
+        ('m2/2/ccs', 16, 3000, '1000M', 1000, [100, 500], [147, 147]),
+        ('m3/3/ccs', 0x810, 5000, '500H1000M200H', 1000, [600, 1200], [147, 147]),
+        ('m5/5/ccs', 0x810, 9000, '500H1000M200H', 1000, [600, 1900], [147, 147]),     # beyond the molecule
+    ])
+    with pysam.AlignmentFile(bam) as f:
+        reads = {r.query_name: r for r in f.fetch('chrS')}
+        assert _carry_record(reads['m3/3/ccs'])
+        assert list(reads['m3/3/ccs'].get_tag('ns')) == [1700 - 1200 - 147, 1700 - 600 - 147]
+        assert _carry_record(reads['m2/2/ccs']) and list(reads['m2/2/ccs'].get_tag('ns')) == [1000 - 500 - 147,
+                                                                                               1000 - 100 - 147]
+        assert not _carry_record(reads['m5/5/ccs'])
+    units = plan({'chrS': 20_000}, genome=True, unit_bp=5000, stride_bp=2500)
+    _run(tmp_path / 'scan', [{'paths': [bam]}], units, modules=('molly',))
+    rows = _rows(tmp_path / 'scan' / 'molly' / 'molecules.tsv.bgz')
+    assert sorted(int(r['start']) for r in rows) == [1000, 3000, 5000]
+    m = json.loads((tmp_path / 'scan' / 'manifest.json').read_text())
+    assert m['status']['records_not_carried'] == {'molly': 1}

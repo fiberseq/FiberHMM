@@ -124,6 +124,49 @@ def _declares_molecular(path) -> bool:
         return ma_annotation_frame(bam.header) == 'molecular'
 
 
+def _carry_record(read) -> bool:
+    """Put a record of an input without a molecular-coordinate declaration into molecular frame (in place).
+    False when its calls cannot be carried. A reverse hard-clipped record whose legacy calls cover the whole
+    molecule (fiberhmm-lift's scope rule) is mirrored against the molecule's length, not the stored SEQ's."""
+    from fiberhmm.io.frame_carry import carry_to_molecular
+    original = {t: read.get_tag(t) for t in ('ns', 'nl', 'nq', 'as', 'al', 'aq') if read.has_tag(t)}
+    try:
+        carry_to_molecular(read)
+        return True
+    except (ValueError, OverflowError):
+        pass
+    if not read.is_reverse or not original or read.has_tag('MA') or read.has_tag('Ma'):
+        return False
+    from fiberhmm.io.annotation_frame import MOLECULAR, legacy_frame_of
+    from fiberhmm.io.graph_lift import annotation_scope
+    from fiberhmm.io.ma_tags import flip_interval_frame
+    import array
+    for t, v in original.items():
+        read.set_tag(t, v)
+    ops = read.cigartuples or []
+    stored = int(read.query_length or len(read.query_sequence or ''))
+    hard = sum(n for op, n in ops[:1] + ops[-1:] if op == 5) if len(ops) > 1 else sum(n for op, n in ops if op == 5)
+    total = stored + hard
+    if annotation_scope(read, stored, total) != 'whole':
+        return False
+    if legacy_frame_of(read.header).for_read(read) == MOLECULAR:
+        return True
+    for start_tag, size_tag, score_tag in (('ns', 'nl', 'nq'), ('as', 'al', 'aq')):
+        if not (read.has_tag(start_tag) and read.has_tag(size_tag)):
+            continue
+        scores = list(read.get_tag(score_tag)) if read.has_tag(score_tag) else None
+        rows = []
+        for k, (a, n) in enumerate(zip(read.get_tag(start_tag), read.get_tag(size_tag))):
+            a, n = flip_interval_frame(int(a), int(n), total)
+            rows.append((a, n, scores[k] if scores and k < len(scores) else None))
+        rows.sort(key=lambda r: r[0])
+        read.set_tag(start_tag, array.array('I', [r[0] for r in rows]))
+        read.set_tag(size_tag, array.array('I', [r[1] for r in rows]))
+        if scores is not None and len(scores) == len(rows):
+            read.set_tag(score_tag, array.array('B', [int(r[2]) for r in rows]))
+    return True
+
+
 def resolve_datasets(datasets: Sequence[Mapping[str, Any]]):
     """Datasets in canonical order and the shared reference (contig -> length, header order).
 
@@ -375,6 +418,7 @@ def run_unit_task(spec: dict) -> dict:
             scratch.mkdir()
             result = mod.run_unit(unit, inputs, settings, calibration, upstream, scratch, progress)
             molecules = []
+            skipped = []
             if mod.wants_molecules:
                 # Every record overlapping the unit: molecule-wide outputs do not depend on the unit, and
                 # finalize keeps each record's result from the unit that owns it under the current plan
@@ -383,13 +427,11 @@ def run_unit_task(spec: dict) -> dict:
                     rec = record_ref(read, ds, i, sha, occ, unit.chrom)
                     if ds.paths[i] not in molecular_input:
                         molecular_input[ds.paths[i]] = _declares_molecular(ds.paths[i])
-                    if not molecular_input[ds.paths[i]]:
-                        # FullMolecule.read carries molecular-frame annotations (the contract)
-                        try:
-                            from fiberhmm.io.frame_carry import carry_to_molecular
-                            carry_to_molecular(read)
-                        except (ValueError, OverflowError):
-                            continue
+                    if not molecular_input[ds.paths[i]] and not _carry_record(read):
+                        # FullMolecule.read carries molecular-frame annotations (the contract); a record whose
+                        # calls cannot be carried there is counted (manifest status.records_not_carried)
+                        skipped.append(rec)
+                        continue
                     mr = mod.molecule_outputs(FullMolecule(rec, read, ds), settings, calibration)
                     if mr is not None:
                         molecules.append(mr)
@@ -399,6 +441,8 @@ def run_unit_task(spec: dict) -> dict:
                 _save_tracks(folder, result.tracks)
             _write_json(folder / 'result.json.gz', unit_result_to_json(result))
             _write_json(folder / 'molecules.json.gz', [molecule_result_to_json(x) for x in molecules])
+            if skipped:
+                _write_json(folder / 'skipped.json.gz', [r.to_json() for r in skipped])
             _publish_marker(folder, key, dict(status=result.status, unit=unit.unit_id, module=name))
             module_status[name] = result.status
         return dict(unit=unit.unit_id, index=unit.index, records=survey['records'], status='empty' if empty else 'done',
@@ -663,8 +707,9 @@ def _run_locked(out, resolved, reference, contigs, units, units_info, mods, poli
         if foreign:
             # Scan groups are molecular; writing them into a file whose header does not declare molecular
             # coordinates would need its other annotations carried too. Such inputs get the tables instead.
-            progress.report('scan', f'{len(foreign)} input(s) do not declare molecular coordinates (FiberHMM >= 2.13.2 '
-                                    'or fibertools): per-molecule results are written as tables, not annotated BAMs')
+            progress.report('scan', f'{len(foreign)} input(s) do not declare molecular coordinates in their header '
+                                    '(coord=molecular, written by FiberHMM >= 2.13.2): per-molecule results of every '
+                                    'input are written as tables, not annotated BAMs')
             annotate = False
     summary = finalize(out, manifest, resolved, reference, units, mods, unit_keys, annotate, progress,
                        command=command, calibrations=calibrations)
