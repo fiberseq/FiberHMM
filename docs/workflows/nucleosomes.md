@@ -84,8 +84,12 @@ anchors, the anchor's phase coherence among its matched backgrounds.
 undersized runs or missing nucleosomes recur across molecules more than
 chance. Chance is each read's own calls placed anywhere along the read: a
 test per 500 bp window with an exact null, and Benjamini–Hochberg at FDR 0.1
-per contig. A read that carries a kind end to end gives no positional
-evidence. Phased patches mark windows whose molecules share nucleosome
+per kind over every window the scan tests, on all contigs, so the FDR holds
+for the scan's whole patch list (`enrich_fdr_scope: "contig"` runs it per
+contig instead). The manifest records each kind's threshold and number of
+tested windows (`modules.nuc.scan_statistics`). A smaller scan tests fewer
+windows, so it can select other patches from the same window statistics. A
+read that carries a kind end to end gives no positional evidence. Phased patches mark windows whose molecules share nucleosome
 positions; fuzzy patches mark recurrent arrays whose molecules do not.
 
 ## Calibration
@@ -104,9 +108,14 @@ the λ_acc below which the coarse can't-tell rate exceeds 50%. Thinning is a
 degradation model; it never assigns true lengths.
 
 In a scan, each dataset's calibration population comes from up to 40 fixed
-50 kb windows of the scanned territory that hold its records, taken in a
-stable hash order (`calibration_units`), so the sample does not depend on the
-tiling and a genome scan of targeted data calibrates on the target.
+50 kb windows that hold its records, taken in a stable hash order
+(`calibration_units`) over every contig of the reference that has reads
+(`calibration_scope: "data"`, the default). The sample depends on the data
+only, not on what is scanned: a scan of one window, a genome scan and every
+extension of a browser view scan calibrate alike, so their molecule results
+agree and an extended scan reuses its finished units. A genome scan of
+targeted data calibrates on the target. `calibration_scope: "territory"`
+draws the windows from the scanned territory instead.
 
 ## Tags
 

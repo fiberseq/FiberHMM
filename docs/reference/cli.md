@@ -637,10 +637,11 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 |------|---------|-------------|
 | `--bam` | — | Input BAM (repeat for separate datasets); FiberHMM-called (MA tags from fiberhmm-call/apply). Chemistry from @CO metadata |
 | `--datasets` | — | JSON list of {dataset_id, paths: [BAMs], chemistry?} |
-| `--genome` | off | Scan whole contigs on the fixed grid (see --contigs) |
+| `--genome` | off | Scan whole contigs on the fixed grid (see --contigs and --zones) |
 | `--region` | — | Scan a window (0-based, half-open; repeatable). A window longer than --unit-bp is grid-planned restricted to it |
 | `--bed` | — | BED units (overlapping or touching intervals are merged; longer than --unit-bp: grid-planned inside) |
 | `--contigs` | — | With --genome: comma-separated contigs (default: every contig in the header) |
+| `--zones` | — | Scan only the genome-grid units whose owned zones meet this window (0-based, half-open; repeatable; implies --genome). Units keep their genome-grid spans (not clipped to the window), so their results are the genome scan's and a --genome scan can reuse them. FiberBrowser's view scans print this form |
 | `--modules` | `fp,nfr,peaks` | Comma-separated modules (default fp,nfr,peaks; nfr is an EXPERIMENTAL preview) |
 | `--parameters` | — | JSON {"fp": {...}, "nfr": {...}, "peaks": {...}, "read_policy": {...}}; see --schema |
 | `--chemistry` | — | Chemistry for --bam inputs whose header does not declare one Choices: `ddda`, `dddb`, `hia5-pacbio`, `hia5-nanopore`. |

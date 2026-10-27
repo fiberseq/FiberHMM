@@ -28,6 +28,9 @@ the scan does not call footprints.
 # every contig of the header on the fixed grid (or --contigs chr3)
 fiberhmm-scan --bam out/sample.calls.bam --genome --contigs chr3 --cores 8 -o out/scan
 
+# the genome-grid units whose zones meet a window (FiberBrowser's view scans print this form)
+fiberhmm-scan --bam out/sample.calls.bam --genome --zones chr3:128625000-128725000 -o out/scan_view
+
 # a window or a BED file of units
 fiberhmm-scan --bam out/sample.calls.bam --region chr3:128650000-128700000 -o out/scan_window
 fiberhmm-scan --bam out/sample.calls.bam --bed promoters.bed --modules fp,peaks -o out/scan_promoters
@@ -37,7 +40,9 @@ fiberhmm-scan --bam out/sample.calls.bam --bed promoters.bed --modules fp,peaks 
 separate datasets; group files into datasets with `--datasets datasets.json`
 (`[{"dataset_id": "A", "paths": ["a1.bam", "a2.bam"]}, ...]`). Datasets are
 pooled for discovery, as in `fiberhmm-consensus`, and every result carries
-values per dataset and channel.
+values per dataset and channel. `--bam` datasets are labelled `dataset_1`,
+`dataset_2`, ... in a fixed order (by file content), not in the order they
+are listed, so listing the BAMs in another order gives the same scan.
 
 ## Units, zones and seams
 
@@ -46,6 +51,14 @@ values per dataset and channel.
   25 kb, so every owned base has 12.5 kb of context on both sides. 50 kb is
   the engines' analysis budget (`compute.maximum_region_bp`) and is never
   raised silently.
+- **Zones of the genome grid** (`--zones CHROM:START-END`, repeatable). The
+  genome grid's units whose owned zones meet the window, unchanged: same
+  ids, spans and zones as in a `--genome` scan, so a genome scan can reuse
+  them and they can reuse a genome scan's (see Resuming). A `--region`
+  instead plans its own grid from the window's start, clipped to it. At the
+  edges of a `--zones` scan the grid goes on unscanned: a peak or patch that
+  reaches the edge is flagged `open_end`, and a footprint class or NFR at
+  the edge is kept by its anchor (no neighbour to reconcile with).
 - **BED units and short windows.** Each interval is a unit and owns all of
   itself. Overlapping or touching intervals are merged; an interval longer
   than `--unit-bp` is planned as a grid restricted to it.
@@ -92,17 +105,19 @@ share of reads whose call there is a gap or shorter than 90 bp, smoothed
 over 100 bp, then tiered at 50%, 30%, 15% and 8%. Per-position scores equal
 FiberBrowser's. Two rules make grid scans independent of where units fall:
 
-- **Rare tier.** FiberBrowser's rare threshold is
-  `max(8%, min_reads / reads in the window)`, so it changes with the view
-  (`tier_rule: window`). Grid scans use `local`: a base takes part in the
-  rare tier only where at least `min_reads` molecules are measured. BED and
-  short-window scans keep `window` (the default `auto` picks); set
-  `{"peaks": {"tier_rule": "local"}}` to use the local rule there too.
-- **Rows.** FiberBrowser draws one row per molecule and counts a
-  supplementary alignment only when its primary is out of view, which also
-  depends on the view. Grid scans count every primary and supplementary
-  record (`row_rule: records`); BED and short-window scans keep
-  FiberBrowser's rule.
+- **Rare tier** (`tier_rule`). Every scan uses `local` by default: a base
+  takes part in the rare tier only where at least `min_reads` molecules are
+  measured, which does not depend on the view. FiberBrowser uses the same
+  rule. Its earlier rule, `max(8%, min_reads / reads in the window)`
+  (`window`), changes with the view, so it is accepted for BED and
+  short-window scans only.
+- **Rows** (`row_rule`). Every scan counts every primary and supplementary
+  record by default (`records`). FiberBrowser's earlier rule (`view`: a
+  supplementary counts only when its primary is out of view) depends on the
+  view and is accepted for BED and short-window scans only.
+- `auto` (the default before 3.1) picks `window` and `view` for BED and
+  short-window scans and `local` and `records` for grid scans; it is kept
+  for one release.
 
 Circular contigs (`@SQ TP:circular`) are not scanned for peaks: FiberBrowser
 joins records that run past the contig end with their wrapped tails, which
@@ -119,6 +134,12 @@ computed, and the tables, annotated BAMs and manifest are rebuilt. The
 result is byte-identical to an uninterrupted run. `--continue` refuses a
 command whose inputs, units, read policy or module settings differ; only
 `--cores`, `--window-jobs` and `--json-progress` may change.
+
+A unit's result does not depend on the rest of the plan. The Python API's
+`run_units(..., continue_run=True, extend=True)` (FiberBrowser's live scans)
+runs another plan in the same directory and reuses every unit result whose
+inputs, labels, read policy and module settings match, so extending a view
+scan computes only its new units.
 
 `--json-progress` prints progress as JSON lines on stderr (FiberBrowser's
 job manager reads the same stream).
@@ -145,7 +166,7 @@ scan.values('peaks', 'chr3', 128_600_000, 128_700_000)
 {
   "fp": {"recaller": {"stringency": 0.9}},
   "nfr": {"nfr": {"bootstrap": 200}},
-  "peaks": {"min_reads": 5, "tier_rule": "auto"},
+  "peaks": {"min_reads": 5, "tier_rule": "local"},
   "read_policy": {"callable_min_molecules": 5}
 }
 ```

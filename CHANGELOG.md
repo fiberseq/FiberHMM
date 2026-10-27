@@ -15,7 +15,18 @@
   (`fpcls`, `nfrvar`, `nfrmol`) that survive `fiberhmm-lift`; BED-scoped
   scans and `--no-annotate` write them as tables instead. Seams between
   units are reconciled so each feature is reported once, `--continue`
-  resumes an interrupted scan, and reruns are byte-identical. `--schema`
+  resumes an interrupted scan, and reruns are byte-identical. `--zones`
+  scans the genome grid's units that meet a window, unchanged, so their
+  results are the genome scan's (FiberBrowser's view scans print this
+  form). A unit's result does not depend on the plan, so a scan extended
+  with more units reuses every unit it shares. `--bam` datasets are labelled
+  in a fixed order (by file content), so the order of `--bam` changes
+  nothing. Per-molecule tables name each record's input file
+  (`input_index`). Peaks use the local rare tier and count every record by
+  default, in BED scans too (FiberBrowser's earlier view rules stay
+  available for BED units). `fiberhmm.scan.state_at` gives a record's
+  NFR state (open, closed, not callable) at any position, equal to a scan's
+  states. `--schema`
   lists every parameter; `--inspect` validates a scan directory. See
   [Scanning features genome-wide](https://fiberseq.github.io/FiberHMM/workflows/scanning/)
   and the [scan format](https://fiberseq.github.io/FiberHMM/reference/scan-format/).
@@ -58,11 +69,13 @@
   low-information floor. As the `nuc` module of `fiberhmm-scan` it writes MA
   groups `nucsz`, `nucseg` and `nucmol` and finds patches where arrays,
   disordered spacing, undersized runs or missing nucleosomes recur across
-  molecules (a shift-within-read test with FDR control), plus phased and
-  fuzzy patches. Molecules are decoded with the DAF run mask and DddA CpG
-  policy that `fiberhmm-call` recorded, and scan calibration samples windows
-  that hold each dataset's records, so a genome scan of targeted data
-  calibrates on the target. See
+  molecules (a shift-within-read test with Benjamini-Hochberg control over
+  every window the scan tests), plus phased and fuzzy patches. Molecules
+  are decoded with the DAF run mask and DddA CpG policy that `fiberhmm-call`
+  recorded. Scan calibration samples windows that hold each dataset's
+  records across the reference, so it does not depend on what is scanned: a
+  window scan, its extensions and a genome scan agree, and a genome scan of
+  targeted data calibrates on the target. See
   [Nucleosome sizes and arrays](https://fiberseq.github.io/FiberHMM/workflows/nucleosomes/).
 
 ### Changed
