@@ -414,3 +414,30 @@ def test_rule_needs_seven_dyads_and_stays_inside_segments():
     assert all(s.end - s.start > 2 for s in r.segments)
     cover = (min(s.start for s in r.segments), max(s.end for s in r.segments))
     assert all(cover[0] <= s.start and s.end <= cover[1] for s in regs)
+
+
+
+def test_rule_segments_count_their_terminal_dyads():
+    """A rule run of 7 and of 8 dyads reports 7 and 8 (review case: rounded
+    ends against unrounded centres undercounted)."""
+    cal = flat_calibration(nrl=200.0, mu=115.0)
+    p = NucParams(seg_posterior_min=1.01)
+    for n in (7, 8):
+        nn = [(200 + 200 * k + (k == 7), 315 + 200 * k + (k == 7)) for k in range(n)]
+        m = make_molecule(2400, nucs=nn, msps=complement_msps(2400, nn),
+                          hits=np.setdiff1d(np.arange(0, 2400, 2), [x for a, b in nn for x in range(a, b)]))
+        r = molecule_outputs(m, p, cal)
+        regs = [s for s in r.segments if s.state == REGULAR]
+        assert regs and max(s.n_dyads for s in regs) == n
+
+
+def test_per_molecule_offsets_match_the_pooled_phase_at_unoriented_anchors():
+    """Identical arrays: every molecule sits on the pooled phase (f = 0), with
+    the sides kept apart (review case)."""
+    from fiberhmm.nuc.phasing import phasing
+    ms = [make_molecule(6000, chrom='c', ref_start=0, ref_end=6000, blocks=np.array([[0, 0, 6000]]), name=f'i{k}')
+          for k in range(2)]
+    ds = {id(m): 3030.0 + 200 * np.arange(-14, 15) for m in ms}
+    ph = phasing(ms, [('c', 3000, 0)], P=200, dyads=ds)
+    assert ph.summary.R > 0.99
+    assert all(pm['f_bp'] == pytest.approx(0.0, abs=1e-6) for pm in ph.per_molecule)

@@ -242,7 +242,8 @@ def overlay_rule(segs: List[Segment], runs, dyads: np.ndarray, track=(),
             if q is not None:
                 qsum += q * n
                 qw += n
-        n_dy = int(((dyads >= start) & (dyads <= end)).sum())
+        rd = np.rint(dyads)                      # the decoder's rounded dyad positions
+        n_dy = int(((rd >= start) & (rd <= end)).sum())
         inside = {id(p[3]): p[3].n_steps for p in g
                   if p[3] is not None and p[3].start >= start and p[3].end <= end}
         left = next((s for s in ordered if s.start == start), None)

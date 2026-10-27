@@ -343,18 +343,39 @@ def phasing(molecules: Sequence[NucMolecule], anchors: Sequence[Tuple[str, int, 
     osc = _osc_fit(x_all, summ[0], summ[1], P)
     per_mol = []
     phi_W = results[-1].phi
-    for (i, ai), x in zip(who, x_list):
-        sel = x[(x >= summ[0]) & (x < summ[1])]
-        n = len(sel)
+
+    def sel_of(x):
+        return x[(x >= summ[0]) & (x < summ[1])]
+    if sided:
+        # per side, against that side's pooled phase (the sides' phases differ)
+        def pooled(xs):
+            v = sum(np.exp(2j * np.pi * sel_of(x) / P).sum() for x in xs)
+            return float(np.angle(v)) if abs(v) > 0 else float('nan')
+        phi_side = (pooled(xr_list), pooled(xl_list))
+        pairs = list(zip(who, zip(xr_list, xl_list)))
+    else:
+        pairs = [(w, (x, None)) for w, x in zip(who, x_list)]
+    for (i, ai), (xa, xb) in pairs:
+        sides = [sel_of(xa)] + ([sel_of(xb)] if xb is not None else [])
+        n = int(sum(len(s_) for s_ in sides))
         if n == 0:
             per_mol.append({'molecule': i, 'anchor': ai, 'n': 0, 'r': float('nan'),
                             'theta': float('nan'), 'reliable': False, 'f_bp': float('nan')})
             continue
-        v = np.exp(2j * np.pi * sel / P).sum()
-        r = abs(v) / n
-        th = float(np.angle(v))
+        vs = [np.exp(2j * np.pi * s_ / P).sum() for s_ in sides]
+        r = float(sum(abs(v) for v in vs)) / n
         reliable = bool(r >= params.theta_min_r and n >= params.theta_min_dyads)
-        f = abs(np.angle(np.exp(1j * (th - phi_W)))) * P / (2 * np.pi) if reliable else float('nan')
+        if sided:
+            # theta: the downstream side's phase (the upstream side's mirrored
+            # when the molecule has no downstream dyads); f: the dyad-weighted
+            # offset of each side from its pooled phase
+            th = float(np.angle(vs[0])) if len(sides[0]) else float(np.angle(np.conj(vs[1])))
+            off = [len(s_) * abs(np.angle(np.exp(1j * (np.angle(v) - ph)))) for s_, v, ph in zip(sides, vs, phi_side)
+                   if len(s_) and np.isfinite(ph)]
+            f = (sum(off) / n) * P / (2 * np.pi) if (reliable and off) else float('nan')
+        else:
+            th = float(np.angle(vs[0]))
+            f = abs(np.angle(np.exp(1j * (th - phi_W)))) * P / (2 * np.pi) if reliable else float('nan')
         per_mol.append({'molecule': i, 'anchor': ai, 'n': n, 'r': float(r), 'theta': th,
                         'reliable': reliable, 'f_bp': float(f)})
     Rs = results[-1].R
