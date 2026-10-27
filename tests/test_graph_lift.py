@@ -1238,7 +1238,8 @@ def test_cli_bed_native_lifts_bed12_blocks_and_writes_dropped_rows(tmp_path, cap
                    "srcA\t500\t700\tr1\t0\t+\t500\t700\t0\t2\t50,50\t0,150\t1,2\n")
     out, unl = tmp_path / "out.bed", tmp_path / "unl.bed"
     code = lift.main(["--bed", "-i", str(bed), "-o", str(out), "--map", _lift_map(tmp_path),
-                      "--liftbed", _stub_liftbed(tmp_path / "bin"), "--unlifted", str(unl)])
+                      "--liftbed", _stub_liftbed(tmp_path / "bin"), "--unlifted", str(unl),
+                      "--bed12-partial", "drop"])
     err = capsys.readouterr().err
     assert code == 0, err
     assert "1 of 2 BED12 rows lifted (1 lost a block" in err and "3 of 4 blocks lifted" in err
@@ -1345,7 +1346,8 @@ def test_cli_bed_reads_gzip_bgzip_and_stdin_and_writes_gz(tmp_path, capsys, monk
         with open(out, "rb") as handle:
             assert handle.read(4) == b"\x1f\x8b\x08\x04"        # BGZF (gzip + extra field)
         assert gzip.open(out, "rt").read() == ref
-        assert gzip.open(unl, "rt").read().startswith("#block_no_projection\n")
+        # keep (the default): r1 loses its unliftable block, listed with its reason
+        assert gzip.open(unl, "rt").read().startswith("#partial_no_projection\n")
     monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(gz.read_bytes())))
     assert lift.main(base + ["-i", "-", "-o", str(tmp_path / "stdin.bed")]) == 0
     assert (tmp_path / "stdin.bed").read_text() == ref
@@ -1355,7 +1357,7 @@ def test_cli_bed_reads_gzip_bgzip_and_stdin_and_writes_gz(tmp_path, capsys, monk
     assert "stdin) is for --bed" in capsys.readouterr().err
 
 
-def test_cli_bed12_partial_keep_keeps_lifted_blocks(tmp_path, capsys):
+def test_cli_bed12_partial_keep_is_the_default_and_keeps_lifted_blocks(tmp_path, capsys):
     from fiberhmm.cli import lift
 
     bed = tmp_path / "in.bed"
@@ -1365,7 +1367,11 @@ def test_cli_bed12_partial_keep_keeps_lifted_blocks(tmp_path, capsys):
     out, unl = tmp_path / "out.bed", tmp_path / "unl.bed"
     argv = ["--bed", "-i", str(bed), "-o", str(out), "--map", _lift_map(tmp_path),
             "--liftbed", _stub_liftbed(tmp_path / "bin"), "--unlifted", str(unl)]
+    assert lift.main(argv) == 0                         # keep is the default (owner, 27 Oct)
+    default_out, default_unl = out.read_text(), unl.read_text()
+    capsys.readouterr()
     assert lift.main(argv + ["--bed12-partial", "keep"]) == 0
+    assert (out.read_text(), unl.read_text()) == (default_out, default_unl)
     err = capsys.readouterr().err
     assert "2 of 3 BED12 rows lifted (1 lost a block" in err
     assert "1 rows kept without 1 unliftable blocks" in err
@@ -1378,15 +1384,19 @@ def test_cli_bed12_partial_keep_keeps_lifted_blocks(tmp_path, capsys):
     assert unl.read_text() == ("#block_no_projection\n"
                                "srcB\t1\t50\tr2\t0\t+\t1\t50\t0\t1\t49\t0\t1\n"
                                "#partial_no_projection\nsrcA\t650\t700\tr1|1\t0\t+\n")
-    # The default still drops r1, and keep is for BED12 only.
-    assert lift.main(argv) == 0
+    # drop stays available: it drops r1 whole, listed as a lost block.
+    assert lift.main(argv + ["--bed12-partial", "drop"]) == 0
     assert [l.split("\t")[3] for l in out.read_text().splitlines()] == ["r0"]
+    assert unl.read_text().startswith("#block_no_projection\n") and "#block_no_projection\nsrcA\t500" in unl.read_text()
+    # An explicit keep is for BED12 only; the default leaves plain BED alone.
     peaks = tmp_path / "p.bed"
     peaks.write_text("srcA\t1\t20\n")
+    plain = ["--bed", "-i", str(peaks), "-o", str(out), "--map", _lift_map(tmp_path),
+             "--liftbed", _stub_liftbed(tmp_path / "bin")]
     capsys.readouterr()
-    assert lift.main(["--bed", "-i", str(peaks), "-o", str(out), "--map", _lift_map(tmp_path),
-                      "--liftbed", _stub_liftbed(tmp_path / "bin"), "--bed12-partial", "keep"]) == 2
+    assert lift.main(plain + ["--bed12-partial", "keep"]) == 2
     assert "--bed12-partial keep is for BED12" in capsys.readouterr().err
+    assert lift.main(plain) == 0
 
 
 def test_cli_bed_lifts_narrowpeak_summits_and_thick(tmp_path, capsys):

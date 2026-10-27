@@ -31,8 +31,9 @@
   kept and recorded in `Yq`, the source locus in `Yp`; `--unlifted` writes the
   records that did not lift with their reason in `Yu`. `--repair-only
   --source` repairs a BAM lifted by another vg-based tool. `--bed` lifts
-  BED12 rows block by block (`--bed12-partial keep` keeps a row without its
-  unliftable blocks), narrowPeak summits and thickStart/thickEnd with their
+  BED12 rows block by block (by default a row keeps the blocks that lift and
+  its lost blocks go to `--unlifted` with their reasons; `--bed12-partial
+  drop` drops the whole row instead), narrowPeak summits and thickStart/thickEnd with their
   rows (`--bed-format`), and reads gzip, bgzip or stdin and writes `.gz`. See
   [Lifting to another assembly](https://fiberseq.github.io/FiberHMM/workflows/lifting/).
 - `fiberhmm-check` reports BAMs lifted through a graph without that repair

@@ -208,14 +208,14 @@ fiberhmm-lift --bed -i calls_nucleosome.bed -o calls_nucleosome.grch38.bed \
     becomes empty if it does not lift). For `bed` this applies when every row
     has integer columns 7–8 within the row.
 - **BED12 rows with unliftable blocks** (`--bed12-partial`). By default
-  (`drop`) a row is dropped when one of its blocks does not lift. `keep`
-  keeps the blocks that lift, recomputes blockCount, sizes, starts and the
-  row bounds (per-block columns are subset too), and writes each dropped
-  block to `--unlifted` as a BED6 row in source coordinates, named
-  `<row name>|<block index>`, after a `#partial_<reason>` line. Either way a
-  row is dropped when no block lifts, its blocks land on different contigs,
-  or they come back out of order (`block_no_projection`, `split_contigs`,
-  `rearranged`, ...). Lifting the BAM and running `fiberhmm-extract` on it
+  (`keep`) a row keeps the blocks that lift: blockCount, sizes, starts and
+  the row bounds are recomputed (per-block columns are subset too), and each
+  dropped block goes to `--unlifted` as a BED6 row in source coordinates,
+  named `<row name>|<block index>`, after a `#partial_<reason>` line. With
+  `drop` the whole row is dropped when one of its blocks does not lift
+  (`block_<reason>` in `--unlifted`). Either way a row is dropped when no
+  block lifts, its blocks land on different contigs, or they come back out
+  of order (`block_no_projection`, `split_contigs`, `rearranged`, ...). Lifting the BAM and running `fiberhmm-extract` on it
   gives the same blocks as `keep`, except where the BAM lift splits a
   molecule into a primary and a supplementary (across a large target-only
   gap, say): `keep` writes the blocks of both pieces in one row, while
@@ -232,9 +232,9 @@ fiberhmm-lift --bed -i calls_nucleosome.bed -o calls_nucleosome.grch38.bed \
   0.07–0.5% of nucleosome blocks lifted to less than half their size, and
   1 in 2,000–15,000 to 10 bp or less. `--min-match 0.5` drops intervals of which
   less than half projects, so those remnants are not written; they count as
-  unlifted, and with `--bed12-partial drop` their whole row goes with them.
-  With `--bed12-partial keep`, `--min-match 0.5` drops only the remnant
-  blocks.
+  unlifted. With the default `--bed12-partial keep`, `--min-match 0.5`
+  drops only the remnant blocks; with `--bed12-partial drop` their whole row
+  goes with them.
 - **vg** (fallback: `--engine vg`, or `--graph` without `--map`). The
   source contigs (from `--source-fasta`) are cut into 50 kb reads that
   overlap by half, where intervals lie; `vg inject` puts them on the graph

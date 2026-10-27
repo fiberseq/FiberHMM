@@ -631,7 +631,7 @@ def _block_reasons(path: str) -> dict:
 def _bed_lift(args, work_dir: str) -> int:
     bed_in = materialize_bed(args.input, work_dir)
     fmt, thick = detect_bed_format(bed_in, args.bed_format, args.input)
-    if args.bed12_partial == "keep" and fmt != "bed12":
+    if args.bed12_partial_explicit == "keep" and fmt != "bed12":
         raise LiftError(f"--bed12-partial keep is for BED12 input; {args.input} is read as {fmt}")
     out_tmp = os.path.join(work_dir, "output.bed")
     unl_tmp = os.path.join(work_dir, "unlifted.out.bed") if args.unlifted else None
@@ -861,11 +861,12 @@ Examples:
                              "auto (default): bed12 when every row has 12+ columns, narrowPeak "
                              "for a .narrowPeak[.gz] input or a 'track type=narrowPeak' line, "
                              "else bed")
-    parser.add_argument("--bed12-partial", choices=("drop", "keep"), default="drop",
-                        help="--bed: a BED12 row some of whose blocks do not lift. drop "
-                             "(default): drop the row; keep: keep the blocks that lift "
-                             "(blockCount, sizes, starts and bounds recomputed) when at least "
-                             "one does, and list the dropped blocks in --unlifted")
+    parser.add_argument("--bed12-partial", choices=("drop", "keep"), default=None,
+                        help="--bed: a BED12 row some of whose blocks do not lift. keep "
+                             "(default): keep the blocks that lift (blockCount, sizes, starts "
+                             "and bounds recomputed) when at least one does, and list the "
+                             "dropped blocks in --unlifted with their reasons; drop: drop the "
+                             "whole row")
     parser.add_argument("-g", "--graph", help="Pangenome graph (GBZ) with source and target paths")
     parser.add_argument("-p", "--prefix",
                         help="panSN prefix of the source assembly's paths in the graph, "
@@ -933,8 +934,12 @@ def main(argv=None) -> int:
         parser.error("--unlifted is for the native engine, or --bed")
     if args.source and not args.repair_only:
         parser.error("--source is for --repair-only")
-    if not args.bed and (args.bed_format != "auto" or args.bed12_partial != "drop"):
+    if not args.bed and (args.bed_format != "auto" or args.bed12_partial is not None):
         parser.error("--bed-format and --bed12-partial are for --bed")
+    # keep is the default (owner, 27 Oct 2026); only an explicit keep is refused for non-BED12 input
+    args.bed12_partial_explicit = args.bed12_partial
+    if args.bed12_partial is None:
+        args.bed12_partial = "keep"
     if args.input == "-" and not args.bed:
         parser.error("-i - (stdin) is for --bed")
     for flag, path in (("-i", None if args.input == "-" else args.input), ("--graph", args.graph), ("--map", args.map),
