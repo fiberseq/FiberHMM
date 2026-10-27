@@ -34,26 +34,58 @@ it), spectral SNR, gap CV, ρ_read (marks / informative sites), λ_acc (marks /
 informative sites inside MSPs), class counts and segment fractions. Metrics
 below their minimum window (4 gaps for NRL, 6 for S) are marked too short.
 
-**Segments along each molecule**: regular arrays (with the repeat q̂),
-irregular stretches and low-information stretches, with a sub-rich flag for
-runs dense in short and TF footprints. A factorial HMM over dyad gaps and
-footprint composition decodes them; regular segments need 5 dyads and
-800 bp. Gaps are read on the dyad grid: a can't-tell, short or long call
-between two mono calls hides a dyad, and the run stays regular when the gap
-fits two or three repeats. The regular jitter, the irregular spread and the
-share of hidden dyads come from the dataset's calibration (real arrays jitter
-by 14–17 bp, so the design's 8 bp is kept as a second, tight regular state).
-Low-information segments are where marking is below the calibrated floor or
-nothing can be measured. Long MSPs (> 300 bp) split molecules: they belong to
-the NFR module.
+**Segments along each molecule** partition its measurable stretches into
+four states:
+
+- **regular** (with the repeat q̂): the HMM's posterior P(regular) is at least
+  0.7, **or** the model-free rule holds: at least 6 consecutive spacings of
+  mono dyads, each within 25 bp of one or two repeats of the molecule's NRL;
+- **disordered**: the spacing evidence beats every regular repeat by at least
+  3 nats (under the same edge noise);
+- **undetermined**: neither, for example where dyads are too sparse or hidden;
+- **low-information**: marking below the calibrated floor.
+
+A factorial HMM over dyad gaps decodes the states; regular runs from the HMM
+need 5 dyads and 800 bp. Gaps are read on the dyad grid: a can't-tell, short or
+long call between two mono calls hides a dyad, and the run stays regular when
+the gap fits two or three repeats. The regular jitter, the irregular spread
+and the share of hidden dyads come from the dataset's calibration. Long MSPs
+(> 300 bp) split molecules: they belong to the NFR module. `seg_decode`
+switches the decoder (`threshold`, the default; `viterbi`; `posterior`) and
+`seg_rule` the rule.
+
+**Disrupted nucleosomes**, overlaid on the segments:
+
+- **undersized runs**: stretches where nucleosome-scale footprints well below
+  the density-matched mono size (z ≤ −2; nucleosome calls and TF calls of at
+  least 60 bp) are more common than the dataset's background at that density.
+  Runs are scored by log-likelihood ratio and need 7 nats, so false runs stay
+  at about one per 8,000 footprints whatever the density. No names are given.
+- **missing nucleosomes**: inside a regular array, an open stretch of
+  120–300 bp between two confident nucleosome calls whose dyads are two
+  repeats apart, with marks that favour accessible over protected DNA.
+  Longer openings belong to the NFR module.
+
+**Fuzzy or dephased loci** (at anchors): molecules that stay periodic near an
+anchor but no longer share a phase. `fiberhmm.nuc.dephasing.anchor_phase`
+reports the phase coherence across molecules, the within-molecule periodicity
+and the positional dispersion; `dephasing_test` compares anchors with matched
+background anchors (for example enhancers against control peaks) within
+density and depth strata.
 
 **Window metrics** (a peak, hit, BED row or selection, with an optional
-anchor): class mix, NRL, S, phasing in the anchor frame and in the
-molecule's own frame (the edge of its open region), per observation (dataset,
-haplotype, strand or read set).
+anchor): class mix, NRL, S, state and disruption fractions, phasing in the
+anchor frame and in the molecule's own frame (the edge of its open region),
+per observation (dataset, haplotype, strand or read set). With background
+anchors, the anchor's phase coherence among its matched backgrounds.
 
-**Patches** (scan): regular, irregular, sub-rich and phased stretches where
-the fraction of measured molecules passes a threshold.
+**Patches** (scan): stretches where regular arrays, disordered spacing,
+undersized runs or missing nucleosomes recur across molecules more than
+chance. Chance is each read's own calls placed anywhere along the read: a
+test per 500 bp window with an exact null, and Benjamini–Hochberg at FDR 0.1
+per contig. A read that carries a kind end to end gives no positional
+evidence. Phased patches mark windows whose molecules share nucleosome
+positions; fuzzy patches mark recurrent arrays whose molecules do not.
 
 ## Calibration
 
@@ -79,8 +111,9 @@ tiling and a genome scan of targeted data calibrates on the target.
 
 With annotation the scan writes three MA groups in molecular coordinates:
 `nucsz` (one interval per footprint: coarse code, named code, posterior,
-z), `nucseg` (one per segment: state, posterior, q̂) and `nucmol` (one per
-record: the molecule scalars). See [BAM tags](../reference/bam-tags.md#nucleosome-groups).
+z), `nucseg` (one per segment: state, posterior, q̂; plus one row per
+undersized run or missing nucleosome) and `nucmol` (one per record: the
+molecule scalars). See [BAM tags](../reference/bam-tags.md#nucleosome-groups).
 They survive `fiberhmm-lift`. Any tool that re-calls footprints
 (`fiberhmm-call`, `-apply`, `-recall-tfs`, `-recall-nucs`) drops them,
 because they describe the old calls.
@@ -98,8 +131,8 @@ fiberhmm-scan --bam calls.bam --region chr1:20000000-21000000 --modules nuc \
 ```
 
 The scan directory holds `nuc/hits` (patches: `nuc.patch.regular`,
-`.irregular`, `.sub_rich` and `.phased`), `nuc/values` (per-group patch
-values), `nuc/molecules` (the per-molecule scalars), `nuc/marks` (one row per
+`.disordered`, `.undersized`, `.missing`, `.phased` and `.fuzzy`),
+`nuc/values` (per-group patch values and the test's numbers), `nuc/molecules` (the per-molecule scalars), `nuc/marks` (one row per
 footprint and per segment, when results are written as tables) and
 `nuc/extra/calibration.json`. `fiberhmm-scan --schema` lists the module's
 parameters and defaults. See [scan format](../reference/scan-format.md).

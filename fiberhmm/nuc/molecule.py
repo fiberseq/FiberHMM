@@ -8,6 +8,10 @@ Footprints are the molecule's nucleosome calls and TF calls (the small end
 must read TF calls: recall moves TF-sized footprints to MA ``tf``). Each gets
 lambda_i, z, a coarse call and, with an absolute calibration, a named call.
 Eligible dyads, spacing scalars and segments use nucleosome calls only.
+Segments partition the measurable stretches into regular (decoder OR the
+model-free rule), disordered, undetermined and low-information; disruption
+events (undersized runs, missing nucleosomes; :mod:`fiberhmm.nuc.disrupted`)
+overlay them.
 A molecule whose lambda_acc is below the calibration's low-information floor
 (D8) is flagged, gets one low-information segment and is left out of window
 and patch aggregates (counted there as excluded).
@@ -25,7 +29,10 @@ from fiberhmm.nuc.density import (accessible_counts, edge_informativeness, edge_
                                   footprint_lambdas, rho_read)
 from fiberhmm.nuc.params import DEFAULT_PARAMS, NucParams
 from fiberhmm.nuc.records import NucMolecule
-from fiberhmm.nuc.segment import REGULAR, Segment, lowinfo_segment, segment_molecule
+from fiberhmm.nuc.disrupted import (EVENT_NAMES, Event, missing_nucleosomes, overlay_rule, rule_runs,
+                                    undersized_runs)
+from fiberhmm.nuc.segment import (DISORDERED, REGULAR, UNDETERMINED, Segment, lowinfo_segment,
+                                  segment_molecule)
 from fiberhmm.nuc.sizes import (CANT_TELL, LONG, MONO, MULTI2, MULTI3, SHORT, call_coarse,
                                 call_named)
 from fiberhmm.nuc.spacing import molecule_spacing
@@ -33,7 +40,8 @@ from fiberhmm.nuc.spacing import molecule_spacing
 #: per-molecule scalar names, in their storage order
 SCALARS = ('nrl', 'regularity', 'spectral_snr', 'gap_cv', 'lambda_acc', 'rho_read',
            'n_dyads', 'n_short', 'n_mono', 'n_long', 'n_multi', 'n_cant_tell',
-           'reg_fraction', 'sub_rich_fraction')
+           'reg_fraction', 'disordered_fraction', 'undetermined_fraction', 'undersized_fraction',
+           'n_missing')
 
 
 def calls_digest(mol) -> str:
@@ -111,6 +119,7 @@ class MoleculeResult:
     digest: str
     calibration_digest: str = ''
     record: tuple = field(default_factory=tuple)
+    events: List[Event] = field(default_factory=list)
 
     def scalar_vector(self) -> List[float]:
         return [self.scalars.get(k, float('nan')) for k in SCALARS]
@@ -134,10 +143,20 @@ class MoleculeResult:
                                  'q2': int(round(255 * float(fp['named_posterior'][i])))})
         for s in self.segments:
             rows.append({'type': 'nuc.seg', 'start': s.start, 'end': s.end, 'q1': s.code,
-                         'q2': int(round(255 * s.posterior)), 'q_hat': s.q_hat, 'S': s.regularity,
-                         'n_dyads': s.n_dyads, 'boundary_ci': list(s.boundary_ci),
-                         'comp': 'sub_rich' if s.sub_rich else 'canonical'})
+                         'q2': _pbyte(s.posterior), 'q_hat': s.q_hat, 'S': s.regularity,
+                         'n_dyads': s.n_dyads, 'boundary_ci': list(s.boundary_ci), 'source': s.source})
+        for e in self.events:
+            rows.append({'type': f'nuc.event.{EVENT_NAMES[e.kind]}', 'start': e.start, 'end': e.end,
+                         'q1': e.kind, 'q2': _llr_byte(e.score), 'score': e.score, 'count': e.count})
         return rows
+
+
+def _pbyte(p: float) -> int:
+    return int(round(255 * float(p))) if p is not None and np.isfinite(p) else 0
+
+
+def _llr_byte(llr: float) -> int:
+    return int(max(0, min(255, round(10.0 * float(llr))))) if np.isfinite(llr) else 0
 
 
 def molecule_outputs(mol: NucMolecule, params: NucParams = DEFAULT_PARAMS,
@@ -156,6 +175,7 @@ def molecule_outputs(mol: NucMolecule, params: NucParams = DEFAULT_PARAMS,
     scal['lambda_acc'] = lam_acc
     flags['low_information'] = bool(cal.below_floor(lam_acc))
     segs: List[Segment] = []
+    events: List[Event] = []
     if fp is not None:
         nuc_codes = np.full(len(mol.nucs), CANT_TELL)
         sel = ~fp['is_tf']
@@ -180,17 +200,41 @@ def molecule_outputs(mol: NucMolecule, params: NucParams = DEFAULT_PARAMS,
             if nuc_sel.any():
                 segs = [lowinfo_segment(int(fp['start'][nuc_sel].min()), int(fp['end'][nuc_sel].max()))]
         elif segments:
-            segs, too_short = segment_molecule(mol.length, mol.msps, fp, cal, params)
+            track: list = []
+            segs, too_short = segment_molecule(mol.length, mol.msps, fp, cal, params, step_track=track)
             flags['too_short_segments'] = too_short
+            dyads = dy.centres
+            if segs and not too_short and params.seg_rule:
+                dyads, runs = rule_runs(mol, fp, cal.nrl_pooled, params)
+                segs = overlay_rule(segs, runs, dyads, track)
             for s in segs:
                 if s.state == REGULAR:
                     ssp, _ = molecule_spacing(mol, cal.nrl_pooled, params, coarse_codes=nuc_codes,
                                               window=(s.start - 1, s.end + 1))
                     s.regularity = ssp.regularity
-            if segs and not flags['too_short_segments']:
+            if segs and not too_short:
+                events = undersized_runs(mol, fp, cal, params) + \
+                    missing_nucleosomes(mol, fp, segs, dyads, sp.nrl, cal, params)
                 cov = sum(s.end - s.start for s in segs)
                 if cov > 0:
-                    scal['reg_fraction'] = sum(s.end - s.start for s in segs if s.state == REGULAR) / cov
-                    scal['sub_rich_fraction'] = sum(s.end - s.start for s in segs if s.sub_rich) / cov
+                    def frac(state):
+                        return sum(s.end - s.start for s in segs if s.state == state) / cov
+                    scal['reg_fraction'] = frac(REGULAR)
+                    scal['disordered_fraction'] = frac(DISORDERED)
+                    scal['undetermined_fraction'] = frac(UNDETERMINED)
+                    und = _union_iv([(e.start, e.end) for e in events if e.kind == 16])
+                    scal['undersized_fraction'] = min(1.0, sum(
+                        max(0, min(b, s.end) - max(a, s.start)) for a, b in und for s in segs) / cov)
+                scal['n_missing'] = float(sum(1 for e in events if e.kind == 17))
     return MoleculeResult(mol.name, mol.length, fp, segs, scal, flags, calls_digest(mol),
-                          cal.digest(), mol.record_key())
+                          cal.digest(), mol.record_key(), sorted(events, key=lambda e: (e.start, e.end, e.kind)))
+
+
+def _union_iv(iv):
+    out = []
+    for a, b in sorted(iv):
+        if out and a <= out[-1][1]:
+            out[-1][1] = max(out[-1][1], b)
+        else:
+            out.append([a, b])
+    return out

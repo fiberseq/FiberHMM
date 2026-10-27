@@ -1,10 +1,12 @@
 """nuc as a ScanModule (NUC P-E): a scan unit and a direct API call give
 identical outputs; stitched patches do not depend on the tiling; planted
-regular, irregular and phased stretches are found.
+recurrent arrays and phased stretches are found.
 
-Molecules are cut from one planted reference chromatin map, so arrays are
-phased across molecules: regular 190 bp in [20, 60) kb, irregular in
-[60, 95) kb, regular 172 bp in [95, 130) kb.
+Molecules (8-12 kb) are cut from one planted reference chromatin map, so
+arrays are phased across molecules and recur at the same place: regular
+190 bp in ARRAYS_190, regular 172 bp in ARRAYS_172 (each shorter than a
+read, as in real data: a read regular end to end carries no positional
+evidence under the shift-within-read null), irregular gaps elsewhere.
 """
 from __future__ import annotations
 
@@ -25,14 +27,16 @@ from fiberhmm.scan.tables import read_all
 from fiberhmm.scan.units import plan
 
 LENGTH = 160_000
+ARRAYS_190 = ((20_000, 27_000), (38_000, 45_000), (54_000, 60_000))
+ARRAYS_172 = ((95_000, 102_000), (116_000, 122_000))
 
 
 def _map(rng):
     dyads, pos = [], 2_000.0
     while pos < LENGTH - 2_000:
-        if 20_000 <= pos < 60_000:
+        if any(a <= pos < b for a, b in ARRAYS_190):
             pos += 190 + rng.normal(0, 3)
-        elif 95_000 <= pos < 130_000:
+        elif any(a <= pos < b for a, b in ARRAYS_172):
             pos += 172 + rng.normal(0, 3)
         else:
             pos += rng.uniform(150, 300)
@@ -178,14 +182,19 @@ def test_planted_patches_are_found(tsv_scan):
 
     def covered(rows, a, b):
         return sum(max(0, min(int(h['end']), b) - max(int(h['start']), a)) for h in rows) / (b - a)
-    assert covered(reg, 24_000, 56_000) > 0.6
-    assert covered(reg, 99_000, 126_000) > 0.6
+    for a, b in ARRAYS_190 + ARRAYS_172:
+        assert covered(reg, a + 500, b - 500) > 0.6, (a, b)
     assert covered(reg, 65_000, 90_000) < 0.1
-    q = [float(h['q_hat']) for h in reg if int(h['start']) < 60_000 and h['q_hat']]
+    q = [float(h['q_hat']) for h in reg if int(h['start']) < 61_000 and h['q_hat']]
     assert q and abs(np.median(q) - 190) <= 6
-    q2 = [float(h['q_hat']) for h in reg if int(h['start']) > 95_000 and h['q_hat']]
+    q2 = [float(h['q_hat']) for h in reg if int(h['start']) > 94_000 and h['q_hat']]
     assert q2 and abs(np.median(q2) - 172) <= 6
-    assert covered(phased, 24_000, 56_000) > 0.4
+    assert np.mean([covered(phased, a, b) for a, b in ARRAYS_190]) > 0.4
+    # recurrence patches carry the test's numbers
+    values = read_all(tsv_scan / 'nuc' / 'values.tsv.bgz')
+    pmin = [float(v['value']) for v in values if v['value_name'] == 'p_min']
+    assert pmin and max(pmin) <= 0.1             # every patch holds a BH rejection at FDR 0.1
+    assert not [h for h in hits if h['type'] in ('nuc.patch.irregular', 'nuc.patch.sub_rich')]
     values = read_all(tsv_scan / 'nuc' / 'values.tsv.bgz')
     groups = {v['group'] for v in values}
     assert {'all', 'synth', 'synth:HP1', 'synth:HP2'} <= groups
@@ -242,12 +251,20 @@ def test_molecules_below_the_floor_are_not_measured(tmp_path):
         assert (res.tracks['measured:all'].sum() > 0) == expect_measured
 
 
-def test_stitch_handles_territories_shorter_than_the_smoothing_window():
-    from fiberhmm.scan.modules.nuc import NucModule, _smooth
+def test_stitch_handles_territories_shorter_than_a_window():
+    from fiberhmm.scan.modules.nuc import ENRICH_KINDS, SEG_METRICS, NucModule, _smooth
     m = NucModule()
-    for n in (1, 100, 199, 200, 201):
-        tracks = {k + ':all': [np.zeros(n)] for k in ('measured', 'reg', 'irr', 'sub', 'qsum')}
-        m.stitch('chrS', [(1000, 1000 + n, False, False)], tracks, m.resolve({}), None)
+    for n in (1, 100, 249, 250, 499, 500, 501):
+        tracks = {k + ':all': [np.ones(n)] for k in ('measured',) + SEG_METRICS + ('qsum',)}
+        for kind in ENRICH_KINDS:
+            p = np.full(n, np.nan)
+            p[n - 1] = 1e-9                     # a significant window starting at the last base
+            tracks[f'enr_p:{kind}'] = [p]
+            for name in ('obs', 'exp', 'n'):
+                tracks[f'enr_{name}:{kind}'] = [np.where(np.isfinite(p), 0.5, np.nan)]
+        res = m.stitch('chrS', [(1000, 1000 + n, False, False)], tracks, m.resolve({}), None)
+        pats = [h for h in res.hits if h.type.startswith('nuc.patch.')]
+        assert pats and all(1000 <= h.start < h.end <= 1000 + n for h in pats)
         assert len(_smooth(np.ones(n), 200)) == n
     x = np.zeros(1000)
     x[400:600] = 1.0
@@ -339,3 +356,32 @@ def test_cli_scan_unit_equals_direct_api(scan_bam, tmp_path):
                   for q, (_m, r) in direct.items() for g, (_spec, items) in group_rows(r).items()
                   if g != NUCMOL for s, n, qb, _a in items)
     assert got == want
+
+
+def test_record_probe_skips_filtered_and_uncalled_reads(scan_bam, tmp_path):
+    """The calibration probe looks past any number of filtered records and
+    needs an annotated (called) primary record."""
+    from fiberhmm.scan.modules.nuc import _RecordProbe
+    from fiberhmm.scan.reads import passes, resolve_read_policy
+    filters = resolve_read_policy(None)['filters']
+    path = str(tmp_path / 'probe.bam')
+    with pysam.AlignmentFile(scan_bam) as src:
+        hdr = src.header
+        recs = list(src.fetch(until_eof=True))
+    with pysam.AlignmentFile(path, 'wb', header=hdr) as out:
+        first = recs[0]
+        for k in range(300):                     # duplicates ahead of the called record
+            d = pysam.AlignedSegment.fromstring(first.to_string(), hdr)
+            d.query_name = f'dup{k}'
+            d.is_duplicate = True
+            out.write(d)
+        out.write(first)
+        bare = pysam.AlignedSegment.fromstring(recs[-1].to_string(), hdr)
+        for t in ('MA', 'AQ', 'AN', 'Ma', 'Aq', 'An', 'ns', 'nl', 'as', 'al'):
+            if bare.has_tag(t):
+                bare.set_tag(t, None)
+        out.write(bare)                          # an uncalled read elsewhere
+    pysam.index(path)
+    with _RecordProbe([path], lambda r: passes(r, filters)) as probe:
+        assert probe('chrS', first.reference_start, first.reference_start + 50)
+        assert not probe('chrS', bare.reference_end - 10, bare.reference_end)

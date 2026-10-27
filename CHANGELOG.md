@@ -45,16 +45,23 @@
   density-matched deviation z and a coarse call (short, mono, long, multi(2),
   multi(3+), can't tell); named classes need an absolute control. Each
   molecule gets its repeat length, regularity, gap CV and mark densities, and
-  regular / irregular / low-information segments with a sub-rich flag. Window
-  metrics and phasing (anchor and molecule frames) run per observation. A
-  dataset calibration thins dense molecules and re-calls them with the
-  dataset's caller to set edge noise, the supported density range and the
+  segments: regular (posterior P(regular) >= 0.7 or a model-free spacing
+  rule), disordered (positive spacing evidence only), undetermined and
+  low-information. Disrupted nucleosomes are called on each molecule:
+  undersized footprint runs (against the dataset's density-matched
+  background) and missing nucleosomes inside arrays. Window metrics and
+  phasing (anchor and molecule frames) run per observation, with fuzzy /
+  dephased loci tested against matched background anchors. A dataset
+  calibration thins dense molecules and re-calls them with the dataset's
+  caller to set edge noise, the supported density range and the
   low-information floor. As the `nuc` module of `fiberhmm-scan` it writes MA
-  groups `nucsz`, `nucseg` and `nucmol` and finds regular, irregular,
-  sub-rich and phased patches. Molecules are decoded with the DAF run mask
-  and DddA CpG policy that `fiberhmm-call` recorded, and scan calibration
-  samples windows that hold each dataset's records, so a genome scan of
-  targeted data calibrates on the target. See
+  groups `nucsz`, `nucseg` and `nucmol` and finds patches where arrays,
+  disordered spacing, undersized runs or missing nucleosomes recur across
+  molecules (a shift-within-read test with FDR control), plus phased and
+  fuzzy patches. Molecules are decoded with the DAF run mask and DddA CpG
+  policy that `fiberhmm-call` recorded, and scan calibration samples windows
+  that hold each dataset's records, so a genome scan of targeted data
+  calibrates on the target. See
   [Nucleosome sizes and arrays](https://fiberseq.github.io/FiberHMM/workflows/nucleosomes/).
 
 ### Changed

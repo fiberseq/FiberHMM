@@ -13,20 +13,27 @@ Wraps :mod:`fiberhmm.nuc` (NUC design; feature-hub CONTRACTS 11):
   envelopes) and the ``nucmol`` scalars.
 - ``run_unit``: per-base core tracks over the unit's zone, per observation
   group (``all``, each dataset, each dataset haplotype): molecules with a
-  regular / irregular / low-information / sub-rich segment at each base, the
-  measured denominator (aligned and not low-information) and the summed
-  q-hat of regular segments; plus phased-window statistics on a fixed genome
-  grid (``phase_window_bp`` windows every ``phase_step_bp``), each written by
-  the zone holding the window start, from molecular distances to the window
-  start (indels never stretch a phase). Molecules below the calibration's
-  low-information floor, too short to segment, or with nothing to segment
-  are not measured. Nothing depends on the tiling.
-- ``stitch``: patches from the concatenated tracks: per-base fractions
-  smoothed over ``patch_smooth_bp`` and thresholded (regular 0.5, irregular
-  0.35, sub-rich 0.25 by default), at least ``patch_min_bp`` long with at
-  least ``patch_min_measured`` measured molecules; phased patches where a
-  window's resultant exceeds its null by ``phase_min_excess`` with
-  p < ``phase_max_p``.
+  regular / disordered / undetermined / low-information segment and with an
+  undersized run or a missing nucleosome at each base, the measured
+  denominator (aligned and not low-information) and the summed q-hat of
+  regular segments. Two fixed genome grids, each window written by the zone
+  holding its start: phased windows (``phase_window_bp`` every
+  ``phase_step_bp``, from molecular distances to the window start, so indels
+  never stretch a phase; resultant, null, p, period and the coherence of the
+  molecules' phases) and recurrence windows (``enrich_window_bp`` every
+  ``enrich_step_bp``; the exact shift-within-read null of
+  :mod:`fiberhmm.nuc.enrichment` per kind, pooled over every measured
+  molecule). Molecules below the calibration's low-information floor, too
+  short to segment, or with nothing to segment are not measured. Nothing
+  depends on the tiling.
+- ``stitch``: recurrence patches per kind (regular, disordered, undersized,
+  missing): Benjamini-Hochberg at ``enrich_fdr`` over the contig's windows,
+  significant windows merged; phased patches where a window's resultant
+  exceeds its null by ``phase_min_excess`` with p < ``phase_max_p``; fuzzy
+  patches where a phased window starts inside a recurrent regular patch but
+  its molecules share no phase (null p > ``fuzzy_min_p``, excess below
+  ``phase_min_excess``), scored by the positional dispersion
+  P / (2 pi) sqrt(-2 ln coherence).
 
 Phased windows use the large-sample form of the molecule-level phase
 randomisation null: with V_m the molecule sums, E_null|S| = sqrt(pi/4 sum
@@ -46,9 +53,11 @@ from ..types import (FeatureTypeDecl, Hit, MAGroupDecl, Mark, MoleculeResult, Sc
                      StitchResult, UnitResult, Value)
 
 CAL_SCHEMA = 'fiberhmm.nuc.scan_calibration.v1'
-SEG_METRICS = ('reg', 'irr', 'low', 'sub')
-PATCH_TYPES = (('regular', 'reg', 'patch_tau_regular'), ('irregular', 'irr', 'patch_tau_irregular'),
-               ('sub_rich', 'sub', 'patch_tau_sub_rich'))
+#: per-base tracks: segment states and disruption events
+SEG_METRICS = ('reg', 'dis', 'und', 'low', 'uds', 'mis')
+#: kinds tested for recurrence, and their patch types
+ENRICH_KINDS = ('reg', 'dis', 'uds', 'mis')
+PATCH_KINDS = (('reg', 'regular'), ('dis', 'disordered'), ('uds', 'undersized'), ('mis', 'missing'))
 
 
 def _p(default, typ, help_):
@@ -57,7 +66,7 @@ def _p(default, typ, help_):
 
 class NucModule(ScanModuleBase):
     name = 'nuc'
-    version = '1.0'
+    version = '2.0'
     experimental = True
     reconcile = 'stitch'
     max_support_bp = 12_500
@@ -79,12 +88,13 @@ class NucModule(ScanModuleBase):
                                        'taken in stable-hash order of the absolute window index, for the '
                                        'calibration population (per dataset); 0 = all'),
             'groups': _p('dataset+haplotype', 'str', "observation groups: 'dataset' or 'dataset+haplotype'"),
-            'patch_smooth_bp': _p(200, 'int', 'smoothing window for per-base fractions'),
-            'patch_tau_regular': _p(0.5, 'float', 'regular patch threshold'),
-            'patch_tau_irregular': _p(0.35, 'float', 'irregular patch threshold'),
-            'patch_tau_sub_rich': _p(0.25, 'float', 'sub-rich patch threshold'),
-            'patch_min_bp': _p(800, 'int', 'minimum patch length'),
-            'patch_min_measured': _p(10, 'int', 'minimum measured molecules'),
+            'enrich_window_bp': _p(500, 'int', 'recurrence-test window on the fixed grid'),
+            'enrich_step_bp': _p(250, 'int', 'recurrence-test window step'),
+            'enrich_fdr': _p(0.1, 'float', 'Benjamini-Hochberg FDR of recurrence patches, per contig and kind'),
+            'enrich_levels': _p(10, 'int', 'levels of the per-molecule window score'),
+            'enrich_min_molecules': _p(3, 'int', 'minimum molecules in a tested window'),
+            'patch_min_measured': _p(10, 'int', 'minimum molecules in a phased window'),
+            'fuzzy_min_p': _p(0.2, 'float', 'phase null p above which a window in a regular patch is fuzzy'),
             'phase_window_bp': _p(1200, 'int', 'phased-window length on the fixed grid'),
             'phase_step_bp': _p(200, 'int', 'phased-window step'),
             'phase_min_excess': _p(0.15, 'float', 'R minus null for a phased window'),
@@ -106,6 +116,7 @@ class NucModule(ScanModuleBase):
         post = ScoreDecl('posterior', 'Posterior', 'fraction', 'high', False)
         frac = ScoreDecl('fraction', 'Fraction of measured molecules', 'fraction', 'high', True)
         qh = ScoreDecl('q_hat', 'Repeat length', 'bp', 'none', False)
+        llr = ScoreDecl('llr', 'Log-likelihood ratio', 'nats', 'high', False)
         cols = ('q_hat', 'P', 'width', 'open_end')
         types = [
             FeatureTypeDecl('nuc.size.coarse', 'nuc', 'Footprint size class', 'Footprint size classes', ('mark',),
@@ -114,22 +125,31 @@ class NucModule(ScanModuleBase):
                             'centre', scores=(post,)),
             FeatureTypeDecl('nuc.seg.regular', 'nuc', 'Regular array segment', 'Regular array segments',
                             ('mark',), 'none', scores=(post, qh)),
-            FeatureTypeDecl('nuc.seg.irregular', 'nuc', 'Irregular segment', 'Irregular segments', ('mark',),
-                            'none', scores=(post,)),
+            FeatureTypeDecl('nuc.seg.disordered', 'nuc', 'Disordered spacing', 'Disordered spacing',
+                            ('mark',), 'none', scores=(post,)),
+            FeatureTypeDecl('nuc.seg.undetermined', 'nuc', 'Undetermined spacing', 'Undetermined spacing',
+                            ('mark',), 'none', scores=(post,)),
             FeatureTypeDecl('nuc.seg.low_information', 'nuc', 'Low-information segment',
                             'Low-information segments', ('mark',), 'none', scores=(post,)),
-            FeatureTypeDecl('nuc.seg.sub_rich', 'nuc', 'Sub-rich segment', 'Sub-rich segments', ('mark',),
-                            'none', scores=(post,)),
+            FeatureTypeDecl('nuc.event.undersized', 'nuc', 'Undersized footprint run', 'Undersized footprint runs',
+                            ('mark',), 'none', scores=(llr,)),
+            FeatureTypeDecl('nuc.event.missing', 'nuc', 'Missing nucleosome', 'Missing nucleosomes',
+                            ('mark',), 'centre', scores=(llr,)),
             FeatureTypeDecl('nuc.metric', 'nuc', 'Nucleosome metric', 'Nucleosome metrics', ('scalar',), 'none'),
         ]
-        for t, _m, _k in PATCH_TYPES:
-            types.append(FeatureTypeDecl(f'nuc.patch.{t}', 'nuc', f'{t.replace("_", "-")} patch',
-                                         f'{t.replace("_", "-")} patches', ('hit',), 'centre',
+        for _k, t in PATCH_KINDS:
+            types.append(FeatureTypeDecl(f'nuc.patch.{t}', 'nuc', f'Recurrent {t} patch',
+                                         f'Recurrent {t} patches', ('hit',), 'centre',
                                          scores=(frac, qh) if t == 'regular' else (frac,), columns=cols))
         types.append(FeatureTypeDecl('nuc.patch.phased', 'nuc', 'Phased patch', 'Phased patches', ('hit',),
                                      'centre', scores=(ScoreDecl('R_minus_null', 'Resultant above null',
                                                                  'fraction', 'high', True),
                                                        ScoreDecl('P', 'Period', 'bp', 'none', False)),
+                                     columns=cols))
+        types.append(FeatureTypeDecl('nuc.patch.fuzzy', 'nuc', 'Fuzzy array patch', 'Fuzzy array patches',
+                                     ('hit',), 'centre',
+                                     scores=(ScoreDecl('dispersion_bp', 'Positional dispersion', 'bp', 'high',
+                                                       False), ScoreDecl('P', 'Period', 'bp', 'none', False)),
                                      columns=cols))
         return types
 
@@ -244,14 +264,17 @@ class NucModule(ScanModuleBase):
     # ------------------------------------------------------------------ unit tracks
     def run_unit(self, unit, inputs, settings, calibration, upstream, work: Path, progress) -> UnitResult:
         import pysam
+        from fiberhmm.nuc.enrichment import MeasuredTrack, grid_windows, window_test
         from fiberhmm.nuc.molecule import molecule_outputs as nuc_outputs
         from fiberhmm.nuc.records import decode_record
-        from fiberhmm.nuc.segment import IRREGULAR, LOWINFO, REGULAR
+        from fiberhmm.nuc.segment import DISORDERED, LOWINFO, REGULAR, UNDETERMINED
         from fiberhmm.scan.reads import iter_records
         params = self._params(settings)
         z0, z1 = unit.zone_start, unit.zone_end
         n = z1 - z0
         W, step = int(settings['phase_window_bp']), int(settings['phase_step_bp'])
+        EW, Estep = int(settings['enrich_window_bp']), int(settings['enrich_step_bp'])
+        reach = max(W, EW)
         haps = settings['groups'] == 'dataset+haplotype'
         filters = inputs.read_policy['filters']
         tracks: Dict[str, np.ndarray] = {}
@@ -262,8 +285,18 @@ class NucModule(ScanModuleBase):
                 a = np.zeros(n, dtype=np.float64)
                 tracks[name] = a
             return a
+
+        def mask(ivs):
+            mk = np.zeros(n, dtype=bool)
+            for a, b in ivs:
+                a, b = max(int(a), z0), min(int(b), z1)
+                if b > a:
+                    mk[a - z0:b - z0] = True
+            return mk
         win_starts = [w for w in range((z0 + step - 1) // step * step, z1, step)]
-        phase_mols: Dict[str, List[Tuple[np.ndarray, int, int]]] = {}
+        enr_starts = grid_windows(z0, z1, Estep)
+        phase_mols: Dict[str, List[Tuple[object, np.ndarray, np.ndarray]]] = {}
+        enr_tracks: List[MeasuredTrack] = []
         # a fixed group (and so track) set for every unit: territory runs
         # concatenate tracks by name, zone by zone
         groups_seen = ['all']
@@ -271,6 +304,7 @@ class NucModule(ScanModuleBase):
             groups_seen.append(ds.dataset_id)
             if haps:
                 groups_seen += [f'{ds.dataset_id}:HP1', f'{ds.dataset_id}:HP2']
+        state_key = {REGULAR: 'reg', DISORDERED: 'dis', UNDETERMINED: 'und', LOWINFO: 'low'}
         for ds in inputs.datasets:
             cal = self._cal(calibration, ds.dataset_id)
             for i, path in enumerate(ds.paths):
@@ -278,7 +312,7 @@ class NucModule(ScanModuleBase):
                     if unit.chrom not in bam.references:
                         continue
                     ctx = self._context(ds.dataset_id, i, bam.header, params)
-                    for read, _sha, _occ in iter_records(bam, unit.chrom, z0, z1 + W, filters):
+                    for read, _sha, _occ in iter_records(bam, unit.chrom, z0, z1 + reach, filters):
                         if read.is_supplementary:
                             continue
                         mol, _why = decode_record(read, ctx)
@@ -292,39 +326,47 @@ class NucModule(ScanModuleBase):
                         grp = ['all', ds.dataset_id]
                         if haps and mol.hp in (1, 2):
                             grp.append(f'{ds.dataset_id}:HP{mol.hp}')
-                        # measured = aligned bases minus low-information segments
-                        cov = np.zeros(n, dtype=bool)
-                        if mol.blocks is not None:
-                            for _q0, r0, ln in mol.blocks:
-                                a, b = max(int(r0), z0), min(int(r0 + ln), z1)
-                                if b > a:
-                                    cov[a - z0:b - z0] = True
-                        segmask = {k: np.zeros(n, dtype=bool) for k in SEG_METRICS}
-                        qsum = np.zeros(n)
+                        # reference intervals: aligned blocks; segment and event envelopes
+                        blocks = [(int(r0), int(r0 + ln)) for _q0, r0, ln in mol.blocks] \
+                            if mol.blocks is not None else []
+                        kind_ref: Dict[str, List[Tuple[int, int]]] = {k: [] for k in SEG_METRICS}
+                        q_ref: List[Tuple[int, int, float]] = []
                         for sgm in res.segments:
                             env = mol.mol_interval_to_ref(sgm.start, sgm.end)
-                            if env is None:
+                            if env is None or env[1] <= env[0]:
                                 continue
-                            a, b = max(env[0], z0), min(env[1], z1)
-                            if b <= a:
-                                continue
-                            key = {REGULAR: 'reg', IRREGULAR: 'irr', LOWINFO: 'low'}[sgm.state]
-                            segmask[key][a - z0:b - z0] = True
-                            if sgm.sub_rich:
-                                segmask['sub'][a - z0:b - z0] = True
+                            kind_ref[state_key[sgm.state]].append((int(env[0]), int(env[1])))
                             if sgm.state == REGULAR and sgm.q_hat:
-                                qsum[a - z0:b - z0] = sgm.q_hat
-                        meas = cov & ~segmask['low']
+                                q_ref.append((int(env[0]), int(env[1]), float(sgm.q_hat)))
+                        for ev in res.events:
+                            env = mol.mol_interval_to_ref(ev.start, ev.end)
+                            if env is not None and env[1] > env[0]:
+                                kind_ref['uds' if ev.kind == 16 else 'mis'].append((int(env[0]), int(env[1])))
+                        measured = _subtract_iv(blocks, kind_ref['low'])
+                        cov = mask(blocks)
+                        meas = mask(measured)
+                        kmask = {k: mask(kind_ref[k]) for k in SEG_METRICS}
+                        qsum = np.zeros(n)
+                        for a, b, q in q_ref:
+                            a, b = max(a, z0), min(b, z1)
+                            if b > a:
+                                qsum[a - z0:b - z0] = q
                         for g in grp:
                             arr(f'measured:{g}')[meas] += 1
                             for k in SEG_METRICS:
-                                arr(f'{k}:{g}')[segmask[k] & cov] += 1
-                            arr(f'qsum:{g}')[segmask['reg'] & cov] += qsum[segmask['reg'] & cov]
+                                base = cov if k == 'low' else meas
+                                arr(f'{k}:{g}')[kmask[k] & base] += 1
+                            arr(f'qsum:{g}')[kmask['reg'] & meas] += qsum[kmask['reg'] & meas]
+                        # recurrence test: the molecule's measured bases and kinds
+                        t = MeasuredTrack(measured)
+                        for k in ENRICH_KINDS:
+                            t.set_kind(k, kind_ref[k])
+                        enr_tracks.append(t)
                         # dyads for phased windows: molecular positions of observed mono
                         # dyads (distances are measured along the molecule; the
                         # reference position only decides window membership)
                         fp = res.footprints
-                        if fp is not None and not res.flags.get('low_information'):
+                        if fp is not None:
                             from fiberhmm.nuc.sizes import MONO
                             sel = (fp['coarse'] == MONO) & ~fp['is_tf'] & ~fp['truncated']
                             c = ((fp['start'][sel] + fp['end'][sel]) / 2.0)
@@ -334,8 +376,9 @@ class NucModule(ScanModuleBase):
                                 phase_mols.setdefault(g, []).append((mol, c[ok], ref[ok]))
         # fixed-grid phased windows written by the zone holding the window start
         qgrid = np.arange(165.0, 216.0, 1.0)
+        from fiberhmm.nuc.phasing import uniform_expectation
         for g in groups_seen:
-            Rt, Nt, nullt, logpt, Pt = (np.full(n, np.nan) for _ in range(5))
+            Rt, Nt, nullt, logpt, Pt, Ct = (np.full(n, np.nan) for _ in range(6))
             mols = phase_mols.get(g, [])
             for w in win_starts:
                 xs = []
@@ -356,7 +399,6 @@ class NucModule(ScanModuleBase):
                 # P maximising the mean per-molecule resultant (phase-free)
                 # the window is a fixed W bp, generally not whole periods: remove
                 # the uniform expectation over [0, W) per dyad
-                from fiberhmm.nuc.phasing import uniform_expectation
                 best_p, best = None, -1.0
                 for P in qgrid:
                     eu = uniform_expectation(0.0, float(W), P)
@@ -374,11 +416,31 @@ class NucModule(ScanModuleBase):
                 logpt[k] = -(S * S) / var if var > 0 else 0.0
                 Nt[k] = len(xs)
                 Pt[k] = best_p
+                # coherence of the molecules' phases: 1 all in phase, ~1/sqrt(n) random
+                tot = float(np.abs(V).sum())
+                Ct[k] = S / tot if tot > 0 else np.nan
             tracks[f'phase_R:{g}'] = Rt
             tracks[f'phase_null:{g}'] = nullt
             tracks[f'phase_logp:{g}'] = logpt
             tracks[f'phase_n:{g}'] = Nt
             tracks[f'phase_P:{g}'] = Pt
+            tracks[f'phase_C:{g}'] = Ct
+        # recurrence windows (pooled over every measured molecule): exact
+        # shift-null p per window start, written by the zone holding the start
+        K = int(settings['enrich_levels'])
+        min_mol = int(settings['enrich_min_molecules'])
+        for kind in ENRICH_KINDS:
+            Pv, Ov, Ev, Nv = (np.full(n, np.nan) for _ in range(4))
+            for w in enr_starts:
+                r = window_test(enr_tracks, kind, w, w + EW, K, min_mol)
+                if r is None:
+                    continue
+                k = w - z0
+                Pv[k], Ov[k], Ev[k], Nv[k] = r['p'], r['obs'], r['exp'], r['n']
+            tracks[f'enr_p:{kind}'] = Pv
+            tracks[f'enr_obs:{kind}'] = Ov
+            tracks[f'enr_exp:{kind}'] = Ev
+            tracks[f'enr_n:{kind}'] = Nv
         for g in groups_seen:
             arr(f'measured:{g}')
             for k in SEG_METRICS + ('qsum',):
@@ -387,91 +449,147 @@ class NucModule(ScanModuleBase):
 
     # ------------------------------------------------------------------ stitching
     def stitch_support_bp(self, settings) -> int:
-        """Zero context a stitch run needs: the smoothing window plus one
-        phased window (a phased patch extends a window past its start)."""
-        return int(settings['patch_smooth_bp']) + int(settings['phase_window_bp'])
+        """Zero context a stitch run needs: the longest window that extends past
+        its start (a phased window or a recurrence window)."""
+        return max(int(settings['phase_window_bp']), int(settings['enrich_window_bp']))
 
     def stitch(self, chrom, territory, tracks, settings, calibration) -> StitchResult:
+        from fiberhmm.nuc.enrichment import bh, merge_windows
         out = StitchResult()
         groups = sorted({name.split(':', 1)[1] for name in tracks if name.startswith('measured:')})
         if 'all' not in groups:
             return out
-        smooth = int(settings['patch_smooth_bp'])
-        min_bp = int(settings['patch_min_bp'])
-        min_meas = float(settings['patch_min_measured'])
         W = int(settings['phase_window_bp'])
-        for run_index, (t0, t1, left_open, right_open) in enumerate(territory):
+        EW = int(settings['enrich_window_bp'])
+        q = float(settings['enrich_fdr'])
+
+        def getter(run_index):
             def get(name):
                 arrs = tracks.get(name)
                 if arrs is None or arrs[run_index] is None:
                     return None
                 return np.asarray(arrs[run_index], dtype=float)
-            den_all = get('measured:all')
-            if den_all is None:
+            return get
+
+        def kind_of(g):
+            return 'all' if g == 'all' else ('haplotype' if ':HP' in g else 'dataset')
+        regular_patches: List[Tuple[int, int]] = []
+        # --- recurrence patches: BH over the contig's windows, per kind -----------
+        for kind, ptype in PATCH_KINDS:
+            rows = []                          # (run_index, offset, p, obs, exp, n)
+            for run_index, (t0, t1, _lo, _ro) in enumerate(territory):
+                get = getter(run_index)
+                pv = get(f'enr_p:{kind}')
+                if pv is None:
+                    continue
+                ov, ev, nv = get(f'enr_obs:{kind}'), get(f'enr_exp:{kind}'), get(f'enr_n:{kind}')
+                for off in np.flatnonzero(np.isfinite(pv)):
+                    rows.append((run_index, int(off), float(pv[off]), float(ov[off]), float(ev[off]), int(nv[off])))
+            if not rows:
                 continue
-            sden = _smooth(den_all, smooth)
-            for ptype, metric, tau_key in PATCH_TYPES:
-                num = get(f'{metric}:all')
-                snum = _smooth(num, smooth)
-                with np.errstate(invalid='ignore', divide='ignore'):
-                    frac = np.where(sden > 0, snum / sden, 0.0)
-                ok = (frac >= float(settings[tau_key])) & (den_all >= min_meas)
-                for a, b in _runs(ok):
-                    if b - a < min_bp:
-                        continue
+            rej = bh([r[2] for r in rows], q)
+            n_tests = len(rows)
+            for run_index, (t0, t1, left_open, right_open) in enumerate(territory):
+                get = getter(run_index)
+                sig = [r for r, ok in zip(rows, rej) if ok and r[0] == run_index]
+                if not sig:
+                    continue
+                den_all = get('measured:all')
+                L = len(den_all)
+                for a, b in merge_windows([r[1] for r in sig], EW):
+                    b = min(b, L)
+                    inside = [r for r in sig if a <= r[1] < b]
                     s, e = t0 + a, t0 + b
-                    open_end = (a == 0 and left_open) or (b == len(ok) and right_open)
+                    open_end = (a == 0 and left_open) or (b == L and right_open)
                     vals = []
                     for g in groups:
-                        if get(f'measured:{g}') is None:
+                        dg, ng = get(f'measured:{g}'), get(f'{kind}:{g}')
+                        if dg is None or ng is None:
                             continue
-                        dg, ng = get(f'measured:{g}')[a:b], get(f'{metric}:{g}')[a:b]
+                        dg, ng = dg[a:b], ng[a:b]
                         fg = float(ng.sum() / dg.sum()) if dg.sum() > 0 else None
-                        kind = 'all' if g == 'all' else ('haplotype' if ':HP' in g else 'dataset')
-                        vals.append((g, kind, fg, int(np.median(dg)) if len(dg) else 0))
+                        vals.append((g, kind_of(g), fg, int(np.median(dg)) if len(dg) else 0))
                     qh = None
-                    if metric == 'reg':
+                    if kind == 'reg':
                         qs, rn = get('qsum:all')[a:b].sum(), get('reg:all')[a:b].sum()
                         qh = float(qs / rn) if rn > 0 else None
+                        regular_patches.append((s, e))
+                    p_min = min(r[2] for r in inside)
                     score = vals[[v[0] for v in vals].index('all')][2]
                     key = f'{ptype}:{s}'
                     out.hits.append(Hit(f'nuc.patch.{ptype}', key, chrom, s, e, (s + e) // 2, score=score,
                                         flags=('open_end',) if open_end else (),
                                         columns={'q_hat': '' if qh is None else round(qh, 1), 'P': '',
                                                  'width': e - s, 'open_end': int(open_end)}))
-                    for g, kind, fg, nm in vals:
-                        out.values.append(Value(key, g, kind, 'fraction', fg, n_molecules=nm))
+                    for g, kd, fg, nm in vals:
+                        out.values.append(Value(key, g, kd, 'fraction', fg, n_molecules=nm))
+                    out.values.append(Value(key, 'all', 'all', 'p_min', p_min))
+                    out.values.append(Value(key, 'all', 'all', 'expected_fraction',
+                                            float(np.mean([r[4] for r in inside]))))
+                    out.values.append(Value(key, 'all', 'all', 'observed_fraction',
+                                            float(np.mean([r[3] for r in inside]))))
+                    out.values.append(Value(key, 'all', 'all', 'windows_tested', float(n_tests)))
                     if qh is not None:
                         out.values.append(Value(key, 'all', 'all', 'q_hat', qh))
-            # phased patches: union of qualifying fixed-grid windows
+        # --- phased and fuzzy windows on the fixed grid --------------------------------
+        for run_index, (t0, t1, left_open, right_open) in enumerate(territory):
+            get = getter(run_index)
             R, null, logp, P = get('phase_R:all'), get('phase_null:all'), get('phase_logp:all'), get('phase_P:all')
+            C = get('phase_C:all')
             if R is None:
                 continue
-            good = np.zeros(len(R), dtype=bool)
-            starts = np.flatnonzero(np.isfinite(R) & ((R - null) >= float(settings['phase_min_excess']))
-                                    & (logp <= np.log(float(settings['phase_max_p']))))
-            for k_ in starts:
-                good[k_:min(k_ + W, len(good))] = True
-            for a, b in _runs(good):
-                s, e = t0 + a, t0 + b
-                inwin = [k_ for k_ in starts if a <= k_ < b]
-                key = f'phased:{s}'
-                open_end = (a == 0 and left_open) or (b == len(good) and right_open)
-                ex = float(np.max(R[inwin] - null[inwin]))
-                Pm = float(np.median(P[inwin]))
-                out.hits.append(Hit('nuc.patch.phased', key, chrom, s, e, (s + e) // 2, score=ex,
-                                    flags=('open_end',) if open_end else (),
-                                    columns={'q_hat': '', 'P': round(Pm, 1), 'width': e - s,
-                                             'open_end': int(open_end)}))
-                for g in groups:
-                    Rg, ng = get(f'phase_R:{g}'), get(f'phase_null:{g}')
-                    if Rg is None:
-                        continue
-                    vals = [Rg[k_] - ng[k_] for k_ in inwin if np.isfinite(Rg[k_])]
-                    kind = 'all' if g == 'all' else ('haplotype' if ':HP' in g else 'dataset')
-                    out.values.append(Value(key, g, kind, 'R_minus_null', float(np.max(vals)) if vals else None))
-                out.values.append(Value(key, 'all', 'all', 'P', Pm))
+            excess = R - null
+            fin = np.isfinite(R)
+            phased = fin & (excess >= float(settings['phase_min_excess'])) & \
+                (logp <= np.log(float(settings['phase_max_p'])))
+            # fuzzy: a window starting inside a recurrent regular patch whose
+            # molecules do not share a phase (coherence at the null)
+            in_reg = np.zeros(len(R), dtype=bool)
+            for s_, e_ in regular_patches:
+                a_, b_ = max(s_ - t0, 0), min(e_ - t0, len(R))
+                if b_ > a_:
+                    in_reg[a_:b_] = True
+            fuzzy = fin & in_reg & (logp > np.log(float(settings['fuzzy_min_p']))) & \
+                (excess < float(settings['phase_min_excess']))
+            for ptype, starts_mask in (('phased', phased), ('fuzzy', fuzzy)):
+                starts = np.flatnonzero(starts_mask)
+                if not len(starts):
+                    continue
+                good = np.zeros(len(R), dtype=bool)
+                for k_ in starts:
+                    good[k_:min(k_ + W, len(good))] = True
+                for a, b in _runs(good):
+                    s, e = t0 + a, t0 + b
+                    inwin = [k_ for k_ in starts if a <= k_ < b]
+                    key = f'{ptype}:{s}'
+                    open_end = (a == 0 and left_open) or (b == len(good) and right_open)
+                    Pm = float(np.median(P[inwin]))
+                    if ptype == 'phased':
+                        score = float(np.max(excess[inwin]))
+                    else:
+                        cc = C[inwin] if C is not None else np.array([np.nan])
+                        cm = float(np.nanmedian(cc)) if np.isfinite(cc).any() else float('nan')
+                        score = float(Pm / (2 * np.pi) * np.sqrt(-2 * np.log(cm))) if 0 < cm < 1 else float('nan')
+                    out.hits.append(Hit(f'nuc.patch.{ptype}', key, chrom, s, e, (s + e) // 2, score=score,
+                                        flags=('open_end',) if open_end else (),
+                                        columns={'q_hat': '', 'P': round(Pm, 1), 'width': e - s,
+                                                 'open_end': int(open_end)}))
+                    for g in groups:
+                        Rg, ng, Cg = get(f'phase_R:{g}'), get(f'phase_null:{g}'), get(f'phase_C:{g}')
+                        if Rg is None:
+                            continue
+                        vals = [Rg[k_] - ng[k_] for k_ in inwin if np.isfinite(Rg[k_])]
+                        out.values.append(Value(key, g, kind_of(g), 'R_minus_null',
+                                                float(np.max(vals)) if vals else None))
+                        if Cg is not None:
+                            cs = [Cg[k_] for k_ in inwin if np.isfinite(Cg[k_])]
+                            out.values.append(Value(key, g, kind_of(g), 'coherence',
+                                                    float(np.median(cs)) if cs else None))
+                    out.values.append(Value(key, 'all', 'all', 'P', Pm))
+                    if ptype == 'fuzzy':
+                        out.values.append(Value(key, 'all', 'all', 'dispersion_bp', score))
         return out
+
 
     def scalar_names(self) -> List[str]:
         from fiberhmm.nuc.tags import NUCMOL_CODECS
@@ -493,8 +611,8 @@ CAL_WINDOW_BP = 50_000
 
 
 class _RecordProbe:
-    """``probe(chrom, start, end)``: does any BAM hold a primary record there
-    that passes the read filter (first 200 records looked at)?"""
+    """``probe(chrom, start, end)``: does any BAM hold a primary, annotated
+    record there that passes the read filter?"""
 
     def __init__(self, paths, read_filter=None):
         self.paths, self.read_filter, self.bams = list(paths), read_filter, []
@@ -510,15 +628,14 @@ class _RecordProbe:
         self.bams = []
 
     def __call__(self, chrom, start, end) -> bool:
+        from fiberhmm.scan.reads import has_annotations
         for bam in self.bams:
             if chrom not in bam.references:
                 continue
-            for k, r in enumerate(bam.fetch(chrom, start, end)):
-                if k >= 200:
-                    break
+            for r in bam.fetch(chrom, start, end):
                 if r.is_unmapped or r.is_secondary or r.is_supplementary:
                     continue
-                if self.read_filter is None or self.read_filter(r):
+                if (self.read_filter is None or self.read_filter(r)) and has_annotations(r):
                     return True
         return False
 
@@ -559,6 +676,23 @@ def calibration_regions(units, n_windows: int, has_records=None) -> List[Tuple[s
     elif n_windows:
         windows = windows[:n_windows]
     return sorted((c, s0, e0) for _h, c, s0, e0 in windows)
+
+
+def _subtract_iv(iv, cut) -> List[Tuple[int, int]]:
+    """Intervals ``iv`` minus the union of ``cut`` (both half-open)."""
+    cut = sorted(cut)
+    out = []
+    for a, b in sorted(iv):
+        cur = a
+        for c0, c1 in cut:
+            if c1 <= cur or c0 >= b:
+                continue
+            if c0 > cur:
+                out.append((cur, c0))
+            cur = max(cur, c1)
+        if cur < b:
+            out.append((cur, b))
+    return out
 
 
 def _runs(mask: np.ndarray) -> List[Tuple[int, int]]:

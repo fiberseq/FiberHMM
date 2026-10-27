@@ -10,7 +10,8 @@ from nuc_synth import array_molecule, complement_msps, flat_calibration
 from fiberhmm.nuc.molecule import SCALARS, calls_digest, footprint_calls, molecule_outputs
 from fiberhmm.nuc.params import NucParams
 from fiberhmm.nuc.records import make_molecule
-from fiberhmm.nuc.segment import IRREGULAR, LOWINFO, REGULAR, state_space
+from fiberhmm.nuc.disrupted import MISSING, UNDERSIZED
+from fiberhmm.nuc.segment import DISORDERED, IRREGULAR, LOWINFO, REGULAR, UNDETERMINED, state_space
 from fiberhmm.nuc.sizes import (CANT_TELL, EDGE_TRUNCATED, LONG, MONO, MULTI2, MULTI3, SHORT,
                                 AbsoluteClasses, ReferenceCurve, call_coarse, call_named)
 from fiberhmm.nuc.thinning import calibrate_absolute
@@ -93,24 +94,33 @@ def _segments(mol, cal=None):
     return molecule_outputs(mol, cal=cal)
 
 
-def test_segmentation_recovers_planted_arrays_irregular_and_sub_rich():
+def test_segmentation_recovers_planted_arrays_disorder_and_undersized_runs():
     rng = np.random.default_rng(1)
     m = array_molecule([('reg', 30, 190), ('irr', 20, 0), ('reg', 25, 170), ('sub', 30, 60),
                         ('reg', 3, 190), ('irr', 10, 0)], rng)
     r = _segments(m)
-    states = [(s.state, s.sub_rich, s.q_hat) for s in r.segments]
-    assert states[0] == (REGULAR, False, 190.0)
-    assert states[1][0] == IRREGULAR
-    assert states[2] == (REGULAR, False, 170.0)
-    sub = [s for s in r.segments if s.sub_rich]
-    assert len(sub) == 1 and sub[0].end - sub[0].start >= 800
+    states = [(s.state, s.q_hat) for s in r.segments]
+    assert states[0] == (REGULAR, 190.0)
+    assert states[1][0] == DISORDERED
+    assert states[2] == (REGULAR, 170.0)
+    und = [e for e in r.events if e.kind == UNDERSIZED]
+    assert len(und) == 1 and und[0].end - und[0].start >= 800 and und[0].count >= 10
     # the 3-dyad regular stretch is below the minimum: never a regular segment there
-    tail_start = sub[0].end
+    tail_start = und[0].end
     assert all(s.state != REGULAR for s in r.segments if s.start >= tail_start)
+    # the undersized stretch has no dyads: no spacing evidence, so undetermined
+    mid = (und[0].start + und[0].end) // 2
+    assert [s.state for s in r.segments if s.start <= mid < s.end] == [UNDETERMINED]
     assert r.segments[0].posterior > 0.9 and r.segments[0].n_dyads >= 25
-    assert 0.6 < r.segments[0].boundary[1] <= 1.0
+    # the decoder's change probability at the array's end (absent when the
+    # rule moved the end inside the next decoder segment)
+    if r.segments[0].source == 'hmm':
+        assert 0.6 < r.segments[0].boundary[1] <= 1.0
+    assert r.segments[0].source in ('hmm', 'hmm+rule')
     assert r.segments[0].regularity > 0.3
     assert 0.3 < r.scalars['reg_fraction'] < 0.8
+    assert 0.0 < r.scalars['undersized_fraction'] < 0.5
+    assert 0.0 < r.scalars['disordered_fraction'] < 0.5
 
 
 def test_minimum_regular_segment_is_five_dyads_and_800bp():
@@ -167,7 +177,7 @@ def test_low_information_state_on_cant_tell_runs():
     cal = flat_calibration(sigma_loc={'log_lambda': [np.log(0.5)], 'sigma': [30.0]})
     r = molecule_outputs(mm, cal=cal)
     mid = [s for s in r.segments if s.start <= extra[3][0] < s.end]
-    assert mid and mid[0].state in (LOWINFO, IRREGULAR)
+    assert mid and mid[0].state in (LOWINFO, UNDETERMINED)
     assert mid[0].state != REGULAR
 
 
@@ -255,7 +265,7 @@ def test_segments_partition_the_molecule_around_composition_runs():
         assert a.end <= b.start, (a.as_dict(), b.as_dict())
     from fiberhmm.nuc.window import _seg_fracs
     f = _seg_fracs(segs, 6500, 7500)
-    assert sum(f[k] for k in ('regular', 'irregular', 'low_information')) <= 1.0 + 1e-9
+    assert sum(f[k] for k in ('regular', 'disordered', 'undetermined', 'low_information')) <= 1.0 + 1e-9
 
 
 def test_relabel_compares_orders_with_their_composition_terms():

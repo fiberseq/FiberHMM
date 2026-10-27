@@ -9,10 +9,16 @@ Three groups, molecular coordinates, each self-contained:
     1 small, 2 hexasome, 3 octasome, 4 chromatosome; absolute calibration
     only); Q3 = round(255 x posterior); Q4 = clip(round(20 z + 128), 0, 254),
     255 = missing.
-``nucseg.QQQ``  one interval per segment. Q1 = state (1 regular,
-    2 irregular, 3 low-information; +8 sub-rich); Q2 = round(255 x
-    posterior); Q3 = q-hat - 100 for regular segments, else 0.
-``nucmol.Q x 24``  one whole-molecule interval (AN ``nucmol``) with the per-molecule scalars
+``nucseg.QQQ`` (group version 2)  segment rows and event rows.
+    Segment rows (Q1 < 16) partition the molecule's measurable stretches:
+    Q1 = state (1 regular, 2 disordered, 3 low-information, 4 undetermined);
+    Q2 = round(255 x posterior) (undetermined: the mean P(regular));
+    Q3 = q-hat - 100 for regular segments, else 0. Event rows (Q1 >= 16)
+    overlay the segments: Q1 = 16 undersized run, 17 missing nucleosome;
+    Q2 = round(10 x LLR) capped at 255; Q3 = the run's undersized footprints
+    / the open stretch's marks, capped at 255. (Version 1 had Q1 1 regular,
+    2 irregular, 3 low-information, +8 sub-rich and no event rows.)
+``nucmol.Q x 27`` (group version 2)  one whole-molecule interval (AN ``nucmol``) with the per-molecule scalars
     (:data:`NUCMOL_CODECS`, CONTRACTS 6.4 codec: 1 byte value = offset +
     scale x q with 255 missing; 2 bytes big-endian with 65535 missing).
 
@@ -32,7 +38,9 @@ import numpy as np
 
 NUCSZ, NUCSEG, NUCMOL = 'nucsz', 'nucseg', 'nucmol'
 NUC_GROUPS = (NUCSZ, NUCSEG, NUCMOL)
-GROUP_VERSION = 1
+#: per-group layout versions (nucseg and nucmol changed in version 2)
+GROUP_VERSIONS = {NUCSZ: 1, NUCSEG: 2, NUCMOL: 2}
+EVENT_MIN_CODE = 16
 TF_FLAG = 16
 
 #: (name, nbytes, scale, offset, unit), in byte order
@@ -50,7 +58,10 @@ NUCMOL_CODECS: Tuple[Tuple[str, int, float, float, str], ...] = (
     ('n_multi', 1, 1.0, 0.0, 'count'),
     ('n_cant_tell', 2, 1.0, 0.0, 'count'),
     ('reg_fraction', 1, 0.004, 0.0, 'fraction'),
-    ('sub_rich_fraction', 1, 0.004, 0.0, 'fraction'),
+    ('disordered_fraction', 1, 0.004, 0.0, 'fraction'),
+    ('undetermined_fraction', 1, 0.004, 0.0, 'fraction'),
+    ('undersized_fraction', 1, 0.004, 0.0, 'fraction'),
+    ('n_missing', 1, 1.0, 0.0, 'count'),
     ('flags', 1, 1.0, 0.0, 'bits'),
     ('calls_digest_hi', 2, 1.0, 0.0, 'digest'),
     ('calls_digest_lo', 2, 1.0, 0.0, 'digest'),
@@ -119,11 +130,18 @@ def group_rows(result) -> Dict[str, Tuple[str, List[Tuple[int, int, List[int], s
     rows.sort(key=lambda r: (r[0], r[1]))
     out[NUCSZ] = (SPECS[NUCSZ], [(s, n, q, f'{NUCSZ}@{dg}_{k}') for k, (s, n, q, _a) in enumerate(rows)])
     seg_rows = []
-    for k, s in enumerate(sorted(result.segments, key=lambda x: (x.start, x.end))):
+    for s in result.segments:
         q3 = int(max(0, min(255, round(s.q_hat - 100)))) if s.q_hat is not None else 0
+        p = float(s.posterior)
         seg_rows.append((int(s.start), int(s.end - s.start),
-                         [int(s.code), int(round(255 * float(s.posterior))), q3], f'{NUCSEG}@{dg}_{k}'))
-    out[NUCSEG] = (SPECS[NUCSEG], seg_rows)
+                         [int(s.code), int(round(255 * p)) if np.isfinite(p) else 0, q3]))
+    for e in getattr(result, 'events', ()) or ():
+        llr = float(e.score)
+        seg_rows.append((int(e.start), int(e.end - e.start),
+                         [int(e.kind), int(max(0, min(255, round(10.0 * llr)))) if np.isfinite(llr) else 0,
+                          int(max(0, min(255, e.count)))]))
+    seg_rows.sort(key=lambda r: (r[0], r[1], r[2][0]))
+    out[NUCSEG] = (SPECS[NUCSEG], [(s, n, q, f'{NUCSEG}@{dg}_{k}') for k, (s, n, q) in enumerate(seg_rows)])
     # scalar groups carry their group name as AN (CONTRACTS 6.4); nucmol holds
     # the calls digest in its last four bytes
     out[NUCMOL] = (SPECS[NUCMOL], [(0, int(result.length),
@@ -152,17 +170,16 @@ def ma_group_declarations() -> List[dict]:
     """The three groups as CONTRACTS 3 ``MAGroupDecl``-shaped dicts."""
     from fiberhmm.nuc.sizes import COARSE_NAMES
     return [
-        {'group': NUCSZ, 'group_version': GROUP_VERSION, 'kind': 'mark',
+        {'group': NUCSZ, 'group_version': GROUP_VERSIONS[NUCSZ], 'kind': 'mark',
          'quality_names': ['coarse', 'named', 'posterior', 'z'],
          'state_codes': {str(k): v for k, v in COARSE_NAMES.items()}, 'codecs': [],
          'an': 'nucsz@<calls digest8>_<index>'},
-        {'group': NUCSEG, 'group_version': GROUP_VERSION, 'kind': 'mark',
-         'quality_names': ['state', 'posterior', 'q_hat_minus_100'],
-         'state_codes': {'1': 'regular', '2': 'irregular', '3': 'low_information',
-                         '9': 'regular+sub_rich', '10': 'irregular+sub_rich',
-                         '11': 'low_information+sub_rich'}, 'codecs': [],
+        {'group': NUCSEG, 'group_version': GROUP_VERSIONS[NUCSEG], 'kind': 'mark',
+         'quality_names': ['code', 'posterior_or_llr10', 'q_hat_minus_100_or_count'],
+         'state_codes': {'1': 'regular', '2': 'disordered', '3': 'low_information', '4': 'undetermined',
+                         '16': 'event:undersized', '17': 'event:missing'}, 'codecs': [],
          'an': 'nucseg@<calls digest8>_<index>'},
-        {'group': NUCMOL, 'group_version': GROUP_VERSION, 'kind': 'scalar',
+        {'group': NUCMOL, 'group_version': GROUP_VERSIONS[NUCMOL], 'kind': 'scalar',
          'quality_names': [f'{n}' if nb == 1 else f'{n}[{k}]'
                            for n, nb, *_ in NUCMOL_CODECS for k in range(nb)],
          'state_codes': {},

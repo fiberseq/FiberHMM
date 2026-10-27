@@ -76,8 +76,12 @@ except ImportError:  # pragma: no cover
 
 CATS = ('mono', 'short', 'long', 'multi', 'tf')
 _X_UNIFORM = 1.0 / 2000.0
-REGULAR, IRREGULAR, LOWINFO = 1, 2, 3
-STATE_NAMES = {REGULAR: 'regular', IRREGULAR: 'irregular', LOWINFO: 'low_information'}
+REGULAR, DISORDERED, LOWINFO, UNDETERMINED = 1, 2, 3, 4
+#: the decoder's irregular order; a segment keeps it (as disordered) only with
+#: a positive evidence margin over every regular repeat
+IRREGULAR = DISORDERED
+STATE_NAMES = {REGULAR: 'regular', DISORDERED: 'disordered', LOWINFO: 'low_information',
+               UNDETERMINED: 'undetermined'}
 
 
 def _cat_of(code: int, is_tf: bool) -> int:
@@ -465,7 +469,7 @@ def _comp_loglik(steps: List[Step], comp: dict) -> np.ndarray:
 
 
 def emissions(steps: List[Step], space: StateSpace, cal, params: NucParams = DEFAULT_PARAMS,
-              sigma_loc: float = 0.0) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
+              sigma_loc: float = 0.0, structural_error: float = 0.0) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """Expanded-state log emissions (T, S) and the per-factor parts."""
     T = len(steps)
     nq = space.nq
@@ -486,14 +490,20 @@ def emissions(steps: List[Step], space: StateSpace, cal, params: NucParams = DEF
     for k, wk in enumerate(w, start=1):
         var = k * s2_col + 2.0 * sigma_loc ** 2
         dens_R += wk * np.exp(-0.5 * (g[:, None] - k * q[None, :]) ** 2 / var) / np.sqrt(2 * np.pi * var)
-    if params.seg_irregular == 'empirical':
-        dens_I = _gap_density_fn(cal)(g)
-    else:
-        P = float(cal.nrl_pooled) if cal is not None else 189.0
-        dens_I = np.full(T, 0.05 / 1450.0)
+    P = float(cal.nrl_pooled) if cal is not None else 189.0
+
+    def broad(noise2):
+        d = np.full(T, 0.05 / 1450.0)
         for k, wk in enumerate(w, start=1):
-            var = k * gm['sigma_irregular'] ** 2
-            dens_I += 0.95 * wk * np.exp(-0.5 * (g - k * P) ** 2 / var) / np.sqrt(2 * np.pi * var)
+            var = k * gm['sigma_irregular'] ** 2 + noise2
+            d += 0.95 * wk * np.exp(-0.5 * (g - k * P) ** 2 / var) / np.sqrt(2 * np.pi * var)
+        return d
+    dens_I = _gap_density_fn(cal)(g) if params.seg_irregular == 'empirical' else broad(0.0)
+    # the disorder margin compares the irregular order with every regular
+    # repeat under the same observation noise: the regular columns carry the
+    # molecule's edge noise (2 sigma_loc^2), so the margin's irregular density
+    # does too (the decoder keeps dens_I)
+    dens_Im = dens_I if params.seg_irregular == 'empirical' else broad(2.0 * sigma_loc ** 2)
     dens_X = np.full(T, _X_UNIFORM)
     # Steps touching a virtual dyad (from a multi(m) call) carry no gap
     # evidence: virtual dyads are equally spaced by construction, so they give
@@ -502,6 +512,13 @@ def emissions(steps: List[Step], space: StateSpace, cal, params: NucParams = DEF
     informative = has_gap & observed
     gR = np.where(informative[:, None], np.log(np.maximum(dens_R, 1e-300)), 0.0)
     gI = np.where(informative, np.log(np.maximum(dens_I, 1e-300)), 0.0)
+    gIm = np.where(informative, np.log(np.maximum(dens_Im, 1e-300)), 0.0)
+    # for the disorder margin, regular arrays also hold the caller's structural
+    # errors (merged / split footprints put dyads off the grid) at the
+    # molecule's density: a mixture with the irregular density
+    eps = float(structural_error)
+    gRm = np.where(informative[:, None],
+                   np.log(np.maximum((1 - eps) * dens_R + eps * dens_Im[:, None], 1e-300)), 0.0)
     gX = np.where(informative, np.log(dens_X), 0.0)
     cl = _comp_loglik(steps, comp)
     low = np.array([st.low_info for st in steps])
@@ -517,7 +534,7 @@ def emissions(steps: List[Step], space: StateSpace, cal, params: NucParams = DEF
             Eb[:, b] = gI + cl[:, c] + iO
         else:
             Eb[:, b] = gX + cl[:, 2] + iX
-    parts = {'gR': gR, 'gI': gI, 'gX': gX, 'comp': cl, 'iX': iX, 'iO': iO}
+    parts = {'gR': gR, 'gI': gI, 'gIm': gIm, 'gRm': gRm, 'gX': gX, 'comp': cl, 'iX': iX, 'iO': iO}
     return Eb[:, space.exp_base], parts
 
 
@@ -605,10 +622,12 @@ class Segment:
     boundary: Tuple[float, float] = (float('nan'), float('nan'))   # change prob at left/right
     boundary_ci: Tuple[int, int, int, int] = (-1, -1, -1, -1)
     regularity: float = float('nan')
+    #: what called a regular segment: 'hmm', 'rule' or 'hmm+rule' ('' otherwise)
+    source: str = ''
 
     @property
     def code(self) -> int:
-        return self.state + (8 if self.sub_rich else 0)
+        return self.state
 
     def as_dict(self):
         d = dict(self.__dict__)
@@ -624,13 +643,15 @@ def _class_of(space: StateSpace, base: np.ndarray) -> Tuple[np.ndarray, np.ndarr
 
 
 def segment_steps(steps: List[Step], cal, params: NucParams = DEFAULT_PARAMS,
-                  sigma_loc: float = 0.0) -> List[Segment]:
-    """Segments of one piece from its steps."""
+                  sigma_loc: float = 0.0, step_track: Optional[list] = None,
+                  structural_error: float = 0.0) -> List[Segment]:
+    """Segments of one piece from its steps. ``step_track``, when given,
+    receives ``(starts, ends, P(regular))`` arrays of the steps."""
     T = len(steps)
     if T == 0:
         return []
     space = state_space(params)
-    E, parts = emissions(steps, space, cal, params, sigma_loc)
+    E, parts = emissions(steps, space, cal, params, sigma_loc, structural_error)
     end_mask = space.exp_last.copy()
     F, B, logZ = _forward_backward(E, space.log_init, space.pred_ptr, space.pred_idx,
                                    space.pred_logp, end_mask)
@@ -640,15 +661,26 @@ def segment_steps(steps: List[Step], cal, params: NucParams = DEFAULT_PARAMS,
     exp_order, exp_comp = _class_of(space, space.exp_base)
     p_order = np.stack([post[:, exp_order == k].sum(axis=1) for k in (REGULAR, IRREGULAR, LOWINFO)], axis=1)
     p_sub = post[:, exp_comp == 1].sum(axis=1)
+    if step_track is not None:
+        step_track.append((np.array([st.start for st in steps], dtype=np.int64),
+                           np.array([st.end for st in steps], dtype=np.int64), p_order[:, 0].copy()))
     if params.seg_decode == 'viterbi':
         path, _ = _viterbi(E, space.log_init, space.pred_ptr, space.pred_idx, space.pred_logp, end_mask)
         order, comp = _class_of(space, space.exp_base[path])
-    else:
-        # posterior decoding: order class with the highest marginal (summed over
-        # repeat and tightness), composition by its marginal; the run rules
-        # below then apply the minimum sizes and the LLR test
+    elif params.seg_decode == 'posterior':
+        # the order class with the highest marginal (summed over repeat and
+        # tightness), composition by its marginal; the run rules below then
+        # apply the minimum sizes and the LLR tests
         order = np.array([REGULAR, IRREGULAR, LOWINFO])[np.argmax(p_order, axis=1)]
         comp = (p_sub > 0.5).astype(np.int64)
+    elif params.seg_decode == 'threshold':
+        # regular where P(regular) >= seg_posterior_min, else the likelier of
+        # irregular and low-information
+        order = np.where(p_order[:, 0] >= params.seg_posterior_min, REGULAR,
+                         np.where(p_order[:, 1] >= p_order[:, 2], IRREGULAR, LOWINFO))
+        comp = (p_sub > 0.5).astype(np.int64)
+    else:
+        raise ValueError(f"unknown seg_decode {params.seg_decode!r}")
     change = _change_probs(F, B, E, logZ, space, exp_order, exp_comp)
 
     runs = []
@@ -658,7 +690,10 @@ def segment_steps(steps: List[Step], cal, params: NucParams = DEFAULT_PARAMS,
             runs.append((t0, t))
             t0 = t
     gR, gI, gX, cl = parts['gR'], parts['gI'], parts['gX'], parts['comp']
+    gIm, gRm = parts['gIm'], parts['gRm']
     iX, iO = parts['iX'], parts['iO']
+
+    has_ev = np.array([np.isfinite(st.gap) and st.observed_left and st.observed_right for st in steps])
 
     def run_stats(a, b, o, c):
         # the same factors the decoder used: R and I with the run's composition,
@@ -668,26 +703,37 @@ def segment_steps(steps: List[Step], cal, params: NucParams = DEFAULT_PARAMS,
         ll_R = gR[sl].sum(axis=0) + iO[sl].sum() + cc
         ll = {REGULAR: float(ll_R.max()), IRREGULAR: float(gI[sl].sum() + iO[sl].sum() + cc),
               LOWINFO: float(gX[sl].sum() + iX[sl].sum() + cl[sl, 2].sum())}
-        llr_order = ll[o] - max(v for k, v in ll.items() if k != o)
+        oo = IRREGULAR if o == UNDETERMINED else o
+        llr_order = ll[oo] - max(v for k, v in ll.items() if k != oo)
+        # disorder margin: the irregular order (with the same edge noise as
+        # the regular columns) against the best regular repeat (allowing the
+        # caller's structural errors at this density)
+        margin = float(gIm[sl].sum() - gRm[sl].sum(axis=0).max())
         llr_comp = float(cl[sl, c].sum() - cl[sl, 1 - c].sum())
         gap_steps = [st for st in steps[a:b] if np.isfinite(st.gap)]
         n_dy = sum(st.observed_left for st in gap_steps) + (gap_steps[-1].observed_right if gap_steps else 0)
-        return ll_R, llr_order, llr_comp, int(n_dy), steps[a].start, steps[b - 1].end
+        return ll_R, llr_order, llr_comp, int(n_dy), steps[a].start, steps[b - 1].end, margin
 
-    # 1) relabel each Viterbi run by the LLR and minimum-size rules
+    # 1) relabel each decoded run (order x composition) by the LLR and
+    #    minimum-size rules: a regular run without enough evidence, a
+    #    low-information run without enough evidence and an irregular run
+    #    without a clear margin over every regular repeat (or with no gap
+    #    evidence at all) are undetermined
     labelled = []
     for (a, b) in runs:
         o, c = int(order[a]), int(comp[a])
-        _, llr_o, llr_c, n_dy, start, end = run_stats(a, b, o, c)
+        _, llr_o, _llr_c, n_dy, start, end, margin = run_stats(a, b, o, c)
         span = end - start
         if o == REGULAR and (llr_o < params.seg_merge_llr or n_dy < params.seg_min_dyads
                              or span < params.seg_min_bp):
-            o = IRREGULAR
+            o = UNDETERMINED
         elif o == LOWINFO and llr_o < params.seg_merge_llr:
-            o = IRREGULAR
-        sub = c == 1 and not (llr_c < params.seg_merge_llr or span < params.seg_min_bp
-                              or (b - a) < params.seg_min_steps_sub)
-        labelled.append([a, b, o, int(sub)])
+            o = UNDETERMINED
+        elif o == IRREGULAR and (margin < params.seg_disorder_llr or not has_ev[a:b].any()):
+            o = UNDETERMINED
+        # the composition factor stays a nuisance of the decoder; segments are
+        # no longer labelled by it (undersized runs replace the sub-rich flag)
+        labelled.append([a, b, o, 0])
     # 2) merge neighbours that now share a label
     merged = []
     for r in labelled:
@@ -698,14 +744,16 @@ def segment_steps(steps: List[Step], cal, params: NucParams = DEFAULT_PARAMS,
     # 3) final statistics on the merged runs
     segs: List[Segment] = []
     for a, b, o, sub in merged:
-        ll_R, llr_o, _, n_dy, start, end = run_stats(a, b, o, sub)
+        ll_R, llr_o, _, n_dy, start, end, margin = run_stats(a, b, o, sub)
         sl = slice(a, b)
-        col = {REGULAR: 0, IRREGULAR: 1, LOWINFO: 2}[o]
+        # posterior: the mean marginal of the segment's class; undetermined
+        # segments report the mean P(regular)
+        col = {REGULAR: 0, IRREGULAR: 1, LOWINFO: 2, UNDETERMINED: 0}[o]
         pst = float(p_order[sl, col].mean())
-        if sub:
-            pst = float(min(pst, p_sub[sl].mean()))
         q_hat = float(space.q_grid[int(np.argmax(ll_R))]) if o == REGULAR else None
-        seg = Segment(start, end, o, bool(sub), pst, float(llr_o), q_hat, n_dy, b - a)
+        llr_rep = float(margin) if o in (IRREGULAR, UNDETERMINED) else float(llr_o)
+        seg = Segment(start, end, o, False, pst, llr_rep, q_hat, n_dy, b - a,
+                      source='hmm' if o == REGULAR else '')
         pl = float(change[a - 1]) if a > 0 else float('nan')
         pr = float(change[b - 1]) if b - 1 < len(change) else float('nan')
         seg.boundary = (pl, pr)
@@ -756,11 +804,13 @@ def _ci(steps: List[Step], change: np.ndarray, t: int, left: bool) -> int:
 
 
 def segment_molecule(length: int, msps: np.ndarray, fp: Dict[str, np.ndarray], cal,
-                     params: NucParams = DEFAULT_PARAMS) -> Tuple[List[Segment], bool]:
+                     params: NucParams = DEFAULT_PARAMS,
+                     step_track: Optional[list] = None) -> Tuple[List[Segment], bool]:
     """Segments of a molecule from its per-footprint calls.
 
     ``fp`` holds arrays ``start, end, coarse, posterior, is_tf, lambda,
-    truncated``. Returns ``(segments, too_short)``.
+    truncated``. Returns ``(segments, too_short)``; ``step_track`` collects
+    the steps' P(regular) (see :func:`segment_steps`).
     """
     if length < params.seg_min_molecule_bp:
         return [], True
@@ -768,15 +818,18 @@ def segment_molecule(length: int, msps: np.ndarray, fp: Dict[str, np.ndarray], c
     mu_fn = (lambda lam: float(cal.curve.mu_at(lam))) if (cal is not None and cal.curve) else (lambda lam: 147.0)
     lam_floor = cal.lambda_floor if cal is not None else None
     sigma_loc = 0.0
-    if cal is not None and cal.sigma_loc and len(fp['lambda']):
+    eps = 0.05
+    if cal is not None and len(fp['lambda']):
         lam_med = float(np.nanmedian(fp['lambda'][~fp['is_tf']])) if (~fp['is_tf']).any() else 0.3
-        sigma_loc = float(cal.sigma_loc_at(lam_med))
+        if cal.sigma_loc:
+            sigma_loc = float(cal.sigma_loc_at(lam_med))
+        eps = cal.structural_error_at(lam_med)
     segs: List[Segment] = []
     centres = (fp['start'] + fp['end']) / 2.0
     for piece in _pieces(length, msps, params.long_msp_bp):
         steps = build_steps(fp['start'], fp['end'], fp['coarse'], fp['posterior'], fp['is_tf'],
                             fp['lambda'], fp['truncated'], piece, nrl, mu_fn, lam_floor, params)
-        got = segment_steps(steps, cal, params, sigma_loc)
+        got = segment_steps(steps, cal, params, sigma_loc, step_track, eps)
         if not got:
             # calls but nothing measurable (can't-tell, truncated): low information
             inside = (centres >= piece[0]) & (centres < piece[1]) & ~fp['is_tf']

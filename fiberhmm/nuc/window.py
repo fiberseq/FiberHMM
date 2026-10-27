@@ -38,7 +38,7 @@ import numpy as np
 from fiberhmm.nuc.params import DEFAULT_PARAMS, NucParams
 from fiberhmm.nuc.phasing import anchor_offsets, phasing
 from fiberhmm.nuc.records import NucMolecule
-from fiberhmm.nuc.segment import IRREGULAR, LOWINFO, REGULAR
+from fiberhmm.nuc.segment import REGULAR, STATE_NAMES
 from fiberhmm.nuc.sizes import CANT_TELL, COARSE_NAMES, EDGE_TRUNCATED, MONO, NAMED_CODES
 from fiberhmm.nuc.spacing import molecule_spacing
 
@@ -90,21 +90,28 @@ class Observation:
 ALL = Observation('all')
 
 
-def _seg_fracs(segments, ms: int, me: int) -> Dict[str, float]:
+def _seg_fracs(segments, ms: int, me: int, events=()) -> Dict[str, float]:
     span = max(me - ms, 1)
-    out = {'regular': 0.0, 'irregular': 0.0, 'low_information': 0.0, 'sub_rich': 0.0}
+    out = {name: 0.0 for name in STATE_NAMES.values()}
     best = (0, None)
     for s in segments:
         ov = min(s.end, me) - max(s.start, ms)
         if ov <= 0:
             continue
-        key = {REGULAR: 'regular', IRREGULAR: 'irregular', LOWINFO: 'low_information'}[s.state]
-        out[key] += ov / span
-        if s.sub_rich:
-            out['sub_rich'] += ov / span
+        out[STATE_NAMES[s.state]] += ov / span
         if s.state == REGULAR and ov > best[0]:
             best = (ov, s.q_hat)
     out['q_hat_dominant'] = best[1]
+    # disruption events in the window: undersized bp share, missing count
+    und = sorted((max(e.start, ms), min(e.end, me)) for e in events if e.kind == 16 and e.end > ms and e.start < me)
+    cov, pos = 0, ms
+    for a, b in und:
+        a = max(a, pos)
+        if b > a:
+            cov += b - a
+            pos = b
+    out['undersized'] = cov / span
+    out['n_missing'] = int(sum(1 for e in events if e.kind == 17 and ms <= (e.start + e.end) / 2 < me))
     return out
 
 
@@ -121,7 +128,7 @@ def molecule_window_row(mol: NucMolecule, result, ms: int, me: int, params: NucP
         counts = {COARSE_NAMES[k]: int((codes == k).sum()) for k in COARSE_NAMES}
         counts['tf'] = int((inside & fp['is_tf']).sum())
         if cal is not None and cal.named_available:
-            named = fp['named'][inside & ~fp['is_tf']]
+            named = fp['named'][inside]          # TF calls too: small particles land there
             for nm, code in NAMED_CODES.items():
                 counts[f'named_{nm}'] = int((named == code).sum())
         row['class_counts'] = counts
@@ -134,7 +141,7 @@ def molecule_window_row(mol: NucMolecule, result, ms: int, me: int, params: NucP
                 'n_dyads': sp.n_dyads, 'too_short_nrl': sp.too_short_nrl,
                 'too_short_regularity': sp.too_short_regularity})
     if result is not None:
-        row['segments'] = _seg_fracs(result.segments, ms, me)
+        row['segments'] = _seg_fracs(result.segments, ms, me, getattr(result, 'events', ()))
     if anchor is not None:
         a = int(mol.ref_to_mol([anchor])[0])
         if a < 0:
@@ -164,11 +171,17 @@ def window_metrics(molecules: Sequence[NucMolecule], window: Tuple[str, int, int
                    results: Optional[Dict[int, object]] = None,
                    observations: Sequence[Observation] = (ALL,),
                    phase_frames: Sequence[str] = ('anchor', 'molecule'),
-                   seed: int = 0) -> WindowResult:
+                   seed: int = 0,
+                   background_anchors: Optional[Sequence[Tuple[str, int, int]]] = None) -> WindowResult:
     """Window metrics per observation (NUC 3.7).
 
     ``results`` maps ``id(molecule)`` to its :class:`MoleculeResult`; missing
     results are computed with ``molecule_outputs`` when ``cal`` is given.
+    With an anchor and ``background_anchors`` (comparable loci without the
+    property under test; ``molecules`` must cover them), each observation
+    also reports ``dephasing``: the anchor's phase statistics
+    (:func:`fiberhmm.nuc.dephasing.anchor_phase`) and its coherence and
+    excess placed among the matched backgrounds.
     """
     from fiberhmm.nuc.molecule import molecule_outputs
     chrom, ws, we = window
@@ -208,6 +221,21 @@ def window_metrics(molecules: Sequence[NucMolecule], window: Tuple[str, int, int
         agg['too_short_fraction'] = float(np.mean([r['too_short_nrl'] for r in rows])) if rows else None
         regs = [r['segments']['regular'] for r in rows if 'segments' in r]
         agg['regular_fraction'] = float(np.mean(regs)) if regs else None
+        for key in ('disordered', 'undetermined', 'low_information', 'undersized'):
+            vals = [r['segments'][key] for r in rows if 'segments' in r]
+            agg[f'{key}_fraction'] = float(np.mean(vals)) if vals else None
+        miss = [r['segments']['n_missing'] for r in rows if 'segments' in r]
+        agg['missing_per_molecule'] = float(np.mean(miss)) if miss else None
+        if anchor is not None and background_anchors and cal is not None:
+            from fiberhmm.nuc.dephasing import anchor_phase, matched_percentile
+            pool = [m for m in molecules if obs.matches(m)]
+            res_map = dict(results or {})
+            a_ph = anchor_phase(pool, (chrom, anchor, orientation), cal, params, res_map)
+            bg = [anchor_phase(pool, b, cal, params, res_map) for b in background_anchors]
+            agg['dephasing'] = {'anchor': a_ph.as_dict(),
+                                'coherence': matched_percentile(a_ph, bg, 'coherence'),
+                                'excess': matched_percentile(a_ph, bg, 'excess'),
+                                'n_background': len(bg)}
         if anchor is not None and members:
             # whole-molecule eligible dyads from the calibrated coarse calls
             dyads = {}

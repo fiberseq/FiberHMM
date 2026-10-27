@@ -221,3 +221,46 @@ def test_named_calls_only_for_single_particle_footprints_and_weights_are_fitted(
     L = np.r_[rng.normal(147, 5, 800), rng.normal(110, 5, 200)]
     w = fit_named_weights(model, L, np.full(len(L), 0.5))
     assert abs(w['octasome'] - 0.8) < 0.05 and abs(w['hexasome'] - 0.2) < 0.05
+
+
+def test_absolute_weights_use_tf_calls_and_density_bias():
+    """Class weights fitted on the dataset: small particles sit in TF calls and
+    every class is shifted by the control's bias b(lambda); none may be
+    censored or missed."""
+    from fiberhmm.nuc.calibration import calibrate_self
+    from fiberhmm.nuc.molecule import footprint_calls
+    from fiberhmm.nuc.records import make_molecule
+    from fiberhmm.nuc.thinning import calibrate_absolute
+    rng = np.random.default_rng(42)
+
+    def mol(name, nucs, tfs=()):
+        L = (max(b for _a, b in list(nucs) + list(tfs)) + 300)
+        occ = np.zeros(L, bool)
+        for a, b in list(nucs) + list(tfs):
+            occ[a:b] = True
+        hits = np.flatnonzero(~occ & (rng.random(L) < 0.25))
+        allc = sorted(list(nucs) + list(tfs))
+        msps, prev = [], 0
+        for a, b in allc:
+            if a - prev >= 15:
+                msps.append((prev, a))
+            prev = max(prev, b)
+        msps.append((prev, L))
+        return make_molecule(L, nucs=list(nucs), tfs=list(tfs), msps=msps, hits=hits, name=name)
+    ctrl = [mol(f'c{i}', [(200 + 200 * k, 200 + 200 * k + int(rng.normal(177, 5))) for k in range(12)])
+            for i in range(40)]
+    ds = []
+    for i in range(80):
+        nucs, tfs, pos = [], [], 200
+        for k in range(12):
+            L = int(round(rng.normal((100, 140, 177, 197)[k % 4], 5)))
+            (tfs if k % 4 == 0 else nucs).append((pos, pos + L))
+            pos += 240
+        ds.append(mol(f'd{i}', nucs, tfs))
+    cal = calibrate_absolute(calibrate_self(ds), ctrl, control_class='octasome', dataset_molecules=ds)
+    w = cal.absolute.weights
+    assert all(abs(w[k] - 0.25) < 0.05 for k in ('small', 'hexasome', 'octasome', 'chromatosome')), w
+    probe = mol('probe', [(600, 740), (900, 1077), (1200, 1397)], [(300, 400)])
+    fp = footprint_calls(probe, cal=cal)
+    from fiberhmm.nuc.sizes import NAMED_CODES
+    assert fp['named'].tolist() == [NAMED_CODES[k] for k in ('small', 'hexasome', 'octasome', 'chromatosome')]

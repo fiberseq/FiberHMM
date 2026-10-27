@@ -13,6 +13,10 @@ API (NUC 5.1):
 - :func:`phasing` -> :class:`PhasingResult` (anchor and molecule frames,
   whole-period bins, molecule-level phase null)
 - :func:`mark_acf`: the caller-free spacing check
+- :func:`anchor_phase`, :func:`dephasing_test`: fuzzy / dephased loci at
+  anchors against matched backgrounds
+- :mod:`fiberhmm.nuc.disrupted`: the regular rule, undersized runs and missing
+  nucleosomes; :mod:`fiberhmm.nuc.enrichment`: the recurrence test
 - :mod:`fiberhmm.nuc.tags`: MA groups ``nucsz``/``nucseg``/``nucmol``
 
 ``condition_stats`` and ``association_stats`` belong to ``fiberhmm.assoc``
@@ -27,6 +31,7 @@ __all__ = [
     'decode_record', 'iter_molecules', 'make_molecule', 'calibrate_self', 'calibrate_thin',
     'calibrate_absolute', 'NucCalibration', 'molecule_outputs', 'MoleculeResult',
     'window_metrics', 'WindowResult', 'Observation', 'phasing', 'PhasingResult', 'mark_acf',
+    'anchor_phase', 'dephasing_test', 'AnchorPhase',
 ]
 
 
@@ -46,6 +51,9 @@ def __getattr__(name):
         return getattr(m, name)
     if name in ('phasing', 'PhasingResult'):
         from fiberhmm.nuc import phasing as m
+        return getattr(m, name)
+    if name in ('anchor_phase', 'dephasing_test', 'AnchorPhase'):
+        from fiberhmm.nuc import dephasing as m
         return getattr(m, name)
     if name == 'mark_acf':
         from fiberhmm.nuc.markacf import mark_acf

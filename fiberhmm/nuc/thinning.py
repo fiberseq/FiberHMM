@@ -472,6 +472,8 @@ def calibrate_thin(bam_path, params: NucParams = DEFAULT_PARAMS, *, label: str =
     lam_typ = float(np.median(ft_pop['lambda'][~ft_pop['truncated']])) if len(ft_pop['lambda']) else 0.3
     cal.gap_model['sigma_loc_typical'] = float(cal.sigma_loc_at(lam_typ))
     cal.composition = fit_composition(mols, cal, params)
+    from fiberhmm.nuc.disrupted import fit_disruption
+    cal.disruption = fit_disruption(mols, cal, params)
     cal.notes.append(
         f'thinning: {len(dense_idx)} dense molecules (top lambda_acc quartile >= {q75:.3f}), '
         f'{len(hold)} held out, {len(targets)} targets x {seeds} seeds, {len(tasks)} caller runs, '
@@ -522,8 +524,14 @@ def calibrate_absolute(base: NucCalibration, control_molecules: Sequence[NucMole
                                    sigma_b=list(curve.sigma), sigma_struct={k: sigma_struct for k in T})
     if dataset_molecules:
         from fiberhmm.nuc.sizes import fit_named_weights
-        ftd = footprint_table(dataset_molecules, base, params)
-        kd = ~ftd['truncated'] & (ftd['length'] <= max(T.values()) + 3 * max(curve.sigma))
+        # every footprint, TF calls included (recall moves small particles
+        # there); the length cut follows each footprint's density-dependent
+        # class locations (T_k + b(lambda) + 3 sd_k), so large classes are not
+        # censored where marking is sparse
+        ftd = footprint_table(dataset_molecules, base, params, include_tfs=True)
+        _names, mu, sd = cal.absolute.locations(ftd['lambda'])
+        top = (mu + 3 * sd).max(axis=-1) if len(ftd['lambda']) else np.zeros(0)
+        kd = ~ftd['truncated'] & (ftd['length'] <= top)
         cal.absolute.weights = fit_named_weights(cal.absolute, ftd['length'][kd], ftd['lambda'][kd])
     if naked_molecules:
         ftn = footprint_table(naked_molecules, base, params)

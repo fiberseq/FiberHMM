@@ -91,10 +91,24 @@ class NucParams:
     seg_irregular: str = 'broad'
     #: whether a can't-tell footprint flags its step low-information
     seg_cant_tell_low_info: bool = False
-    #: segment labels from the 'viterbi' path (default: lowest false-call rate
-    #: on planted arrays) or 'posterior' marginals summed over repeat and
-    #: tightness (more sensitive on sparse data, about 7% false calls)
-    seg_decode: str = 'viterbi'
+    #: per-step order decision: 'threshold' (default; regular where the
+    #: posterior P(regular), summed over repeat and tightness, is at least
+    #: ``seg_posterior_min``, else the likelier of disordered / low-information),
+    #: 'viterbi' (the Viterbi path) or 'posterior' (the class with the highest
+    #: marginal, i.e. P(regular) >= 0.5)
+    seg_decode: str = 'threshold'
+    seg_posterior_min: float = 0.7
+    #: the model-free regular rule, OR-ed with the decoder: runs of at least
+    #: ``seg_rule_min_spacings`` consecutive eligible mono-dyad spacings each
+    #: within ``seg_rule_tol_bp`` of k x the molecule's NRL (k = 1 ..
+    #: ``seg_rule_max_k``) are regular from their first to their last dyad
+    seg_rule: bool = True
+    seg_rule_tol_bp: float = 25.0
+    seg_rule_min_spacings: int = 6
+    seg_rule_max_k: int = 2
+    #: a run is disordered only when its spacing evidence beats every regular
+    #: repeat by this many nats; weaker runs are undetermined
+    seg_disorder_llr: float = 3.0
     seg_min_steps_regular: int = 5
     seg_min_steps_sub: int = 5
     seg_min_steps_irregular: int = 3
@@ -108,6 +122,28 @@ class NucParams:
     seg_min_molecule_bp: int = 2000
     seg_composition_flank: int = 400
     seg_max_gap: int = 300
+
+    # --- disrupted nucleosomes (NUC 13.1) -----------------------------------
+    #: a footprint (nucleosome call, or TF call of at least
+    #: ``undersized_min_bp``) is undersized at density-matched z <= this;
+    #: shorter TF calls (linker-sized; recall turns footprints under 85 bp
+    #: into TF calls) never count
+    undersized_z: float = -2.0
+    undersized_min_bp: int = 60
+    #: undersized rate inside a run (the alternative of the run score); at
+    #: least twice the density-matched background
+    undersized_p1: float = 0.5
+    #: minimum log-likelihood-ratio score (nats) of an undersized run and its
+    #: minimum count of undersized footprints (7 nats: about one chance run
+    #: per 8,000 footprints, the same for background rates 0.05 to 0.45)
+    undersized_min_llr: float = 7.0
+    undersized_min_count: int = 2
+    #: missing nucleosome: open (MSP) stretch length between two nucleosome
+    #: calls whose dyads sit about two repeats apart
+    missing_len_bp: Tuple[int, int] = (120, 300)
+    missing_grid_tol_bp: float = 30.0
+    #: accessible-versus-protected log-likelihood ratio of the stretch's marks
+    missing_min_llr: float = 3.0
 
     extra: dict = field(default_factory=dict, compare=False, hash=False)
 

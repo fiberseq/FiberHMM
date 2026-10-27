@@ -12,7 +12,9 @@ depends on nothing else:
 - segmentation composition frequencies;
 - thinning: sigma_loc knots, outcome rates, overshoot, supported lambda range,
   held-out validation and the low-information floor (D8);
-- absolute controls: class locations T_k and b(lambda); naked-DNA nulls.
+- absolute controls: class locations T_k and b(lambda); naked-DNA nulls;
+- disruption backgrounds: the undersized-footprint rate and the in-core mark
+  rate per lambda_i bin (NUC 13.1).
 
 ``self`` calibration fits only what the data identify without a control or
 thinning (sigma_loc = 0, every lambda supported, no floor).
@@ -72,6 +74,9 @@ class NucCalibration:
     validation: Dict = field(default_factory=dict)
     absolute: Optional[AbsoluteClasses] = None
     naked: Dict = field(default_factory=dict)
+    #: density-matched background rates of the disruption calls (NUC 13.1):
+    #: 'undersized' and 'protected' {log_lambda_edges, rate, n}
+    disruption: Dict = field(default_factory=dict)
     notes: List[str] = field(default_factory=list)
 
     # --- evaluation -----------------------------------------------------------
@@ -81,6 +86,18 @@ class NucCalibration:
             return np.zeros(lam.shape)
         x = np.log(np.clip(lam, 1e-6, 1.0))
         return np.interp(x, self.sigma_loc['log_lambda'], self.sigma_loc['sigma'])
+
+    def structural_error_at(self, lam) -> float:
+        """Share of footprints the caller merges, splits or drops at density
+        ``lam`` (thinning outcomes), clipped to [0.02, 0.5]; 0.05 without
+        thinning."""
+        o = self.outcomes or {}
+        if not o.get('log_lambda'):
+            return 0.05
+        err = np.asarray(o.get('merged', 0), float) + np.asarray(o.get('split', 0), float) + \
+            np.asarray(o.get('dropped', 0), float)
+        x = float(np.log(np.clip(lam, 1e-6, 1.0)))
+        return float(np.clip(np.interp(x, o['log_lambda'], err), 0.02, 0.5))
 
     def is_supported(self, lam) -> np.ndarray:
         """Within the supported lambda range (all True when the record sets
@@ -119,7 +136,8 @@ class NucCalibration:
             'lambda_floor': None if self.lambda_floor is None else float(self.lambda_floor),
             'validation': _clean(self.validation),
             'absolute': self.absolute.to_dict() if self.absolute else None,
-            'naked': _clean(self.naked), 'notes': list(self.notes),
+            'naked': _clean(self.naked), 'disruption': _clean(self.disruption),
+            'notes': list(self.notes),
         }
 
     @classmethod
@@ -140,7 +158,8 @@ class NucCalibration:
             supported=d.get('supported'), lambda_floor=d.get('lambda_floor'),
             validation=d.get('validation', {}),
             absolute=AbsoluteClasses.from_dict(d['absolute']) if d.get('absolute') else None,
-            naked=d.get('naked', {}), notes=list(d.get('notes', [])),
+            naked=d.get('naked', {}), disruption=d.get('disruption', {}) or {},
+            notes=list(d.get('notes', [])),
         )
 
     def to_json(self) -> str:
@@ -192,20 +211,24 @@ def _version() -> str:
 
 
 def footprint_table(molecules: Iterable[NucMolecule], cal: NucCalibration,
-                    params: NucParams = DEFAULT_PARAMS) -> Dict[str, np.ndarray]:
+                    params: NucParams = DEFAULT_PARAMS, include_tfs: bool = False) -> Dict[str, np.ndarray]:
     """Per-footprint arrays (length, lambda_i, truncated, molecule lambda_acc)
-    for every nucleosome call in ``molecules``."""
+    for every nucleosome call in ``molecules`` (and every TF call with
+    ``include_tfs``: recall moves footprints under 85 bp there)."""
     Ls, lams, trunc, lacc = [], [], [], []
     for m in molecules:
-        if len(m.nucs) == 0:
+        iv = m.nucs
+        if include_tfs and len(m.tfs):
+            iv = np.concatenate([m.nucs, m.tfs]) if len(m.nucs) else m.tfs
+        if len(iv) == 0:
             continue
         k, n = accessible_counts(m, params)
         la = float(cal.prior.shrink(k, n))
-        li = footprint_lambdas(m, m.nucs, la, params, cal.prior)
-        Ls.append(m.nucs[:, 1] - m.nucs[:, 0])
+        li = footprint_lambdas(m, iv, la, params, cal.prior)
+        Ls.append(iv[:, 1] - iv[:, 0])
         lams.append(li)
-        trunc.append(edge_truncated(m, m.nucs))
-        lacc.append(np.full(len(m.nucs), la))
+        trunc.append(edge_truncated(m, iv))
+        lacc.append(np.full(len(iv), la))
     if not Ls:
         z = np.zeros(0)
         return {'length': z, 'lambda': z, 'truncated': z.astype(bool), 'lambda_acc': z}
@@ -249,7 +272,9 @@ def calibrate_self(molecules: Sequence[NucMolecule], params: NucParams = DEFAULT
     cal.gap_model = fit_gap_model(pop, cal.nrl_pooled, params)
     if fit_composition:
         from fiberhmm.nuc.segment import fit_composition as _fit
+        from fiberhmm.nuc.disrupted import fit_disruption
         cal.composition = _fit(pop, cal, params)
+        cal.disruption = fit_disruption(pop, cal, params)
     return cal
 
 
