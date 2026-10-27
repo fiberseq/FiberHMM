@@ -358,3 +358,15 @@ def test_capped_relocations_are_left_out_of_the_null():
     assert r['n_relocations_effective'] == 99
     k = r['global_p'] * (r['n_relocations_effective'] + 1)
     assert k == pytest.approx(round(k))              # p on the grid of the effective N
+
+
+def test_out_of_territory_hits_do_not_alias_another_contig():
+    """Codex round 2 (group B): a coordinate far past one contig's territory must not land in the next contig's
+    territory on the concatenated axis."""
+    from fiberhmm.assoc.overlap import HitSet, overlap_enrichment
+    r = overlap_enrichment(HitSet(['c2'], [100], [110]), HitSet(['c1'], [1_034_100], [1_034_110]),
+                           [('c1', 0, 10_000), ('c2', 0, 10_000)], distances=(0,), n_relocations=100, seed=0)
+    assert r['n_b_used'] == 0 and r['n_b_dropped_outside'] == 1
+    r2 = overlap_enrichment(HitSet(['c1'], [1_034_100], [1_034_110]), HitSet(['c2'], [100], [110]),
+                            [('c1', 0, 10_000), ('c2', 0, 10_000)], distances=(0,), n_relocations=100, seed=0)
+    assert r2['n_a_used'] == 0 and r2['n_a_dropped_outside'] == 1

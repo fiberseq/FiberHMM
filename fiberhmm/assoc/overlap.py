@@ -274,13 +274,17 @@ class _Frame:
             return g0, g1, tid
         names, inv = np.unique(hits.chrom, return_inverse=True)
         offs = np.array([self.offset.get(str(c), -1) for c in names], np.int64)[inv]
+        cidx = np.array([self.contigs.index(str(c)) if str(c) in self.offset else -1 for c in names],
+                        np.int64)[inv]
         known = offs >= 0
         e_eff = np.maximum(hits.end, hits.start + 1)
         g0 = hits.start + np.where(known, offs, 0)
         g1 = e_eff + np.where(known, offs, 0)
         k = np.searchsorted(self.t0, g0, 'right') - 1
         kk = np.maximum(k, 0)
-        ok = known & (k >= 0) & (g0 >= self.t0[kk]) & (g1 <= self.t1[kk])
+        # the containing territory interval must belong to the hit's own contig (a coordinate past one contig's
+        # end must not land in the next contig's territory on the concatenated axis)
+        ok = known & (k >= 0) & (g0 >= self.t0[kk]) & (g1 <= self.t1[kk]) & (self.tcontig[kk] == cidx)
         tid = np.where(ok, kk, -1)
         return g0, g1, tid
 
