@@ -179,19 +179,16 @@ def anchor_appearances(molecules, loci: LocusTable, *, frame: str = 'anchor', P:
     rows_l, rows_m, rows_s, rows_d, stats, osc, lab = [], [], [], [], [], [], {k: [] for k in (labels or {})}
     info = {'no_state': 0, 'anchor_absent': 0, 'no_barrier': 0, 'appearances': 0}
     dy_cache = dyads if dyads is not None else {}
-    reach = bins[0][1]                         # a molecule must at least reach the first bin on both sides
-    order = sorted(range(len(molecules)), key=lambda i: -molecules[i].length)
+    order = sorted(range(len(molecules)), key=lambda i: (-molecules[i].length, molecules[i].name or ''))
     rank = {i: r for r, i in enumerate(order)}
     masks = []
     for l in range(loci.n):
         c, p = loci.chrom[l], int(loci.pos[l])
-        seen = set()                           # one appearance per physical molecule at a locus (longest record)
-        for i in sorted(ix.spanning(c, p - reach, p + reach), key=lambda i: rank[i]):
+        # records whose alignment covers the anchor; flank eligibility is decided in molecular coordinates
+        # (an insertion can make the molecular flank longer than the reference span)
+        cand = []
+        for i in ix.spanning(c, p, p + 1):
             m = molecules[i]
-            k = molecule_key(m)
-            if k in seen:
-                info['duplicate_records'] = info.get('duplicate_records', 0) + 1
-                continue
             a = int(m.ref_to_mol([p])[0])
             if a < 0:
                 info['anchor_absent'] += 1
@@ -200,6 +197,21 @@ def anchor_appearances(molecules, loci: LocusTable, *, frame: str = 'anchor', P:
             if st not in ('1', '0'):
                 info['no_state'] += 1
                 continue
+            cand.append((rank[i], i, a, st))
+        # one appearance per physical molecule: records that disagree on the state make it '.', otherwise the
+        # longest record is used
+        by_key: Dict[str, list] = {}
+        for item in sorted(cand):
+            by_key.setdefault(molecule_key(molecules[item[1]]), []).append(item)
+        for k in sorted(by_key, key=lambda k_: by_key[k_][0][0]):
+            recs = by_key[k]
+            if len(recs) > 1:
+                info['duplicate_records'] = info.get('duplicate_records', 0) + len(recs) - 1
+                if len({r_[3] for r_ in recs}) > 1:
+                    info['conflicting_records'] = info.get('conflicting_records', 0) + 1
+                    continue
+            _r, i, a, st = recs[0]
+            m = molecules[i]
             if frame == 'molecule':
                 bar = barrier_at(m, a, params)
                 if bar is None:
@@ -219,7 +231,6 @@ def anchor_appearances(molecules, loci: LocusTable, *, frame: str = 'anchor', P:
             if x is None:
                 info[why] = info.get(why, 0) + 1
                 continue
-            seen.add(k)
             xr, xl = x[x > 0], -x[x < 0]
             row = np.zeros((len(bins), len(RES_COLUMNS)))
             for b, (lo, hi) in enumerate(bins):
@@ -504,8 +515,13 @@ def reverse_association(locus, molecule, y, x, log_lambda, pattern=None, *, n_bo
         boot = bb.collect(fn, n_boot)
         for name in ('cmh', 'clogit'):
             s = boot.summary(name, out[name]['log_or'])
-            out[name].update(se_boot=s['se'], lo=float(np.exp(s['lo'])), hi=float(np.exp(s['hi'])),
-                             p=wald_p(out[name]['log_or'], s['se']), interval=s.get('interval'))
+            from scipy.stats import t as tdist
+            z = out[name]['log_or'] / s['se'] if (np.isfinite(s['se']) and s['se'] > 0) else float('nan')
+            df = s.get('df', float('inf'))
+            p_ = (float(2 * tdist.sf(abs(z), df)) if np.isfinite(df) else wald_p(out[name]['log_or'], s['se'])) \
+                if np.isfinite(z) else float('nan')
+            out[name].update(se_boot=s['se'], lo=float(np.exp(s['lo'])), hi=float(np.exp(s['hi'])), p=p_,
+                             df=df, interval=s.get('interval'))
         out['bootstrap'] = boot.info
     return out
 
@@ -529,8 +545,16 @@ def association_stats(molecules, *, cal, params=None, x_state: str = 'regular', 
     code = {'regular': REGULAR, 'disordered': DISORDERED, 'undetermined': UNDETERMINED}[x_state]
     L, IV, PT, JN, CH, MID, MOL = [], [], [], [], [], [], []
     lab = {k: [] for k in (labels or {})}
-    skipped = {'low_information': 0, 'too_short': 0, 'no_informative': 0}
-    for m in molecules:
+    skipped = {'low_information': 0, 'too_short': 0, 'no_informative': 0, 'duplicate_records': 0}
+    best: Dict[str, object] = {}
+    for m in molecules:                       # one record per physical molecule: the longest (ties by name)
+        k = molecule_key(m)
+        if k in best:
+            skipped['duplicate_records'] += 1
+            if (m.length, m.name or '') <= (best[k].length, best[k].name or ''):
+                continue
+        best[k] = m
+    for m in sorted(best.values(), key=lambda m_: (m_.chrom or '', m_.ref_start, m_.name or '')):
         res = results.get(id(m)) if results is not None else None
         if res is None:
             res = molecule_outputs(m, params, cal)

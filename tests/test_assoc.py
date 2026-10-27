@@ -376,3 +376,24 @@ def test_float_zero_haplotype_is_unphased():
     """A8."""
     lab, info = group_labels([1.0, 2.0, 0.0, '0.0'], 'haplotype')
     assert info['unphased'] == 2 and lab[2] is None and lab[3] is None
+
+
+# ---------------------------------------------------------------- review regressions (Codex round 2, group A)
+def test_clogit_mixed_degree_strata_do_not_underflow():
+    X = np.tile([0, 0, 1, 1], 600)
+    y = np.r_[np.tile([0, 1, 0, 1], 300), 1, np.zeros(1199, int)]
+    f = clogit(X, y, np.repeat([0, 1], 1200), max_iter=5)
+    assert np.isfinite(f['beta']).all() and np.isfinite(f['loglik'])
+    assert np.nansum(f['pi']) == pytest.approx(601)
+
+
+def test_single_contrast_with_two_clusters_uses_t1():
+    b = R.BootDraws('groups', draws={'a': np.zeros(3), 'b': np.array([-1., 0, 1])}, info={'clusters': 2})
+    r = group_contrast({'a': 0., 'b': 3.}, b)
+    assert r['p'] == pytest.approx(r['differences'][0]['p_wald'])
+
+
+def test_per_pair_rows_do_not_depend_on_the_pooling_threshold():
+    A, B, mt = _tiny_states({i: i % 2 for i in range(4)}, {i: int(i < 2) for i in range(4)})
+    res = cooccurrence(A, B, mt, min_molecules=2, n_boot=0, effect=False)
+    assert res['n_pair_rows'] == 1 and res['pooled'].get('n_molecules', 0) == 0

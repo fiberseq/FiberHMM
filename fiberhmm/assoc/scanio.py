@@ -233,79 +233,107 @@ NUCSEG_KIND = {'nuc.seg.regular': 1, 'nuc.seg.disordered': 2, 'nuc.seg.low_infor
                'nuc.seg.undetermined': 4, 'nuc.event.undersized': 16, 'nuc.event.missing': 17}
 
 
-def rate_data_from_marks(scan, a_type: str, b_type: str, regions=None, min_tf_bp: int = 0, mi=None):
+def rate_data_from_marks(scan, a_type: str, b_type: str, regions=None, min_tf_bp: int = 0, mi=None,
+                         point_tolerance: int = 5):
     """RateData for M3 from ``nuc/marks.tsv.bgz`` (reference coordinates): A = ``nuc.seg.*``/``nuc.event.*`` rows;
     B = TF footprint centres (``nucsz`` rows with the TF bit, ``b_type='tf'``) or member call centres of a state
     type (``fp.class``: states rows with state 1, ``call_start``/``call_end``). Exposure is admissible reference bp
-    (HUB 7.5): the record's ``nucseg`` partition minus low-information segments. Scan tables carry no per-site
+    (HUB 7.5): the ``nucseg`` partition minus low-information segments. Scan tables carry no per-site
     informativeness, so this is not NUC 3.9's informative-site exposure (``association_stats`` on decoded
-    molecules uses informative sites). Records of one physical molecule are counted once: the longest record
-    first, then any other record of that molecule that does not overlap one already kept (a supplementary
-    elsewhere is its own stretch); ``molecule_ids`` names their physical molecule."""
+    molecules uses informative sites).
+
+    Every physical molecule is one unit per contig: the records of a molecule (overlapping or not) are merged,
+    their admissible stretches and A intervals united and their B points de-duplicated (points within
+    ``point_tolerance`` bp are one point). With ``regions`` the windows are united, rows fetched twice are read
+    once, and geometry and points are clipped to the windows."""
     from fiberhmm.assoc.rate import RateData, compress
     require_tables(scan, ['nuc/marks.tsv.bgz'], 'rate')
     code = NUCSEG_KIND.get(a_type)
     if code is None:
         raise ScanInputError(f'A must be one of {sorted(NUCSEG_KIND)}')
-    rec = {}
-    for r in _rows(scan, 'nuc/marks.tsv.bgz', regions):
-        key = (r['dataset_id'], r.get('input_index', '0'), r['record'])
-        d = rec.setdefault(key, {'chrom': r['chrom'], 'molecule': r['molecule'], 'dataset': r['dataset_id'],
-                                 'qname': r['qname'], 'seg': [], 'low': [], 'a': [], 'b': []})
+    win = None
+    fetch = None
+    if regions:
+        win = defaultdict(list)
+        for c, a, b in regions:
+            win[c].append((int(a), int(b)))
+        win = {c: _union(v) for c, v in win.items()}
+        fetch = [(c, a, b) for c, ivs in sorted(win.items()) for a, b in ivs]
+    mol = {}
+    seen = set()
+
+    def unit(r):
+        return mol.setdefault((r['dataset_id'], r['molecule'], r['chrom']),
+                              {'seg': [], 'low': [], 'a': [], 'b': [], 'qnames': set()})
+    for r in _rows(scan, 'nuc/marks.tsv.bgz', fetch):
+        rk = (r['dataset_id'], r.get('input_index', '0'), r['record'], r['group'], r['start'], r['end'], r['q'])
+        if rk in seen:
+            continue
+        seen.add(rk)
+        d = unit(r)
+        d['qnames'].add(r['qname'])
         q = [int(x) for x in r['q'].split(',')] if r['q'] else []
-        s, e = int(r['start']), int(r['end'])
+        s_, e_ = int(r['start']), int(r['end'])
         if r['group'] == 'nucseg' and q:
             if q[0] < 16:
-                d['seg'].append((s, e))
+                d['seg'].append((s_, e_))
             if q[0] == 3:
-                d['low'].append((s, e))
+                d['low'].append((s_, e_))
             if q[0] == code:
-                d['a'].append((s, e))
-        elif r['group'] == 'nucsz' and q and b_type == 'tf' and (q[0] & 16) and (e - s) >= min_tf_bp:
-            d['b'].append((s + e) // 2)
+                d['a'].append((s_, e_))
+        elif r['group'] == 'nucsz' and q and b_type == 'tf' and (q[0] & 16) and (e_ - s_) >= min_tf_bp:
+            d['b'].append((s_ + e_) // 2)
     if b_type != 'tf':
         mod = module_of(b_type)
         require_tables(scan, [f'{mod}/states.tsv.bgz'], 'rate')
-        hit_type = {h['hit_id']: h['type'] for h in _rows(scan, f'{mod}/hits.tsv.bgz', regions)}
-        for r in _rows(scan, f'{mod}/states.tsv.bgz', regions):
+        hit_type = {h['hit_id']: h['type'] for h in _rows(scan, f'{mod}/hits.tsv.bgz', fetch)}
+        seen_states = set()
+        for r in _rows(scan, f'{mod}/states.tsv.bgz', fetch):
             if r['state'] != '1' or hit_type.get(r['hit_id']) != b_type:
                 continue
-            key = (r['dataset_id'], r.get('input_index', '0'), r['record'])
-            if key in rec:
-                cs, ce = r.get('call_start') or r['start'], r.get('call_end') or r['end']
-                rec[key]['b'].append(int((float(cs) + float(ce)) / 2))
-    L, IV, PT, CH, MID, MOL, DS, JN, QN = [], [], [], [], [], [], [], [], []
-    by_mol = defaultdict(list)
-    for key, d in rec.items():
-        if d['seg']:
-            by_mol[(d['dataset'], d['molecule'])].append(key)
-    kept = []
-    for mk, keys in by_mol.items():
-        keys.sort(key=lambda k: (-sum(e - s for s, e in _union(rec[k]['seg'])), k))
-        spans = []
-        for k in keys:
-            u = _union(rec[k]['seg'])
-            sp = (rec[k]['chrom'], u[0][0], u[-1][1])
-            if any(c == sp[0] and a < sp[2] and sp[1] < b for c, a, b in spans):
+            sk = (r['dataset_id'], r.get('input_index', '0'), r['record'], r['hit_id'])
+            if sk in seen_states:
                 continue
-            spans.append(sp)
-            kept.append(k)
-    for key in sorted(kept):
-        d = rec[key]
-        seg = sorted(d['seg'])
-        adm = _subtract(_union(seg), _union(d['low']))
+            seen_states.add(sk)
+            key = (r['dataset_id'], r['molecule'], r['chrom'])
+            if key in mol:
+                cs, ce = r.get('call_start') or r['start'], r.get('call_end') or r['end']
+                mol[key]['b'].append(int((float(cs) + float(ce)) / 2))
+    L, IV, PT, CH, MID, MOL, DS, JN, QN = [], [], [], [], [], [], [], [], []
+    for key in sorted(mol):
+        ds, m, chrom = key
+        d = mol[key]
+        if not d['seg']:
+            continue
+        adm = _subtract(_union(d['seg']), _union(d['low']))
+        if win is not None:
+            adm = _intersect(adm, win.get(chrom, []))
         if not adm:
             continue
-        n, iv, pts, junc = compress(adm, d['a'], d['b'])
+        pts = []
+        for p_ in sorted(d['b']):
+            if not pts or p_ - pts[-1] > point_tolerance:
+                pts.append(p_)
+        n, iv, pp, junc = compress(adm, _union(d['a']), pts)
         if n <= 0:
             continue
-        L.append(n); IV.append(iv); PT.append(pts); JN.append(junc)
-        CH.append(d['chrom']); MID.append((seg[0][0] + seg[-1][1]) // 2); MOL.append(d['molecule'])
-        DS.append(d['dataset']); QN.append(d['qname'])
+        L.append(n); IV.append(iv); PT.append(pp); JN.append(junc)
+        CH.append(chrom); MID.append((adm[0][0] + adm[-1][1]) // 2); MOL.append(m)
+        DS.append(ds); QN.append(min(d['qnames']) if d['qnames'] else '')
     return RateData(np.array(L, np.int64), IV, PT, np.array(CH, dtype=object), np.array(MID, np.int64),
                     np.array([f'{ds}|{m}' for ds, m in zip(DS, MOL)], dtype=object),
                     labels={'dataset': np.array(DS, dtype=object), 'qname': np.array(QN, dtype=object),
                             'molecule': np.array(MOL, dtype=object)}, junctions=JN)
+
+
+def _intersect(a_iv, b_iv):
+    out = []
+    for a, b in a_iv:
+        for c, d in b_iv:
+            lo, hi = max(a, c), min(b, d)
+            if hi > lo:
+                out.append((lo, hi))
+    return _union(out)
 
 
 def _union(iv):

@@ -66,6 +66,7 @@ def _dp(Xp, valid, kk, beta, need_q=True):
     s = np.zeros((S, K + 1, p))
     Q = np.zeros((S, K + 1, p, p)) if need_q else None
     logsc = np.zeros(S)
+    above = np.arange(K + 1)[None, :] > kk[:, None]
     for j in range(n_max):
         rj = r[:, j]
         if not np.any(rj):
@@ -79,7 +80,12 @@ def _dp(Xp, valid, kk, beta, need_q=True):
                 Qp + xs + np.swapaxes(xs, 2, 3) + (xj[:, :, None] * xj[:, None, :])[:, None] * ep[:, :, None, None])
         s[:, 1:] = s[:, 1:] + rj[:, None, None] * (sp + xj[:, None, :] * ep[:, :, None])
         e[:, 1:] = e[:, 1:] + rj[:, None] * ep
-        # rescale every stratum's polynomials (ratios s/e and Q/e are unchanged); the scale is kept in log
+        # coefficients above a stratum's own degree are never needed: zero them, then rescale every stratum's
+        # polynomials by its largest needed coefficient (ratios s/e and Q/e are unchanged); scales kept in log
+        e[above] = 0.0
+        s[above] = 0.0
+        if need_q:
+            Q[above] = 0.0
         sc = np.max(e, axis=1)
         sc = np.where(sc > 0, sc, 1.0)
         e /= sc[:, None]
@@ -175,9 +181,11 @@ def _case_probabilities(r, valid, kk):
     F = np.zeros((S, n_max + 1, K + 1))
     lF = np.zeros((S, n_max + 1))
     F[:, 0, 0] = 1.0
+    above = np.arange(K + 1)[None, :] > kk[:, None]
     for j in range(n_max):
         row = F[:, j].copy()
         row[:, 1:] += r[:, j, None] * F[:, j, :-1]
+        row[above] = 0.0
         sc = row.max(1)
         sc = np.where(sc > 0, sc, 1.0)
         F[:, j + 1] = row / sc[:, None]
@@ -189,6 +197,7 @@ def _case_probabilities(r, valid, kk):
     for j in range(n_max - 1, -1, -1):
         row = B[:, j + 2].copy()
         row[:, 1:] += r[:, j, None] * B[:, j + 2, :-1]
+        row[above] = 0.0
         sc = row.max(1)
         sc = np.where(sc > 0, sc, 1.0)
         B[:, j + 1] = row / sc[:, None]

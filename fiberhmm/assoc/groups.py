@@ -148,10 +148,13 @@ def group_contrast(estimates: Dict[str, float], boot, names: Optional[Dict[str, 
             r = len(others)
             if not np.isfinite(stat) or stat < 0:
                 out.update(chi2=stat, df=r, p=float('nan'), note='covariance not positive definite')
-            elif np.isfinite(df) and df > r:
-                # Hotelling-type small-sample reference: F(r, G - r) after scaling
+            elif np.isfinite(df) and df >= r:
+                # Hotelling-type small-sample reference: F(r, G - r) after scaling (r = 1: t(G - 1) squared)
                 Fst = stat * (df - r + 1) / (df * r)
                 out.update(chi2=stat, df=r, df_clusters=df, p=float(fdist.sf(Fst, r, df - r + 1)))
+            elif np.isfinite(df):
+                out.update(chi2=stat, df=r, df_clusters=df, p=float('nan'),
+                           note='fewer resampling clusters than contrasts')
             else:
                 out.update(chi2=stat, df=r, p=float(chi2.sf(stat, r)))
         except np.linalg.LinAlgError:

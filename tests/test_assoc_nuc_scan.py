@@ -369,3 +369,106 @@ def test_cli_condition_with_custom_labels_and_overlap_region(tmp_path):
                  'chrT:0-20000', '--n-perm', '30', '-o', str(tmp_path / 'm4')]) == 0
     r4 = json.loads((tmp_path / 'm4' / 'result.json').read_text())
     assert r4['territory_bp'] == 20_000
+
+
+# ---------------------------------------------------------------- review regressions (Codex round 2, group C)
+def test_flank_eligibility_is_molecular_when_insertions_lengthen_the_molecule():
+    from fiberhmm.assoc.condition import LocusTable
+    from fiberhmm.nuc.records import make_molecule
+    L = 4000
+    blocks = np.array([[0, 0, 400], [1600, 400, 800], [3600, 1200, 400]])   # two 1.2 kb insertions
+    inf = np.zeros(L, bool)
+    for q, _r, n in blocks:
+        inf[q:q + n] = True
+    inf[400:1600] = True
+    inf[2400:3600] = True
+    nucs = [(int(d - 73), int(d + 74)) for d in np.arange(200, L - 100, 190)]
+    m = make_molecule(L, nucs=nucs, informative=inf, name='m/1/ccs', chrom='c', ref_start=0, ref_end=1600,
+                      blocks=blocks)
+    a_ref = 800                                   # molecular 2000, inside a nucleosome near the middle
+    loci = LocusTable(['a'], ['c'], [a_ref], [True], [-1])
+    app, _bins, info = N.anchor_appearances([m], loci, P=190.0, state_fn=lambda mol, a, l: '0')
+    assert len(app.locus) == 1 and app.mask[0] > 0
+
+
+def test_conflicting_records_of_one_molecule_are_dropped_and_m3_counts_one_record():
+    import copy
+    from fiberhmm.assoc.condition import LocusTable
+    sim = simulate_nuc(12, n_anchors=5, coverage=10)
+    m = sim['molecules'][0]
+    twin = copy.deepcopy(m)
+    twin.name = m.name.rsplit('/', 1)[0] + '/ccs_rev'
+    p = (m.ref_start + m.ref_end) // 2
+    loci = LocusTable(['a'], [m.chrom], [p], [True], [-1])
+    states = {id(m): '1', id(twin): '0'}
+    for order in ([m, twin], [twin, m]):
+        app, _b, info = N.anchor_appearances(order, loci, P=189.0, state_fn=lambda mol, a, l: states[id(mol)])
+        assert len(app.locus) == 0 and info['conflicting_records'] == 1
+    rng = np.random.default_rng(13)
+    cal = flat_calibration(nrl=190.0)
+    mol = array_molecule([('reg', 20, 190), ('irr', 10, 0)], rng, name='m/7/ccs', chrom='c', ref_start=0,
+                         ref_end=7000)
+    dup = copy.deepcopy(mol)
+    one = N.association_stats([mol], cal=cal, y=lambda x: np.array([1500, 3000, 5000]), n_shift=10, n_boot=0,
+                              censor_bp=200, edges=False)
+    two = N.association_stats([mol, dup], cal=cal, y=lambda x: np.array([1500, 3000, 5000]), n_shift=10,
+                              n_boot=0, censor_bp=200, edges=False)
+    assert two['skipped']['duplicate_records'] == 1 and two.get('n_molecules') == one.get('n_molecules')
+
+
+def _write_marks_scan(tmp: Path, records) -> Path:
+    """A table-mode scan with nuc marks only. records: [(record, molecule, [(start, end, q1)], [tf centres])]."""
+    from fiberhmm.scan.tables import TableWriter
+    from fiberhmm.scan.types import SCHEMA
+    out = tmp / 'mscan'
+    common = ['chrom', 'start', 'end', 'idx_start', 'idx_end']
+    w = TableWriter(out / 'nuc' / 'marks.tsv.bgz', common + ['group', 'dataset_id', 'input_index', 'qname', 'record',
+                                                             'molecule', 'mol_start', 'mol_len', 'q', 'name'],
+                    {'chrT': 0})
+    for rec, molid, segs, tfs in records:
+        for s, e, q1 in segs:
+            w.add('chrT', s, e, ['nucseg', 'd1', 0, f'q{rec}', rec, molid, s, e - s, f'{q1},200,0', '.'])
+        for c in tfs:
+            w.add('chrT', c - 10, c + 10, ['nucsz', 'd1', 0, f'q{rec}', rec, molid, c - 10, 20, '18,0,255,128', '.'])
+    tables = {'nuc/marks.tsv.bgz': w.close()}
+    (out / 'manifest.json').write_text(json.dumps({'schema': SCHEMA, 'datasets': [{'dataset_id': 'd1', 'files': []}],
+                                                   'modules': {'nuc': {}},
+                                                   'outputs': {'annotate': False, 'tables': tables}}))
+    return out
+
+
+def test_scan_m3_merges_records_of_one_molecule_and_clips_regions(tmp_path):
+    from fiberhmm.assoc import scanio as S
+    from fiberhmm.assoc.rate import rate_ratio
+    # one record: regular [0,500), disordered [500,1000); TF centres 300, 600, 700, 800; region [200, 800)
+    scan = _write_marks_scan(tmp_path, [('r1', 'mol:v1 a', [(0, 500, 1), (500, 1000, 2)], [300, 600, 700, 800])])
+    d = S.rate_data_from_marks(S.open_scan(scan), 'nuc.seg.regular', 'tf', regions=[('chrT', 200, 800),
+                                                                                     ('chrT', 300, 700)])
+    r = rate_ratio(d, n_shift=0, n_boot=0)
+    assert (r['E_in'], r['E_out'], r['O_in'], r['O_out']) == (300, 300, 1, 2)
+    # two overlapping records of one molecule: unique geometry and calls are kept, shared ones counted once
+    scan2 = _write_marks_scan(tmp_path / 'b', [
+        ('r1', 'mol:v1 a', [(0, 900, 1), (900, 1000, 2)], [100, 200, 950]),
+        ('r2', 'mol:v1 a', [(900, 1800, 2)], [950, 1200, 1500])])
+    d2 = S.rate_data_from_marks(S.open_scan(scan2), 'nuc.seg.regular', 'tf')
+    assert d2.n == 1
+    r2 = rate_ratio(d2, n_shift=0, n_boot=0)
+    assert (r2['E_in'], r2['E_out'], r2['O_in'], r2['O_out']) == (900, 900, 2, 3)
+
+
+def test_reverse_association_p_uses_the_cluster_t_reference():
+    from scipy.stats import t as tdist
+    rng = np.random.default_rng(5)
+    rows = []
+    for locus in range(5):
+        for m in range(30):
+            lam = rng.normal()
+            x = int(rng.random() < 0.5)
+            y = int(rng.random() < 1 / (1 + np.exp(-(0.4 * x + 0.5 * lam))))
+            rows.append((locus, locus * 100 + m, y, x, lam))
+    loc, mol, y, x, lam = map(np.array, zip(*rows))
+    res = N.reverse_association(loc, mol, y, x, lam, n_boot=200)
+    c = res['clogit']
+    if np.isfinite(c['df']):
+        z = c['log_or'] / c['se_boot']
+        assert c['p'] == pytest.approx(2 * tdist.sf(abs(z), c['df']))

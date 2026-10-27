@@ -440,7 +440,7 @@ def cooccurrence(a: FeatureStates, b: FeatureStates, molecules: MoleculeTable, *
         for pid, i, j, nest, mols, x, y, oa, ob in pair_data:
             keep = scope_mask[mols]
             mols, x, y = mols[keep], x[keep], y[keep]
-            if len(mols) < max(2, min_pool_molecules):
+            if len(mols) < 2:
                 continue
             lab = strata_for(mols)
             if add_density:
@@ -450,12 +450,14 @@ def cooccurrence(a: FeatureStates, b: FeatureStates, molecules: MoleculeTable, *
                 lab = ST.combine(lab, gcode[mols])
                 ulab = np.unique(gcode[mols], return_inverse=True)[1]
             lab = np.unique(lab, return_inverse=True)[1]
+            if per_pair and len(mols) >= min_molecules:
+                rows.append(_pair_row(a, b, i, j, nest, mols, x, y, lab, oa, ob))
+            if len(mols) < min_pool_molecules:
+                continue                         # reported per pair, not pooled
             P.append(np.full(len(mols), pid)); M.append(mols); X.append(x); Y.append(y)
             CELL.append(n_cells + lab); UNIT.append(n_units + ulab)
             n_cells += int(lab.max()) + 1
             n_units += int(ulab.max()) + 1
-            if per_pair and len(mols) >= min_molecules:
-                rows.append(_pair_row(a, b, i, j, nest, mols, x, y, lab, oa, ob))
         if P:
             it = _Items(*(np.concatenate(v) for v in (P, M, X, Y, CELL, UNIT)))
         else:
