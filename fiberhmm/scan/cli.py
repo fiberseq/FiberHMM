@@ -38,7 +38,8 @@ def _parser():
     p.add_argument('--zones', action='append', metavar='CHROM:START-END',
                    help='Scan only the genome-grid units whose owned zones meet this window (0-based, half-open; '
                         'repeatable; implies --genome). Units keep their genome-grid spans (not clipped to the '
-                        'window), so their results are the genome scan\'s and a --genome scan can reuse them. '
+                        'window), so their results are the genome scan\'s (the Python API\'s run_units(..., '
+                        'extend=True) reuses them across plans; --continue needs the same plan). '
                         'FiberBrowser\'s view scans print this form')
     p.add_argument('--modules', default=DEFAULT_MODULES,
                    help=f'Comma-separated modules (default {DEFAULT_MODULES}; nfr is an EXPERIMENTAL preview)')
