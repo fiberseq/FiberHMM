@@ -117,18 +117,20 @@ def run(args) -> dict:
         d = S.rate_data_from_marks(scan, args.a, args.b or 'tf', regions)
         if gkind == 'haplotype' or args.labels:
             mi = S.MoleculeIndex()
-            for m, ds, q in zip(d.molecule_ids, d.labels['dataset'], d.labels['qname']):
-                mi.add(m, ds, q)
+            idx = [mi.add(m, ds, q) for m, ds, q in zip(d.labels['molecule'], d.labels['dataset'],
+                                                        d.labels['qname'])]
             mt = S.molecule_table(scan, mi, haplotype_tag=args.haplotype_tag if gkind == 'haplotype' else None,
                                   regions=regions, labels_tsv=args.labels)
             for k, v in mt.labels.items():
-                d.labels[k] = v[[mi.index[m] for m in d.molecule_ids]]
+                d.labels[k] = v[idx]
         res = rate_ratio(d, n_shift=args.n_perm, n_boot=args.n_boot, group=group, group_kind=gkind, seed=args.seed)
+        res['coordinate'] = ('admissible reference bp (HUB 7.5): nucseg segments minus low-information; scan tables '
+                             'carry no per-site informativeness')
     else:
         from fiberhmm.assoc.overlap import overlap_enrichment
         if not args.b:
             raise S.ScanInputError('overlap needs --b')
-        terr = S.territory(scan)
+        terr = S.territory(scan, regions=regions)
         strata = None
         if args.strata:
             strata = [(c, int(s), int(e), lab) for c, s, e, lab in
@@ -160,6 +162,12 @@ def _condition_from_scan(scan, args, regions, group, gkind):
     y = S.molecule_scalars(scan, rmod, [rcol], mi, regions)[rcol]
     dens = S.molecule_scalars(scan, 'nuc', [args.density], mi, regions)[args.density]
     hap = S.haplotypes_from_bams(scan, mi, args.haplotype_tag, regions) if gkind == 'haplotype' else None
+    extra = {}
+    if args.labels:
+        mt = S.molecule_table(scan, mi, regions=regions, labels_tsv=args.labels)
+        extra = {k: v for k, v in mt.labels.items() if k != 'dataset'}
+    if group is not None and group not in ('dataset', 'haplotype') and group not in extra:
+        raise S.ScanInputError(f'--group-label {group!r} is not a column of --labels')
     n = A.n_hits
     depth = np.bincount(A.hit, minlength=n).astype(float)
     prev = np.bincount(A.hit, weights=A.state, minlength=n) / np.maximum(depth, 1)
@@ -195,6 +203,8 @@ def _condition_from_scan(scan, args, regions, group, gkind):
     labels = {'dataset': np.array(mi.dataset, dtype=object)[rows_m]}
     if hap is not None:
         labels['haplotype'] = hap[rows_m]
+    for k, v in extra.items():
+        labels[k] = v[rows_m]
     app = Appearances(np.array(rows_l), rows_m, np.array(rows_s), stratum, ok.astype(np.int64), stats, labels,
                       density=dens[rows_m])
     res = condition(app, loci, mean_metric(f'mean {rcol}'), bins=['molecule'], n_perm=args.n_perm,

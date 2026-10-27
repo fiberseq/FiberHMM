@@ -27,7 +27,10 @@ intact (NUC 2.3: closed molecules had 9x lower density).
   within-anchor permutation (fixed 1,000, which also gives the SE), BH across anchors, and empirical-Bayes
   shrinkage for ranking. The aggregate is the primary result.
 - Groups: Delta per group by permutation within group x cell; the difference of the groups' Deltas gets a joint
-  locus-group bootstrap interval (Wald). Unphased molecules are left out of haplotype contrasts (D14).
+  locus-group bootstrap interval (Wald). When locus groups chain, the contrast's variance comes from resampling
+  whole molecules (the groups are disjoint in molecules and locus effects cancel within each Delta; the two-way
+  variance was noisy for contrasts and rejected at about 10% under the null, molecules alone at about 1%).
+  Unphased molecules are left out of haplotype contrasts (D14).
 """
 from __future__ import annotations
 
@@ -344,6 +347,9 @@ def _bin_result(bd: _Bin, loci: LocusTable, *, n_perm, n_role, per_anchor, min_p
             nulls = np.concatenate(nulls)
             out['p_site_state1'] = perm_p_two_from_tails(s1, np.concatenate(n1s))
             out['p_site_state0'] = perm_p_two_from_tails(s0, np.concatenate(n0s))
+            if return_null:
+                out['null_site_state1'] = np.concatenate(n1s)
+                out['null_site_state0'] = np.concatenate(n0s)
             out['p_site'] = perm_p_two_from_tails(ds, nulls)
             out['null_mean_site'] = float(np.nanmean(nulls))
             if return_null:
@@ -414,7 +420,8 @@ def condition(app: Appearances, loci: LocusTable, metric: SumMetric, *, bins: Op
                 key = 'delta_site' if all('delta_site' in gres[g] for g in group_names) else 'delta_anchor'
                 if all(f'{g}|{key}' in boot.names for g in group_names):
                     est = {g: gres[g][key] for g in group_names}
-                    res['interaction'] = group_contrast(est, boot, {g: f'{g}|{key}' for g in group_names})
+                    res['interaction'] = group_contrast(est, boot, {g: f'{g}|{key}' for g in group_names},
+                                                        part='molecules')
                     res['interaction']['statistic'] = key
                     res['interaction']['test'] = 'difference of group Deltas, joint locus-group bootstrap (Wald)'
         if gres:

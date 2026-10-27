@@ -55,9 +55,9 @@ def test_pooled_msp_anchors_and_held_out_cross_fit():
     anchors = N.pooled_msp_anchors(sim['molecules'], min_frac=0.2)
     assert anchors and all(b[1] - a[1] >= 3000 for a, b in zip(anchors, anchors[1:]))
     out = N.held_out(sim['molecules'], lambda ms: N.pooled_msp_anchors(ms, min_frac=0.2),
-                     lambda ms, an: N.condition_stats(ms, an, backgrounds='random', k=2, n_perm=50, n_role=50,
-                                                      n_boot=0, metrics=('R',), per_anchor=False,
-                                                      return_null=True, frames=('anchor',)))
+                     lambda ms, an, seed: N.condition_stats(ms, an, backgrounds='random', k=2, n_perm=50, n_role=50,
+                                                            n_boot=0, metrics=('R',), per_anchor=False,
+                                                            return_null=True, frames=('anchor',), seed=seed))
     d0, d1 = out['directions']
     assert d0['tested_on'] == 'half 1' and d1['tested_on'] == 'half 0'
     rows = out['cross_fit']['anchor/R']
@@ -241,6 +241,131 @@ def test_cli_rate_from_nuc_marks_with_haplotypes(nuc_scan, tmp_path):
                  'haplotype', '--n-perm', '100', '--n-boot', '50', '-o', str(tmp_path / 'm3')]) == 0
     r = json.loads((tmp_path / 'm3' / 'result.json').read_text())
     assert r['mode'] == 'M3' and r['n_molecules'] > 0
+    assert r['coordinate'].startswith('admissible reference bp')        # C1: the exposure is labelled
     assert r['group_info']['groups'] == ['1', '2']
     if np.isfinite(r.get('rate_ratio', np.nan)):
         assert r['rate_ratio'] < 1.0
+
+
+# ---------------------------------------------------------------- review regressions (Codex round 1, group C)
+def test_masks_follow_measured_geometry_and_partial_spans_count():
+    """C2: a molecule with no informative sites in its flanks gets no appearance; one that reaches the first bin
+    but not the summary span appears with a partial mask."""
+    from fiberhmm.assoc.condition import LocusTable
+    from fiberhmm.nuc.records import make_molecule
+    nucs = [(int(d - 73), int(d + 74)) for d in np.arange(300, 20_000, 190)]
+    msps = [(nucs[i][1], nucs[i + 1][0]) for i in range(len(nucs) - 1)]
+
+    def mol(name, start, L, informative=True):
+        nn = [(s - start, e - start) for s, e in nucs if s >= start and e <= start + L]
+        mm = [(s - start, e - start) for s, e in msps if s >= start and e <= start + L]
+        inf = np.ones(L, bool) if informative else np.zeros(L, bool)
+        return make_molecule(L, nucs=nn, msps=mm, informative=inf, name=name, chrom='c', ref_start=start,
+                             ref_end=start + L, blocks=np.array([[0, start, L]]))
+    anchor = 9990                             # a nucleosome dyad: closed
+    full = mol('m/1/ccs', 5000, 10_000)
+    blind = mol('m/2/ccs', 5000, 10_000, informative=False)
+    short = mol('m/3/ccs', anchor - 700, 1400)         # reaches 150 + 2 x 190 = 530 bp, not 1100 bp
+    loci = LocusTable(['a'], ['c'], [anchor], [True], [-1])
+    app, bins, info = N.anchor_appearances([full, blind, short], loci, P=190.0)
+    assert len(app.locus) == 2 and info['no_bin_measured'] == 1
+    full_mask = (1 << len(bins)) - 1
+    masks = sorted(app.mask.tolist())
+    assert masks[-1] == full_mask and 0 < masks[0] < full_mask and masks[0] & 1
+
+
+def test_one_appearance_per_physical_molecule_and_one_record_in_m3():
+    """C3: two records of one physical molecule give one M2 appearance; overlapping scan records of one molecule
+    count once in M3."""
+    from fiberhmm.assoc.condition import LocusTable
+    sim = simulate_nuc(9, n_anchors=5, coverage=10)
+    m = sim['molecules'][0]
+    import copy
+    twin = copy.deepcopy(m)
+    twin.name = m.name.rsplit('/', 1)[0] + '/ccs_fwd'        # same movie/zmw, another record
+    c, p = m.chrom, (m.ref_start + m.ref_end) // 2
+    loci = LocusTable(['a'], [c], [p], [True], [-1])
+    app, _bins, info = N.anchor_appearances([m, twin], loci, P=189.0, state_fn=lambda mol, a, l: '1')
+    assert len(app.locus) == 1 and info.get('duplicate_records') == 1
+
+
+def test_held_out_gives_each_direction_its_own_seed():
+    """C4: the two directions draw independent permutations."""
+    sim = simulate_nuc(10, n_anchors=10, coverage=15)
+    seeds = []
+
+    def analyse(ms, an, seed):
+        seeds.append(seed)
+        return N.condition_stats(ms, an, backgrounds=None, n_perm=20, n_role=0, n_boot=0, metrics=('R',),
+                                 per_anchor=False, return_null=True, frames=('anchor',), seed=seed)
+    N.held_out(sim['molecules'], lambda ms: sim['anchors'], analyse, seed=5)
+    assert len(seeds) == 2 and seeds[0] != seeds[1]
+
+
+def test_association_stats_drops_censored_points_before_mapping():
+    """C5: a TF centre inside the censored end does not enter the informative coordinate."""
+    rng = np.random.default_rng(11)
+    cal = flat_calibration(nrl=190.0)
+    m = array_molecule([('reg', 20, 190), ('irr', 10, 0)], rng, name='m/1/ccs', chrom='c', ref_start=0,
+                       ref_end=7000)
+    res = N.association_stats([m], cal=cal, y=lambda mol: np.array([100, 450, mol.length // 2]), n_shift=10,
+                              n_boot=0, censor_bp=500, edges=False)
+    if res.get('n_molecules'):
+        assert res['O_in'] + res['O_out'] == 1
+
+
+def test_molecule_index_is_per_dataset_and_territory_needs_every_dataset(tmp_path):
+    """C6, C8."""
+    from fiberhmm.assoc import scanio as S
+    mi = S.MoleculeIndex()
+    assert mi.add('mol:v1 aa', 'd1', 'q') != mi.add('mol:v1 aa', 'd2', 'q') and mi.n == 2
+    scan = _write_scan(tmp_path)
+    man = json.loads((scan / 'manifest.json').read_text())
+    man['datasets'].append({'dataset_id': 'd2', 'ordinal': 1, 'files': []})
+    (scan / 'manifest.json').write_text(json.dumps(man))
+    assert S.territory(S.open_scan(scan)) == []
+    assert S.territory(S.open_scan(scan), datasets=['d1'], regions=[('chrT', 100, 200)]) == [('chrT', 100, 200)]
+
+
+def test_haplotypes_are_read_within_each_dataset(tmp_path):
+    """C7: one QNAME in two datasets with HP 1 and HP 2 gives each molecule its own haplotype."""
+    from fiberhmm.assoc import scanio as S
+    paths = {}
+    for ds, hp in (('d1', 1), ('d2', 2)):
+        path = str(tmp_path / f'{ds}.bam')
+        with pysam.AlignmentFile(path, 'wb', header={'HD': {'VN': '1.6', 'SO': 'coordinate'},
+                                                     'SQ': [{'SN': 'chrT', 'LN': 10_000}]}) as out:
+            r = pysam.AlignedSegment(out.header)
+            r.query_name, r.reference_id, r.reference_start, r.cigarstring = 'm1/5/ccs', 0, 100, '50M'
+            r.query_sequence, r.mapping_quality = 'A' * 50, 60
+            r.set_tag('HP', hp)
+            out.write(r)
+        pysam.index(path)
+        paths[ds] = path
+
+    class FakeScan:
+        manifest = {'datasets': [{'dataset_id': d, 'files': [{'path': p}]} for d, p in paths.items()]}
+    mi = S.MoleculeIndex()
+    mi.add('mol:v1 x', 'd1', 'm1/5/ccs')
+    mi.add('mol:v1 x', 'd2', 'm1/5/ccs')
+    assert list(S.haplotypes_from_bams(FakeScan(), mi)) == [1, 2]
+
+
+def test_cli_condition_with_custom_labels_and_overlap_region(tmp_path):
+    """C9, C10."""
+    from fiberhmm.scan.cli import main
+    scan = _write_scan(tmp_path)
+    lab = tmp_path / 'labels.tsv'
+    lab.write_text('molecule\ttreatment\n' + ''.join(f'mol:v1 {k:016x}\t{"x" if k % 2 else "y"}\n'
+                                                     for k in range(150)))
+    bed = tmp_path / 'anchors.bed'
+    bed.write_text('chrT\t0\t20000\n')
+    assert main(['assoc', str(scan), '--mode', 'condition', '--a', 'nfr.region', '--response', 'nfr:openness',
+                 '--bed', str(bed), '--labels', str(lab), '--group-label', 'treatment', '--n-perm', '30',
+                 '--n-boot', '20', '-o', str(tmp_path / 'm2')]) == 0
+    r2 = json.loads((tmp_path / 'm2' / 'result.json').read_text())
+    assert r2['group_info']['groups'] == ['x', 'y']
+    assert main(['assoc', str(scan), '--mode', 'overlap', '--a', 'nfr.region', '--b', 'fp.class', '--region',
+                 'chrT:0-20000', '--n-perm', '30', '-o', str(tmp_path / 'm4')]) == 0
+    r4 = json.loads((tmp_path / 'm4' / 'result.json').read_text())
+    assert r4['territory_bp'] == 20_000

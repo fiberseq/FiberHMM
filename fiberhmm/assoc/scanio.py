@@ -54,21 +54,27 @@ def module_of(type_id: str) -> str:
 
 
 class MoleculeIndex:
-    """Physical molecules seen in a scan, with their records' datasets and QNAMEs."""
+    """Physical molecules seen in a scan, keyed by (dataset_id, molecule): the identity is defined within a dataset
+    (HUB 3.4), so one token in two datasets is two molecules. Keeps each molecule's dataset and QNAMEs."""
 
     def __init__(self):
-        self.index: Dict[str, int] = {}
+        self.index: Dict[Tuple[str, str], int] = {}
         self.dataset: List[str] = []
         self.qnames: List[set] = []
 
     def add(self, molecule: str, dataset: str, qname: str) -> int:
-        i = self.index.get(molecule)
+        key = (dataset, molecule)
+        i = self.index.get(key)
         if i is None:
-            i = self.index[molecule] = len(self.dataset)
+            i = self.index[key] = len(self.dataset)
             self.dataset.append(dataset)
             self.qnames.append(set())
-        self.qnames[i].add(qname)
+        if qname:
+            self.qnames[i].add(qname)
         return i
+
+    def get(self, molecule: str, dataset: str) -> Optional[int]:
+        return self.index.get((dataset, molecule))
 
     @property
     def n(self) -> int:
@@ -77,8 +83,8 @@ class MoleculeIndex:
     @property
     def ids(self) -> np.ndarray:
         out = np.empty(self.n, dtype=object)
-        for m, i in self.index.items():
-            out[i] = m
+        for (ds, m), i in self.index.items():
+            out[i] = f'{ds}|{m}'
         return out
 
 
@@ -121,7 +127,7 @@ def molecule_scalars(scan, module: str, columns: Sequence[str], mi: MoleculeInde
         return out
     acc = defaultdict(list)
     for r in _rows(scan, rel, regions):
-        i = mi.index.get(r['molecule'])
+        i = mi.get(r['molecule'], r['dataset_id'])
         if i is None:
             continue
         for c in columns:
@@ -134,21 +140,24 @@ def molecule_scalars(scan, module: str, columns: Sequence[str], mi: MoleculeInde
 
 
 def haplotypes_from_bams(scan, mi: MoleculeIndex, tag: str = 'HP', regions=None) -> np.ndarray:
-    """Per-molecule haplotype from the input BAMs' ``tag`` (0 = unphased; molecules whose records disagree are
-    unphased)."""
+    """Per-molecule haplotype from each dataset's input BAMs' ``tag`` (0 = unphased; molecules whose records disagree
+    are unphased). Records are matched by QNAME within the molecule's own dataset."""
     import pysam
-    want = defaultdict(set)
+    want = defaultdict(lambda: defaultdict(set))          # dataset -> qname -> molecules
     for i, qs in enumerate(mi.qnames):
         for q in qs:
-            want[q].add(i)
+            want[mi.dataset[i]][q].add(i)
     val: Dict[int, set] = defaultdict(set)
     for ds in scan.manifest.get('datasets', []):
+        wq = want.get(ds['dataset_id'])
+        if not wq:
+            continue
         for f in ds.get('files', []):
             with pysam.AlignmentFile(f['path']) as bam:
                 it = (bam.fetch(c, s, e) for c, s, e in regions) if regions else [bam.fetch(until_eof=True)]
                 for chunk in it:
                     for r in chunk:
-                        for i in want.get(r.query_name, ()):
+                        for i in wq.get(r.query_name, ()):
                             val[i].add(r.get_tag(tag) if r.has_tag(tag) else 0)
     out = np.zeros(mi.n, dtype=object)
     for i in range(mi.n):
@@ -160,7 +169,8 @@ def haplotypes_from_bams(scan, mi: MoleculeIndex, tag: str = 'HP', regions=None)
 def molecule_table(scan, mi: MoleculeIndex, *, density: str = 'rho_read', haplotype_tag: Optional[str] = None,
                    channel_of: Optional[Dict[int, str]] = None, regions=None, labels_tsv: Optional[str] = None):
     """MoleculeTable with openness (nfr), density (nuc ``rho_read`` or ``lambda_acc``), channel, dataset and
-    optional haplotype labels. ``labels_tsv``: extra labels, a TSV with a ``molecule`` column."""
+    optional haplotype labels. ``labels_tsv``: extra labels, a TSV with a ``molecule`` column (and optionally
+    ``dataset_id``)."""
     from fiberhmm.assoc.cooccur import MoleculeTable
     op = molecule_scalars(scan, 'nfr', ['openness'], mi, regions)['openness']
     dens = molecule_scalars(scan, 'nuc', [density], mi, regions)[density]
@@ -172,13 +182,16 @@ def molecule_table(scan, mi: MoleculeIndex, *, density: str = 'rho_read', haplot
         with open(labels_tsv) as fh:
             rows = list(csv.DictReader(fh, delimiter='\t'))
         for col in (rows[0].keys() if rows else []):
-            if col == 'molecule':
+            if col in ('molecule', 'dataset_id'):
                 continue
             v = np.empty(mi.n, dtype=object)
+            by_mol = defaultdict(list)
+            for (ds, m), i in mi.index.items():
+                by_mol[m].append((ds, i))
             for r in rows:
-                i = mi.index.get(r['molecule'])
-                if i is not None:
-                    v[i] = r[col]
+                for ds, i in by_mol.get(r['molecule'], ()):
+                    if not r.get('dataset_id') or r['dataset_id'] == ds:
+                        v[i] = r[col]
             labels[col] = v
     ch = None
     if channel_of:
@@ -188,19 +201,23 @@ def molecule_table(scan, mi: MoleculeIndex, *, density: str = 'rho_read', haplot
                          density=dens if np.isfinite(dens).any() else None, labels=labels)
 
 
-def territory(scan, datasets: Optional[Sequence[str]] = None) -> List[Tuple[str, int, int]]:
-    """Callable runs (``callable.tsv.bgz``) of the given datasets (intersection across them; default every
-    dataset), clipped to the zones of computed units."""
+def territory(scan, datasets: Optional[Sequence[str]] = None, regions=None) -> List[Tuple[str, int, int]]:
+    """Callable runs (``callable.tsv.bgz``) of the given datasets (intersection across them; default every dataset
+    in the manifest, so a dataset with no callable run empties the territory), within the zones of computed units
+    and, with ``regions``, within those windows."""
     from fiberhmm.assoc.overlap import intersect_territories
     zones = [(u['chrom'], int(u['zone_start']), int(u['zone_end'])) for u in _rows(scan, 'units.tsv.bgz')
              if u.get('status') == 'done']
     by_ds = defaultdict(list)
     for r in _rows(scan, 'callable.tsv.bgz'):
         by_ds[r['dataset_id']].append((r['chrom'], int(r['start']), int(r['end'])))
-    names = list(datasets) if datasets else sorted(by_ds)
-    terr = [by_ds[d] for d in names if d in by_ds]
-    if not terr:
+    names = list(datasets) if datasets else [d['dataset_id'] for d in scan.manifest.get('datasets', [])] or \
+        sorted(by_ds)
+    if any(not by_ds.get(d) for d in names):
         return []
+    terr = [by_ds[d] for d in names]
+    if regions:
+        terr.append([(c, int(a), int(b)) for c, a, b in regions])
     return intersect_territories(zones, *terr)
 
 
@@ -219,9 +236,12 @@ NUCSEG_KIND = {'nuc.seg.regular': 1, 'nuc.seg.disordered': 2, 'nuc.seg.low_infor
 def rate_data_from_marks(scan, a_type: str, b_type: str, regions=None, min_tf_bp: int = 0, mi=None):
     """RateData for M3 from ``nuc/marks.tsv.bgz`` (reference coordinates): A = ``nuc.seg.*``/``nuc.event.*`` rows;
     B = TF footprint centres (``nucsz`` rows with the TF bit, ``b_type='tf'``) or member call centres of a state
-    type (``fp.class``: states rows with state 1, ``call_start``/``call_end``). Admissible bases: the record's
-    aligned span (its ``nucseg`` partition) minus low-information segments. Records are kept separately (a
-    supplementary record is its own stretch); ``molecule_ids`` names their physical molecule."""
+    type (``fp.class``: states rows with state 1, ``call_start``/``call_end``). Exposure is admissible reference bp
+    (HUB 7.5): the record's ``nucseg`` partition minus low-information segments. Scan tables carry no per-site
+    informativeness, so this is not NUC 3.9's informative-site exposure (``association_stats`` on decoded
+    molecules uses informative sites). Records of one physical molecule are counted once: the longest record
+    first, then any other record of that molecule that does not overlap one already kept (a supplementary
+    elsewhere is its own stretch); ``molecule_ids`` names their physical molecule."""
     from fiberhmm.assoc.rate import RateData, compress
     require_tables(scan, ['nuc/marks.tsv.bgz'], 'rate')
     code = NUCSEG_KIND.get(a_type)
@@ -255,10 +275,23 @@ def rate_data_from_marks(scan, a_type: str, b_type: str, regions=None, min_tf_bp
                 cs, ce = r.get('call_start') or r['start'], r.get('call_end') or r['end']
                 rec[key]['b'].append(int((float(cs) + float(ce)) / 2))
     L, IV, PT, CH, MID, MOL, DS, JN, QN = [], [], [], [], [], [], [], [], []
-    for key in sorted(rec):
+    by_mol = defaultdict(list)
+    for key, d in rec.items():
+        if d['seg']:
+            by_mol[(d['dataset'], d['molecule'])].append(key)
+    kept = []
+    for mk, keys in by_mol.items():
+        keys.sort(key=lambda k: (-sum(e - s for s, e in _union(rec[k]['seg'])), k))
+        spans = []
+        for k in keys:
+            u = _union(rec[k]['seg'])
+            sp = (rec[k]['chrom'], u[0][0], u[-1][1])
+            if any(c == sp[0] and a < sp[2] and sp[1] < b for c, a, b in spans):
+                continue
+            spans.append(sp)
+            kept.append(k)
+    for key in sorted(kept):
         d = rec[key]
-        if not d['seg']:
-            continue
         seg = sorted(d['seg'])
         adm = _subtract(_union(seg), _union(d['low']))
         if not adm:
@@ -270,8 +303,9 @@ def rate_data_from_marks(scan, a_type: str, b_type: str, regions=None, min_tf_bp
         CH.append(d['chrom']); MID.append((seg[0][0] + seg[-1][1]) // 2); MOL.append(d['molecule'])
         DS.append(d['dataset']); QN.append(d['qname'])
     return RateData(np.array(L, np.int64), IV, PT, np.array(CH, dtype=object), np.array(MID, np.int64),
-                    np.array(MOL, dtype=object), labels={'dataset': np.array(DS, dtype=object),
-                                                         'qname': np.array(QN, dtype=object)}, junctions=JN)
+                    np.array([f'{ds}|{m}' for ds, m in zip(DS, MOL)], dtype=object),
+                    labels={'dataset': np.array(DS, dtype=object), 'qname': np.array(QN, dtype=object),
+                            'molecule': np.array(MOL, dtype=object)}, junctions=JN)
 
 
 def _union(iv):

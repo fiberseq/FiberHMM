@@ -92,10 +92,12 @@ def post_selection_check(tested: Sequence[Tuple[str, int, int]], cluster_regions
 
 
 def group_contrast(estimates: Dict[str, float], boot, names: Optional[Dict[str, str]] = None,
-                   reference: Optional[str] = None) -> dict:
+                   reference: Optional[str] = None, part: Optional[str] = None) -> dict:
     """Interaction contrast between groups: differences against ``reference`` (the first group) and a Wald
     chi-square with the bootstrap covariance. ``boot`` is a :class:`fiberhmm.assoc.resample.BootDraws` (``names``
-    maps group -> statistic name; default the group name) or a dict {group: draws}."""
+    maps group -> statistic name; default the group name) or a dict {group: draws}. ``part``: in two-way mode,
+    use one draw set only (M2 contrasts use 'molecules': the groups are disjoint in molecules and locus effects
+    cancel within each Delta)."""
     from scipy.stats import chi2, f as fdist, norm, t as tdist
     from fiberhmm.assoc.resample import BootDraws, boot_p_two, percentile_ci
     groups = [g for g in estimates]
@@ -108,8 +110,9 @@ def group_contrast(estimates: Dict[str, float], boot, names: Optional[Dict[str, 
     ref = reference if reference is not None else groups[0]
     others = [g for g in groups if g != ref]
     allg = [ref] + others
-    fac, df = boot.correction()
-    cov = boot.cov([names[g] for g in allg]) * fac
+    part = part if boot.mode == 'twoway' else None
+    fac, df = boot.correction(part)
+    cov = boot.cov([names[g] for g in allg], part) * fac
     A = np.zeros((len(others), len(allg)))
     A[:, 0] = -1
     A[np.arange(len(others)), np.arange(1, len(allg))] = 1
@@ -131,7 +134,8 @@ def group_contrast(estimates: Dict[str, float], boot, names: Optional[Dict[str, 
             row['p_boot'] = boot_p_two(fin)
         row['lo'], row['hi'] = dobs[k] - q * se, dobs[k] + q * se
         rows.append(row)
-    out = {'groups': groups, 'reference': ref, 'differences': rows, 'variance': boot.mode}
+    out = {'groups': groups, 'reference': ref, 'differences': rows,
+           'variance': boot.mode if part is None else f'{boot.mode} ({part} part)'}
     if np.all(np.isfinite(cd)) and np.all(np.isfinite(dobs)):
         try:
             stat = float(dobs @ np.linalg.solve(cd, dobs))

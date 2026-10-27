@@ -177,9 +177,13 @@ class BootDraws:
     def names(self):
         return list((self.draws if self.draws is not None else self.parts['units']).keys())
 
-    def cov(self, names: Sequence[str]) -> np.ndarray:
+    def cov(self, names: Sequence[str], part: Optional[str] = None) -> np.ndarray:
+        """Covariance of the named statistics. ``part`` (twoway mode): one draw set only ('units', 'molecules' or
+        'items') instead of the two-way combination."""
         if self.mode != 'twoway':
             return _nancov([self.draws[n] for n in names])
+        if part is not None:
+            return _nancov([self.parts[part][n] for n in names])
         c = (_nancov([self.parts['units'][n] for n in names]) + _nancov([self.parts['molecules'][n] for n in names])
              - _nancov([self.parts['items'][n] for n in names]))
         if not np.all(np.isfinite(c)):
@@ -200,10 +204,10 @@ class BootDraws:
     def clusters(self) -> int:
         return int((self.info or {}).get('clusters') or 0)
 
-    def correction(self) -> Tuple[float, float]:
+    def correction(self, part: Optional[str] = None) -> Tuple[float, float]:
         """(variance factor G / (G - 1), degrees of freedom G - 1) for G resampling clusters (CR1 with t(G - 1));
-        (1, inf) when G is unknown."""
-        G = self.clusters
+        (1, inf) when G is unknown. ``part='molecules'`` uses the molecule count."""
+        G = self.clusters if part != 'molecules' else int((self.info or {}).get('molecules') or 0)
         if G and G > 2:
             return G / (G - 1), G - 1.0
         return 1.0, float('inf')

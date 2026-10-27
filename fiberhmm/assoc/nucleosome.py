@@ -157,15 +157,18 @@ def anchor_appearances(molecules, loci: LocusTable, *, frame: str = 'anchor', P:
                        prior=None, state_fn: Optional[Callable] = None, nrl_pooled: Optional[float] = None,
                        flank_exclude: int = 2000, density_bins: int = 12, labels: Optional[Dict[str, Callable]] = None,
                        dyads: Optional[Dict[int, np.ndarray]] = None, oscillation: Optional[SumMetric] = None,
-                       index: Optional[_ChromIndex] = None):
+                       index: Optional[_ChromIndex] = None, min_sites: int = 10):
     """M2 appearances of molecules at loci for the phasing metrics (module docstring).
 
-    Each molecule spanning a locus +/- the summary span with a state gives one row: resultant statistics per
-    period bin (and, with ``oscillation``, dyad counts over the summary span), lambda_acc outside the anchor
-    +/- ``flank_exclude``, and labels (``labels``: name -> f(molecule)). Returns (Appearances, bins, info)."""
+    Each physical molecule (its longest record) reaching the first bin on both sides of a locus, with a state,
+    gives one row: resultant statistics per period bin, a coverage mask (bin b is measured when the molecule
+    extends past the bin on both sides of the anchor, or of its barrier in the molecule frame, with at least
+    ``min_sites`` informative sites on each side; unmeasured bins carry no statistics), dyad counts over the
+    summary span with ``oscillation``, lambda_acc outside the anchor +/- ``flank_exclude``, and labels
+    (``labels``: name -> f(molecule)). Returns (Appearances, bins, info)."""
     from fiberhmm.nuc.density import FLAT_PRIOR, lambda_acc
     from fiberhmm.nuc.params import DEFAULT_PARAMS
-    from fiberhmm.nuc.phasing import anchor_offsets, period_bins
+    from fiberhmm.nuc.phasing import anchor_offsets, barrier_at, period_bins
     params = params or DEFAULT_PARAMS
     prior = prior or FLAT_PRIOR
     nrl = nrl_pooled or P
@@ -176,10 +179,19 @@ def anchor_appearances(molecules, loci: LocusTable, *, frame: str = 'anchor', P:
     rows_l, rows_m, rows_s, rows_d, stats, osc, lab = [], [], [], [], [], [], {k: [] for k in (labels or {})}
     info = {'no_state': 0, 'anchor_absent': 0, 'no_barrier': 0, 'appearances': 0}
     dy_cache = dyads if dyads is not None else {}
+    reach = bins[0][1]                         # a molecule must at least reach the first bin on both sides
+    order = sorted(range(len(molecules)), key=lambda i: -molecules[i].length)
+    rank = {i: r for r, i in enumerate(order)}
+    masks = []
     for l in range(loci.n):
         c, p = loci.chrom[l], int(loci.pos[l])
-        for i in ix.spanning(c, p - span, p + span):
+        seen = set()                           # one appearance per physical molecule at a locus (longest record)
+        for i in sorted(ix.spanning(c, p - reach, p + reach), key=lambda i: rank[i]):
             m = molecules[i]
+            k = molecule_key(m)
+            if k in seen:
+                info['duplicate_records'] = info.get('duplicate_records', 0) + 1
+                continue
             a = int(m.ref_to_mol([p])[0])
             if a < 0:
                 info['anchor_absent'] += 1
@@ -188,6 +200,18 @@ def anchor_appearances(molecules, loci: LocusTable, *, frame: str = 'anchor', P:
             if st not in ('1', '0'):
                 info['no_state'] += 1
                 continue
+            if frame == 'molecule':
+                bar = barrier_at(m, a, params)
+                if bar is None:
+                    info['no_barrier'] = info.get('no_barrier', 0) + 1
+                    continue
+                s0, e0 = bar[0], bar[1]
+            else:
+                s0, e0 = a, a
+            mask = _measured_bins(m, s0, e0, bins, min_sites)
+            if not mask:
+                info['no_bin_measured'] = info.get('no_bin_measured', 0) + 1
+                continue
             d = dy_cache.get(id(m))
             if d is None:
                 d = dy_cache[id(m)] = molecule_dyads(m, nrl, params)
@@ -195,20 +219,23 @@ def anchor_appearances(molecules, loci: LocusTable, *, frame: str = 'anchor', P:
             if x is None:
                 info[why] = info.get(why, 0) + 1
                 continue
+            seen.add(k)
             xr, xl = x[x > 0], -x[x < 0]
             row = np.zeros((len(bins), len(RES_COLUMNS)))
             for b, (lo, hi) in enumerate(bins):
+                if not (mask >> b) & 1:
+                    continue
                 vr = np.exp(2j * np.pi * xr[(xr >= lo) & (xr < hi)] / P)
                 vl = np.exp(2j * np.pi * xl[(xl >= lo) & (xl < hi)] / P)
                 Vr, Vl = vr.sum(), vl.sum()
                 row[b] = (Vr.real, Vr.imag, Vl.real, Vl.imag, abs(Vr) ** 2, abs(Vl) ** 2, len(vr) + len(vl))
             if oscillation is not None:
-                folded = np.abs(x)
-                osc.append(np.histogram(folded, bins=oscillation.edges)[0].astype(float))
-            k = molecule_key(m)
+                h = np.histogram(np.abs(x), bins=oscillation.edges)[0].astype(float)
+                osc.append(h if (mask >> (len(bins) - 1)) & 1 else np.zeros_like(h))
             mid = key_index.setdefault(k, len(key_index))
             lam = lambda_acc(m, prior, params, exclude=(a - flank_exclude, a + flank_exclude))
             rows_l.append(l); rows_m.append(mid); rows_s.append(int(st)); rows_d.append(lam); stats.append(row)
+            masks.append(mask)
             for name, f in (labels or {}).items():
                 lab[name].append(f(m))
             info['appearances'] += 1
@@ -217,7 +244,7 @@ def anchor_appearances(molecules, loci: LocusTable, *, frame: str = 'anchor', P:
     dens = np.array(rows_d, float)
     app = Appearances(np.array(rows_l, np.int64), np.array(rows_m, np.int64), np.array(rows_s, np.int64),
                       ST.density_bins(dens, density_bins) if n else np.zeros(0, np.int64),
-                      np.full(n, (1 << len(bins)) - 1, np.int64), S,
+                      np.array(masks, np.int64), S,
                       {k: np.array(v, dtype=object) for k, v in lab.items()}, density=dens)
     info['molecules'] = len(key_index)
     if oscillation is not None:
@@ -225,8 +252,25 @@ def anchor_appearances(molecules, loci: LocusTable, *, frame: str = 'anchor', P:
     return app, bins, info
 
 
+def _measured_bins(mol, s0: int, e0: int, bins, min_sites: int) -> int:
+    """Coverage mask over ``bins`` for a molecule whose origin occupies molecular [s0, e0] (the anchor, or the
+    barrier's edges): bin (lo, hi) is measured when the molecule extends hi bp past both edges and holds at least
+    ``min_sites`` informative sites in each side's [lo, hi) window."""
+    mask = 0
+    for b, (lo, hi) in enumerate(bins):
+        lo_i, hi_i = int(np.floor(lo)), int(np.ceil(hi))
+        if s0 - hi_i < 0 or e0 + hi_i > mol.length:
+            continue
+        _h1, n_right = mol.counts(e0 + lo_i, e0 + hi_i)
+        _h2, n_left = mol.counts(s0 - hi_i, s0 - lo_i)
+        if n_right >= min_sites and n_left >= min_sites:
+            mask |= 1 << b
+    return mask
+
+
 def _with_osc(app: Appearances) -> Appearances:
-    return Appearances(app.locus, app.molecule, app.state, app.stratum, np.ones(len(app.locus), np.int64),
+    summary = (app.mask >> (app.n_bins - 1)) & 1
+    return Appearances(app.locus, app.molecule, app.state, app.stratum, summary.astype(np.int64),
                        app.osc[:, None, :], app.labels, app.density, app.channel)
 
 
@@ -360,17 +404,19 @@ def condition_stats(molecules, anchors: Sequence[Tuple[str, int]], *, cal=None, 
     return out
 
 
-def held_out(molecules, discover: Callable, analyse: Callable, *, salt: str = 'fiberhmm.assoc.held_out') -> dict:
-    """Held-out discovery with cross-fitting. ``discover(molecules) -> anchors``; ``analyse(molecules, anchors) ->
-    condition_stats result`` (run with ``return_null=True``). Molecules are split by a stable hash of the physical
-    molecule; each half's anchors are tested on the other half. ``cross_fit`` holds, per frame, metric and bin, the
-    mean of the two directions' Deltas and p-values from the pairwise-averaged permutation nulls."""
+def held_out(molecules, discover: Callable, analyse: Callable, *, salt: str = 'fiberhmm.assoc.held_out',
+             seed: int = 0) -> dict:
+    """Held-out discovery with cross-fitting. ``discover(molecules) -> anchors``; ``analyse(molecules, anchors,
+    seed) -> condition_stats result`` (run with ``return_null=True`` and the given seed, so the two directions draw
+    independent permutations). Molecules are split by a stable hash of the physical molecule; each half's anchors
+    are tested on the other half. ``cross_fit`` holds, per frame, metric and bin, the mean of the two directions'
+    statistics and p-values from the pairwise-averaged (independent) permutation nulls."""
     from fiberhmm.assoc.resample import perm_p_two_from_tails
     halves = [[m for m in molecules if hash_half(m, salt) == h] for h in (0, 1)]
     res = []
     for d, t in ((0, 1), (1, 0)):
         anchors = discover(halves[d])
-        r = analyse(halves[t], anchors)
+        r = analyse(halves[t], anchors, seed + 1_000_003 * (d + 1))
         r['discovered_on'] = f'half {d}'
         r['tested_on'] = f'half {t}'
         res.append(r)
@@ -383,13 +429,15 @@ def held_out(molecules, discover: Callable, analyse: Callable, *, salt: str = 'f
             for x, y in zip(b0, b1):
                 row = {'bin': x['bin']}
                 for stat, nk, pk in (('delta_anchor', 'null_within', 'p_within_anchor'),
-                                     ('delta_site', 'null_site', 'p_site')):
+                                     ('delta_site', 'null_site', 'p_site'),
+                                     ('site_state1', 'null_site_state1', 'p_site_state1'),
+                                     ('site_state0', 'null_site_state0', 'p_site_state0')):
                     if stat in x and stat in y:
                         row[stat] = (x[stat] + y[stat]) / 2
                         if nk in x and nk in y:
                             n = min(len(x[nk]), len(y[nk]))
                             row[pk] = perm_p_two_from_tails(row[stat], (x[nk][:n] + y[nk][:n]) / 2)
-                for ci in ('delta_site_ci', 'delta_anchor_ci', 'delta_random_ci'):
+                for ci in ('delta_site_ci', 'delta_anchor_ci', 'delta_random_ci', 'site_state1_ci', 'site_state0_ci'):
                     if ci in x and ci in y:
                         row[ci.replace('_ci', '_se_mean')] = 0.5 * float(np.hypot(x[ci]['se'], y[ci]['se']))
                 if 'delta_random' in x and 'delta_random' in y:
@@ -400,8 +448,8 @@ def held_out(molecules, discover: Callable, analyse: Callable, *, salt: str = 'f
         for fr in r['frames'].values():
             for met in fr['metrics'].values():
                 for b in met['bins']:
-                    b.pop('null_within', None)
-                    b.pop('null_site', None)
+                    for key in ('null_within', 'null_site', 'null_site_state1', 'null_site_state0'):
+                        b.pop(key, None)
     return {'directions': res, 'cross_fit': cross,
             'note': 'anchors discovered on one hash half of the molecules and tested on the other; cross-fit = mean '
                     'of both directions'}
@@ -509,9 +557,13 @@ def association_stats(molecules, *, cal, params=None, x_state: str = 'regular', 
             pts_mol = ((tf[:, 0] + tf[:, 1]) // 2) if len(tf) else np.zeros(0, np.int64)
         else:
             pts_mol = np.asarray(y(m), np.int64)
-        pts_mol = pts_mol[(pts_mol >= 0) & (pts_mol < m.length)]
-        # a point at a non-informative base maps to the next informative site
-        pts = cum[pts_mol]
+        # only points inside the uncensored interior and outside low-information segments (molecular bp), then
+        # mapped to the informative coordinate (a non-informative base maps to the next informative site)
+        keep = (pts_mol >= censor_bp) & (pts_mol < m.length - censor_bp)
+        for sg in res.segments:
+            if sg.state == LOWINFO:
+                keep &= ~((pts_mol >= sg.start) & (pts_mol < sg.end))
+        pts = cum[pts_mol[keep]]
         n, iv, pp, junc = compress(adm, a_iv, pts)
         if n <= 0:
             skipped['no_informative'] += 1
