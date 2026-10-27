@@ -14,7 +14,8 @@ Intervals use a one-step score bootstrap: beta* = beta + H^-1 sum_i w_i u_i, wit
 u_i = (x_i - xbar_s)(y_i - pi_i) (pi_i = the conditional probability that row i is a case; xbar_s the stratum mean,
 which leaves every stratum's total unchanged because sum_s (y_i - pi_i) = 0) and bootstrap weights w from
 :class:`fiberhmm.assoc.resample.BlockBootstrap`. When the resampling splits strata (whole molecules), each row's
-contribution is scaled by sqrt(n_s / (n_s - 1)), the within-stratum correction of the pair-stratified score.
+contribution is scaled by n_s / (n_s - 1): the residual against the stratum's other rows (leave-one-out), so a
+molecule's own outcome does not shrink its residual.
 """
 from __future__ import annotations
 
@@ -167,7 +168,7 @@ def clogit(X, y, strata, *, max_iter: int = 50, tol: float = 1e-8, l2: float = 1
         xc = X[idx] - X[idx].mean(0)
         u[idx] = xc * (y[idx] - pr)[:, None]
         ns = len(idx)
-        u_split[idx] = u[idx] * np.sqrt(ns / (ns - 1))
+        u_split[idx] = u[idx] * (ns / (ns - 1))             # leave-molecule-out residual scale
     ll = float(np.sum(obs @ beta - loge))
     return {'beta': beta, 'se': se, 'loglik': ll, 'H': H, 'Hinv': Hinv, 'pi': pi_row, 'u': u, 'u_split': u_split,
             'n_strata': int(len(kk)), 'n_rows': int(valid.sum()), 'converged': converged, 'iterations': it + 1}

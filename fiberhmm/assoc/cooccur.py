@@ -13,11 +13,10 @@ For hits a in A and b in B with ``|anchor_a - anchor_b| <= max_distance`` (5 kb)
    - test: a pair-stratified score, U = sum over molecules and pairs of (x - x_hat)(y - y_hat), where x_hat and
      y_hat are within-pair means plus pooled covariate adjustments (quantile-bin indicators and linear terms of
      log mark density and openness, and the channel). With no covariates it is the MH score over pairs. Its
-     variance is clustered by physical molecule: a molecule's contributions are summed over every pair it spans
-     before squaring, each pair's scaled by sqrt(n / (n - 1)). The within-pair centring also correlates different
-     molecules of overlapping pairs, which this variance leaves out: it runs 13% low for pairs of 2-3 molecules
-     sharing most molecules, 4-8% low at 5-10 and under 1% at 30, so only pairs with at least
-     ``min_pool_molecules`` (5) molecules are pooled. With fewer than ``small_n`` (200) molecules p comes from
+     variance is clustered by physical molecule: conditional on A's states U = sum_i xc_i y_i, so molecule m
+     contributes sum_i xc_i (y_i - mu_i) over every pair it spans; mu_i is estimated by the pair's mean without
+     molecule m (leave-molecule-out, = n / (n - 1) times the centred residual), so m's own state does not shrink
+     its residual. Only pairs with at least ``min_pool_molecules`` (5) molecules are pooled. With fewer than ``small_n`` (200) molecules p comes from
      t(G - 1) (G molecules) instead of the normal (a sign-flip is not valid here: the centred contributions of a
      pair's molecules are not independent);
    - effect: the conditional logistic OR of B's state on A's state with the same covariates, pairs as strata
@@ -234,7 +233,7 @@ def _cell_counts(it: _Items, n_cells: int):
 
 
 def _clustered(u, w_cell, cells, mols, T, small_n, label):
-    """Molecule-clustered variance of T = sum u (each cell's contributions scaled by sqrt(n / (n - 1))), with a
+    """Molecule-clustered variance of T = sum u (each cell's contributions scaled by its weight), with a
     normal reference, or t(G - 1) below ``small_n`` molecules."""
     from scipy.stats import norm, t as tdist
     mol_u, mol_idx = np.unique(mols, return_inverse=True)
@@ -263,7 +262,7 @@ def _mh_score(it: _Items, n_cells: int, small_n, n_flip, rng) -> dict:
     xbar = np.divide(sx, n, out=np.zeros_like(sx), where=n > 0)
     ybar = np.divide(sy, n, out=np.zeros_like(sy), where=n > 0)
     u = np.where(n[it.cell] >= 2, (it.x - xbar[it.cell]) * (it.y - ybar[it.cell]), 0.0)
-    w = np.sqrt(np.divide(n, n - 1, out=np.zeros_like(n), where=n > 1))
+    w = np.divide(n, n - 1, out=np.zeros_like(n), where=n > 1)        # leave-molecule-out B residuals
     out = _clustered(u, w, it.cell, it.mol, float(u.sum()), small_n, 'MH score over pair x stratum')
     out['var_independent'] = float(np.sum(np.divide(sx * (n - sx) * sy * (n - sy), n ** 2 * (n - 1),
                                                     out=np.zeros_like(n), where=n > 1)))
@@ -331,7 +330,10 @@ def _adjusted(it: _Items, Zm: np.ndarray, small_n, n_flip, rng) -> dict:
             xd = xd - Zd @ gx
             yd = yd - Zd @ gy
     u = np.where(use, xd * yd, 0.0)
-    w = np.sqrt(np.divide(n, n - 1, out=np.zeros_like(n), where=n > 1))
+    # conditional on A's states U = sum_i xd_i y_i, so molecule m's variance contribution is
+    # sum_i xd_i (y_i - mu_i); estimating mu_i by the pair mean without molecule m (leave-molecule-out) keeps m's
+    # own state out of its residual: y_i - ybar_{p,-i} = n / (n - 1) (y_i - ybar_p)
+    w = np.divide(n, n - 1, out=np.zeros_like(n), where=n > 1)
     out = _clustered(u, w, unit, it.mol, float(u.sum()), small_n, 'pair-stratified covariate-adjusted score')
     out['n_covariates'] = int(Zm.shape[1])
     return out
