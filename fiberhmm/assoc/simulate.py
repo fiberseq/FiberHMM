@@ -115,11 +115,13 @@ def simulate_m1(seed: int = 0, *, chrom_len: int = 400_000, n_a: int = 60, n_b: 
 def simulate_m2(seed: int = 0, *, n_anchors: int = 60, k: int = 5, chrom_len: int = 3_000_000, coverage: float = 25,
                 mean_len: int = 15_000, confound: float = 1.0, self_seed: float = 0.3, site_effect: float = 0.0,
                 group_effect: Optional[Dict[int, float]] = None, n_datasets: int = 1, flank: int = 1500,
-                n_bins: int = 3, unphased_fraction: float = 0.0, density_bins: int = 12) -> dict:
+                n_bins: int = 3, unphased_fraction: float = 0.0, density_bins: int = 12,
+                anchor_coverage_power: float = 2.0) -> dict:
     """M2 data: anchors in high-coverage loci, matched backgrounds (coverage and site-density deciles), molecules
     whose density drives both the state (open/closed) and the response, self-seeding (the state shifts the response
     by ``self_seed`` at anchors and backgrounds alike), a per-molecule random effect shared across the loci a
-    molecule spans, and partial coverage masks. ``site_effect`` adds an anchor-only state effect (a true
+    molecule spans, and partial coverage masks (``anchor_coverage_power``: anchors are drawn with probability
+    proportional to block coverage to this power; 0 = uniform). ``site_effect`` adds an anchor-only state effect (a true
     Delta_site); ``group_effect`` sets it per dataset. Returns ``{'app', 'loci', 'metric', 'bins', 'sets'}``."""
     from fiberhmm.assoc.background import candidate_positions, matched_backgrounds
     from fiberhmm.assoc.condition import Appearances, LocusTable, mean_metric
@@ -138,7 +140,8 @@ def simulate_m2(seed: int = 0, *, n_anchors: int = 60, k: int = 5, chrom_len: in
     nm = len(mol['start'])
     u = rng.normal(0, 0.5, nm)
     w = blk_cov / blk_cov.sum()
-    a_blk = rng.choice(nblk, size=n_anchors, p=w ** 2 / np.sum(w ** 2))
+    wa = w ** anchor_coverage_power        # anchors prefer high-coverage blocks (0: uniform)
+    a_blk = rng.choice(nblk, size=n_anchors, p=wa / np.sum(wa))
     a_pos = np.sort(a_blk * 100_000 + rng.integers(5_000, 95_000, n_anchors))
     cand = candidate_positions([('chrS', 5_000, chrom_len - 5_000)], step=700, seed=seed)
     c_pos = np.array([p for _c, p in cand])
