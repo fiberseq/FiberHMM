@@ -126,11 +126,11 @@ def anchor_phase(molecules, anchor: Tuple[str, int, int], cal, params: NucParams
 def _strata(values: np.ndarray, n: int) -> np.ndarray:
     ok = np.isfinite(values)
     out = np.zeros(len(values), dtype=np.int64)
+    out[~ok] = n                                   # unknowns always get their own stratum
     if ok.sum() < n or n <= 1:
         return out
     edges = np.quantile(values[ok], np.linspace(0, 1, n + 1)[1:-1])
     out[ok] = np.searchsorted(edges, values[ok], side='right')
-    out[~ok] = n                                   # unknowns get their own stratum
     return out
 
 
@@ -198,6 +198,7 @@ def matched_percentile(anchor: AnchorPhase, background: Sequence[AnchorPhase], s
                            np.log(b.n_molecules) - np.log(anchor.n_molecules)) for b in bg])
     pick = [bg[i] for i in np.argsort(d, kind='stable')[:n_match]]
     vals = np.array([getattr(b, stat) for b in pick], float)
+    tol = 1e-9 * max(1.0, abs(v))                  # numerical ties count against the anchor
     return {'stat': stat, 'value': float(v), 'n_matched': len(pick),
             'background_median': float(np.median(vals)),
-            'p_dephased': float((1 + np.sum(vals <= v)) / (len(vals) + 1))}
+            'p_dephased': float((1 + np.sum(vals <= v + tol)) / (len(vals) + 1))}

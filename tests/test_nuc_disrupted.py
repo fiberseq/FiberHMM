@@ -186,12 +186,20 @@ def test_window_test_is_exact_against_enumeration():
             s += int(np.floor(K * xx[w0:w1].sum() / 8 + 1e-9))
         dist.append(s)
     exact = float(np.mean(np.asarray(dist) >= obs))
-    exp = float(np.mean(dist))
-    if obs > exp:
-        assert r['p'] == pytest.approx(exact)
-    else:
-        assert r['p'] == 1.0 and exact >= 0.2
+    assert r['p'] == pytest.approx(exact)
     assert r['n'] == 3
+
+
+def test_window_test_tail_is_exact_below_the_mean():
+    """A small, skewed sample: the observed statistic sits below its null
+    mean yet its exact tail is small (review case)."""
+    ts = []
+    for iv in ([(0, 501)], [(1000, 1501)], []):
+        t = MeasuredTrack([(0, 10000)])
+        t.set_kind('k', iv)
+        ts.append(t)
+    r = window_test(ts, 'k', 500, 510, min_molecules=1)
+    assert r['p'] == pytest.approx(1 - (1 - 510 / 10000) ** 2)
 
 
 def test_bh_and_window_merge():
@@ -277,3 +285,61 @@ def test_fuzzy_locus_keeps_periodicity_but_loses_coherence():
     assert t['effect'] < 0 and t['p_dephased'] < 0.01 and t['p_more_phased'] > 0.5
     mp = matched_percentile(fz[0], ph)
     assert mp['p_dephased'] <= 1 / 9 + 1e-9
+
+
+# --- review regressions -------------------------------------------------------------
+
+def _evenly(starts, q=190, core=147):
+    iv = [(int(x), int(x) + core) for x in starts]
+    L = int(max(starts) + 700)
+    ms = complement_msps(L, iv)
+    hits = [j for a, b in ms for j in range(a, b, 2)]
+    return make_molecule(L, nucs=iv, msps=ms, hits=hits), flat_calibration(nrl=q, mu=core)
+
+
+def test_rule_runs_stop_at_nfr_territory():
+    m, cal = _evenly(300 + 215 * np.delete(np.arange(16), 8), q=215, core=120)
+    long = [(a, b) for a, b in m.msps if b - a > 300]
+    assert long
+    r = molecule_outputs(m, cal=cal)
+    for s in r.segments:
+        assert not any(s.start < a and s.end > b for a, b in long), s.as_dict()
+
+
+def test_undersized_runs_stay_llrs_where_undersized_is_common():
+    rng = np.random.default_rng(0)
+    m = array_molecule([('sub', 60, 60)], rng)
+    rich = flat_calibration(disruption={'undersized': {'log_lambda_edges': [], 'rate': [0.8], 'n': [1000]}})
+    r = molecule_outputs(m, cal=rich)
+    assert not [e for e in r.events if e.kind == UNDERSIZED]
+
+
+def test_a_cut_disordered_remnant_keeps_its_label_only_with_the_margin():
+    from fiberhmm.nuc.disrupted import _remnant_margin
+    from fiberhmm.nuc.segment import segment_molecule
+    m = array_molecule([('irr', 8, 0), ('reg', 12, 190), ('irr', 8, 0)], np.random.default_rng(88))
+    cal = flat_calibration()
+    r = molecule_outputs(m, cal=cal)
+    track = []
+    segment_molecule(m.length, m.msps, r.footprints, cal, step_track=track)
+    for s in r.segments:
+        if s.state == DISORDERED:
+            margin = _remnant_margin(track, s.start, s.end)
+            assert margin is not None and margin >= NucParams().seg_disorder_llr
+    assert _partition_ok(r.segments)
+
+
+def test_unknown_densities_form_their_own_stratum():
+    from types import SimpleNamespace as NS
+    from fiberhmm.nuc.dephasing import dephasing_test
+    test = [NS(n_molecules=10, coherence=0.1, lambda_acc=0.2) for _ in range(2)]
+    background = [NS(n_molecules=10, coherence=0.9, lambda_acc=float('nan')) for _ in range(40)]
+    assert dephasing_test(test, background, n_perm=99)['effect'] is None
+
+
+def test_matched_percentile_counts_numerical_ties():
+    from types import SimpleNamespace as NS
+    from fiberhmm.nuc.dephasing import AnchorPhase, matched_percentile
+    def ph(c):
+        return AnchorPhase('c', 0, 0, 'anchor', 190.0, 10, 50, 0.9, 0.1, 0.8, c, 0.9, 0.0, 0.5)
+    assert matched_percentile(ph(0.9999999999999997), [ph(0.9999999999999999)] * 20)['p_dephased'] > 0.9

@@ -515,8 +515,11 @@ def emissions(steps: List[Step], space: StateSpace, cal, params: NucParams = DEF
     gIm = np.where(informative, np.log(np.maximum(dens_Im, 1e-300)), 0.0)
     # for the disorder margin, regular arrays also hold the caller's structural
     # errors (merged / split footprints put dyads off the grid) at the
-    # molecule's density: a mixture with the irregular density
-    eps = float(structural_error)
+    # molecule's density: a mixture with the irregular density. A gap joins
+    # two footprints, so its error rate is 1 - (1 - e)^2 for a per-footprint
+    # rate e (capped at 0.8)
+    e = float(structural_error)
+    eps = min(0.8, 1.0 - (1.0 - e) ** 2)
     gRm = np.where(informative[:, None],
                    np.log(np.maximum((1 - eps) * dens_R + eps * dens_Im[:, None], 1e-300)), 0.0)
     gX = np.where(informative, np.log(dens_X), 0.0)
@@ -646,7 +649,8 @@ def segment_steps(steps: List[Step], cal, params: NucParams = DEFAULT_PARAMS,
                   sigma_loc: float = 0.0, step_track: Optional[list] = None,
                   structural_error: float = 0.0) -> List[Segment]:
     """Segments of one piece from its steps. ``step_track``, when given,
-    receives ``(starts, ends, P(regular))`` arrays of the steps."""
+    receives ``(starts, ends, P(regular), irregular margin term, regular margin
+    terms per column)`` arrays of the steps."""
     T = len(steps)
     if T == 0:
         return []
@@ -662,8 +666,10 @@ def segment_steps(steps: List[Step], cal, params: NucParams = DEFAULT_PARAMS,
     p_order = np.stack([post[:, exp_order == k].sum(axis=1) for k in (REGULAR, IRREGULAR, LOWINFO)], axis=1)
     p_sub = post[:, exp_comp == 1].sum(axis=1)
     if step_track is not None:
+        # per step: start, end, P(regular) and the disorder-margin terms
         step_track.append((np.array([st.start for st in steps], dtype=np.int64),
-                           np.array([st.end for st in steps], dtype=np.int64), p_order[:, 0].copy()))
+                           np.array([st.end for st in steps], dtype=np.int64), p_order[:, 0].copy(),
+                           parts['gIm'].copy(), parts['gRm'].copy()))
     if params.seg_decode == 'viterbi':
         path, _ = _viterbi(E, space.log_init, space.pred_ptr, space.pred_idx, space.pred_logp, end_mask)
         order, comp = _class_of(space, space.exp_base[path])

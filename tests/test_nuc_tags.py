@@ -277,3 +277,29 @@ def test_recall_nucs_drops_groups_on_reads_without_calls(tmp_path):
     _assert_no_nuc_groups(tmp_path / 'out.bam')
     with pysam.AlignmentFile(str(tmp_path / 'out.bam'), check_sq=False) as bam:
         assert 'fire.Q' in next(bam.fetch(until_eof=True)).get_tag('MA')
+
+
+def test_reader_refuses_other_group_versions_and_lengths():
+    """A header declaring nucseg version 1, or a 24-byte nucmol, is flagged
+    unsupported and stale, never decoded as version 2 (review case)."""
+    import array
+    import pysam
+    from nuc_synth import header
+    from fiberhmm.io.scan_ma import scan_contract_line
+    from fiberhmm.nuc.tags import read_nuc_groups, record_calls_digest
+    h = pysam.AlignmentHeader.from_dict(header(extra_co=[scan_contract_line({'group': 'nucseg', 'group_version': 1})]))
+    r = pysam.AlignedSegment(h)
+    r.query_sequence = 'A' * 1000
+    r.set_tag('MA', '1000;nuc.:101-147;nucseg.QQQ:1-1000')
+    r.set_tag('AQ', array.array('B', [2, 200, 0]))
+    r.set_tag('AN', '.,nucseg@' + record_calls_digest(r) + '_0')
+    g = read_nuc_groups(r)['nucseg']
+    assert g['unsupported'] and g['stale'] and g['version'] == 1
+    h2 = pysam.AlignmentHeader.from_dict(header())
+    r2 = pysam.AlignedSegment(h2)
+    r2.query_sequence = 'A' * 1000
+    r2.set_tag('MA', '1000;nuc.:101-147;nucmol.' + 'Q' * 24 + ':1-1000')
+    r2.set_tag('AQ', array.array('B', [0] * 24))
+    r2.set_tag('AN', '.,nucmol')
+    g2 = read_nuc_groups(r2)['nucmol']
+    assert g2['unsupported'] and g2['stale'] and 'scalars' not in g2

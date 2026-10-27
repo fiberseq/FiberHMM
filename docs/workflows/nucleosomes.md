@@ -46,7 +46,8 @@ four states:
 - **low-information**: marking below the calibrated floor.
 
 A factorial HMM over dyad gaps decodes the states; regular runs from the HMM
-need 5 dyads and 800 bp. Gaps are read on the dyad grid: a can't-tell, short or
+also need 5 dyads, 800 bp and a log-likelihood ratio of 3 nats against the
+other orders. Rule runs stop at MSPs longer than 300 bp. Gaps are read on the dyad grid: a can't-tell, short or
 long call between two mono calls hides a dyad, and the run stays regular when
 the gap fits two or three repeats. The regular jitter, the irregular spread
 and the share of hidden dyads come from the dataset's calibration. Long MSPs

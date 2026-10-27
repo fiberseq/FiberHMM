@@ -93,7 +93,10 @@ class NucParams:
     seg_cant_tell_low_info: bool = False
     #: per-step order decision: 'threshold' (default; regular where the
     #: posterior P(regular), summed over repeat and tightness, is at least
-    #: ``seg_posterior_min``, else the likelier of disordered / low-information),
+    #: ``seg_posterior_min``, else the likelier of disordered / low-information;
+    #: a decoded regular run then also needs ``seg_min_dyads`` dyads,
+    #: ``seg_min_bp`` bp and an order LLR of ``seg_merge_llr``, the setting
+    #: evaluated and approved in NUC 13.1),
     #: 'viterbi' (the Viterbi path) or 'posterior' (the class with the highest
     #: marginal, i.e. P(regular) >= 0.5)
     seg_decode: str = 'threshold'

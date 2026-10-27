@@ -483,7 +483,11 @@ class NucModule(ScanModuleBase):
                 if pv is None:
                     continue
                 ov, ev, nv = get(f'enr_obs:{kind}'), get(f'enr_exp:{kind}'), get(f'enr_n:{kind}')
-                for off in np.flatnonzero(np.isfinite(pv)):
+                if ov is None or ev is None or nv is None:
+                    continue
+                # tested windows only (empty zones are zero-padded: n = 0 there)
+                valid = np.isfinite(pv) & np.isfinite(nv) & (nv >= int(settings['enrich_min_molecules']))
+                for off in np.flatnonzero(valid):
                     rows.append((run_index, int(off), float(pv[off]), float(ov[off]), float(ev[off]), int(nv[off])))
             if not rows:
                 continue
@@ -539,7 +543,10 @@ class NucModule(ScanModuleBase):
             if R is None:
                 continue
             excess = R - null
-            fin = np.isfinite(R)
+            Nw = get('phase_n:all')
+            nw = np.nan_to_num(Nw) if Nw is not None else np.zeros(len(R))
+            # computed windows only (empty zones are zero-padded: n = 0 there)
+            fin = np.isfinite(R) & (nw >= int(settings['patch_min_measured']))
             phased = fin & (excess >= float(settings['phase_min_excess'])) & \
                 (logp <= np.log(float(settings['phase_max_p'])))
             # fuzzy: a window starting inside a recurrent regular patch whose

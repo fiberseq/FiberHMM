@@ -3,10 +3,13 @@
 **Model-free regular rule.** On the molecule's eligible mono dyads (at least
 8), spacings g, the molecule's NRL (median spacing within 0.7-1.3 x
 NRL_pooled, else NRL_pooled), k = max(1, round(g / NRL)): a spacing fits when
-|g - k NRL| <= ``seg_rule_tol_bp`` and k <= ``seg_rule_max_k``. Runs of at
-least ``seg_rule_min_spacings`` fitting spacings are regular from their first
-to their last dyad, outside low-information segments; they are OR-ed with the
-decoder's regular segments (:func:`overlay_rule`).
+|g - k NRL| <= ``seg_rule_tol_bp`` and k <= ``seg_rule_max_k`` and no MSP
+longer than ``long_msp_bp`` (NFR territory) lies between its dyads. Runs of
+at least ``seg_rule_min_spacings`` fitting spacings are regular from their
+first to their last dyad, outside low-information segments; they are OR-ed
+with the decoder's regular segments (:func:`overlay_rule`). A disordered
+segment the rule cuts keeps its label only when the remnant still has the
+disorder margin (otherwise it is undetermined).
 
 **Undersized runs** replace the composition sub-rich flag. A nucleosome-scale
 footprint (a nucleosome call, or a TF call of at least ``undersized_min_bp``:
@@ -43,7 +46,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from fiberhmm.nuc.params import DEFAULT_PARAMS, NucParams
-from fiberhmm.nuc.segment import LOWINFO, REGULAR, Segment, _pieces
+from fiberhmm.nuc.segment import DISORDERED, LOWINFO, REGULAR, UNDETERMINED, Segment, _pieces
 from fiberhmm.nuc.sizes import CANT_TELL, EDGE_TRUNCATED, MONO
 
 UNDERSIZED, MISSING = 16, 17
@@ -91,6 +94,10 @@ def rule_runs(mol, fp, nrl_pooled: float, params: NucParams = DEFAULT_PARAMS):
     nrl = float(np.median(near)) if len(near) else float(nrl_pooled)
     k = np.maximum(1, np.round(g / nrl))
     ok = (np.abs(g - k * nrl) <= params.seg_rule_tol_bp) & (k <= params.seg_rule_max_k)
+    # runs never cross NFR territory (MSPs longer than long_msp_bp split molecules)
+    msps = np.asarray(mol.msps, dtype=float).reshape(-1, 2)
+    for s0, e0 in msps[(msps[:, 1] - msps[:, 0]) > params.long_msp_bp]:
+        ok &= ~((cen[:-1] <= s0) & (cen[1:] >= e0))
     out, i = [], 0
     while i < len(ok):
         j = i
@@ -136,14 +143,32 @@ def _union(iv):
 def _track_mean(track, a: int, b: int) -> float:
     """bp-weighted mean step P(regular) over molecular [a, b) (NaN without steps)."""
     w = num = 0.0
-    for s, e, p in track:
+    for s, e, p, *_rest in track:
         ov = np.clip(np.minimum(e, b) - np.maximum(s, a), 0, None)
         w += float(ov.sum())
         num += float((ov * p).sum())
     return num / w if w > 0 else float('nan')
 
 
-def overlay_rule(segs: List[Segment], runs, dyads: np.ndarray, track=()) -> List[Segment]:
+def _remnant_margin(track, a: int, b: int) -> Optional[float]:
+    """Disorder margin of the steps inside molecular [a, b) (None without gap
+    evidence): irregular against the best regular repeat, as the decoder's
+    relabelling computes it."""
+    gi, gr = 0.0, None
+    for s, e, _p, gim, grm in (t for t in track if len(t) == 5):
+        sel = (s >= a) & (e <= b)
+        if not sel.any():
+            continue
+        gi += float(gim[sel].sum())
+        part = grm[sel].sum(axis=0)
+        gr = part if gr is None else gr + part
+    if gr is None or gi == 0.0:
+        return None
+    return gi - float(gr.max())
+
+
+def overlay_rule(segs: List[Segment], runs, dyads: np.ndarray, track=(),
+                 disorder_llr: float = 3.0) -> List[Segment]:
     """OR the rule's runs (minus low-information segments) into the segments.
 
     The result still partitions the covered stretches. Segments the rule does
@@ -184,6 +209,11 @@ def overlay_rule(segs: List[Segment], runs, dyads: np.ndarray, track=()) -> List
                 and only.start == start and only.end == end:
             out.append(only)                     # untouched
             continue
+        if state == DISORDERED:
+            # a cut disordered segment keeps the label only with the margin
+            margin = _remnant_margin(track, start, end)
+            if margin is None or margin < disorder_llr:
+                state = UNDETERMINED
         w = post = qw = qsum = 0.0
         llrs = []
         src = set()
@@ -199,6 +229,8 @@ def overlay_rule(segs: List[Segment], runs, dyads: np.ndarray, track=()) -> List
                 p = _track_mean(track, x0, x1)
                 q = next((qq for a, b, qq in rule_q if a <= x0 and b >= x1), None)
                 src.add('rule')
+            elif state == UNDETERMINED and cov is not None and cov.state == DISORDERED:
+                p, q = _track_mean(track, x0, x1), None          # undetermined: mean P(regular)
             else:
                 p, q = cov.posterior, None
             if np.isfinite(p):
@@ -306,8 +338,10 @@ def fit_disruption(molecules, cal, params: NucParams = DEFAULT_PARAMS) -> dict:
 
 
 def undersized_p0(cal, lam) -> np.ndarray:
+    """The dataset's undersized rate at density ``lam`` (clipped only for
+    numerical safety)."""
     tab = (getattr(cal, 'disruption', None) or {}).get('undersized', {})
-    return np.clip(_lookup(tab, lam, DEFAULT_UNDERSIZED_RATE), 0.002, 0.45)
+    return np.clip(_lookup(tab, lam, DEFAULT_UNDERSIZED_RATE), 1e-3, 0.98)
 
 
 def protected_rate(cal, lam) -> np.ndarray:
@@ -348,9 +382,11 @@ def undersized_runs(mol, fp, cal, params: NucParams = DEFAULT_PARAMS) -> List[Ev
     ok = undersized_eligible(fp, cal, params)
     under = ok & (fp['z'] <= params.undersized_z)
     p0 = undersized_p0(cal, fp['lambda'])
-    p1 = np.minimum(np.maximum(params.undersized_p1, 2.0 * p0), 0.95)
+    p1 = np.minimum(np.maximum(params.undersized_p1, 2.0 * p0), 0.99)
+    # where undersized is already the rule there is no room for a run: no test
+    testable = ok & (p1 >= p0 + 0.02)
     score = np.where(under, np.log(p1 / p0), np.log((1 - p1) / (1 - p0)))
-    score = np.where(ok, score, 0.0)
+    score = np.where(testable, score, 0.0)
     centres = (fp['start'] + fp['end']) / 2.0
     out: List[Event] = []
     for a, b in _pieces(mol.length, mol.msps, params.long_msp_bp):

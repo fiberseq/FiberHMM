@@ -122,8 +122,8 @@ def window_test(tracks: Sequence[MeasuredTrack], kind: str, w0: int, w1: int,
     if n < min_molecules:
         return None
     exp = float(sum(float(np.dot(np.arange(K + 1), p)) for p in pmfs))
-    if obs <= exp:
-        p_val = 1.0                    # not above expectation: never a discovery
+    if obs == 0:
+        p_val = 1.0                    # P(S >= 0) = 1
     else:
         dist = np.ones(1)
         for p in pmfs:

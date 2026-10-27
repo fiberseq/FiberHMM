@@ -252,10 +252,12 @@ def read_nuc_groups(read, mol=None, check_digest: bool = True) -> Dict[str, dict
     """Parse the nuc groups of one record.
 
     Returns ``{group: {'intervals': [(start, length)], 'q': [[...]],
-    'digest': str, 'stale': bool}}`` plus decoded scalars under
-    ``nucmol['scalars']``/``['flags']``. ``stale`` is True when the digest in
-    the AN names differs from the record's current calls (pass the decoded
-    ``mol`` to avoid decoding it again)."""
+    'digest': str, 'stale': bool, 'version': int}}`` plus decoded scalars
+    under ``nucmol['scalars']``/``['flags']``. ``stale`` is True when the
+    digest in the AN names differs from the record's current calls (pass the
+    decoded ``mol`` to avoid decoding it again). A group whose header contract
+    declares another ``group_version`` (or a ``nucmol`` of the wrong length)
+    is returned with ``unsupported`` and ``stale`` set and is not decoded."""
     from fiberhmm.io.ma_tags import annotation_tags, parse_an_tag, parse_aq_array, parse_ma_tag
     tags = annotation_tags(read)
     if tags is None:
@@ -277,21 +279,42 @@ def read_nuc_groups(read, mol=None, check_digest: bool = True) -> Dict[str, dict
             continue
         digests = {n.split('@', 1)[1].split('_', 1)[0] for n in nm if '@' in n}
         out[name] = {'intervals': list(iv), 'q': q, 'digest': digests.pop() if len(digests) == 1 else None,
-                     'stale': False}
+                     'stale': False, 'version': GROUP_VERSIONS[name]}
     if not out:
         return out
-    if NUCMOL in out and out[NUCMOL]['q']:
-        vals, _flags = decode_nucmol(out[NUCMOL]['q'][0])
-        out[NUCMOL]['digest_pieces'] = (vals.get('calls_digest_hi'), vals.get('calls_digest_lo'))
+    # layout versions: a header contract declaring another version, or a
+    # nucmol of the wrong length, is not ours to decode
+    hdr = getattr(read, 'header', None)
+    contracts = {}
+    if hdr is not None:
+        try:
+            from fiberhmm.io.scan_ma import scan_contracts
+            contracts = scan_contracts(hdr)
+        except Exception:
+            contracts = {}
+    for name, g in out.items():
+        declared = contracts.get(name, {}).get('group_version')
+        if declared is not None:
+            g['version'] = int(declared)
+        bad = declared is not None and int(declared) != GROUP_VERSIONS[name]
+        if name == NUCMOL and g['q'] and len(g['q'][0]) != len(NUCMOL_SPEC):
+            bad = True
+        if bad:
+            g['unsupported'] = True
+            g['stale'] = True
+    supported = {n: g for n, g in out.items() if not g.get('unsupported')}
+    if NUCMOL in supported and supported[NUCMOL]['q']:
+        vals, _flags = decode_nucmol(supported[NUCMOL]['q'][0])
+        supported[NUCMOL]['digest_pieces'] = (vals.get('calls_digest_hi'), vals.get('calls_digest_lo'))
     if check_digest:
         current = record_calls_digest(read) if mol is None else _digest(mol)
-        for name, g in out.items():
+        for name, g in supported.items():
             if name == NUCMOL:
                 g['stale'] = current is None or g.get('digest_pieces') != digest_pieces(current)
             else:
                 g['stale'] = current is None or g['digest'] != current
-    if NUCMOL in out and out[NUCMOL]['q']:
-        vals, flags = decode_nucmol(out[NUCMOL]['q'][0])
-        out[NUCMOL]['scalars'] = vals
-        out[NUCMOL]['flags'] = flags
+    if NUCMOL in supported and supported[NUCMOL]['q']:
+        vals, flags = decode_nucmol(supported[NUCMOL]['q'][0])
+        supported[NUCMOL]['scalars'] = vals
+        supported[NUCMOL]['flags'] = flags
     return out

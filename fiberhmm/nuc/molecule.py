@@ -206,7 +206,7 @@ def molecule_outputs(mol: NucMolecule, params: NucParams = DEFAULT_PARAMS,
             dyads = dy.centres
             if segs and not too_short and params.seg_rule:
                 dyads, runs = rule_runs(mol, fp, cal.nrl_pooled, params)
-                segs = overlay_rule(segs, runs, dyads, track)
+                segs = overlay_rule(segs, runs, dyads, track, params.seg_disorder_llr)
             for s in segs:
                 if s.state == REGULAR:
                     ssp, _ = molecule_spacing(mol, cal.nrl_pooled, params, coarse_codes=nuc_codes,

@@ -260,8 +260,8 @@ def test_stitch_handles_territories_shorter_than_a_window():
             p = np.full(n, np.nan)
             p[n - 1] = 1e-9                     # a significant window starting at the last base
             tracks[f'enr_p:{kind}'] = [p]
-            for name in ('obs', 'exp', 'n'):
-                tracks[f'enr_{name}:{kind}'] = [np.where(np.isfinite(p), 0.5, np.nan)]
+            for name, v in (('obs', 0.5), ('exp', 0.2), ('n', 5.0)):
+                tracks[f'enr_{name}:{kind}'] = [np.where(np.isfinite(p), v, np.nan)]
         res = m.stitch('chrS', [(1000, 1000 + n, False, False)], tracks, m.resolve({}), None)
         pats = [h for h in res.hits if h.type.startswith('nuc.patch.')]
         assert pats and all(1000 <= h.start < h.end <= 1000 + n for h in pats)
@@ -385,3 +385,22 @@ def test_record_probe_skips_filtered_and_uncalled_reads(scan_bam, tmp_path):
     with _RecordProbe([path], lambda r: passes(r, filters)) as probe:
         assert probe('chrS', first.reference_start, first.reference_start + 50)
         assert not probe('chrS', bare.reference_end - 10, bare.reference_end)
+
+
+def test_padded_empty_zones_are_never_tested_windows():
+    """territory_runs zero-fills empty zones; zeros there are not p = 0 windows
+    (review case)."""
+    from fiberhmm.scan.modules.nuc import ENRICH_KINDS, NucModule
+    from fiberhmm.scan.seams import territory_runs
+    m = NucModule()
+    s = m.resolve({})
+    units, _ = plan({'c': 50_000}, genome=True)
+    t = {k + ':all': np.zeros(25_000) for k in ('measured', 'qsum') + ENRICH_KINDS}
+    for k in ENRICH_KINDS:
+        for v in ('p', 'obs', 'exp', 'n'):
+            t[f'enr_{v}:{k}'] = np.full(25_000, np.nan)
+    for v in ('R', 'null', 'logp', 'n', 'P', 'C'):
+        t[f'phase_{v}:all'] = np.full(25_000, np.nan)
+    runs = territory_runs([(units[0], t, 'ok'), (units[1], None, 'empty')], m.stitch_support_bp(s))
+    out = m.stitch('c', [(a, b, lo, hi) for a, b, _x, lo, hi in runs], {k: [x[2][k] for x in runs] for k in t}, s, None)
+    assert not out.hits
