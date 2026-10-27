@@ -137,6 +137,23 @@ def finalize(out: Path, manifest: dict, datasets, reference: Mapping[str, int], 
     seen_evidence: Dict[str, set] = {n: set() for n, _m, _s in mods}
     native_cols: Dict[str, Dict[str, List[str]]] = {n: {} for n, _m, _s in mods}
 
+    # Scan-wide statistics of stitch modules (e.g. nuc's Benjamini-Hochberg over every tested window of the
+    # scan): a first pass over every contig with only the tracks it needs, before any contig is stitched.
+    scan_stats: Dict[str, dict] = {}
+    for name, mod, settings in mods:
+        names = mod.scan_statistics_tracks(settings) if mod.reconcile == 'stitch' else None
+        if names is None:
+            continue
+        per_contig = {}
+        for chrom in contigs_in_plan:
+            territory, tracks = _stitch_inputs(out, name, mod, settings, units_by_chrom[chrom], status, names)
+            if territory:
+                per_contig[chrom] = mod.stitch_statistics(chrom, territory, tracks, settings,
+                                                          (calibrations or {}).get(name))
+        stats = mod.combine_statistics(per_contig, settings, (calibrations or {}).get(name))
+        if stats is not None:
+            scan_stats[name] = stats
+
     ann = _Annotations() if annotate else None
     annotated_outputs = []
     bam_writers = _open_annotated(out, manifest, datasets, mods, decls, command) if annotate else None
@@ -193,21 +210,9 @@ def finalize(out: Path, manifest: dict, datasets, reference: Mapping[str, int], 
                                                [e.evidence_unit, rec.dataset_id, rec.input_index, rec.qname,
                                                 rec.record, rec.molecule])
                 else:
-                    zones = []
-                    for u in cunits:
-                        st = status[u.unit_id]
-                        if st == 'done' and results[u.unit_id].status == 'ok':
-                            tracks = _load_tracks(_unit_dir(out, name, u))
-                            zones.append((u, tracks, 'ok' if tracks is not None else 'empty'))
-                        elif st == 'empty' or (st == 'done'):
-                            zones.append((u, None, 'empty'))
-                        else:
-                            zones.append((u, None, 'missing'))
-                    runs = territory_runs(zones, mod.stitch_support_bp(settings))
-                    territory = [(s, e, lo, ro) for s, e, _a, lo, ro in runs]
-                    names = sorted({k for _s, _e, arrays, _l, _r in runs for k in arrays})
-                    tracks = {k: [arrays.get(k) for _s, _e, arrays, _l, _r in runs] for k in names}
-                    stitched = mod.stitch(chrom, territory, tracks, settings, (calibrations or {}).get(name))
+                    territory, tracks = _stitch_inputs(out, name, mod, settings, cunits, status, None, results)
+                    extra = {'scan_statistics': scan_stats[name]} if name in scan_stats else {}
+                    stitched = mod.stitch(chrom, territory, tracks, settings, (calibrations or {}).get(name), **extra)
                     skey = {}
                     for h in stitched.hits:
                         skey[h.key] = I.hit_id(name, h.type, h.chrom, h.anchor, h.start, h.end, h.key, 'stitch',
@@ -267,6 +272,9 @@ def finalize(out: Path, manifest: dict, datasets, reference: Mapping[str, int], 
     done = sum(1 for v in status.values() if v == 'done')
     empty = sum(1 for v in status.values() if v == 'empty')
     manifest = dict(manifest)
+    if scan_stats:
+        manifest['modules'] = {n: (dict(m, scan_statistics=scan_stats[n]) if n in scan_stats else m)
+                               for n, m in manifest['modules'].items()}
     manifest['outputs'] = dict(annotate=bool(annotate), annotated=annotated_outputs,
                                tables={k: tables[k] for k in sorted(tables)})
     manifest['status'] = dict(units_total=len(units), units_done=done, units_empty=empty,
@@ -316,13 +324,38 @@ def _write_value(writer, span, hid, v):
                              v.n_callable])
 
 
-def _load_tracks(folder: Path):
+def _load_tracks(folder: Path, names=None):
     import numpy as np
     p = folder / 'tracks.npz'
     if not p.is_file():
         return None
     with np.load(p) as data:
-        return {k: data[k] for k in data.files}
+        return {k: data[k] for k in data.files if names is None or k in names}
+
+
+def _stitch_inputs(out: Path, name: str, mod, settings, cunits, status, names=None, results=None):
+    """One contig's territory runs and concatenated tracks for a stitch module (``names``: only these tracks)."""
+    zones = []
+    for u in cunits:
+        st = status[u.unit_id]
+        if st == 'done':
+            r = results.get(u.unit_id) if results is not None else None
+            if r is None:
+                r = unit_result_from_json(_read_json(_unit_dir(out, name, u) / 'result.json.gz'))
+            if r.status == 'ok':
+                tracks = _load_tracks(_unit_dir(out, name, u), names)
+                zones.append((u, tracks, 'ok' if tracks is not None else 'empty'))
+            else:
+                zones.append((u, None, 'empty'))
+        elif st == 'empty':
+            zones.append((u, None, 'empty'))
+        else:
+            zones.append((u, None, 'missing'))
+    runs = territory_runs(zones, mod.stitch_support_bp(settings))
+    territory = [(s, e, lo, ro) for s, e, _a, lo, ro in runs]
+    keys = sorted({k for _s, _e, arrays, _l, _r in runs for k in arrays})
+    tracks = {k: [arrays.get(k) for _s, _e, arrays, _l, _r in runs] for k in keys}
+    return territory, tracks
 
 
 def _emit_states(name, mod, groups, result, unit, keymap, w, ann, tsv_mode):

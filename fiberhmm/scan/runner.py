@@ -599,7 +599,8 @@ def _run_locked(out, resolved, reference, contigs, units, units_info, mods, poli
         # Calibration runs once per scan; a cached record is reused only for the same inputs, module
         # settings and plan.
         cal_dir = out / WORK / name / '_calibration'
-        cal_key = I.digest([base, name, mod.version, I.settings_hash(settings), plan_digest])
+        cal_key = I.digest([base, name, mod.version, I.settings_hash(settings),
+                            plan_digest if mod.calibration_uses_plan(settings) else None])
         cal = None
         cached = cal_dir / 'calibration.json'
         if continue_run and _marker_valid(cal_dir, cal_key) is not None and cached.is_file():

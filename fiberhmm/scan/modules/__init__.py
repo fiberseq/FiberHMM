@@ -84,6 +84,28 @@ class ScanModuleBase:
                settings: Mapping[str, Any], calibration: Optional[dict]) -> StitchResult:
         return StitchResult()
 
+    def calibration_uses_plan(self, settings: Mapping[str, Any]) -> bool:
+        """Whether ``calibrate`` depends on the plan (then its cached record is reused only for the same plan).
+        A module whose record depends only on the inputs and settings returns False, so extending a scan with
+        new units keeps the record (and every unit key that contains its digest)."""
+        return True
+
+    # ---- scan-wide statistics for stitch modules (two passes over the contigs)
+    def scan_statistics_tracks(self, settings: Mapping[str, Any]) -> Optional[Sequence[str]]:
+        """Track names the first pass needs; None: this module has no scan-wide statistics."""
+        return None
+
+    def stitch_statistics(self, chrom: str, territory: Sequence[tuple], tracks: Mapping[str, Any],
+                          settings: Mapping[str, Any], calibration: Optional[dict]) -> Any:
+        """First pass, per contig (only the tracks named by ``scan_statistics_tracks``)."""
+        return None
+
+    def combine_statistics(self, per_contig: Mapping[str, Any], settings: Mapping[str, Any],
+                           calibration: Optional[dict]) -> Optional[dict]:
+        """The scan-wide record from every contig's first-pass result (JSON-able: it goes into the manifest's
+        module block as ``scan_statistics``, and ``stitch`` receives it as ``scan_statistics=``)."""
+        return None
+
     # ---- helpers for the manifest
     def hit_columns(self) -> List[str]:
         """Union of the declared module columns over this module's feature types, in declaration order."""

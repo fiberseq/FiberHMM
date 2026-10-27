@@ -251,6 +251,15 @@ def test_molecules_below_the_floor_are_not_measured(tmp_path):
         assert (res.tracks['measured:all'].sum() > 0) == expect_measured
 
 
+def _stitch(m, chrom, territory, tracks, settings):
+    """stitch() as the scan finalizer calls it: with the scan-wide statistics when the FDR scope is the scan."""
+    extra = {}
+    if m.scan_statistics_tracks(settings) is not None:
+        extra['scan_statistics'] = m.combine_statistics(
+            {chrom: m.stitch_statistics(chrom, territory, tracks, settings, None)}, settings, None)
+    return m.stitch(chrom, territory, tracks, settings, None, **extra)
+
+
 def test_stitch_handles_territories_shorter_than_a_window():
     from fiberhmm.scan.modules.nuc import ENRICH_KINDS, SEG_METRICS, NucModule, _smooth
     m = NucModule()
@@ -262,9 +271,10 @@ def test_stitch_handles_territories_shorter_than_a_window():
             tracks[f'enr_p:{kind}'] = [p]
             for name, v in (('obs', 0.5), ('exp', 0.2), ('n', 5.0)):
                 tracks[f'enr_{name}:{kind}'] = [np.where(np.isfinite(p), v, np.nan)]
-        res = m.stitch('chrS', [(1000, 1000 + n, False, False)], tracks, m.resolve({}), None)
-        pats = [h for h in res.hits if h.type.startswith('nuc.patch.')]
-        assert pats and all(1000 <= h.start < h.end <= 1000 + n for h in pats)
+        for scope in ('contig', 'scan'):
+            res = _stitch(m, 'chrS', [(1000, 1000 + n, False, False)], tracks, m.resolve({'enrich_fdr_scope': scope}))
+            pats = [h for h in res.hits if h.type.startswith('nuc.patch.')]
+            assert pats and all(1000 <= h.start < h.end <= 1000 + n for h in pats)
         assert len(_smooth(np.ones(n), 200)) == n
     x = np.zeros(1000)
     x[400:600] = 1.0
@@ -402,8 +412,10 @@ def test_padded_empty_zones_are_never_tested_windows():
     for v in ('R', 'null', 'logp', 'n', 'P', 'C'):
         t[f'phase_{v}:all'] = np.full(25_000, np.nan)
     runs = territory_runs([(units[0], t, 'ok'), (units[1], None, 'empty')], m.stitch_support_bp(s))
-    out = m.stitch('c', [(a, b, lo, hi) for a, b, _x, lo, hi in runs], {k: [x[2][k] for x in runs] for k in t}, s, None)
-    assert not out.hits
+    for scope in ('scan', 'contig'):
+        out = _stitch(m, 'c', [(a, b, lo, hi) for a, b, _x, lo, hi in runs], {k: [x[2][k] for x in runs] for k in t},
+                      m.resolve({'enrich_fdr_scope': scope}))
+        assert not out.hits
 
 
 def test_read_ends_outside_segments_are_not_measured(tmp_path):
@@ -423,3 +435,108 @@ def test_read_ends_outside_segments_are_not_measured(tmp_path):
               params={'nuc': {'calibration': 'self'}}, out=tmp_path / 'o', annotate=False)
     hits = read_all(tmp_path / 'o' / 'nuc' / 'hits.tsv.bgz')
     assert not [h for h in hits if h['type'] == 'nuc.patch.regular']
+
+
+# ------------------------------------------------------------------ calibration and FDR scope (contracts v1.9)
+def test_view_scan_calibration_does_not_depend_on_the_plan(scan_bam, tsv_scan, tmp_path, monkeypatch):
+    """calibration_scope 'data' (default): a view scan (a --zones subset of the genome grid) calibrates on the
+    same windows as the genome scan, so its unit keys are the genome scan's; extending the view recomputes
+    neither the calibration nor any computed nuc unit; and the view's molecule and mark rows equal the genome
+    scan's for the records its units own. Patches are an FDR over the scanned windows, so they are not compared."""
+    from fiberhmm.scan.modules.nuc import NucModule
+    params = {'nuc': {'calibration': 'self', 'calibration_population': 400}}
+    ds = [{'dataset_id': 'synth', 'paths': [scan_bam]}]
+    view = plan({'chrS': LENGTH}, zones=[('chrS', 30_000, 70_000)])
+    out = tmp_path / 'view'
+    run_units(ds, view, modules=['nuc'], params=params, out=out, annotate=False)
+    genome_cal = (tsv_scan / 'nuc' / 'extra' / 'calibration.json').read_bytes()
+    assert (out / 'nuc' / 'extra' / 'calibration.json').read_bytes() == genome_cal
+    calls = []
+    real = NucModule.calibrate
+
+    def counting(self, *a, **kw):
+        calls.append(1)
+        return real(self, *a, **kw)
+    monkeypatch.setattr(NucModule, 'calibrate', counting)
+    wider = plan({'chrS': LENGTH}, zones=[('chrS', 10_000, 90_000)])
+    run_units(ds, wider, modules=['nuc'], params=params, out=out, annotate=False, continue_run=True, extend=True)
+    att = json.loads((out / 'run.json').read_text())['attempts'][-1]
+    assert calls == [] and att['units_reused'] == len(view[0])
+    assert att['units_run'] == len(wider[0]) - len(view[0])
+    owned = [(u.zone_start, u.zone_end) for u in wider[0]]
+
+    def owned_rows(rows):
+        return sorted(str(sorted(r.items())) for r in rows if any(a <= int(r['start']) < b for a, b in owned))
+    g_mol = read_all(tsv_scan / 'nuc' / 'molecules.tsv.bgz')
+    v_mol = read_all(out / 'nuc' / 'molecules.tsv.bgz')
+    assert owned_rows(g_mol) and owned_rows(g_mol) == owned_rows(v_mol)
+    assert 'input_index' in v_mol[0]
+    records = {r['record'] for r in v_mol if any(a <= int(r['start']) < b for a, b in owned)}
+
+    def marks_of(rows):
+        return sorted(str(sorted(r.items())) for r in rows if r['record'] in records)
+    g_marks, v_marks = read_all(tsv_scan / 'nuc' / 'marks.tsv.bgz'), read_all(out / 'nuc' / 'marks.tsv.bgz')
+    assert marks_of(g_marks) and marks_of(g_marks) == marks_of(v_marks)
+
+
+def test_data_calibration_regions_use_contigs_with_records(scan_bam):
+    from fiberhmm.scan.modules.nuc import calibration_regions, data_calibration_regions
+    ref = {'chrS': LENGTH, 'chrEmpty': 5_000_000}
+    got = data_calibration_regions(ref, [scan_bam], 40, has_records=lambda c, s, e: True)
+    assert got and {c for c, _s, _e in got} == {'chrS'}
+    # a whole-genome territory gives the same windows
+    units, _ = plan({'chrS': LENGTH}, genome=True)
+    assert got == calibration_regions(units, 40, has_records=lambda c, s, e: True)
+
+
+def test_scan_wide_bh_differs_from_per_contig_bh():
+    """Benjamini-Hochberg over every tested window of the scan: a window significant within its own small
+    contig is not significant among all the scan's windows (and a strong one still is)."""
+    from fiberhmm.nuc.enrichment import bh, bh_threshold
+    from fiberhmm.scan.modules.nuc import ENRICH_KINDS, NucModule
+    m = NucModule()
+
+    def tracks(pvals):
+        n = len(pvals) * 250
+        t = {k + ':all': [np.ones(n)] for k in ('measured', 'qsum', 'reg', 'dis', 'und', 'low', 'uds', 'mis')}
+        for kind in ENRICH_KINDS:
+            p = np.full(n, np.nan)
+            for i, v in enumerate(pvals):
+                p[i * 250] = v
+            t[f'enr_p:{kind}'] = [p]
+            for name, v in (('obs', 0.5), ('exp', 0.2), ('n', 5.0)):
+                t[f'enr_{name}:{kind}'] = [np.where(np.isfinite(p), v, np.nan)]
+        return [(0, n, False, False)], t
+    rng = np.random.default_rng(3)
+    small = [0.004] + [0.9] * 9
+    big = list(rng.uniform(0.05, 1.0, 1000))
+    for strong, expect_scan in ((0.004, False), (1e-7, True)):
+        small[0] = strong
+        ta, tra = tracks(small)
+        tb, trb = tracks(big)
+        contig = m.resolve({'enrich_fdr_scope': 'contig'})
+        per = m.stitch('chrA', ta, tra, contig, None)
+        assert any(h.type == 'nuc.patch.regular' for h in per.hits)          # within its contig: rejected
+        scan = m.resolve({})
+        stats = m.combine_statistics({'chrA': m.stitch_statistics('chrA', ta, tra, scan, None),
+                                      'chrB': m.stitch_statistics('chrB', tb, trb, scan, None)}, scan, None)
+        assert stats['kinds']['reg']['windows_tested'] == 1010
+        hits = m.stitch('chrA', ta, tra, scan, None, scan_statistics=stats).hits
+        assert any(h.type == 'nuc.patch.regular' for h in hits) == expect_scan
+        allp = small + big
+        thr = bh_threshold([p for p in allp if p <= 0.1], len(allp), 0.1)
+        assert (np.asarray(allp) <= (thr if thr is not None else -1)).tolist() == bh(allp, 0.1).tolist()
+    with pytest.raises(ValueError):
+        m.stitch('chrA', ta, tra, m.resolve({}), None)              # scan scope without the scan statistics
+
+
+def test_scan_records_the_fdr_threshold_in_the_manifest(tsv_scan):
+    man = json.loads((tsv_scan / 'manifest.json').read_text())
+    st = man['modules']['nuc']['scan_statistics']
+    assert st['fdr_scope'] == 'scan' and st['enrich_fdr'] == 0.1
+    for kind in ('reg', 'dis', 'uds', 'mis'):
+        rec = st['kinds'][kind]
+        assert rec['windows_tested'] > 0 and rec['windows_rejected'] >= 0
+    vals = read_all(tsv_scan / 'nuc' / 'values.tsv.bgz')
+    tested = {r['value'] for r in vals if r['value_name'] == 'windows_tested'}
+    assert tested <= {repr(float(st['kinds'][k]['windows_tested'])) for k in st['kinds']}

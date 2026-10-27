@@ -2,10 +2,14 @@
 
 Wraps :mod:`fiberhmm.nuc` (NUC design; feature-hub CONTRACTS 11):
 
-- ``calibrate``: once per scan, per dataset, on a declared sample of the
-  scanned territory (fixed 50 kb windows of absolute coordinates, stable
-  hash; independent of the tiling), records passing the read policy, by
-  thinning (default) or self calibration. The
+- ``calibrate``: once per scan, per dataset, on a declared sample of fixed
+  50 kb windows of absolute coordinates taken in a stable hash order, records
+  passing the read policy, by thinning (default) or self calibration. With
+  ``calibration_scope = 'data'`` (default) the windows are drawn from every
+  contig of the reference that holds the dataset's records, so the record
+  depends on the inputs and settings only, never on the plan: a view scan, its
+  extensions and a genome scan share it (and their unit keys). ``'territory'``
+  draws them from the scanned territory (the earlier rule). The
   record is ``{'schema': 'fiberhmm.nuc.scan_calibration.v1', 'datasets':
   {dataset_id: NucCalibration dict}}``.
 - ``molecule_outputs``: per owned source record, from the complete record:
@@ -28,8 +32,11 @@ Wraps :mod:`fiberhmm.nuc` (NUC design; feature-hub CONTRACTS 11):
   short to segment, or with nothing to segment are not measured. Nothing
   depends on the tiling.
 - ``stitch``: recurrence patches per kind (regular, disordered, undersized,
-  missing): Benjamini-Hochberg at ``enrich_fdr`` over the contig's windows,
-  significant windows merged; phased patches where a window's resultant
+  missing): Benjamini-Hochberg at ``enrich_fdr`` over every tested window of
+  the scan (``enrich_fdr_scope = 'scan'``, default: a first pass over all
+  contigs gives the threshold, recorded in the manifest as
+  ``scan_statistics``) or of the contig (``'contig'``), significant windows
+  merged; phased patches where a window's resultant
   exceeds its null by ``phase_min_excess`` with p < ``phase_max_p``; fuzzy
   patches where a phased window starts inside a recurrent regular patch but
   its molecules share no phase (null p > ``fuzzy_min_p``, excess below
@@ -67,7 +74,7 @@ def _p(default, typ, help_):
 
 class NucModule(ScanModuleBase):
     name = 'nuc'
-    version = '2.0'
+    version = '2.1'
     experimental = True
     reconcile = 'stitch'
     max_support_bp = 12_500
@@ -85,13 +92,19 @@ class NucModule(ScanModuleBase):
             'calibration_population': _p(2000, 'int', 'molecules per dataset in the calibration population'),
             'calibration_seeds': _p(5, 'int', 'thinning repeats'),
             'calibration_targets': _p(8, 'int', 'thinning target lambda values'),
-            'calibration_units': _p(40, 'int', '50 kb windows of the scanned territory that hold records, '
-                                       'taken in stable-hash order of the absolute window index, for the '
-                                       'calibration population (per dataset); 0 = all'),
+            'calibration_units': _p(40, 'int', '50 kb windows that hold records, taken in stable-hash order of '
+                                       'the absolute window index, for the calibration population (per '
+                                       'dataset); 0 = all'),
+            'calibration_scope': _p('data', 'str', "where calibration windows come from: 'data' (every contig "
+                                    "of the reference with the dataset's records; the record does not depend "
+                                    "on the plan) or 'territory' (the scanned territory)"),
             'groups': _p('dataset+haplotype', 'str', "observation groups: 'dataset' or 'dataset+haplotype'"),
             'enrich_window_bp': _p(500, 'int', 'recurrence-test window on the fixed grid'),
             'enrich_step_bp': _p(250, 'int', 'recurrence-test window step'),
-            'enrich_fdr': _p(0.1, 'float', 'Benjamini-Hochberg FDR of recurrence patches, per contig and kind'),
+            'enrich_fdr': _p(0.1, 'float', 'Benjamini-Hochberg FDR of recurrence patches, per kind'),
+            'enrich_fdr_scope': _p('scan', 'str', "windows one Benjamini-Hochberg runs over, per kind: 'scan' "
+                                   "(every tested window of the scan: the FDR holds for the scan's patch "
+                                   "list) or 'contig' (each contig on its own)"),
             'enrich_levels': _p(10, 'int', 'levels of the per-molecule window score'),
             'enrich_min_molecules': _p(3, 'int', 'minimum molecules in a tested window'),
             'patch_min_measured': _p(10, 'int', 'minimum molecules in a phased window'),
@@ -111,7 +124,16 @@ class NucModule(ScanModuleBase):
             raise ValueError("nuc: calibration must be 'thin' or 'self'")
         if out['groups'] not in ('dataset', 'dataset+haplotype'):
             raise ValueError("nuc: groups must be 'dataset' or 'dataset+haplotype'")
+        if out['calibration_scope'] not in ('data', 'territory'):
+            raise ValueError("nuc: calibration_scope must be 'data' or 'territory'")
+        if out['enrich_fdr_scope'] not in ('scan', 'contig'):
+            raise ValueError("nuc: enrich_fdr_scope must be 'scan' or 'contig'")
+        if not 0.0 < float(out['enrich_fdr']) < 1.0:
+            raise ValueError('nuc: enrich_fdr must be between 0 and 1')
         return out
+
+    def calibration_uses_plan(self, settings) -> bool:
+        return settings['calibration_scope'] == 'territory'
 
     def feature_types(self) -> List[FeatureTypeDecl]:
         post = ScoreDecl('posterior', 'Posterior', 'fraction', 'high', False)
@@ -208,13 +230,20 @@ class NucModule(ScanModuleBase):
 
         def read_filter(r):
             return passes(r, filters)
-        out = {'schema': CAL_SCHEMA, 'source': settings['calibration'], 'regions': {}, 'datasets': {}}
+        scope = settings['calibration_scope']
+        out = {'schema': CAL_SCHEMA, 'source': settings['calibration'], 'scope': scope, 'regions': {},
+               'datasets': {}}
         for ds in inputs.datasets:
-            progress.report('nuc', f'calibrating {ds.dataset_id} ({settings["calibration"]})')
+            progress.report('nuc', f'calibrating {ds.dataset_id} ({settings["calibration"]}, {scope} windows)')
             with _RecordProbe(ds.paths, read_filter) as probe:
-                regions = calibration_regions(units, int(settings['calibration_units']), has_records=probe)
+                if scope == 'data':
+                    regions = data_calibration_regions(inputs.reference, ds.paths,
+                                                       int(settings['calibration_units']), has_records=probe)
+                else:
+                    regions = calibration_regions(units, int(settings['calibration_units']), has_records=probe)
             if not regions:
-                raise ValueError(f'nuc: no records in the scanned territory for {ds.dataset_id}')
+                raise ValueError(f'nuc: no records passing the read policy for {ds.dataset_id} '
+                                 + ('in the reference' if scope == 'data' else 'in the scanned territory'))
             out['regions'][ds.dataset_id] = [f'{c}:{a}-{b}' for c, a, b in regions]
             if settings['calibration'] == 'thin':
                 cal = calibrate_thin(list(ds.paths), params, label=ds.dataset_id,
@@ -459,7 +488,46 @@ class NucModule(ScanModuleBase):
         its start (a phased window or a recurrence window)."""
         return max(int(settings['phase_window_bp']), int(settings['enrich_window_bp']))
 
-    def stitch(self, chrom, territory, tracks, settings, calibration) -> StitchResult:
+    # ---- scan-wide Benjamini-Hochberg (enrich_fdr_scope = 'scan')
+    def scan_statistics_tracks(self, settings):
+        if settings['enrich_fdr_scope'] != 'scan':
+            return None
+        return [f'{p}:{k}' for k in ENRICH_KINDS for p in ('enr_p', 'enr_n')]
+
+    def _tested(self, territory, tracks, settings, kind):
+        """(run_index, offset, p) of every tested window of ``kind`` (empty zones are zero-padded: n = 0)."""
+        out = []
+        for run_index in range(len(territory)):
+            pv, nv = (tracks.get(f'{n}:{kind}') for n in ('enr_p', 'enr_n'))
+            if pv is None or nv is None or pv[run_index] is None or nv[run_index] is None:
+                continue
+            pa, na = np.asarray(pv[run_index], dtype=float), np.asarray(nv[run_index], dtype=float)
+            valid = np.isfinite(pa) & np.isfinite(na) & (na >= int(settings['enrich_min_molecules']))
+            for off in np.flatnonzero(valid):
+                out.append((run_index, int(off), float(pa[off])))
+        return out
+
+    def stitch_statistics(self, chrom, territory, tracks, settings, calibration):
+        q = float(settings['enrich_fdr'])
+        res = {}
+        for kind in ENRICH_KINDS:
+            tested = self._tested(territory, tracks, settings, kind)
+            res[kind] = (len(tested), [p for _r, _o, p in tested if p <= q])
+        return res
+
+    def combine_statistics(self, per_contig, settings, calibration):
+        from fiberhmm.nuc.enrichment import bh_threshold
+        q = float(settings['enrich_fdr'])
+        kinds = {}
+        for kind in ENRICH_KINDS:
+            m = sum(per_contig[c][kind][0] for c in per_contig)
+            small = [p for c in sorted(per_contig) for p in per_contig[c][kind][1]]
+            thr = bh_threshold(small, m, q)
+            kinds[kind] = {'windows_tested': int(m), 'p_threshold': thr,
+                           'windows_rejected': int(sum(1 for p in small if thr is not None and p <= thr))}
+        return {'fdr_scope': 'scan', 'enrich_fdr': q, 'kinds': kinds}
+
+    def stitch(self, chrom, territory, tracks, settings, calibration, scan_statistics=None) -> StitchResult:
         from fiberhmm.nuc.enrichment import bh, merge_windows
         out = StitchResult()
         groups = sorted({name.split(':', 1)[1] for name in tracks if name.startswith('measured:')})
@@ -480,7 +548,11 @@ class NucModule(ScanModuleBase):
         def kind_of(g):
             return 'all' if g == 'all' else ('haplotype' if ':HP' in g else 'dataset')
         regular_patches: List[Tuple[int, int]] = []
-        # --- recurrence patches: BH over the contig's windows, per kind -----------
+        # --- recurrence patches: BH over the scan's (or the contig's) windows, per kind ---
+        scan_fdr = settings['enrich_fdr_scope'] == 'scan'
+        if scan_fdr and scan_statistics is None:
+            raise ValueError("nuc: enrich_fdr_scope 'scan' needs the scan-wide statistics (run through "
+                             "fiberhmm.scan.run_units, or set enrich_fdr_scope 'contig')")
         for kind, ptype in PATCH_KINDS:
             rows = []                          # (run_index, offset, p, obs, exp, n)
             for run_index, (t0, t1, _lo, _ro) in enumerate(territory):
@@ -497,8 +569,14 @@ class NucModule(ScanModuleBase):
                     rows.append((run_index, int(off), float(pv[off]), float(ov[off]), float(ev[off]), int(nv[off])))
             if not rows:
                 continue
-            rej = bh([r[2] for r in rows], q)
-            n_tests = len(rows)
+            if scan_fdr:
+                rec = scan_statistics['kinds'][kind]
+                thr = rec['p_threshold']
+                rej = [thr is not None and r[2] <= thr for r in rows]
+                n_tests = int(rec['windows_tested'])
+            else:
+                rej = bh([r[2] for r in rows], q)
+                n_tests = len(rows)
             for run_index, (t0, t1, left_open, right_open) in enumerate(territory):
                 get = getter(run_index)
                 sig = [r for r, ok in zip(rows, rej) if ok and r[0] == run_index]
@@ -689,6 +767,45 @@ def calibration_regions(units, n_windows: int, has_records=None) -> List[Tuple[s
     elif n_windows:
         windows = windows[:n_windows]
     return sorted((c, s0, e0) for _h, c, s0, e0 in windows)
+
+
+def _contigs_with_records(paths, reference) -> List[str]:
+    """Contigs of ``reference`` (in its order) that the BAM indexes count records on in any of ``paths``;
+    every contig when an index gives no statistics."""
+    import pysam
+    found = set()
+    for p in paths:
+        try:
+            with pysam.AlignmentFile(p, 'rb') as bam:
+                for st in bam.get_index_statistics():
+                    if int(st.mapped) > 0:
+                        found.add(st.contig)
+        except (ValueError, OSError, AttributeError):
+            return list(reference)
+    return [c for c in reference if c in found]
+
+
+def data_calibration_regions(reference, paths, n_windows: int, has_records=None) -> List[Tuple[str, int, int]]:
+    """Calibration sample that depends on the data only: fixed 50 kb windows of absolute coordinates over every
+    contig of ``reference`` that holds records of ``paths`` (index statistics), taken in the same stable hash
+    order of (contig, window index) as :func:`calibration_regions`; the first ``n_windows`` (all when 0) for
+    which ``has_records`` returns True. A whole-genome scan with ``calibration_scope = 'territory'`` draws the
+    same windows."""
+    windows = []
+    for chrom in _contigs_with_records(paths, reference):
+        length = int(reference[chrom])
+        for k in range(0, (length - 1) // CAL_WINDOW_BP + 1):
+            s0, e0 = k * CAL_WINDOW_BP, min(length, (k + 1) * CAL_WINDOW_BP)
+            if e0 > s0:
+                windows.append((hashlib.sha256(f'{chrom}:{k}'.encode()).hexdigest(), chrom, s0, e0))
+    windows.sort()
+    keep = []
+    for w in windows:
+        if has_records is None or has_records(w[1], w[2], w[3]):
+            keep.append(w)
+            if n_windows and len(keep) >= n_windows:
+                break
+    return sorted((c, s0, e0) for _h, c, s0, e0 in keep)
 
 
 def _union_iv(iv) -> List[Tuple[int, int]]:

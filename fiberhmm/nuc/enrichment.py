@@ -149,6 +149,18 @@ def bh(pvals: Sequence[float], q: float) -> np.ndarray:
     return out
 
 
+def bh_threshold(small_pvals: Sequence[float], m: int, q: float) -> Optional[float]:
+    """The Benjamini-Hochberg rejection threshold at FDR ``q`` over ``m`` tests, from the p-values <= ``q``
+    only (no larger p-value can be rejected, and they all rank after these): the largest p_(k) with
+    p_(k) <= k q / m, or None when nothing is rejected. Rejecting every p <= the threshold gives exactly
+    :func:`bh`'s rejections over the ``m`` p-values."""
+    p = np.sort(np.asarray([x for x in small_pvals if np.isfinite(x) and x <= q], dtype=float), kind='stable')
+    if m <= 0 or not len(p):
+        return None
+    passed = np.flatnonzero(p <= q * np.arange(1, len(p) + 1) / m)
+    return float(p[passed[-1]]) if len(passed) else None
+
+
 def grid_windows(z0: int, z1: int, step: int) -> List[int]:
     """Window starts on the fixed genome grid that fall in [z0, z1)."""
     return list(range((z0 + step - 1) // step * step, z1, step))
