@@ -214,6 +214,15 @@ def rate_ratio(d: RateData, *, n_shift: int = 1000, n_boot: int = 1000, block_bp
         out['group_info'] = ginfo
         if group_kind == 'haplotype':
             scope = np.array([g is not None for g in glab])
+    if glab is not None and group_kind == 'haplotype':
+        un = d.subset(~scope)
+        u_used, _m, uO, uOin, uEin, uEout, uex = _prepare(un)
+        desc = {'n_molecules': int(len(u_used)), 'excluded': uex,
+                'note': 'descriptive; excluded from haplotype contrasts (D14)'}
+        if len(u_used):
+            ub = float(_solve_beta(uO, np.log(uEin / uEout), [float(uOin.sum())])[0])
+            desc.update(log_rate_ratio=ub, rate_ratio=float(np.exp(ub)))
+        out['unphased'] = desc
     dd = d.subset(scope)
     gl = glab[scope] if glab is not None else None
     used, merged, O, Oin, Ein, Eout, ex = _prepare(dd)
@@ -226,7 +235,7 @@ def rate_ratio(d: RateData, *, n_shift: int = 1000, n_boot: int = 1000, block_bp
     S = float(Oin.sum())
     beta = float(_solve_beta(O, off, [S])[0])
     out.update({'O_in': S, 'O_out': float(O.sum() - S), 'E_in': float(Ein.sum()), 'E_out': float(Eout.sum()),
-                'log_rate_ratio': beta, 'rate_ratio': float(np.exp(beta)) if np.isfinite(beta) else float(beta),
+                'log_rate_ratio': beta, 'rate_ratio': float(np.exp(beta)),
                 'crude_rate_ratio': float((S / Ein.sum()) / ((O.sum() - S) / Eout.sum())) if O.sum() > S else
                 float('inf')})
     if n_shift:
@@ -248,8 +257,7 @@ def rate_ratio(d: RateData, *, n_shift: int = 1000, n_boot: int = 1000, block_bp
                 continue
             Sg = float(Oin[m].sum())
             bg = float(_solve_beta(O[m], off[m], [Sg])[0])
-            row = {'n_molecules': int(m.sum()), 'log_rate_ratio': bg,
-                   'rate_ratio': float(np.exp(bg)) if np.isfinite(bg) else float(bg)}
+            row = {'n_molecules': int(m.sum()), 'log_rate_ratio': bg, 'rate_ratio': float(np.exp(bg))}
             if n_shift:
                 sub = [merged[i] for i in np.flatnonzero(m)]
                 Sn = _shift_null(sub, n_shift, rng, cut_max)
@@ -265,7 +273,9 @@ def rate_ratio(d: RateData, *, n_shift: int = 1000, n_boot: int = 1000, block_bp
                 first.setdefault(m, blk[k])
             blk = np.array([first[m] for m in dd.molecule_ids[used]], dtype=object)
         bidx = np.unique(blk, return_inverse=True)[1]
-        bb = BlockBootstrap(np.arange(int(bidx.max()) + 1), bidx, np.arange(len(used)), seed=seed + 1)
+        mol_items = (np.unique(dd.molecule_ids[used], return_inverse=True)[1] if dd.molecule_ids is not None
+                     else np.arange(len(used)))
+        bb = BlockBootstrap(np.arange(int(bidx.max()) + 1), bidx, mol_items, seed=seed + 1)
         out['bootstrap'] = bb.describe()
 
         def fn(W):

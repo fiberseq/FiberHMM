@@ -65,6 +65,7 @@ def _dp(Xp, valid, kk, beta, need_q=True):
     e[:, 0] = 1.0
     s = np.zeros((S, K + 1, p))
     Q = np.zeros((S, K + 1, p, p)) if need_q else None
+    logsc = np.zeros(S)
     for j in range(n_max):
         rj = r[:, j]
         if not np.any(rj):
@@ -78,10 +79,18 @@ def _dp(Xp, valid, kk, beta, need_q=True):
                 Qp + xs + np.swapaxes(xs, 2, 3) + (xj[:, :, None] * xj[:, None, :])[:, None] * ep[:, :, None, None])
         s[:, 1:] = s[:, 1:] + rj[:, None, None] * (sp + xj[:, None, :] * ep[:, :, None])
         e[:, 1:] = e[:, 1:] + rj[:, None] * ep
+        # rescale every stratum's polynomials (ratios s/e and Q/e are unchanged); the scale is kept in log
+        sc = np.max(e, axis=1)
+        sc = np.where(sc > 0, sc, 1.0)
+        e /= sc[:, None]
+        s /= sc[:, None, None]
+        if need_q:
+            Q /= sc[:, None, None, None]
+        logsc += np.log(sc)
     ar = np.arange(S)
     ek = e[ar, kk]
     mean = s[ar, kk] / ek[:, None]
-    loge = np.log(ek) + kk * m[:, 0]
+    loge = np.log(ek) + logsc + kk * m[:, 0]
     cov = (Q[ar, kk] / ek[:, None, None] - mean[:, :, None] * mean[:, None, :]) if need_q else None
     return loge, mean, cov, r
 
@@ -159,22 +168,33 @@ def clogit(X, y, strata, *, max_iter: int = 50, tol: float = 1e-8, l2: float = 1
 
 
 def _case_probabilities(r, valid, kk):
-    """pi_i = r_i e_{k-1}(r without i) / e_k(r), by forward and backward elementary polynomials."""
+    """pi_i = r_i e_{k-1}(r without i) / e_k(r), by forward and backward elementary polynomials (each row rescaled,
+    scales kept in log, so large balanced strata do not overflow)."""
     S, n_max = r.shape
     K = int(kk.max()) if S else 0
     F = np.zeros((S, n_max + 1, K + 1))
+    lF = np.zeros((S, n_max + 1))
     F[:, 0, 0] = 1.0
     for j in range(n_max):
-        F[:, j + 1] = F[:, j]
-        F[:, j + 1, 1:] += r[:, j, None] * F[:, j, :-1]
+        row = F[:, j].copy()
+        row[:, 1:] += r[:, j, None] * F[:, j, :-1]
+        sc = row.max(1)
+        sc = np.where(sc > 0, sc, 1.0)
+        F[:, j + 1] = row / sc[:, None]
+        lF[:, j + 1] = lF[:, j] + np.log(sc)
     B = np.zeros((S, n_max + 2, K + 1))
+    lB = np.zeros((S, n_max + 2))
     B[:, n_max + 1, 0] = 1.0
     B[:, n_max, 0] = 1.0
     for j in range(n_max - 1, -1, -1):
-        B[:, j + 1] = B[:, j + 2]
-        B[:, j + 1, 1:] += r[:, j, None] * B[:, j + 2, :-1]
+        row = B[:, j + 2].copy()
+        row[:, 1:] += r[:, j, None] * B[:, j + 2, :-1]
+        sc = row.max(1)
+        sc = np.where(sc > 0, sc, 1.0)
+        B[:, j + 1] = row / sc[:, None]
+        lB[:, j + 1] = lB[:, j + 2] + np.log(sc)
     ar = np.arange(S)
-    ek = F[ar, n_max, kk]
+    log_ek = np.log(F[ar, n_max, kk]) + lF[:, n_max]
     pi = np.zeros((S, n_max))
     for j in range(n_max):
         # e_{k-1} without row j = sum_l F[j][l] B[j+2][k-1-l]
@@ -183,7 +203,10 @@ def _case_probabilities(r, valid, kk):
             idx = kk - 1 - l
             ok = idx >= 0
             tot[ok] += F[ok, j, l] * B[ok, j + 2, idx[ok]]
-        pi[:, j] = np.where(valid[:, j], r[:, j] * tot / ek, 0.0)
+        with np.errstate(divide='ignore'):
+            lp = np.log(np.where(r[:, j] > 0, r[:, j], 1.0)) + np.log(np.where(tot > 0, tot, 1.0)) \
+                + lF[:, j] + lB[:, j + 2] - log_ek
+        pi[:, j] = np.where(valid[:, j] & (tot > 0) & (r[:, j] > 0), np.exp(lp), 0.0)
     return pi
 
 

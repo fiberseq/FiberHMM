@@ -28,9 +28,15 @@ def is_unphased(value) -> bool:
         return True
     if isinstance(value, float) and math.isnan(value):
         return True
-    if isinstance(value, (int, np.integer)) and int(value) == 0:
+    if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool) and value == 0:
         return True
-    return str(value).strip() in _UNPHASED
+    text = str(value).strip()
+    if text in _UNPHASED:
+        return True
+    try:
+        return float(text) == 0.0
+    except ValueError:
+        return False
 
 
 def group_labels(values, kind: str = 'label') -> Tuple[np.ndarray, dict]:
@@ -136,11 +142,13 @@ def group_contrast(estimates: Dict[str, float], boot, names: Optional[Dict[str, 
         rows.append(row)
     out = {'groups': groups, 'reference': ref, 'differences': rows,
            'variance': boot.mode if part is None else f'{boot.mode} ({part} part)'}
-    if np.all(np.isfinite(cd)) and np.all(np.isfinite(dobs)):
+    if np.all(np.isfinite(cd)) and np.all(np.isfinite(dobs)) and np.isfinite(fac):
         try:
             stat = float(dobs @ np.linalg.solve(cd, dobs))
             r = len(others)
-            if np.isfinite(df) and df > r:
+            if not np.isfinite(stat) or stat < 0:
+                out.update(chi2=stat, df=r, p=float('nan'), note='covariance not positive definite')
+            elif np.isfinite(df) and df > r:
                 # Hotelling-type small-sample reference: F(r, G - r) after scaling
                 Fst = stat * (df - r + 1) / (df * r)
                 out.update(chi2=stat, df=r, df_clusters=df, p=float(fdist.sf(Fst, r, df - r + 1)))

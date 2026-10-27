@@ -152,10 +152,10 @@ def test_m1_pooled_detects_a_planted_cooccurrence_and_not_a_null():
     assert null['pooled']['p'] > 0.01
 
 
-def test_m1_small_samples_use_the_sign_flip():
+def test_m1_small_samples_use_a_t_reference():
     sim = simulate_m1(5, chrom_len=150_000, coverage=15, n_a=20, n_b=30)
     res = cooccurrence(sim['a'], sim['b'], sim['molecules'], n_boot=0, effect=False)
-    assert res['pooled']['n_molecules'] < 200 and 'p_signflip' in res['pooled']
+    assert res['pooled']['n_molecules'] < 200 and 't(' in res['pooled']['test']
 
 
 def test_m1_haplotype_contrast_leaves_unphased_out_and_reports_them():
@@ -296,3 +296,83 @@ def test_group_contrast_from_draws():
     rng = np.random.default_rng(0)
     out = group_contrast({'x': 0.0, 'y': 1.0}, {'x': rng.normal(0, 0.1, 500), 'y': rng.normal(1, 0.1, 500)})
     assert out['differences'][0]['difference'] == pytest.approx(1.0) and out['p'] < 1e-6
+
+
+# ---------------------------------------------------------------- review regressions (Codex round 1, group A)
+def test_m1_small_samples_use_t_and_tiny_pairs_are_not_pooled():
+    """A1, A2: one pair of six molecules never rejects at 0.05 for any equally likely table (the sign-flip did
+    at 10%); pairs below min_pool_molecules stay out of the pooled test."""
+    from fiberhmm.assoc.cooccur import _clustered
+    x = np.array([0, 0, 0, 1, 1, 1.])
+    rej = 0
+    for ones in itertools.combinations(range(6), 3):
+        y = np.zeros(6)
+        y[list(ones)] = 1
+        u = (x - x.mean()) * (y - y.mean())
+        rej += _clustered(u, np.array([np.sqrt(6 / 5)]), np.zeros(6, int), np.arange(6), u.sum(), 200, 't')['p'] < .05
+    assert rej == 0
+    sa = {i: int(i < 2) for i in range(4)}
+    sb = {i: int(i % 2) for i in range(4)}
+    A, B, mt = _tiny_states(sa, sb)
+    res = cooccurrence(A, B, mt, n_boot=0, effect=False, min_pool_molecules=5)
+    assert res['pooled'].get('n_molecules', 0) == 0
+
+
+def test_clogit_large_balanced_stratum_does_not_overflow():
+    """A3."""
+    from math import comb, log
+    f = clogit(np.tile([0, 0, 1, 1], 300), np.tile([0, 1, 0, 1], 300), np.zeros(1200), max_iter=2, l2=0)
+    assert abs(f['beta'][0]) < 1e-8 and f['loglik'] == pytest.approx(-log(comb(1200, 600)), abs=1e-6)
+    assert np.nansum(f['pi']) == pytest.approx(600)
+
+
+def test_m2_bootstrap_recomputes_balance_weights():
+    """A4: a contrast that is zero by balance stays zero in every bootstrap draw."""
+    rows = []
+    for s_ in range(2):
+        for k in range(20):
+            rows.append((0, len(rows), k % 2, s_, 1, 10.0 * s_))
+    loc, mol, st, strat, mask, y = map(np.array, zip(*rows))
+    app = Appearances(loc, mol, st, strat, mask, np.stack([y, np.ones_like(y)], -1)[:, None, :])
+    loci = LocusTable(['a', 'b'], ['c', 'c'], [0, 10_000], [True, True], [-1, -1])
+    r = condition(app, loci, mean_metric(), n_perm=0, n_role=0, n_boot=100)
+    assert r['bins'][0]['delta_anchor'] == pytest.approx(0) and r['bins'][0]['delta_anchor_ci']['se'] < 1e-9 or \
+        np.isnan(r['bins'][0]['delta_anchor_ci']['se'])
+
+
+def test_twoway_covariance_is_positive_semidefinite_and_contrasts_reject_negative_statistics():
+    """A5, A6."""
+    rng = np.random.default_rng(0)
+    e = rng.choice([-1.0, 1.0], size=(4000, 3))
+    mk = lambda C: e @ np.linalg.cholesky(C + 1e-9 * np.eye(3)).T
+    parts = {}
+    for name, C in (('units', np.array([[1, 1, 0], [1, 1, 0], [0, 0, 1.]])),
+                    ('molecules', np.array([[1, 0, 1], [0, 1, 0], [1, 0, 1.]])), ('items', 10 * np.eye(3))):
+        d = mk(C)
+        parts[name] = {'a': d[:, 0], 'b': d[:, 1], 'c': d[:, 2]}
+    boot = R.BootDraws('twoway', parts=parts, info={'clusters': 50, 'molecules': 50})
+    c = boot.cov(['a', 'b', 'c'])
+    assert np.linalg.eigvalsh(c).min() > -1e-9
+    out = group_contrast({'a': 0.0, 'b': 1.0, 'c': 1.0}, boot)
+    assert not (out.get('chi2', 0) < 0 and out['p'] == 1)
+    assert R.BootDraws('groups', draws={'x': np.array([-1., 0, 1])}, info={'clusters': 2}).correction() == (2.0, 1.0)
+
+
+def test_m3_bootstrap_keeps_a_physical_molecule_together_and_boundaries():
+    """A7, A9, A10."""
+    d = RateData([1000, 1000, 1000], [np.array([[0, 500]])] * 3, [np.array([100, 700])] * 3,
+                 molecule_ids=np.array(['m1', 'm1', 'm2'], dtype=object))
+    res = rate_ratio(d, n_shift=0, n_boot=20)
+    assert res['bootstrap']['molecules'] == 2
+    assert rate_ratio(RateData([100], [np.array([[0, 50]])], [np.array([80])]), n_shift=0,
+                      n_boot=0)['rate_ratio'] == 0.0
+    d3 = RateData([100] * 3, [np.array([[0, 50]])] * 3, [np.array([80, 10])] * 3,
+                  labels={'hap': np.array([1, 2, 0], dtype=object)})
+    r = rate_ratio(d3, n_shift=0, n_boot=0, group='hap', group_kind='haplotype')
+    assert r['unphased']['n_molecules'] == 1 and set(r['groups']) == {'1', '2'}
+
+
+def test_float_zero_haplotype_is_unphased():
+    """A8."""
+    lab, info = group_labels([1.0, 2.0, 0.0, '0.0'], 'haplotype')
+    assert info['unphased'] == 2 and lab[2] is None and lab[3] is None

@@ -183,6 +183,7 @@ class _Bin:
             w0 = (n0 > 0).astype(float)
         P = np.asarray(metric.powers, float)
         X = app.stats[self.idx, b, :]
+        self.X, self.P, self.nc, self.balance = X, P, nc, balance
         self.X1 = X * (w1[cell][:, None] ** P)
         self.X0 = X * (w0[cell][:, None] ** P)
         self.state = st
@@ -472,19 +473,49 @@ def _boot_bin(bd: _Bin, loci: LocusTable, bb: BlockBootstrap, n_boot, gmain, gro
     for g in group_names:
         plan[g] = (gbd[g], np.flatnonzero(gmain == g), roles(gbd[g]))
 
-    def sums(b_: _Bin, W, sel):
-        st = b_.state[sel]
-        return W[:, sel] @ (b_.X1[sel] * st[:, None]), W[:, sel] @ (b_.X0[sel] * (1 - st[:, None]))
+    from scipy.sparse import csr_matrix
+    onehot = {}
+    for key, (b_, _cols, _r) in plan.items():
+        n = len(b_.idx)
+        rows = np.arange(n)
+        onehot[key] = (csr_matrix((b_.state.astype(float), (rows, b_.cell)), shape=(n, max(b_.nc, 1))),
+                       csr_matrix(((1 - b_.state).astype(float), (rows, b_.cell)), shape=(n, max(b_.nc, 1))))
+
+    def rebalance(key, b_: _Bin, W):
+        """Per-draw balance weights: each cell's resampled state counts give min(n1, n0) / n_state."""
+        if not b_.balance:
+            n1 = (onehot[key][0].T @ W.T).T
+            n0 = (onehot[key][1].T @ W.T).T
+            return (n1 > 0).astype(float), (n0 > 0).astype(float)
+        n1 = (onehot[key][0].T @ W.T).T
+        n0 = (onehot[key][1].T @ W.T).T
+        m = np.minimum(n1, n0)
+        w1 = np.divide(m, n1, out=np.zeros_like(m), where=n1 > 0)
+        w0 = np.divide(m, n0, out=np.zeros_like(m), where=n0 > 0)
+        return w1, w0
+
+    def sums(b_: _Bin, W, sel, w1, w0):
+        st = b_.state.astype(float)
+        S1 = np.zeros((W.shape[0], b_.X.shape[1]))
+        S0 = np.zeros_like(S1)
+        for pw in np.unique(b_.P):
+            cols = np.flatnonzero(b_.P == pw)
+            c1 = W * (w1[:, b_.cell] ** pw) * (st * sel)[None, :]
+            c0 = W * (w0[:, b_.cell] ** pw) * ((1 - st) * sel)[None, :]
+            S1[:, cols] = c1 @ b_.X[:, cols]
+            S0[:, cols] = c0 @ b_.X[:, cols]
+        return S1, S0
 
     def fn(Wall):
         out = {}
         for key, (b_, cols, (anc, sa, sb, has_sets)) in plan.items():
             W = Wall[:, b_.idx] if cols is None else Wall[:, cols][:, b_.idx]
             loc = b_.locus
-            out[f'{key}|delta_anchor'] = np.asarray(b_.delta(*sums(b_, W, anc[loc])))
+            w1, w0 = rebalance(key, b_, W)
+            out[f'{key}|delta_anchor'] = np.asarray(b_.delta(*sums(b_, W, anc[loc].astype(float), w1, w0)))
             if has_sets:
-                a1, a0 = sums(b_, W, sa[loc])
-                r1, r0 = sums(b_, W, sb[loc])
+                a1, a0 = sums(b_, W, sa[loc].astype(float), w1, w0)
+                r1, r0 = sums(b_, W, sb[loc].astype(float), w1, w0)
                 da = b_.delta(a1, a0)
                 dr = b_.delta(r1, r0)
                 out[f'{key}|delta_random'] = np.asarray(dr)

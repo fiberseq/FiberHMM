@@ -188,16 +188,17 @@ class BootDraws:
              - _nancov([self.parts['items'][n] for n in names]))
         if not np.all(np.isfinite(c)):
             return c
-        # keep it positive semi-definite; a negative variance falls back to the larger one-way variance
-        w, v = np.linalg.eigh((c + c.T) / 2)
+        # positive semi-definite: clip negative eigenvalues, then give any variance clipped to zero the larger
+        # one-way variance on the diagonal (adding a non-negative diagonal keeps the matrix PSD)
+        c = (c + c.T) / 2
+        w, v = np.linalg.eigh(c)
         if w.min() < 0:
-            one = np.maximum(_nancov([self.parts['units'][n] for n in names]),
-                             _nancov([self.parts['molecules'][n] for n in names]))
-            c = v @ np.diag(np.maximum(w, 0)) @ v.T
-            d = np.diag(c).copy()
-            bad = d <= 0
-            if bad.any():
-                c[np.ix_(bad, bad)] = one[np.ix_(bad, bad)]
+            c = (v * np.maximum(w, 0)) @ v.T
+            one = np.maximum(np.diag(_nancov([self.parts['units'][n] for n in names])),
+                             np.diag(_nancov([self.parts['molecules'][n] for n in names])))
+            d = np.diag(c)
+            add = np.where(d <= 1e-15 * max(1.0, float(np.max(np.abs(one)))), np.maximum(one, 0), 0.0)
+            c = c + np.diag(add)
         return c
 
     @property
@@ -208,8 +209,10 @@ class BootDraws:
         """(variance factor G / (G - 1), degrees of freedom G - 1) for G resampling clusters (CR1 with t(G - 1));
         (1, inf) when G is unknown. ``part='molecules'`` uses the molecule count."""
         G = self.clusters if part != 'molecules' else int((self.info or {}).get('molecules') or 0)
-        if G and G > 2:
+        if G >= 2:
             return G / (G - 1), G - 1.0
+        if G == 1:
+            return float('nan'), float('nan')        # one cluster: no cluster-based interval
         return 1.0, float('inf')
 
     def summary(self, name: str, est: float, level: float = 0.95) -> dict:
@@ -218,8 +221,9 @@ class BootDraws:
         from scipy.stats import t as tdist
         fac, df = self.correction()
         var = self.cov([name])[0, 0]
-        se = float(np.sqrt(max(var, 0) * fac)) if np.isfinite(var) else float('nan')
-        q = float(tdist.ppf(0.5 + level / 2, df)) if np.isfinite(df) else 1.959964
+        se = float(np.sqrt(max(var, 0) * fac)) if (np.isfinite(var) and np.isfinite(fac)) else float('nan')
+        q = float(tdist.ppf(0.5 + level / 2, df)) if np.isfinite(df) else (1.959964 if np.isfinite(fac) else
+                                                                          float('nan'))
         out = {'estimate': float(est), 'se': se, 'lo': float(est - q * se), 'hi': float(est + q * se), 'df': df,
                'interval': f't({df:g}), {"two-way clustered" if self.mode == "twoway" else self.mode} variance'}
         if self.mode != 'twoway':

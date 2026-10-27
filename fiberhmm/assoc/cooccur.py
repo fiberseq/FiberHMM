@@ -14,8 +14,12 @@ For hits a in A and b in B with ``|anchor_a - anchor_b| <= max_distance`` (5 kb)
      y_hat are within-pair means plus pooled covariate adjustments (quantile-bin indicators and linear terms of
      log mark density and openness, and the channel). With no covariates it is the MH score over pairs. Its
      variance is clustered by physical molecule: a molecule's contributions are summed over every pair it spans
-     before squaring, each pair's scaled by sqrt(n / (n - 1)). With fewer than ``small_n`` (200) molecules p comes
-     from a sign-flip of the molecules' contributions (independent Rademacher signs);
+     before squaring, each pair's scaled by sqrt(n / (n - 1)). The within-pair centring also correlates different
+     molecules of overlapping pairs, which this variance leaves out: it runs 13% low for pairs of 2-3 molecules
+     sharing most molecules, 4-8% low at 5-10 and under 1% at 30, so only pairs with at least
+     ``min_pool_molecules`` (5) molecules are pooled. With fewer than ``small_n`` (200) molecules p comes from
+     t(G - 1) (G molecules) instead of the normal (a sign-flip is not valid here: the centred contributions of a
+     pair's molecules are not independent);
    - effect: the conditional logistic OR of B's state on A's state with the same covariates, pairs as strata
      (``fiberhmm.assoc.clogit``), with a locus-group bootstrap interval (one-step score bootstrap). When one locus
      group holds more than 5% of the pairs the bootstrap resamples whole molecules: the pair strata condition out
@@ -229,21 +233,20 @@ def _cell_counts(it: _Items, n_cells: int):
     return cnt.reshape(n_cells, 4).T
 
 
-def _clustered(u, w_cell, cells, mols, T, small_n, n_flip, rng, label):
-    from scipy.stats import norm
+def _clustered(u, w_cell, cells, mols, T, small_n, label):
+    """Molecule-clustered variance of T = sum u (each cell's contributions scaled by sqrt(n / (n - 1))), with a
+    normal reference, or t(G - 1) below ``small_n`` molecules."""
+    from scipy.stats import norm, t as tdist
     mol_u, mol_idx = np.unique(mols, return_inverse=True)
-    Um = np.bincount(mol_idx, weights=u * w_cell[cells], minlength=len(mol_u))
+    G = len(mol_u)
+    Um = np.bincount(mol_idx, weights=u * w_cell[cells], minlength=G)
     V = float(np.sum(Um ** 2))
     z = T / np.sqrt(V) if V > 0 else float('nan')
-    out = {'n_molecules': int(len(mol_u)), 'U': float(T), 'var_clustered': V, 'z': float(z),
+    out = {'n_molecules': int(G), 'U': float(T), 'var_clustered': V, 'z': float(z),
            'p_normal': float(2 * norm.sf(abs(z))) if np.isfinite(z) else float('nan')}
-    if len(mol_u) < small_n and V > 0:
-        eps = rng.integers(0, 2, size=(n_flip, len(mol_u)), dtype=np.int8) * 2 - 1
-        Ts = eps @ Um
-        tol = 1e-12 * max(1.0, abs(T))
-        out['p_signflip'] = float((1 + np.sum(np.abs(Ts) >= abs(T) - tol)) / (n_flip + 1))
-        out['p'] = out['p_signflip']
-        out['test'] = f'{label}, molecule-clustered, sign-flip ({n_flip} flips; < {small_n} molecules)'
+    if G < small_n:
+        out['p'] = float(2 * tdist.sf(abs(z), G - 1)) if (np.isfinite(z) and G > 1) else float('nan')
+        out['test'] = f'{label}, molecule-clustered variance, t({G - 1}) (< {small_n} molecules)'
     else:
         out['p'] = out['p_normal']
         out['test'] = f'{label}, molecule-clustered variance, normal approximation'
@@ -261,7 +264,7 @@ def _mh_score(it: _Items, n_cells: int, small_n, n_flip, rng) -> dict:
     ybar = np.divide(sy, n, out=np.zeros_like(sy), where=n > 0)
     u = np.where(n[it.cell] >= 2, (it.x - xbar[it.cell]) * (it.y - ybar[it.cell]), 0.0)
     w = np.sqrt(np.divide(n, n - 1, out=np.zeros_like(n), where=n > 1))
-    out = _clustered(u, w, it.cell, it.mol, float(u.sum()), small_n, n_flip, rng, 'MH score over pair x stratum')
+    out = _clustered(u, w, it.cell, it.mol, float(u.sum()), small_n, 'MH score over pair x stratum')
     out['var_independent'] = float(np.sum(np.divide(sx * (n - sx) * sy * (n - sy), n ** 2 * (n - 1),
                                                     out=np.zeros_like(n), where=n > 1)))
     return out
@@ -329,8 +332,7 @@ def _adjusted(it: _Items, Zm: np.ndarray, small_n, n_flip, rng) -> dict:
             yd = yd - Zd @ gy
     u = np.where(use, xd * yd, 0.0)
     w = np.sqrt(np.divide(n, n - 1, out=np.zeros_like(n), where=n > 1))
-    out = _clustered(u, w, unit, it.mol, float(u.sum()), small_n, n_flip, rng,
-                     'pair-stratified covariate-adjusted score')
+    out = _clustered(u, w, unit, it.mol, float(u.sum()), small_n, 'pair-stratified covariate-adjusted score')
     out['n_covariates'] = int(Zm.shape[1])
     return out
 
@@ -381,7 +383,8 @@ def _pooled_summary(it: _Items, n_cells: int, Zm, test, *, small_n, n_flip, rng,
 
 def cooccurrence(a: FeatureStates, b: FeatureStates, molecules: MoleculeTable, *, max_distance: int = 5000,
                  group: Optional[str] = None, group_kind: str = 'label', test: str = 'adjusted',
-                 basis: str = 'bins', min_molecules: int = 10, openness_per_bin: int = ST.PER_BIN,
+                 basis: str = 'bins', min_molecules: int = 10, min_pool_molecules: int = 5,
+                 openness_per_bin: int = ST.PER_BIN,
                  density_bins: int = ST.DENSITY_BINS, add_density: Optional[bool] = None, n_boot: int = 1000,
                  n_flip: int = 10000, small_n: int = 200, seed: int = 0, per_pair: bool = True,
                  max_pair_rows: Optional[int] = None, effect: bool = True) -> dict:
@@ -391,7 +394,7 @@ def cooccurrence(a: FeatureStates, b: FeatureStates, molecules: MoleculeTable, *
     ``test``: 'adjusted' (default) or 'strata'. ``basis``: covariates of the adjusted test ('bins', 'poly',
     'none'). ``add_density``: add the mark-density stratum to the per-pair strata (default: when A or B is
     footprint-like and densities exist). Per-pair rows are reported for pairs with at least ``min_molecules``
-    molecules; every pair with two or more molecules enters the pooled analysis. ``effect=False`` skips the
+    molecules; every pair with at least ``min_pool_molecules`` molecules enters the pooled analysis. ``effect=False`` skips the
     conditional logistic effect and its interval (the test only)."""
     if test not in ('adjusted', 'strata'):
         raise ValueError(f"test must be 'adjusted' or 'strata', not {test!r}")
@@ -437,7 +440,7 @@ def cooccurrence(a: FeatureStates, b: FeatureStates, molecules: MoleculeTable, *
         for pid, i, j, nest, mols, x, y, oa, ob in pair_data:
             keep = scope_mask[mols]
             mols, x, y = mols[keep], x[keep], y[keep]
-            if len(mols) < 2:
+            if len(mols) < max(2, min_pool_molecules):
                 continue
             lab = strata_for(mols)
             if add_density:
@@ -472,6 +475,7 @@ def cooccurrence(a: FeatureStates, b: FeatureStates, molecules: MoleculeTable, *
            'n_pairs_found': len(pairs) + len(skipped), 'n_pairs_tested': len(pairs), 'skipped': skipped,
            'pooled': pooled,
            'settings': {'test': test, 'basis': basis if test == 'adjusted' else None, 'min_molecules': min_molecules,
+                        'min_pool_molecules': min_pool_molecules,
                         'openness_per_bin': openness_per_bin, 'density_stratum': bool(add_density),
                         'density_bins': density_bins, 'n_boot': n_boot, 'n_flip': n_flip, 'small_n': small_n,
                         'seed': seed, 'group': group, 'group_kind': group_kind}}
