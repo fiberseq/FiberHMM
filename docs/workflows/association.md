@@ -73,5 +73,6 @@ informative sites.
   Only Δ_site, against matched backgrounds with the same state rule, says whether an anchor is special.
 - **Selection.** Anchors discovered from the tested molecules use held-out discovery.
 
-Each mode was checked on simulated nulls with these confounders built in, with 2,000 replicates per test. The
-false-positive rate at 0.05 stayed within 4–6% and the p-values were uniform.
+Each mode's main test was checked on simulated nulls with these confounders built in, with 2,000 replicates per
+test: the false-positive rate at 0.05 stayed within 4–6%. The group contrasts of M2 and M4 err on the
+conservative side (they reject less often than 5% under the null).
