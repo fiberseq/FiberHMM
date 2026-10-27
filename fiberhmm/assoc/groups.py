@@ -96,7 +96,7 @@ def group_contrast(estimates: Dict[str, float], boot, names: Optional[Dict[str, 
     """Interaction contrast between groups: differences against ``reference`` (the first group) and a Wald
     chi-square with the bootstrap covariance. ``boot`` is a :class:`fiberhmm.assoc.resample.BootDraws` (``names``
     maps group -> statistic name; default the group name) or a dict {group: draws}."""
-    from scipy.stats import chi2, norm
+    from scipy.stats import chi2, f as fdist, norm, t as tdist
     from fiberhmm.assoc.resample import BootDraws, boot_p_two, percentile_ci
     groups = [g for g in estimates]
     if len(groups) < 2:
@@ -108,7 +108,8 @@ def group_contrast(estimates: Dict[str, float], boot, names: Optional[Dict[str, 
     ref = reference if reference is not None else groups[0]
     others = [g for g in groups if g != ref]
     allg = [ref] + others
-    cov = boot.cov([names[g] for g in allg])
+    fac, df = boot.correction()
+    cov = boot.cov([names[g] for g in allg]) * fac
     A = np.zeros((len(others), len(allg)))
     A[:, 0] = -1
     A[np.arange(len(others)), np.arange(1, len(allg))] = 1
@@ -117,21 +118,30 @@ def group_contrast(estimates: Dict[str, float], boot, names: Optional[Dict[str, 
     rows = []
     for k, g in enumerate(others):
         se = float(np.sqrt(cd[k, k])) if np.isfinite(cd[k, k]) and cd[k, k] > 0 else float('nan')
+        q = float(tdist.ppf(0.975, df)) if np.isfinite(df) else 1.959964
         row = {'group': g, 'reference': ref, 'difference': float(dobs[k]), 'se': se,
-               'p_wald': float(2 * norm.sf(abs(dobs[k] / se))) if np.isfinite(se) and se > 0 else float('nan')}
+               'p_wald': float('nan'), 'df': df}
+        if np.isfinite(se) and se > 0:
+            z = abs(dobs[k] / se)
+            row['p_wald'] = float(2 * (tdist.sf(z, df) if np.isfinite(df) else norm.sf(z)))
         if boot.mode != 'twoway':
             d = boot.draws[names[g]] - boot.draws[names[ref]]
             fin = d[np.isfinite(d)]
-            row['lo'], row['hi'] = percentile_ci(fin)
+            row['lo_pct'], row['hi_pct'] = percentile_ci(fin)
             row['p_boot'] = boot_p_two(fin)
-        else:
-            row['lo'], row['hi'] = dobs[k] - 1.959964 * se, dobs[k] + 1.959964 * se
+        row['lo'], row['hi'] = dobs[k] - q * se, dobs[k] + q * se
         rows.append(row)
     out = {'groups': groups, 'reference': ref, 'differences': rows, 'variance': boot.mode}
     if np.all(np.isfinite(cd)) and np.all(np.isfinite(dobs)):
         try:
             stat = float(dobs @ np.linalg.solve(cd, dobs))
-            out.update(chi2=stat, df=len(others), p=float(chi2.sf(stat, len(others))))
+            r = len(others)
+            if np.isfinite(df) and df > r:
+                # Hotelling-type small-sample reference: F(r, G - r) after scaling
+                Fst = stat * (df - r + 1) / (df * r)
+                out.update(chi2=stat, df=r, df_clusters=df, p=float(fdist.sf(Fst, r, df - r + 1)))
+            else:
+                out.update(chi2=stat, df=r, p=float(chi2.sf(stat, r)))
         except np.linalg.LinAlgError:
             out['p'] = float('nan')
     else:

@@ -234,3 +234,74 @@ def simulate_m3(seed: int = 0, *, n_molecules: int = 400, mean_len: int = 15_000
                     np.array([f'mol{m:05d}' for m in range(n_molecules)], dtype=object),
                     labels={'dataset': np.array([f'd{d}' for d in dataset], dtype=object), 'haplotype': hap},
                     junctions=junctions)
+
+
+def simulate_nuc(seed: int = 0, *, n_anchors: int = 40, chrom_len: int = 2_000_000, coverage: float = 25,
+                 mean_len: int = 15_000, nrl: float = 189.0, site_effect: float = 0.0, jitter: float = 12.0,
+                 n_datasets: int = 1) -> dict:
+    """Synthetic molecules for nucleosome state conditioning (NUC 3.8). Nucleosome arrays (NRL ``nrl``, dyad
+    jitter ``jitter``) run outward from each locus's barrier on every molecule that spans it: open molecules
+    carry an MSP across the locus, closed molecules a nucleosome on it. The barrier position varies from molecule
+    to molecule (MSP width 150-400 bp, centre +/- 60 bp), so arrays are phased in the molecule frame everywhere
+    and only weakly in the anchor frame (self-seeding). ``site_effect`` (0-1) fixes the MSP edges of open molecules
+    at anchor loci (a share ``site_effect`` of them get a 200 bp MSP centred on the anchor): a true anchor-frame
+    Delta_site. Barrier sites sit every 4.5 kb; the anchors are a random subset and the other sites are the
+    background candidates (the non-transferable rule), so with ``site_effect=0`` anchors and backgrounds are
+    exchangeable. Returns {'molecules', 'anchors', 'candidates'}."""
+    from fiberhmm.nuc.records import make_molecule
+    rng = np.random.default_rng(seed)
+    sites = np.arange(20_000, chrom_len - 20_000, 4500) + rng.integers(-500, 500, len(range(20_000, chrom_len - 20_000, 4500)))
+    is_anchor = np.zeros(len(sites), bool)
+    is_anchor[rng.choice(len(sites), n_anchors, replace=False)] = True
+    a_pos = sites
+    n = int(coverage * chrom_len / mean_len)
+    mols = []
+    for k in range(n):
+        L = int(np.clip(rng.lognormal(np.log(mean_len), 0.3), 6000, 40_000))
+        start = int(rng.integers(0, chrom_len - L))
+        dens = float(np.clip(rng.lognormal(np.log(0.25), 0.4), 0.05, 0.8))
+        loci = a_pos[(a_pos > start + 2500) & (a_pos < start + L - 2500)]
+        # free array everywhere, then barriers re-seed the array around each spanned anchor
+        phase = rng.uniform(0, nrl)
+        dy = list(np.arange(phase, L, nrl) + rng.normal(0, jitter, len(np.arange(phase, L, nrl))))
+        msps_extra = []
+        for p in loci:
+            a = p - start
+            p_open = 0.2 + 0.6 * dens
+            if rng.random() < p_open:
+                if site_effect and is_anchor[np.searchsorted(sites, p)] and rng.random() < site_effect:
+                    w, c = 200, a
+                else:
+                    w, c = int(rng.integers(150, 400)), a + int(rng.integers(-60, 61))
+                bl, br = c - w // 2, c + w // 2
+                msps_extra.append((bl, br))
+                left = bl - 73 - 10
+                right = br + 73 + 10
+            else:
+                c = a + int(rng.integers(-60, 61))
+                left = c
+                right = c + nrl
+            dy = [d for d in dy if d < left - 1500 or d > right + 1500]
+            dy += list(left - np.arange(0, 1500, nrl) + rng.normal(0, jitter, len(np.arange(0, 1500, nrl))))
+            dy += list(right + np.arange(0, 1500, nrl) + rng.normal(0, jitter, len(np.arange(0, 1500, nrl))))
+        dy = np.sort(np.array([d for d in dy if 80 < d < L - 80]))
+        # drop dyads that collide (< 150 bp apart) and those inside an open stretch
+        keep = []
+        for d in dy:
+            if keep and d - keep[-1] < 150:
+                continue
+            if any(s - 70 < d < e + 70 for s, e in msps_extra):
+                continue
+            keep.append(d)
+        nucs = [(int(d - 73), int(d + 74)) for d in keep]
+        msps = [(nucs[i][1], nucs[i + 1][0]) for i in range(len(nucs) - 1) if nucs[i + 1][0] > nucs[i][1]]
+        inf = np.ones(L, bool)
+        hits = np.zeros(L, bool)
+        for s, e in msps:
+            hits[s:e] = rng.random(e - s) < dens
+        m = make_molecule(L, nucs=nucs, msps=msps, hits=hits, informative=inf, name=f'sim/{k}/ccs', chrom='chrS',
+                          ref_start=start, ref_end=start + L, blocks=np.array([[0, start, L]]))
+        m.meta['dataset'] = f'd{int(rng.integers(0, n_datasets))}'
+        mols.append(m)
+    return {'molecules': mols, 'anchors': [('chrS', int(p)) for p in sites[is_anchor]],
+            'candidates': [('chrS', int(p)) for p in sites[~is_anchor]]}

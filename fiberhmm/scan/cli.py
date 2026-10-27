@@ -7,6 +7,9 @@ values per module, and per-molecule results as MA tags in annotated BAMs
 (genome scans; BED-scoped scans write them as tables). Units are resumable
 (--continue), and a rerun gives byte-identical outputs.
 
+Association statistics from a scan directory: `fiberhmm-scan assoc SCAN_DIR --mode ...` (see
+`fiberhmm-scan assoc --help`).
+
 Format reference: docs/reference/scan-format.md.
 """
 from __future__ import annotations
@@ -79,6 +82,11 @@ def _parser():
 
 
 def main(argv=None):
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args[:1] == ['assoc']:
+        # `fiberhmm-scan assoc SCAN_DIR ...`: association statistics from a scan directory (fiberhmm.assoc)
+        from fiberhmm.assoc.cli import main as assoc_main
+        return assoc_main(args[1:])
     from fiberhmm.cli.common import run_reporting_input_errors
     return run_reporting_input_errors('fiberhmm-scan', lambda: _main(argv))
 

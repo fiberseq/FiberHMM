@@ -4,6 +4,20 @@
 
 ### Added
 
+- **`fiberhmm.assoc`** (feature hub association statistics) and
+  **`fiberhmm-scan assoc`**: per-molecule co-occurrence of two feature types
+  (M1), state-conditioned response at anchors against matched backgrounds
+  (M2), within-molecule rate inside versus outside interval features (M3)
+  and pooled overlap and distance enrichment (M4), from scan directories or
+  plain arrays. Variances are clustered by physical molecule, intervals come
+  from a bootstrap over locus groups, group contrasts are interaction tests,
+  and unphased molecules are left out of haplotype contrasts. Every mode was
+  calibrated on simulated confounded nulls. `fiberhmm.nuc.condition_stats`
+  and `fiberhmm.nuc.association_stats` run the nucleosome analyses (phasing
+  conditioned on the anchor state in the anchor and molecule frames; arrays
+  against TF footprints). `fiberhmm.inference.accessibility.coaccess` moved
+  to `fiberhmm.assoc.coaccess`; the old import path still works and
+  `fiberhmm-nfr` output is unchanged. See `docs/workflows/association.md`.
 - **`fiberhmm-scan`** scans called BAMs genome-wide (50 kb units at a 25 kb
   stride, each owning its central 25 kb), over `--region` windows or over
   BED units, with three modules: `fp` (footprint classes, the lattice

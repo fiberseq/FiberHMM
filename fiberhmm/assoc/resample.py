@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Dict, Iterator, Optional, Sequence
+from typing import Dict, Iterator, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -92,10 +92,19 @@ class BlockBootstrap:
         self.mode = self.fallback if self.largest_share > self.max_group_share else 'groups'
         self.rng = np.random.default_rng(self.seed)
 
+    @property
+    def n_clusters(self) -> int:
+        """Independent resampling units behind the variance (for the few-clusters correction)."""
+        if self.mode == 'groups':
+            return int(self.n_groups)
+        if self.mode == 'molecules':
+            return int(self.n_mols)
+        return int(min(self.n_units, self.n_mols))
+
     def describe(self) -> dict:
         return {'mode': self.mode, 'units': int(self.n_units), 'locus_groups': int(self.n_groups),
                 'molecules': int(self.n_mols), 'largest_group_share': self.largest_share,
-                'max_group_share': self.max_group_share}
+                'max_group_share': self.max_group_share, 'clusters': self.n_clusters}
 
     def _counts(self, n_draw: int, n: int) -> np.ndarray:
         if n == 0:
@@ -187,16 +196,35 @@ class BootDraws:
                 c[np.ix_(bad, bad)] = one[np.ix_(bad, bad)]
         return c
 
+    @property
+    def clusters(self) -> int:
+        return int((self.info or {}).get('clusters') or 0)
+
+    def correction(self) -> Tuple[float, float]:
+        """(variance factor G / (G - 1), degrees of freedom G - 1) for G resampling clusters (CR1 with t(G - 1));
+        (1, inf) when G is unknown."""
+        G = self.clusters
+        if G and G > 2:
+            return G / (G - 1), G - 1.0
+        return 1.0, float('inf')
+
     def summary(self, name: str, est: float, level: float = 0.95) -> dict:
-        from scipy.stats import norm
+        """SE (bootstrap, or two-way) with the few-clusters correction, and a t interval with G - 1 degrees of
+        freedom; groups mode also reports the percentile interval (``lo_pct``, ``hi_pct``)."""
+        from scipy.stats import t as tdist
+        fac, df = self.correction()
+        var = self.cov([name])[0, 0]
+        se = float(np.sqrt(max(var, 0) * fac)) if np.isfinite(var) else float('nan')
+        q = float(tdist.ppf(0.5 + level / 2, df)) if np.isfinite(df) else 1.959964
+        out = {'estimate': float(est), 'se': se, 'lo': float(est - q * se), 'hi': float(est + q * se), 'df': df,
+               'interval': f't({df:g}), {"two-way clustered" if self.mode == "twoway" else self.mode} variance'}
         if self.mode != 'twoway':
-            out = boot_summary(est, self.draws[name], level)
-            out['interval'] = 'percentile'
-            return out
-        se = float(np.sqrt(max(self.cov([name])[0, 0], 0))) if np.isfinite(self.cov([name])[0, 0]) else float('nan')
-        z = norm.ppf(0.5 + level / 2)
-        return {'estimate': float(est), 'se': se, 'lo': float(est - z * se), 'hi': float(est + z * se),
-                'n_boot': int(len(self.parts['units'][name])), 'interval': 'normal, two-way clustered variance'}
+            d = self.draws[name]
+            out['n_boot'] = int(len(d))
+            out['lo_pct'], out['hi_pct'] = percentile_ci(d, level)
+        else:
+            out['n_boot'] = int(len(self.parts['units'][name]))
+        return out
 
     def draws_of(self, name: str) -> Optional[np.ndarray]:
         return None if self.draws is None else self.draws[name]

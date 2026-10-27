@@ -19,8 +19,10 @@ API (NUC 5.1):
   nucleosomes; :mod:`fiberhmm.nuc.enrichment`: the recurrence test
 - :mod:`fiberhmm.nuc.tags`: MA groups ``nucsz``/``nucseg``/``nucmol``
 
-``condition_stats`` and ``association_stats`` belong to ``fiberhmm.assoc``
-(feature hub M2/M3) and are not part of this release.
+- :func:`condition_stats` (state conditioning at anchors, NUC 3.8) and
+  :func:`association_stats` (segments against point features, NUC 3.9) live in
+  ``fiberhmm.assoc.nucleosome`` (feature hub M2/M3) and are re-exported here
+  (owner decision D6).
 """
 from fiberhmm.nuc.params import DEFAULT_PARAMS, NucParams, parameter_schema
 from fiberhmm.nuc.records import (DecodeContext, NucMolecule, decode_record, iter_molecules,
@@ -31,7 +33,7 @@ __all__ = [
     'decode_record', 'iter_molecules', 'make_molecule', 'calibrate_self', 'calibrate_thin',
     'calibrate_absolute', 'NucCalibration', 'molecule_outputs', 'MoleculeResult',
     'window_metrics', 'WindowResult', 'Observation', 'phasing', 'PhasingResult', 'mark_acf',
-    'anchor_phase', 'dephasing_test', 'AnchorPhase',
+    'anchor_phase', 'dephasing_test', 'AnchorPhase', 'condition_stats', 'association_stats',
 ]
 
 
@@ -54,6 +56,9 @@ def __getattr__(name):
         return getattr(m, name)
     if name in ('anchor_phase', 'dephasing_test', 'AnchorPhase'):
         from fiberhmm.nuc import dephasing as m
+        return getattr(m, name)
+    if name in ('condition_stats', 'association_stats'):
+        from fiberhmm.assoc import nucleosome as m
         return getattr(m, name)
     if name == 'mark_acf':
         from fiberhmm.nuc.markacf import mark_acf

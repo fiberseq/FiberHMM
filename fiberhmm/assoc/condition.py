@@ -20,7 +20,8 @@ intact (NUC 2.3: closed molecules had 9x lower density).
 - Delta_site = Delta_anchor - Delta_random: each anchor and its matched backgrounds form a matched set; under "anchors
   behave like their matched backgrounds" the set's loci are exchangeable, so the test **permutes which locus in
   each set plays the anchor** (1,000 draws of one role per set). Every locus keeps its own molecules and
-  self-seeding.
+  self-seeding. The same draws test the per-state site contrasts M_anchor(S) - M_random(S) (``site_state1``)
+  and M_anchor(not S) - M_random(not S) (``site_state0``).
 - Intervals: a bootstrap over locus groups (sets that share molecules are joined; pigeonhole fallback).
 - Per anchor: Delta_a when each state has at least ``min_per_state`` (8) molecules in cells holding both states;
   within-anchor permutation (fixed 1,000, which also gives the SE), BH across anchors, and empirical-Bayes
@@ -245,7 +246,8 @@ def _sets(loci: LocusTable, ok: np.ndarray):
     return M, np.array([len(r) for r in rows], np.int64)
 
 
-def _bin_result(bd: _Bin, loci: LocusTable, *, n_perm, n_role, per_anchor, min_per_state, rng, chunk=100):
+def _bin_result(bd: _Bin, loci: LocusTable, *, n_perm, n_role, per_anchor, min_per_state, rng, chunk=100,
+                return_null=False):
     out = {}
     anc = loci.is_anchor & bd.locus_ok
     S1A, S0A = bd.S1[anc].sum(0), bd.S0[anc].sum(0)
@@ -295,6 +297,8 @@ def _bin_result(bd: _Bin, loci: LocusTable, *, n_perm, n_role, per_anchor, min_p
             done += c
         out['p_within_anchor'] = perm_p_two_from_tails(d_anchor, null)
         out['null_mean_within'] = float(np.nanmean(null)) if null else float('nan')
+        if return_null:
+            out['null_within'] = np.asarray(null, float)
         if len(want):
             nn = np.maximum(acc['n'], 1)
             mean = acc['sum'] / nn
@@ -310,14 +314,18 @@ def _bin_result(bd: _Bin, loci: LocusTable, *, n_perm, n_role, per_anchor, min_p
         T0 = np.where(M[..., None] >= 0, bd.S0[np.maximum(M, 0)], 0).sum(1)
         tot1, tot0 = T1.sum(0), T0.sum(0)
 
-        def site(roles):            # roles (r, n_sets) -> (Delta_anchor_sets, Delta_random, Delta_site)
+        def site(roles):            # roles (r, n_sets) -> (Delta_anchor_sets, Delta_random, Delta_site, site S, site not S)
             loc = np.take_along_axis(np.broadcast_to(M, (roles.shape[0],) + M.shape), roles[..., None], 2)[..., 0]
             A1 = bd.S1[loc].sum(1)
             A0 = bd.S0[loc].sum(1)
             da = bd.delta(A1, A0)
             dr = bd.delta(tot1 - A1, tot0 - A0)
-            return da, dr, da - dr
-        da, dr, ds = (float(v[0]) for v in site(np.zeros((1, len(nmem)), np.int64)))
+            s1 = bd.metric(A1) - bd.metric(tot1 - A1)
+            s0 = bd.metric(A0) - bd.metric(tot0 - A0)
+            return da, dr, da - dr, s1, s0
+        da, dr, ds, s1, s0 = (float(v[0]) for v in site(np.zeros((1, len(nmem)), np.int64)))
+        out['site_state1'] = s1
+        out['site_state0'] = s0
         out['delta_anchor_sets'] = da
         out['delta_random'] = dr
         out['delta_site'] = ds
@@ -325,16 +333,21 @@ def _bin_result(bd: _Bin, loci: LocusTable, *, n_perm, n_role, per_anchor, min_p
         out['M_random_state0'] = float(bd.metric(tot0 - bd.S0[M[:, 0]].sum(0)))
         out['n_backgrounds'] = int(nmem.sum() - len(nmem))
         if n_role:
-            nulls = []
+            nulls, n1s, n0s = [], [], []
             done = 0
             while done < n_role:
                 c = min(chunk, n_role - done)
                 roles = np.floor(rng.random((c, len(nmem))) * nmem[None, :]).astype(np.int64)
-                nulls.append(site(roles)[2])
+                r_ = site(roles)
+                nulls.append(r_[2]); n1s.append(r_[3]); n0s.append(r_[4])
                 done += c
             nulls = np.concatenate(nulls)
+            out['p_site_state1'] = perm_p_two_from_tails(s1, np.concatenate(n1s))
+            out['p_site_state0'] = perm_p_two_from_tails(s0, np.concatenate(n0s))
             out['p_site'] = perm_p_two_from_tails(ds, nulls)
             out['null_mean_site'] = float(np.nanmean(nulls))
+            if return_null:
+                out['null_site'] = nulls
     return out, pa, M, nmem
 
 
@@ -342,9 +355,10 @@ def condition(app: Appearances, loci: LocusTable, metric: SumMetric, *, bins: Op
               mask_rule: str = 'bin', balance: bool = True, n_perm: int = 1000, n_role: int = 1000,
               n_boot: int = 1000, per_anchor: bool = True, min_per_state: int = 8, min_locus_per_state: int = 1,
               group: Optional[str] = None, group_kind: str = 'label', seed: int = 0,
-              max_anchor_rows: Optional[int] = 5000) -> dict:
+              max_anchor_rows: Optional[int] = 5000, return_null: bool = False) -> dict:
     """M2 state-conditioned response (module docstring). ``bins``: labels of the ``app.stats`` bins (default
-    0..n_bins-1). ``group``: an ``app.labels`` key for group contrasts."""
+    0..n_bins-1). ``group``: an ``app.labels`` key for group contrasts. ``return_null``: keep the permutation
+    draws (``null_within``, ``null_site``) in each bin, for cross-fitting."""
     if mask_rule not in ('bin', 'exact'):
         raise ValueError("mask_rule must be 'bin' or 'exact'")
     nb = app.n_bins
@@ -379,7 +393,7 @@ def condition(app: Appearances, loci: LocusTable, metric: SumMetric, *, bins: Op
     for b in range(nb):
         bd = _Bin(main, loci, metric, b, mask_rule, balance, min_locus_per_state)
         res, pa, M, nmem = _bin_result(bd, loci, n_perm=n_perm, n_role=n_role, per_anchor=per_anchor,
-                                       min_per_state=min_per_state, rng=rng)
+                                       min_per_state=min_per_state, rng=rng, return_null=return_null)
         res['bin'] = labels[b]
         gres, gbd = {}, {}
         for g in group_names:
@@ -389,7 +403,7 @@ def condition(app: Appearances, loci: LocusTable, metric: SumMetric, *, bins: Op
                                                min_per_state=min_per_state, rng=rng)
         if bb is not None:
             boot = _boot_bin(bd, loci, bb, n_boot, gmain, group_names, gbd)
-            for key in ('delta_anchor', 'delta_random', 'delta_site'):
+            for key in ('delta_anchor', 'delta_random', 'delta_site', 'site_state1', 'site_state0'):
                 if key in res and f'all|{key}' in boot.names:
                     res[key + '_ci'] = boot.summary(f'all|{key}', res[key])
             for g in group_names:
@@ -462,9 +476,13 @@ def _boot_bin(bd: _Bin, loci: LocusTable, bb: BlockBootstrap, n_boot, gmain, gro
             loc = b_.locus
             out[f'{key}|delta_anchor'] = np.asarray(b_.delta(*sums(b_, W, anc[loc])))
             if has_sets:
-                da = b_.delta(*sums(b_, W, sa[loc]))
-                dr = b_.delta(*sums(b_, W, sb[loc]))
+                a1, a0 = sums(b_, W, sa[loc])
+                r1, r0 = sums(b_, W, sb[loc])
+                da = b_.delta(a1, a0)
+                dr = b_.delta(r1, r0)
                 out[f'{key}|delta_random'] = np.asarray(dr)
                 out[f'{key}|delta_site'] = np.asarray(da - dr)
+                out[f'{key}|site_state1'] = np.asarray(b_.metric(a1) - b_.metric(r1))
+                out[f'{key}|site_state0'] = np.asarray(b_.metric(a0) - b_.metric(r0))
         return out
     return bb.collect(fn, n_boot)

@@ -98,6 +98,7 @@ nav:
       - Quality control: workflows/qc.md
       - Footprint classes (consensus): workflows/consensus.md
       - Scanning features genome-wide: workflows/scanning.md
+      - Associating features: workflows/association.md
       - Transferring classes: workflows/transfer.md
       - Strand rescue: workflows/strand-rescue.md
       - Tag consensus states: workflows/tag-consensus.md

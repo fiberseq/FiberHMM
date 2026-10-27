@@ -258,6 +258,12 @@ def rate_ratio(d: RateData, *, n_shift: int = 1000, n_boot: int = 1000, block_bp
     if n_boot:
         chrom = dd.chrom[used]
         blk = np.array([f'{c}:{int(x) // block_bp}' for c, x in zip(chrom, dd.midpoint[used])], dtype=object)
+        if dd.molecule_ids is not None:
+            # records of one physical molecule (a primary and its supplementaries) share the first one's block
+            first: Dict[str, str] = {}
+            for k, m in enumerate(dd.molecule_ids[used]):
+                first.setdefault(m, blk[k])
+            blk = np.array([first[m] for m in dd.molecule_ids[used]], dtype=object)
         bidx = np.unique(blk, return_inverse=True)[1]
         bb = BlockBootstrap(np.arange(int(bidx.max()) + 1), bidx, np.arange(len(used)), seed=seed + 1)
         out['bootstrap'] = bb.describe()
