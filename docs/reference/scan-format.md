@@ -100,10 +100,11 @@ the module (version, settings, calibration digest) and the unit itself (id,
 span, zone), not by the plan. A scan extended with more units
 (`run_units(..., continue_run=True, extend=True)`), or a `--zones` subset of
 the genome grid, reuses every unit it shares with an earlier scan in the
-same directory. Hits away from a plan's edges (units whose two grid
-neighbours are planned) are the same in both; at an edge, anchor hits fall
-back to the anchor-in-zone rule and stitched hits reaching the edge are
-flagged `open_end`. nuc's patches are a Benjamini-Hochberg selection over the
+same directory. Footprint classes and NFRs of units whose two grid
+neighbours are planned are the same in both; at an edge they fall back to
+the anchor-in-zone rule. Peaks and patches near an edge (peaks: within
+`smooth_width + min_width` of it) are flagged `open_end`; every unflagged
+one is the genome scan's. nuc's patches are a Benjamini-Hochberg selection over the
 windows a scan tests, so a smaller scan can select other patches from the
 same window statistics; its molecule-wide rows (marks, molecules, annotated
 groups) do not depend on the plan.

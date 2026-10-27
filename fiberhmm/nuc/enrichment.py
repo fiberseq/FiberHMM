@@ -149,12 +149,20 @@ def bh(pvals: Sequence[float], q: float) -> np.ndarray:
     return out
 
 
+def bh_candidate_bound(q: float) -> float:
+    """Every p-value :func:`bh` can reject at FDR ``q`` is at most this (``q * k / m`` can round a few ulp
+    above ``q``)."""
+    return float(q) * (1.0 + 1e-9)
+
+
 def bh_threshold(small_pvals: Sequence[float], m: int, q: float) -> Optional[float]:
-    """The Benjamini-Hochberg rejection threshold at FDR ``q`` over ``m`` tests, from the p-values <= ``q``
-    only (no larger p-value can be rejected, and they all rank after these): the largest p_(k) with
-    p_(k) <= k q / m, or None when nothing is rejected. Rejecting every p <= the threshold gives exactly
-    :func:`bh`'s rejections over the ``m`` p-values."""
-    p = np.sort(np.asarray([x for x in small_pvals if np.isfinite(x) and x <= q], dtype=float), kind='stable')
+    """The Benjamini-Hochberg rejection threshold at FDR ``q`` over ``m`` tests, from the candidate p-values
+    only (those <= :func:`bh_candidate_bound`; no larger p-value can be rejected, and they all rank after
+    these): the largest p_(k) with p_(k) <= q k / m, computed as :func:`bh` computes it, or None when
+    nothing is rejected. Rejecting every p <= the threshold gives exactly :func:`bh`'s rejections over the
+    ``m`` p-values."""
+    bound = bh_candidate_bound(q)
+    p = np.sort(np.asarray([x for x in small_pvals if np.isfinite(x) and x <= bound], dtype=float), kind='stable')
     if m <= 0 or not len(p):
         return None
     passed = np.flatnonzero(p <= q * np.arange(1, len(p) + 1) / m)

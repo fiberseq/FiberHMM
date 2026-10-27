@@ -42,6 +42,8 @@ class StateReader:
         from .modules.nfr import NfrModule
         if nucleosomes not in ('scan', 'calls'):
             raise ValueError("nucleosomes must be 'scan' or 'calls'")
+        if int(cache_size) < 0:
+            raise ValueError('cache_size must be >= 0 (0: no cache)')
         s = dict(settings or {})
         if not ({'nfr', 'loader', 'use_fp_classes'} <= set(s)):
             s = NfrModule().resolve(s)
@@ -77,11 +79,13 @@ class StateReader:
     def nucleosomes(self, read) -> Optional[List[Tuple[int, int]]]:
         """Reference intervals of the record's nucleosomes (>= 90 bp) as the scan's loader sees them, or
         None for a record the loader does not use."""
+        if self._cache_size <= 0:
+            return self._nucleosomes(read)
         key = read.to_string()
         if key in self._cache:
             return self._cache[key]
         value = self._nucleosomes(read)
-        if len(self._cache) >= self._cache_size:
+        while self._cache and len(self._cache) >= self._cache_size:
             self._cache.pop(next(iter(self._cache)))
         self._cache[key] = value
         return value

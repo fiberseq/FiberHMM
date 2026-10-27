@@ -99,10 +99,13 @@ def _parse_region(parser, value, flag='--region'):
 EXECUTION_FLAGS = {'--continue': 0, '--json-progress': 0, '--cores': 1, '--window-jobs': 1, '-o': 1, '--output': 1}
 
 
-def _recorded_command(argv):
+def _recorded_command(argv, bam_rank=None):
     """The command line recorded in annotated BAM headers, without execution-only flags (a continued or
-    differently parallelised run writes the same bytes)."""
-    out, skip = ['fiberhmm-scan'], 0
+    differently parallelised run writes the same bytes). With ``bam_rank`` (``--bam`` value -> canonical
+    ordinal), every ``--bam`` comes first, in canonical order, so listing the BAMs in another order (or in
+    other places on the line) records the same command."""
+    out, skip, bams = [], 0, []
+    pending_bam = False
     for arg in argv:
         if skip:
             skip -= 1
@@ -111,8 +114,18 @@ def _recorded_command(argv):
         if flag in EXECUTION_FLAGS:
             skip = 0 if '=' in arg else EXECUTION_FLAGS[flag]
             continue
-        out.append(arg)
-    return out
+        if pending_bam:
+            bams.append(arg)
+            pending_bam = False
+        elif arg == '--bam':
+            pending_bam = True
+        elif arg.startswith('--bam='):
+            bams.append(arg[len('--bam='):])
+        else:
+            out.append(arg)
+    if bam_rank:
+        bams = sorted(bams, key=lambda v: (bam_rank.get(v, len(bam_rank)), v))
+    return ['fiberhmm-scan'] + [x for v in bams for x in ('--bam', v)] + out
 
 
 def _schema(modules):
@@ -182,6 +195,10 @@ def _main(argv=None):
     from fiberhmm.scan.units import PlanError, plan
     try:
         _resolved, reference = resolve_datasets(datasets)
+        bam_rank = {}
+        if args.bam:
+            ordinal = {p: d.ordinal for d in _resolved for p in d.paths}
+            bam_rank = {b: ordinal.get(str(Path(b).expanduser().resolve()), len(args.bam)) for b in args.bam}
         units = plan(reference, genome=args.genome or bool(args.zones),
                      contigs=[c.strip() for c in args.contigs.split(',')] if args.contigs else None,
                      regions=[_parse_region(p, r) for r in args.region] if args.region else None, bed=args.bed,
@@ -198,7 +215,7 @@ def _main(argv=None):
             summary = run_units(datasets, units, modules=modules, params=params, read_policy=read_policy, out=out,
                                 annotate=args.annotate, progress=progress, cores=args.cores,
                                 window_jobs=args.window_jobs, continue_run=args.continue_run,
-                                command=_recorded_command(argv if argv is not None else sys.argv[1:]))
+                                command=_recorded_command(argv if argv is not None else sys.argv[1:], bam_rank))
     except ScanRefused as error:
         p.exit(2, f'fiberhmm-scan: error: {error}\n')
     print(json.dumps(summary, sort_keys=True))

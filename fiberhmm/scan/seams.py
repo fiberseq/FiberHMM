@@ -191,6 +191,15 @@ def territory_runs(zones: Sequence[Tuple[ScanUnit, Optional[Mapping[str, object]
     if not data:
         return []
 
+    def plan_edge_open(k, step):
+        """Zone k is the last planned zone in direction step and its unit has an unplanned grid neighbour
+        there (a --zones subset): the territory goes on, unscanned."""
+        nxt = k + step
+        if 0 <= nxt < n and (contiguous(k, nxt) if step > 0 else contiguous(nxt, k)):
+            return False
+        u = zones[k][0]
+        return (u.right if step > 0 else u.left) is not None
+
     def extend(i, step):
         """Zero padding beyond zone i in direction step: (bases, reached_missing, first_zone_index_used)."""
         got, k, last = 0, i, i
@@ -199,20 +208,20 @@ def territory_runs(zones: Sequence[Tuple[ScanUnit, Optional[Mapping[str, object]
             nxt = k + step
             if nxt < 0 or nxt >= n or not (contiguous(k, nxt) if step > 0 else contiguous(nxt, k)):
                 # the plan stops here; open when the unit has an unplanned grid neighbour on this side
-                u = zones[k][0]
-                return got, (u.right if step > 0 else u.left) is not None, last
+                return got, plan_edge_open(k, step), last
             if kind[nxt] == 'missing':
                 return got, True, last
             if kind[nxt] == 'ok':
                 return got, False, last
             zl = zones[nxt][0].zone_end - zones[nxt][0].zone_start
             if limit is None:
-                return zl, False, nxt
+                return zl, plan_edge_open(nxt, step), nxt
             take = min(zl, limit - got)
             got += take
             last = nxt
             if got >= limit:
-                return got, False, last
+                # the padding ends exactly at the plan's edge: still open there
+                return got, take == zl and plan_edge_open(nxt, step), last
             k = nxt
 
     runs = []

@@ -64,3 +64,12 @@ def test_state_at_equals_the_scan_states(tmp_path, locus_bam):
             reader.state_at(read, 'nfr.variant', 'chr1', 2200)          # not transferable
     with pytest.raises(ValueError):
         StateReader(pysam.AlignmentFile(locus_bam).header, settings={'nfr': {'clip_gaps_to_region': True}})
+
+
+def test_cache_size_zero_disables_the_cache(locus_bam):
+    with pysam.AlignmentFile(locus_bam) as bam:
+        read = next(bam.fetch('chr1', 2200, 2201))
+        assert StateReader(bam.header, cache_size=0).state_at(read, 'nfr.region', 'chr1', 2200) == \
+            StateReader(bam.header).state_at(read, 'nfr.region', 'chr1', 2200)
+        with pytest.raises(ValueError):
+            StateReader(bam.header, cache_size=-1)

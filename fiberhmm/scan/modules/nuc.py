@@ -508,11 +508,12 @@ class NucModule(ScanModuleBase):
         return out
 
     def stitch_statistics(self, chrom, territory, tracks, settings, calibration):
-        q = float(settings['enrich_fdr'])
+        from fiberhmm.nuc.enrichment import bh_candidate_bound
+        bound = bh_candidate_bound(float(settings['enrich_fdr']))
         res = {}
         for kind in ENRICH_KINDS:
             tested = self._tested(territory, tracks, settings, kind)
-            res[kind] = (len(tested), [p for _r, _o, p in tested if p <= q])
+            res[kind] = (len(tested), [p for _r, _o, p in tested if p <= bound])
         return res
 
     def combine_statistics(self, per_contig, settings, calibration):
@@ -770,18 +771,30 @@ def calibration_regions(units, n_windows: int, has_records=None) -> List[Tuple[s
 
 
 def _contigs_with_records(paths, reference) -> List[str]:
-    """Contigs of ``reference`` (in its order) that the BAM indexes count records on in any of ``paths``;
-    every contig when an index gives no statistics."""
+    """Contigs of ``reference`` (in its order) that hold a record in any of ``paths``: the index's mapped
+    count when it is positive, else one indexed fetch (an index may carry no count metadata, and then
+    reports zero for contigs that hold records)."""
     import pysam
     found = set()
-    for p in paths:
-        try:
-            with pysam.AlignmentFile(p, 'rb') as bam:
+    bams = [pysam.AlignmentFile(p, 'rb') for p in paths]
+    try:
+        for bam in bams:
+            try:
                 for st in bam.get_index_statistics():
                     if int(st.mapped) > 0:
                         found.add(st.contig)
-        except (ValueError, OSError, AttributeError):
-            return list(reference)
+            except (ValueError, OSError, AttributeError):
+                pass
+        for chrom in reference:
+            if chrom in found:
+                continue
+            for bam in bams:
+                if chrom in bam.references and next(iter(bam.fetch(chrom)), None) is not None:
+                    found.add(chrom)
+                    break
+    finally:
+        for bam in bams:
+            bam.close()
     return [c for c in reference if c in found]
 
 

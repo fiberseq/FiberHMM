@@ -540,3 +540,45 @@ def test_scan_records_the_fdr_threshold_in_the_manifest(tsv_scan):
     vals = read_all(tsv_scan / 'nuc' / 'values.tsv.bgz')
     tested = {r['value'] for r in vals if r['value_name'] == 'windows_tested'}
     assert tested <= {repr(float(st['kinds'][k]['windows_tested'])) for k in st['kinds']}
+
+
+def test_bh_threshold_keeps_p_values_bh_rounds_in():
+    """q * k / m can round above q: a p-value one ulp above q is rejected by bh() and must not be pruned
+    from the scan-wide candidates (review case)."""
+    from fiberhmm.nuc.enrichment import bh, bh_candidate_bound, bh_threshold
+    p = np.array([0.01, 0.02, np.nextafter(0.1, np.inf)])
+    assert bh(p, 0.1).tolist() == [True, True, True]
+    thr = bh_threshold(p[p <= bh_candidate_bound(0.1)], 3, 0.1)
+    assert (p <= thr).tolist() == bh(p, 0.1).tolist()
+    rng = np.random.default_rng(5)
+    for _ in range(200):
+        m = int(rng.integers(1, 60))
+        p = np.concatenate([rng.uniform(0, 0.02, int(rng.integers(0, 5))), rng.uniform(0, 1, m)])
+        p[rng.random(len(p)) < 0.1] = np.nan
+        ok = np.isfinite(p)
+        thr = bh_threshold(p[ok], int(ok.sum()), 0.1)
+        assert ((p <= thr) if thr is not None else np.zeros(len(p), bool)).tolist() == bh(p, 0.1).tolist()
+
+
+def test_contigs_with_records_do_not_trust_zero_index_counts(scan_bam, monkeypatch):
+    """An index without count metadata reports 0 mapped records for contigs that hold some (review case):
+    contigs are confirmed by a fetch."""
+    import pysam as _pysam
+    from fiberhmm.scan.modules import nuc as N
+
+    class Zero:
+        def __init__(self, contig):
+            self.contig, self.mapped, self.unmapped, self.total = contig, 0, 0, 0
+    real = _pysam.AlignmentFile
+
+    class NoCounts:
+        def __init__(self, *a, **kw):
+            self._bam = real(*a, **kw)
+
+        def get_index_statistics(self):
+            return [Zero(c) for c in self._bam.references]
+
+        def __getattr__(self, name):
+            return getattr(self._bam, name)
+    monkeypatch.setattr(_pysam, 'AlignmentFile', NoCounts)
+    assert N._contigs_with_records([scan_bam], {'chrS': LENGTH, 'chrNone': 10_000}) == ['chrS']

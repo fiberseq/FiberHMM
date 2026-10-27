@@ -220,3 +220,70 @@ def test_extension_reuses_surveys_and_unit_results(tmp_path, bams, monkeypatch):
     assert sorted(calls) == sorted(u.unit_id for u in second[0] if u.unit_id not in {x.unit_id for x in first[0]})
     att = json.loads((tmp_path / 's' / 'run.json').read_text())['attempts'][-1]
     assert att['units_reused'] == 2 and att['units_run'] == len(second[0]) - 2
+
+
+def test_peaks_near_a_plan_edge_are_flagged_open(tmp_path):
+    """A --zones plan edge zero-pads the smoothing: a peak within the smoothing's reach of the edge (not only
+    one touching it) can differ from the genome scan's and is flagged open_end; every unflagged peak equals
+    the genome scan's."""
+    from fiberhmm.scan.testing import write_peaks_fixture_bam
+    bam = write_peaks_fixture_bam(tmp_path / 'p.bam', chemistry='hia5-pacbio', seed=7)
+    common = ['--bam', bam, '--modules', 'peaks', '--unit-bp', '5000', '--stride-bp', '2500', '--no-annotate']
+    _scan_cli(common + ['--genome', '-o', str(tmp_path / 'g')])
+    g = [r for r in _rows(tmp_path / 'g' / 'peaks' / 'hits.tsv.bgz')]
+    edges_checked = 0
+    for z0 in range(2_500, 25_000, 2_500):
+        out = tmp_path / f'z{z0}'
+        _scan_cli(common + ['--zones', f'chrP:{z0}-{z0 + 5_000}', '-o', str(out)])
+        rows = _rows(out / 'peaks' / 'hits.tsv.bgz')
+        for r in rows:
+            if 'open_end' not in r['flags']:
+                assert r in g, (z0, r)
+            else:
+                edges_checked += 1
+    assert edges_checked
+
+
+def test_annotated_bams_do_not_depend_on_bam_order(tmp_path, bams):
+    """The command recorded in annotated BAM headers lists --bam values in canonical order (review case)."""
+    a, b = bams
+    common = ['--region', 'chrS:40000-90000', '--modules', 'nfr', '--annotate']
+    _scan_cli(['--bam', a, '--bam', b] + common + ['-o', str(tmp_path / 'ab')])
+    _scan_cli(['--bam', b] + common + ['--bam', a, '-o', str(tmp_path / 'ba')])
+    oa, ob = _outputs(tmp_path / 'ab'), _outputs(tmp_path / 'ba')
+    assert any(k.startswith('annotated/') for k in oa) and oa == ob
+    from fiberhmm.scan.cli import _recorded_command
+    assert _recorded_command(['--bam=y', '-o', 'o', '--region', 'c:1-2', '--bam', 'x', '--cores', '4'],
+                             {'x': 0, 'y': 1}) == ['fiberhmm-scan', '--bam', 'x', '--bam', 'y', '--region', 'c:1-2']
+
+
+def test_padding_that_ends_at_a_plan_edge_is_open():
+    """Zero padding that consumes a whole empty zone up to the plan's edge still leaves the run open there when
+    the grid goes on unplanned (review case)."""
+    import numpy as np
+    from fiberhmm.scan.seams import territory_runs
+    u, _ = plan({'chrS': 100_000}, zones=[('chrS', 25_000, 75_000)])
+    for pad in (25_000, None):
+        r = territory_runs([(u[0], {'x': np.ones(25_000)}, 'ok'), (u[1], None, 'empty')], pad_bp=pad)
+        assert r[0][3:] == (True, True), pad
+    r = territory_runs([(u[0], {'x': np.ones(25_000)}, 'ok'), (u[1], None, 'empty')], pad_bp=1_000)
+    assert r[0][3:] == (True, False)             # the padding stops inside the empty zone: closed there
+    full, _ = plan({'chrS': 50_000}, genome=True)
+    r = territory_runs([(full[0], {'x': np.ones(25_000)}, 'ok'), (full[1], None, 'empty')], pad_bp=25_000)
+    assert r[0][3:] == (False, False)            # a genome plan: no edge, only contig ends
+
+
+def test_short_territories_flag_every_peak_open():
+    """A territory shorter than the smoothing kernel smooths with a clamped kernel; with an open end every hit
+    is within the stitch support of it and is flagged open_end (review case)."""
+    import numpy as np
+    from fiberhmm.scan.modules.peaks import PeaksModule
+    m = PeaksModule()
+    s = m.resolve({'smooth_width': 1000, 'min_width': 1, 'threshold_strong': .73, 'threshold_medium': .72,
+                   'threshold_weak': .71, 'threshold_rare': .70})
+    num = np.zeros(750, np.int32)
+    num[100:650] = 5
+    den = np.full(750, 5, np.int32)
+    out = m.stitch('c', [(1000, 1750, True, True)], {'num.0': [num], 'den.0': [den]}, s,
+                   {'tier_rule': 'local', 'row_rule': 'records', 'datasets': {'0': 'd'}})
+    assert out.hits and all('open_end' in h.flags for h in out.hits)

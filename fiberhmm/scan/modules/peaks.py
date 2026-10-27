@@ -38,7 +38,7 @@ READ_OPTIONS = dict(hide_terminal_gaps=True, terminal_gap_threshold=500, short_t
 
 class PeaksModule(ScanModuleBase):
     name = 'peaks'
-    version = '1.0'
+    version = '1.1'
     experimental = False
     reconcile = 'stitch'
     max_support_bp = 2_000
@@ -171,6 +171,10 @@ class PeaksModule(ScanModuleBase):
         out = StitchResult()
         ordinals = sorted({int(k.split('.', 1)[1]) for k in tracks if k.startswith('num.')})
         params = {k: settings[k] for k in DEFAULTS}
+        # an open end (a planned zone without a result, or the edge of a --zones plan) zero-pads the smoothing
+        # there; a hit within the smoothing's reach of it (the stitch support) can differ from the whole
+        # contig's and is flagged open_end
+        reach = int(self.stitch_support_bp(settings))
         for i, (start, end, left_open, right_open) in enumerate(territory):
             nums = {o: tracks[f'num.{o}'][i] for o in ordinals}
             dens = {o: tracks[f'den.{o}'][i] for o in ordinals}
@@ -191,7 +195,7 @@ class PeaksModule(ScanModuleBase):
                     seg = res['smoothed'][s:e]
                     summit = s + int(np.argmax(seg)) if len(seg) else s
                     flags = []
-                    if (s == 0 and left_open) or (e == len(den) and right_open):
+                    if (left_open and s < reach) or (right_open and e > len(den) - reach):
                         flags.append('open_end')
                     a, b = start + s, start + e
                     key = f'{kind}:{a}-{b}'
