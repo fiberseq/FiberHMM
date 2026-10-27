@@ -289,3 +289,72 @@ def test_intersect_territories_and_terciles():
     assert [(r[1], r[2], r[3]) for r in coarse] == [(0, 30_000, 0), (30_000, 60_000, 1), (60_000, 90_000, 2)]
     flat = tercile_strata(terr, [('c1', 0, 90_000, 1.0)], None, bin_bp=10_000)   # ties: one tercile
     assert flat == [('c1', 0, 90_000, 0)]
+
+
+# ------------------------------------------------------------------ Codex round 1 regressions
+
+def test_contrast_keeps_infinite_bootstrap_draws():
+    terr = [('c', 0, 100_000)]
+    a = hs([('c', 2000 + 9000 * i, 2010 + 9000 * i) for i in range(10)])
+    groups = {'ref': hs([('c', 0, 100_000)]), 'grp': hs([('c', 1900, 2900)])}    # only one A cluster near grp's B
+    c = overlap_contrast(a, groups, terr, None, d=0, n_relocations=200, n_boot=500, seed=0)
+    r = c['contrasts'][0]
+    assert r['p'] > 0.3                              # dropping the -inf draws gave p ~ 0.003
+    assert r['p'] == r['p_percentile'] and r['ci_low'] == '-inf'
+    assert r['n_boot_infinite'] > 50                 # resamples without the one associated cluster
+    assert r['p_normal'] is None                     # bootstrap variance undefined
+    json.dumps(c, allow_nan=False)
+
+
+def test_contrast_normal_interval():
+    h = HitSet(np.array(['c', 'c']), np.array([100, 3000]), np.array([110, 3010]))
+    c = overlap_contrast(h, {'x': h, 'y': h}, [('c', 0, 10_000)], d=0, n_relocations=20, n_boot=20,
+                         interval='normal')
+    r = c['contrasts'][0]
+    assert r['p'] is None and r['p_normal'] is None and 'undefined' in r['note']    # zero bootstrap SD
+    sim = simulate_overlap(41, n_contigs=4, contig_len=1_000_000, n_a=800, n_b=400, n_groups=2, group_planted=0.8)
+    c = overlap_contrast(sim['a'], sim['b_by_group'], sim['territory'], sim['strata'], d=500, n_relocations=100,
+                         n_boot=200, seed=0, interval='normal')
+    r = c['contrasts'][0]
+    assert r['p'] == r['p_normal'] < 0.01
+    assert r['ci_high'] - r['log_oe_diff'] == pytest.approx(r['log_oe_diff'] - r['ci_low'])     # symmetric
+    assert 0 < r['ci_low'] < r['log_oe_diff'] < r['ci_high']
+
+
+@pytest.mark.parametrize('strata', [[('c', 10_000, 20_000, 0)], []])
+def test_no_admissible_stratum_run_refuses(strata):
+    h = hs([('c', 100, 110)])
+    r = overlap_enrichment(h, h, [('c', 0, 10_000)], strata, n_relocations=10)
+    assert r['status'] == 'refused' and r['n_unplaced'] == 1 and r['global_p'] is None
+    c = overlap_contrast(h, {'x': h, 'y': h}, [('c', 0, 10_000)], strata, d=0, n_relocations=10, n_boot=10)
+    assert c['status'] == 'refused'
+
+
+def test_nearest_distance_stays_on_the_contig():
+    terr = [('c1', 0, 10_000), ('c2', 0, 10_000)]
+    r = overlap_enrichment(hs([('c2', 100, 110)]), hs([('c1', 100, 110)]), terr, None, distances=(0,),
+                           n_relocations=10, return_hits=True)
+    assert r['hits'][0]['signed_distance'] is None
+    assert r['histogram']['observed_overflow'] == 1 and r['histogram']['observed_underflow'] == 0
+    assert r['histogram']['null_mean_underflow'] == 0
+
+
+def test_capped_relocations_are_left_out_of_the_null():
+    terr = [('c', 0, 100_000)]
+    a = hs([('c', 100, 200), ('c', 5000, 5100)])
+    b = hs([('c', 100, 2000)])
+    prep = _Prep(a, terr, None, (0,), 1000, True)
+    prep.keep()
+    n_rows = 0
+    for a0, _, _ in prep.relocations(np.random.default_rng(0), 100, True, 0):
+        s = a0[:, prep.c_first]
+        o = np.argsort(s, axis=1)
+        ss, ee = np.take_along_axis(s, o, 1), np.take_along_axis(s + prep.span[None, :], o, 1)
+        assert np.all(ss[:, 1:] - np.maximum.accumulate(ee, axis=1)[:, :-1] > 1000)   # no capped draw yielded
+        n_rows += len(a0)
+    assert n_rows == 100 - prep.n_capped
+    r = overlap_enrichment(a, b, terr, None, distances=(0,), seed=0, n_relocations=100, max_redraw_rounds=0)
+    assert r['status'] == 'ok' and r['n_relocations_capped'] == 1
+    assert r['n_relocations_effective'] == 99
+    k = r['global_p'] * (r['n_relocations_effective'] + 1)
+    assert k == pytest.approx(round(k))              # p on the grid of the effective N

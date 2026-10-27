@@ -34,6 +34,7 @@ DISTANCES = (0, 100, 250, 500, 1000, 2500, 5000)
 HIST_RANGE = 5000
 HIST_STEP = 250
 _BIG = np.int64(1) << np.int64(60)
+Z95 = 1.959964
 _CHUNK_ELEMENTS = 2_000_000
 
 
@@ -247,14 +248,17 @@ class _Frame:
         self.contigs = list(self.merged)
         self.offset = {}
         off = 0
-        t0, t1, tc = [], [], []
+        t0, t1, tc, clo, chi = [], [], [], [], []
         for i, c in enumerate(self.contigs):
             s, e = self.merged[c]
             self.offset[c] = off
             t0.append(s + off)
             t1.append(e + off)
             tc.append(np.full(len(s), i, np.int64))
+            clo.append(off)
+            chi.append(off + int(e[-1]))
             off += int(e[-1]) + pad
+        self.clo, self.chi = np.array(clo, np.int64), np.array(chi, np.int64)   # global bounds of each contig
         self.t0 = np.concatenate(t0) if t0 else np.zeros(0, np.int64)
         self.t1 = np.concatenate(t1) if t1 else np.zeros(0, np.int64)
         self.tcontig = np.concatenate(tc) if tc else np.zeros(0, np.int64)
@@ -290,14 +294,17 @@ class _BIndex:
         self.pm1 = np.maximum.accumulate(g1[o]) if len(o) else np.zeros(0, np.int64)
         self.n = len(o)
 
-    def gaps(self, a0, a1):
-        """(gl, gr): left gap (negative when some B overlaps) and right gap to the nearest B; _BIG when none."""
+    def gaps(self, a0, a1, lo, hi):
+        """(gl, gr): left gap (negative when some B overlaps) and right gap to the nearest B on the same contig
+        (global bounds [lo, hi)); _BIG when there is none."""
         if self.n == 0:
             big = np.full(np.shape(a0), _BIG, np.int64)
             return big, big.copy()
         idx = np.searchsorted(self.b0, a1, 'left')
-        gr = np.where(idx < self.n, self.b0[np.minimum(idx, self.n - 1)] - a1, _BIG)
-        gl = np.where(idx > 0, a0 - self.pm1[np.maximum(idx - 1, 0)], _BIG)
+        right = self.b0[np.minimum(idx, self.n - 1)]
+        gr = np.where((idx < self.n) & (right < hi), right - a1, _BIG)
+        left = self.pm1[np.maximum(idx - 1, 0)]     # the furthest-reaching earlier B; on A's contig iff it ends past lo
+        gl = np.where((idx > 0) & (left > lo), a0 - left, _BIG)
         return gl, gr
 
 
@@ -349,6 +356,8 @@ class _Prep:
             self.minus = a.strand[idx] == '-'
         else:
             self.minus = np.zeros(len(idx), bool)
+        hc = fr.tcontig[self.tid] if len(idx) else np.zeros(0, np.int64)
+        self.hlo, self.hhi = fr.clo[hc], fr.chi[hc]   # global bounds of each hit's contig
         # clusters: single linkage, gap to the running cluster end <= cluster_gap
         n = len(idx)
         if n:
@@ -460,9 +469,12 @@ class _Prep:
             lens = self.LEN[o0:o0 + m]
             self.goff[c] = o0
             self.nelig[c] = int(np.searchsorted(-lens, -span[c], 'right'))
-        last = self.goff + np.maximum(self.nelig - 1, 0)
-        self.total = np.where(self.nelig > 0, self.PEX[last] + self.LEN[last] - self.nelig * (span - 1), 0)
-        self.placeable = self.nelig > 0
+        self.total = np.zeros(self.n_clusters, np.int64)
+        ok = self.nelig > 0
+        if ok.any():
+            last = self.goff[ok] + self.nelig[ok] - 1
+            self.total[ok] = self.PEX[last] + self.LEN[last] - self.nelig[ok] * (span[ok] - 1)
+        self.placeable = ok
 
     def keep(self):
         """Restrict to hits of placeable clusters (call once, after the refusal check)."""
@@ -470,7 +482,7 @@ class _Prep:
         remap = np.full(self.n_clusters, -1, np.int64)
         remap[keepc] = np.arange(len(keepc))
         h = self.placeable[self.cid]
-        for name in ('src', 'a0', 'a1', 'tid', 'zero_width', 'minus'):
+        for name in ('src', 'a0', 'a1', 'tid', 'zero_width', 'minus', 'hlo', 'hhi'):
             setattr(self, name, getattr(self, name)[h])
         self.cid = remap[self.cid[h]]
         for name in ('c0', 'c1', 'ccontig', 'clabel', 'span', 'goff', 'nelig', 'total', 'c_spans_gap'):
@@ -501,11 +513,11 @@ class _Prep:
 
         Each round sorts the unfinished rows by start; a cluster within cluster_gap of an earlier one is paired with
         the earlier cluster that reaches furthest, and one cluster of each pair (random priority) is redrawn from
-        its own admissible starts. Returns the number of rows still in conflict after ``max_rounds`` rounds.
+        its own admissible starts. Returns the indices of rows still in conflict after ``max_rounds`` rounds.
         """
         nrel, nk = s.shape
         if nk < 2:
-            return 0
+            return np.zeros(0, np.int64)
         rows, pos = np.arange(nrel), np.arange(nk)
         for rnd in range(max_rounds + 1):
             sub = s[rows]
@@ -527,13 +539,14 @@ class _Prep:
             redo[ri, np.where(prio[ri, late] < prio[ri, early], late, early)] = True
             rr, cc = np.nonzero(redo)
             s[rows[rr], cc], rt[rows[rr], cc] = self.draw(rng, cc)
-        return len(rows)
+        return rows
 
     def relocations(self, rng, n, kept_apart=True, max_rounds=200):
-        """Yield (a0, a1, room) arrays of shape (rows, n_hits) for n relocations, in deterministic chunks.
+        """Yield (a0, a1, room) arrays of shape (rows, n_hits) for n relocation draws, in deterministic chunks.
 
         ``kept_apart``: relocated clusters lie more than cluster_gap apart, as linkage guarantees for the observed
-        clusters. Rows still in conflict after ``max_rounds`` redraw rounds are counted in ``self.n_capped``.
+        clusters. Draws still in conflict after ``max_rounds`` redraw rounds are left out (rejection of invalid
+        configurations) and counted in ``self.n_capped``; the rows yielded total n - n_capped.
         """
         step = self.chunk()
         fr = self.frame
@@ -543,7 +556,12 @@ class _Prep:
             m = min(step, n - done)
             s, rt = self.draw(rng, np.broadcast_to(np.arange(self.nk), (m, self.nk)))
             if kept_apart:
-                self.n_capped += self.separate(rng, s, rt, max_rounds)
+                capped = self.separate(rng, s, rt, max_rounds)
+                if len(capped):
+                    self.n_capped += len(capped)
+                    keep = np.ones(m, bool)
+                    keep[capped] = False
+                    s, rt = s[keep], rt[keep]
             off = (s - self.c0[None, :])[:, self.cid]
             a0 = self.a0[None, :] + off
             a1 = self.a1[None, :] + off
@@ -558,9 +576,10 @@ class _Prep:
         return self.a0[None, :], self.a1[None, :], room[None, :]
 
 
-def _evaluate(bidx, a0, a1, room, minus, distances, want_hist=True):
+def _evaluate(bidx, prep, a0, a1, room, want_hist=True):
     """Per row: hits and denominators per d; per hit: summed hits and denominators per d; histogram counts."""
-    gl, gr = bidx.gaps(a0, a1)
+    minus, distances = prep.minus, prep.distances
+    gl, gr = bidx.gaps(a0, a1, prep.hlo, prep.hhi)
     gmin = np.minimum(gl, gr)
     nd = len(distances)
     rows_h = np.zeros((a0.shape[0], nd), np.int64)
@@ -582,6 +601,21 @@ def _evaluate(bidx, a0, a1, room, minus, distances, want_hist=True):
 
 
 # ----------------------------------------------------------------------------------------------- helpers
+
+def _fx(x):
+    """A float for JSON: None for undefined, the strings '-inf' / 'inf' for unbounded values."""
+    if x is None or math.isnan(float(x)):
+        return None
+    x = float(x)
+    return x if math.isfinite(x) else ('inf' if x > 0 else '-inf')
+
+
+def _order_stat(x, q, upper):
+    """The q-quantile of x without interpolation (the order statistic below, or above when upper)."""
+    v = np.sort(x)
+    pos = q * (len(v) - 1)
+    return v[int(math.ceil(pos)) if upper else int(math.floor(pos))]
+
 
 def _f(x):
     if x is None:
@@ -647,7 +681,9 @@ def overlap_enrichment(a: HitSet, b: HitSet, territory, strata=None, *, distance
 
     ``kept_apart``: relocated clusters lie more than ``cluster_gap`` apart (conflict-redraw, at most
     ``max_redraw_rounds`` rounds; close to uniform over separated configurations and exact for sparse clusters).
-    More than ``max_capped`` of relocations still in conflict refuses the analysis. ``return_hits`` adds per-hit rows
+    Draws still in conflict are left out of the null (``n_relocations_capped``; p-values use
+    ``n_relocations_effective``); more than ``max_capped`` of them refuses the analysis. Nearest-B distances look
+    only at A's contig; with no B there, the signed distance is None and counts in the histogram overflow. ``return_hits`` adds per-hit rows
     (id, position, zero-width flag, signed distance).
     """
     if int(n_relocations) < 2:
@@ -663,7 +699,8 @@ def overlap_enrichment(a: HitSet, b: HitSet, territory, strata=None, *, distance
                              strand_aware=bool(strand_aware), hist_range=HIST_RANGE, hist_step=HIST_STEP,
                              kept_apart=bool(kept_apart), max_redraw_rounds=int(max_redraw_rounds),
                              max_capped=float(max_capped)),
-               n_relocations=int(n_relocations), n_relocations_capped=0, rows=[], global_stat=None, global_p=None,
+               n_relocations=int(n_relocations), n_relocations_capped=0, n_relocations_effective=0, rows=[],
+               global_stat=None, global_p=None,
                skipped_d=[], histogram=None)
     if refused:
         out.update(status='refused', message=msg, suggestions=SUGGESTIONS)
@@ -679,7 +716,7 @@ def overlap_enrichment(a: HitSet, b: HitSet, territory, strata=None, *, distance
         out['message'] = (f"{info['n_unplaced']} of {info['n_clusters']} A clusters had no admissible placement; "
                           f"their {out['n_a_excluded_unplaced']} hits are excluded from the observed and null values.")
     rng = np.random.default_rng(seed)
-    oh, on, _, _, ohist = _evaluate(bidx, *prep.observed(), prep.minus, D)
+    oh, on, _, _, ohist = _evaluate(bidx, prep, *prep.observed())
     oh, on = oh[0], on[0]
     N = int(n_relocations)
     nh = np.zeros((N, len(D)), np.int64)
@@ -687,16 +724,19 @@ def overlap_enrichment(a: HitSet, b: HitSet, territory, strata=None, *, distance
     hsum = np.zeros_like(ohist)
     r = 0
     for a0, a1, room in prep.relocations(rng, N, kept_apart, max_redraw_rounds):
-        rh, rn, _, _, hist = _evaluate(bidx, a0, a1, room, prep.minus, D)
+        rh, rn, _, _, hist = _evaluate(bidx, prep, a0, a1, room)
         nh[r:r + len(rh)] = rh
         nn[r:r + len(rh)] = rn
         hsum += hist
         r += len(rh)
     out['n_relocations_capped'] = int(prep.n_capped)
+    out['n_relocations_effective'] = int(r)
     if prep.n_capped > max_capped * N:
         out.update(status='refused', message=_capped_message(prep.n_capped, N, max_redraw_rounds, max_capped),
                    suggestions=SUGGESTIONS + ['kept_apart=False (relocated clusters may overlap; conservative)'])
         return out
+    N = r                                     # capped draws are left out of the null
+    nh, nn = nh[:N], nn[:N]
     with np.errstate(divide='ignore', invalid='ignore'):
         obs = np.where(on > 0, oh / np.maximum(on, 1), np.nan)
         nul = np.where(nn > 0, nh / np.maximum(nn, 1), np.nan)
@@ -738,7 +778,7 @@ def overlap_enrichment(a: HitSet, b: HitSet, territory, strata=None, *, distance
                             note='signed gap to the nearest B (0 = overlap; + = downstream in A orientation); '
                                  'overflow includes A hits with no B on the contig')
     if return_hits:
-        gl, gr = bidx.gaps(prep.a0, prep.a1)
+        gl, gr = bidx.gaps(prep.a0, prep.a1, prep.hlo, prep.hhi)
         down = np.where(prep.minus, gl, gr)
         up = np.where(prep.minus, gr, gl)
         sd_ = np.where(gl < 0, 0, np.where(down <= up, down, -up))
@@ -766,18 +806,21 @@ def _contrast_arrays(prep, bidx_list, N, rng, kept_apart=True, max_rounds=200):
     nul_n = np.zeros((G, nd, len(prep.a0)))
     ob = prep.observed()
     for gi, bidx in enumerate(bidx_list):
-        _, _, hh, hn, _ = _evaluate(bidx, *ob, prep.minus, D, want_hist=False)
+        _, _, hh, hn, _ = _evaluate(bidx, prep, *ob, want_hist=False)
         obs_h[gi] = np.add.reduceat(hh, starts, axis=1)
         obs_n[gi] = np.add.reduceat(hn, starts, axis=1)
+    n_eff = 0
     for a0, a1, room in prep.relocations(rng, N, kept_apart, max_rounds):
+        n_eff += len(a0)
         for gi, bidx in enumerate(bidx_list):
-            _, _, hh, hn, _ = _evaluate(bidx, a0, a1, room, prep.minus, D, want_hist=False)
+            _, _, hh, hn, _ = _evaluate(bidx, prep, a0, a1, room, want_hist=False)
             nul_h[gi] += hh
             nul_n[gi] += hn
-    nul_h = np.add.reduceat(nul_h, starts, axis=2) / max(N, 1)
-    nul_n = np.add.reduceat(nul_n, starts, axis=2) / max(N, 1)
+    nul_h = np.add.reduceat(nul_h, starts, axis=2) / max(n_eff, 1)       # capped draws are left out
+    nul_n = np.add.reduceat(nul_n, starts, axis=2) / max(n_eff, 1)
     informative = np.maximum.reduceat(ob[2][0][None, :] >= D[:, None], starts, axis=1)      # (nd, nk)
-    return dict(obs_h=obs_h, obs_n=obs_n, nul_h=nul_h, nul_n=nul_n, informative=informative, n_capped=prep.n_capped)
+    return dict(obs_h=obs_h, obs_n=obs_n, nul_h=nul_h, nul_n=nul_n, informative=informative, n_capped=prep.n_capped,
+                n_effective=n_eff)
 
 
 def _log_oe(Oh, On, Eh, En):
@@ -789,7 +832,10 @@ def _contrast_rows(arr, groups, D, plist, n_boot, rng, interval='percentile', re
     """Bootstrap over A clusters for every pair and d: log O/E difference, 95% CI and two-sided p.
 
     Each row carries p_percentile (min(1, 2 min(P*(diff <= 0), P*(diff >= 0))), P* = (1 + count) / (n + 1)) and
-    p_normal (2 Phi(-|diff| / bootstrap SD)); ``interval`` picks which one is ``p`` and the CI.
+    p_normal (2 Phi(-|diff| / bootstrap SD)); ``interval`` picks which one is ``p`` and the CI. Every draw counts:
+    signed infinities (a resample with no hits in a group) stay in the tails, a draw undefined in both groups
+    counts as a tie, and unbounded interval ends are reported as '-inf' / 'inf'. The normal interval is left out
+    (p_normal None) when any draw is non-finite or the bootstrap SD is 0.
     ``resample='informative'`` restricts estimate and bootstrap at each d to clusters with a hit whose d-window lies
     inside the territory.
     """
@@ -813,23 +859,30 @@ def _contrast_rows(arr, groups, D, plist, n_boot, rng, interval='percentile', re
                 done += m
         blog = _log_oe(*boot.reshape(int(n_boot), 4, G).transpose(1, 0, 2))                    # (n_boot, G)
         for i, j in plist:
-            diff = point[j] - point[i]
-            bd = blog[:, j] - blog[:, i]
-            bd = bd[np.isfinite(bd)]
-            row = dict(group=groups[j], reference=groups[i], d=int(dd), log_oe_diff=_f(diff), ci_low=None,
-                       ci_high=None, p=None, p_percentile=None, p_normal=None, n_boot_valid=int(len(bd)),
+            with np.errstate(invalid='ignore'):
+                diff = point[j] - point[i]
+                bd = blog[:, j] - blog[:, i]
+            und = np.isnan(bd)              # both groups undefined in a draw: counts as a tie
+            row = dict(group=groups[j], reference=groups[i], d=int(dd), log_oe_diff=_fx(diff), ci_low=None,
+                       ci_high=None, p=None, p_percentile=None, p_normal=None, n_boot=int(len(bd)),
+                       n_boot_infinite=int(np.isinf(bd).sum()), n_boot_undefined=int(und.sum()),
                        n_clusters_used=int(m_))
-            if m_ and math.isfinite(diff) and len(bd) > 1:
-                le = (1 + int((bd <= 0).sum())) / (len(bd) + 1)
-                ge = (1 + int((bd >= 0).sum())) / (len(bd) + 1)
+            if m_ and not math.isnan(diff) and len(bd) > 1:
+                le = (1 + int(((bd <= 0) | und).sum())) / (len(bd) + 1)
+                ge = (1 + int(((bd >= 0) | und).sum())) / (len(bd) + 1)
                 p_pct = min(1.0, 2 * min(le, ge))
-                se = float(np.std(bd, ddof=1))
-                p_nrm = math.erfc(abs(diff) / se / math.sqrt(2)) if se > 0 else None
+                lo = _order_stat(np.where(und, -np.inf, bd), 0.025, False)
+                hi = _order_stat(np.where(und, np.inf, bd), 0.975, True)
+                se = float(np.std(bd, ddof=1)) if (np.isfinite(bd).all() and math.isfinite(diff)) else None
+                p_nrm = math.erfc(abs(diff) / se / math.sqrt(2)) if se else None
                 row.update(p_percentile=p_pct, p_normal=p_nrm)
                 if interval == 'normal':
-                    row.update(ci_low=_f(diff - Z95 * se), ci_high=_f(diff + Z95 * se), p=p_nrm)
+                    if p_nrm is None:
+                        row['note'] = 'normal interval undefined: non-finite or zero-variance bootstrap'
+                    else:
+                        row.update(ci_low=_fx(diff - Z95 * se), ci_high=_fx(diff + Z95 * se), p=p_nrm)
                 else:
-                    row.update(ci_low=_f(np.percentile(bd, 2.5)), ci_high=_f(np.percentile(bd, 97.5)), p=p_pct)
+                    row.update(ci_low=_fx(lo), ci_high=_fx(hi), p=p_pct)
             out.append(row)
     return out
 
@@ -844,7 +897,9 @@ def overlap_contrast(a: HitSet, b_by_group: Mapping[str, HitSet], territory, str
     relocations), summed over A clusters; one relocation draw (kept apart as in overlap_enrichment) serves every
     group. The interval and p come from a bootstrap over A clusters (see _contrast_rows): ``interval`` 'percentile'
     (percentile 95% CI and p = min(1, 2 min(P*(diff <= 0), P*(diff >= 0))), P* = (1 + count) / (n_valid + 1)) or
-    'normal' (diff +/- 1.96 bootstrap SD, normal p); both p-values are reported. ``pairs``: 'first' compares every
+    'normal' (diff +/- 1.96 bootstrap SD, normal p); both p-values are reported. Infinite bootstrap draws are kept
+    and unbounded interval ends are reported as '-inf' / 'inf'. Relocation draws that could not be kept apart are
+    left out (``n_relocations_effective``). ``pairs``: 'first' compares every
     group with the first; 'all' every pair. Note: this O/E is a ratio of sums; overlap_enrichment reports the mean
     of per-relocation fractions.
     """
@@ -870,7 +925,7 @@ def overlap_contrast(a: HitSet, b_by_group: Mapping[str, HitSet], territory, str
                              n_boot=int(n_boot), seed=_seed(seed), pairs=pairs, max_unplaced=float(max_unplaced),
                              kept_apart=bool(kept_apart), max_redraw_rounds=int(max_redraw_rounds),
                              max_capped=float(max_capped), interval=interval, resample=resample),
-               n_relocations_capped=0, per_group=[], contrasts=[])
+               n_relocations_capped=0, n_relocations_effective=0, per_group=[], contrasts=[])
     if refused:
         out.update(status='refused', message=msg, suggestions=SUGGESTIONS)
         return out
@@ -883,6 +938,7 @@ def overlap_contrast(a: HitSet, b_by_group: Mapping[str, HitSet], territory, str
     rng = np.random.default_rng(seed)
     arr = _contrast_arrays(prep, [bs[g][0] for g in groups], N, rng, kept_apart, max_redraw_rounds)
     out['n_relocations_capped'] = int(arr['n_capped'])
+    out['n_relocations_effective'] = int(arr['n_effective'])
     if arr['n_capped'] > max_capped * N:
         out.update(status='refused', message=_capped_message(arr['n_capped'], N, max_redraw_rounds, max_capped),
                    suggestions=SUGGESTIONS + ['kept_apart=False (relocated clusters may overlap; conservative)'])
@@ -896,7 +952,7 @@ def overlap_contrast(a: HitSet, b_by_group: Mapping[str, HitSet], territory, str
             en, eh = arr['nul_n'][gi, k].sum(), arr['nul_h'][gi, k].sum()
             rows.append(dict(d=int(dd), observed=_f(oh / on if on else np.nan),
                              null_mean=_f(eh / en if en else np.nan), o_over_e=_f(np.exp(point[gi, k])),
-                             log_o_over_e=_f(point[gi, k])))
+                             log_o_over_e=_fx(point[gi, k])))
         out['per_group'].append(dict(group=g, n_b_used=nb, n_b_dropped_outside=nbd, rows=rows))
     rows = _contrast_rows(arr, groups, D, plist, n_boot, rng, interval, resample)
     out['contrasts'] = sorted(rows, key=lambda r: (groups.index(r['reference']), groups.index(r['group']), r['d']))
