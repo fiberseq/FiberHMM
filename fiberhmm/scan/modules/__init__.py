@@ -34,6 +34,10 @@ class ScanModuleBase:
     reconcile: ClassVar[str] = 'anchor'          # 'anchor' | 'stitch'
     max_support_bp: ClassVar[int] = 12_500
     wants_molecules: ClassVar[bool] = False
+    # 'molecular': molecule_outputs gets the record with its annotations carried into molecular frame (inputs
+    # without a coord=molecular declaration are carried by the orchestrator); 'source': the record as stored,
+    # for a module that resolves each annotation's frame from the record's header itself (nuc)
+    molecule_frame: ClassVar[str] = 'molecular'
     native_tables: ClassVar[Sequence[str]] = ()
     state_groups: ClassVar[Mapping[str, str]] = {}    # hit type -> MA state group written for it
 

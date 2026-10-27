@@ -582,3 +582,50 @@ def test_contigs_with_records_do_not_trust_zero_index_counts(scan_bam, monkeypat
             return getattr(self._bam, name)
     monkeypatch.setattr(_pysam, 'AlignmentFile', NoCounts)
     assert N._contigs_with_records([scan_bam], {'chrS': LENGTH, 'chrNone': 10_000}) == ['chrS']
+
+
+def test_nuc_decodes_undeclared_inputs_once(tmp_path):
+    """nuc resolves each annotation's frame from the record's header itself (molecule_frame 'source'): the
+    orchestrator must not carry a reverse record of an undeclared (SEQ-frame) input first, or nuc mirrors
+    it twice (review case). The SEQ-frame record and its molecular-frame twin give the same marks; legacy
+    calls that describe a hard-clipped record's whole molecule are refused (length_mismatch)."""
+    from nuc_synth import flat_calibration, planted_record_molecule
+    from fiberhmm.scan.modules.nuc import NucModule
+    from fiberhmm.scan.types import Dataset, FullMolecule, RecordRef
+    assert NucModule.molecule_frame == 'source'
+    rng = np.random.default_rng(4)
+    seq, nucs, msps, marks = planted_record_molecule(rng, 14)
+    L = len(seq)
+    cal = {'datasets': {'d': flat_calibration().to_dict()}}
+    m = NucModule()
+    s = m.resolve({})
+    got = {}
+    for tag, molecular in (('mol', True), ('seq', False)):
+        h = header('chrS', 50_000, coord_molecular=molecular)
+        if not molecular:
+            h['PG'][0]['VN'] = '2.12.0'                 # an older caller: SEQ frame by the legacy rule
+        path = str(tmp_path / f'{tag}.bam')
+        with pysam.AlignmentFile(path, 'wb', header=h) as out:
+            n_, m_ = (nucs, msps) if molecular else ([(L - e, L - b) for b, e in nucs], [(L - e, L - b) for b, e in msps])
+            out.write(make_record(out, 'm1/7/ccs', seq, 1000, n_, m_, (), marks, reverse=True))
+        pysam.index(path)
+        with pysam.AlignmentFile(path) as bam:
+            read = next(bam.fetch('chrS'))
+            ds = Dataset('d', 0, None, (path,), ('cid',))
+            rec = RecordRef('d', 0, read.query_name, 'x', 0, 'chrS', read.reference_start, read.reference_end)
+            res = NucModule().molecule_outputs(FullMolecule(rec, read, ds), s, cal)   # one module per input file
+            got[tag] = sorted((k.group, k.mol, k.q) for k in res.marks)
+            if not molecular:
+                from fiberhmm.scan.runner import _carry_record
+                assert _carry_record(read)          # what the orchestrator did before: nuc then mirrors twice
+                twice = NucModule().molecule_outputs(FullMolecule(rec, read, ds), s, cal)
+                got['carried'] = sorted((k.group, k.mol, k.q) for k in twice.marks)
+    assert got['mol'] and got['mol'] == got['seq'] and got['carried'] != got['mol']
+    from fiberhmm.nuc.records import DecodeContext, _footprints_from_legacy
+    h = pysam.AlignmentHeader.from_dict(header('chrS', 50_000, coord_molecular=False))
+    r = pysam.AlignedSegment(h)
+    r.query_name, r.flag, r.reference_id, r.reference_start = 'm2/8/ccs', 0x810, 0, 5000
+    r.cigarstring, r.query_sequence = '500H1000M200H', 'A' * 1000
+    r.set_tag('ns', [600, 1200])
+    r.set_tag('nl', [147, 147])
+    assert _footprints_from_legacy(r, DecodeContext(h), 1000) == 'length_mismatch'

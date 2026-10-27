@@ -81,7 +81,7 @@ def _num(v) -> Optional[float]:
 
 class NfrModule(ScanModuleBase):
     name = 'nfr'
-    version = '1.0'
+    version = '1.1'
     experimental = True
     reconcile = 'anchor'
     max_support_bp = 12_500

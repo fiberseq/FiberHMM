@@ -390,3 +390,31 @@ def test_padding_next_to_a_missing_zone_is_open():
     r = territory_runs([(u[0], {'x': np.ones(250)}, 'ok'), (u[1], None, 'empty'), (u[2], None, 'missing')],
                        pad_bp=None)
     assert r[0][3:] == (False, True)
+
+
+def test_source_frame_modules_get_the_stored_record(tmp_path):
+    """A module with molecule_frame 'source' (nuc) gets the record as stored; others get it carried into
+    molecular frame (review case: nuc mirrored carried records a second time)."""
+    from fiberhmm.scan.testing import PlantedMoleculeModule
+    seen = {}
+
+    class Grab(PlantedMoleculeModule):
+        name = 'grabmol'
+
+        def molecule_outputs(self, molecule, settings, calibration):
+            seen.setdefault(self.molecule_frame, {})[molecule.read.query_name] = list(molecule.read.get_tag('ns'))
+            return super().molecule_outputs(molecule, settings, calibration)
+
+        def ma_groups(self):
+            return []
+
+    class GrabSource(Grab):
+        name = 'grabsrc'
+        molecule_frame = 'source'
+    bam = _seq_frame_bam(tmp_path / 's.bam', [('m2/2/ccs', 16, 3000, '1000M', 1000, [100, 500], [147, 147])])
+    from fiberhmm.scan import run_units
+    for mod, cls in (('grabmol', Grab), ('grabsrc', GrabSource)):
+        run_units([{'paths': [bam]}], plan({'chrS': 20_000}, regions=[('chrS', 2000, 6000)]), modules=[mod],
+                  out=tmp_path / mod, annotate=False, registry={mod: cls})
+    assert seen['source']['m2/2/ccs'] == [100, 500]
+    assert seen['molecular']['m2/2/ccs'] == [1000 - 500 - 147, 1000 - 100 - 147]

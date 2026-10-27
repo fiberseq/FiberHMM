@@ -79,6 +79,9 @@ class NucModule(ScanModuleBase):
     reconcile = 'stitch'
     max_support_bp = 12_500
     wants_molecules = True
+    # fiberhmm.nuc.records decodes each annotation's frame from the record's header (DecodeContext), so it gets
+    # the stored record: an orchestrator carry would be mirrored a second time on reverse reads
+    molecule_frame = 'source'
 
     def __init__(self):
         self._cals: Dict[Tuple[int, str], Any] = {}

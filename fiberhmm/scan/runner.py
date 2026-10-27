@@ -427,7 +427,8 @@ def run_unit_task(spec: dict) -> dict:
                     rec = record_ref(read, ds, i, sha, occ, unit.chrom)
                     if ds.paths[i] not in molecular_input:
                         molecular_input[ds.paths[i]] = _declares_molecular(ds.paths[i])
-                    if not molecular_input[ds.paths[i]] and not _carry_record(read):
+                    if getattr(mod, 'molecule_frame', 'molecular') == 'molecular' and not molecular_input[ds.paths[i]] \
+                            and not _carry_record(read):
                         # FullMolecule.read carries molecular-frame annotations (the contract); a record whose
                         # calls cannot be carried there is counted (manifest status.records_not_carried)
                         skipped.append(rec)

@@ -417,6 +417,10 @@ def _footprints_from_legacy(read, ctx: DecodeContext, read_length: int):
     msps = pairs('as', 'al')
     if not nucs and not msps:
         return None
+    if max(b for _a, b in nucs + msps) > read_length:
+        # the calls describe the whole molecule of a hard-clipped record, as MA's read length does in
+        # _footprints_from_ma: not decodable on the stored SEQ
+        return 'length_mismatch'
     frame = ctx.legacy_frame.for_read(read)
     if frame is None:
         return 'frame_undecided'
