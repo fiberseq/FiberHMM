@@ -199,7 +199,7 @@ def anchor_appearances(molecules, loci: LocusTable, *, frame: str = 'anchor', P:
                 continue
             cand.append((rank[i], i, a, st))
         # one appearance per physical molecule: records that disagree on the state make it '.', otherwise the
-        # longest record is used
+        # longest record that qualifies (barrier, a measured bin, offsets) is used
         by_key: Dict[str, list] = {}
         for item in sorted(cand):
             by_key.setdefault(molecule_key(molecules[item[1]]), []).append(item)
@@ -210,27 +210,35 @@ def anchor_appearances(molecules, loci: LocusTable, *, frame: str = 'anchor', P:
                 if len({r_[3] for r_ in recs}) > 1:
                     info['conflicting_records'] = info.get('conflicting_records', 0) + 1
                     continue
-            _r, i, a, st = recs[0]
-            m = molecules[i]
-            if frame == 'molecule':
-                bar = barrier_at(m, a, params)
-                if bar is None:
-                    info['no_barrier'] = info.get('no_barrier', 0) + 1
+            chosen, why_not = None, None
+            for _r, i, a, st in recs:
+                m = molecules[i]
+                if frame == 'molecule':
+                    bar = barrier_at(m, a, params)
+                    if bar is None:
+                        why_not = why_not or 'no_barrier'
+                        continue
+                    s0, e0 = bar[0], bar[1]
+                else:
+                    s0, e0 = a, a
+                mask = _measured_bins(m, s0, e0, bins, min_sites)
+                if not mask:
+                    why_not = why_not or 'no_bin_measured'
                     continue
-                s0, e0 = bar[0], bar[1]
-            else:
-                s0, e0 = a, a
-            mask = _measured_bins(m, s0, e0, bins, min_sites)
-            if not mask:
-                info['no_bin_measured'] = info.get('no_bin_measured', 0) + 1
+                d = dy_cache.get(id(m))
+                if d is None:
+                    d = dy_cache[id(m)] = molecule_dyads(m, nrl, params)
+                x, why = anchor_offsets(m, d, p, 1, frame, params)
+                if x is None:
+                    why_not = why_not or why
+                    continue
+                chosen = (i, a, st, mask, x)
+                break
+            if chosen is None:
+                info[why_not] = info.get(why_not, 0) + 1
                 continue
-            d = dy_cache.get(id(m))
-            if d is None:
-                d = dy_cache[id(m)] = molecule_dyads(m, nrl, params)
-            x, why = anchor_offsets(m, d, p, 1, frame, params)
-            if x is None:
-                info[why] = info.get(why, 0) + 1
-                continue
+            i, a, st, mask, x = chosen
+            m = molecules[i]
             xr, xl = x[x > 0], -x[x < 0]
             row = np.zeros((len(bins), len(RES_COLUMNS)))
             for b, (lo, hi) in enumerate(bins):
@@ -546,26 +554,37 @@ def association_stats(molecules, *, cal, params=None, x_state: str = 'regular', 
     L, IV, PT, JN, CH, MID, MOL = [], [], [], [], [], [], []
     lab = {k: [] for k in (labels or {})}
     skipped = {'low_information': 0, 'too_short': 0, 'no_informative': 0, 'duplicate_records': 0}
-    best: Dict[str, object] = {}
-    for m in molecules:                       # one record per physical molecule: the longest (ties by name)
-        k = molecule_key(m)
-        if k in best:
-            skipped['duplicate_records'] += 1
-            if (m.length, m.name or '') <= (best[k].length, best[k].name or ''):
-                continue
-        best[k] = m
-    for m in sorted(best.values(), key=lambda m_: (m_.chrom or '', m_.ref_start, m_.name or '')):
+
+    def outputs(m):
         res = results.get(id(m)) if results is not None else None
         if res is None:
             res = molecule_outputs(m, params, cal)
             if results is not None:
                 results[id(m)] = res
-        if res.flags.get('low_information'):
-            skipped['low_information'] += 1
+        return res
+    groups_: Dict[str, list] = {}
+    for m in molecules:
+        groups_.setdefault(molecule_key(m), []).append(m)
+    chosen = []
+    for k in sorted(groups_):
+        recs = sorted(groups_[k], key=lambda m_: (-m_.length, m_.name or ''))
+        skipped['duplicate_records'] += len(recs) - 1
+        pick, reason = None, None
+        for m in recs:                         # one record per physical molecule: the longest eligible one
+            r_ = outputs(m)
+            if r_.flags.get('low_information'):
+                reason = reason or 'low_information'
+                continue
+            if m.length <= 2 * censor_bp:
+                reason = reason or 'too_short'
+                continue
+            pick = (m, r_)
+            break
+        if pick is None:
+            skipped[reason] += 1
             continue
-        if m.length <= 2 * censor_bp:
-            skipped['too_short'] += 1
-            continue
+        chosen.append(pick)
+    for m, res in sorted(chosen, key=lambda t: (t[0].chrom or '', t[0].ref_start, t[0].name or '')):
         cum = np.concatenate([[0], np.cumsum(m.informative, dtype=np.int64)])
         lo_i, hi_i = int(cum[censor_bp]), int(cum[m.length - censor_bp])
         adm = [(lo_i, hi_i)]

@@ -472,3 +472,27 @@ def test_reverse_association_p_uses_the_cluster_t_reference():
     if np.isfinite(c['df']):
         z = c['log_or'] / c['se_boot']
         assert c['p'] == pytest.approx(2 * tdist.sf(abs(z), c['df']))
+
+
+# ---------------------------------------------------------------- regressions (Codex round 3, group C; unreviewed fixes)
+def test_an_ineligible_longer_record_does_not_hide_an_eligible_one():
+    import copy
+    from fiberhmm.assoc.condition import LocusTable
+    from fiberhmm.nuc.records import make_molecule
+    nucs = [(int(d - 73), int(d + 74)) for d in np.arange(200, 5000, 190)]
+    good = make_molecule(4000, nucs=[n for n in nucs if n[1] <= 4000], name='m/9/ccs', chrom='c', ref_start=0,
+                         ref_end=4000, blocks=np.array([[0, 0, 4000]]))
+    blind = make_molecule(5000, nucs=nucs, informative=np.zeros(5000, bool), name='m/9/ccs2', chrom='c',
+                          ref_start=0, ref_end=5000, blocks=np.array([[0, 0, 5000]]))
+    loci = LocusTable(['a'], ['c'], [1910], [True], [-1])
+    for order in ([good, blind], [blind, good]):
+        app, _b, _i = N.anchor_appearances(order, loci, P=190.0, state_fn=lambda mol, a, l: '0')
+        assert len(app.locus) == 1
+
+
+def test_merged_scan_molecule_keeps_every_qname(tmp_path):
+    from fiberhmm.assoc import scanio as S
+    scan = _write_marks_scan(tmp_path, [('r1', 'mol:v1 a', [(0, 500, 1)], [100]),
+                                        ('r2', 'mol:v1 a', [(2000, 2500, 2)], [2100])])
+    d = S.rate_data_from_marks(S.open_scan(scan), 'nuc.seg.regular', 'tf')
+    assert d.n == 1 and set(d.labels['qname'][0]) == {'qr1', 'qr2'}

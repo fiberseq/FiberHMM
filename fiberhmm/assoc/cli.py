@@ -117,8 +117,12 @@ def run(args) -> dict:
         d = S.rate_data_from_marks(scan, args.a, args.b or 'tf', regions)
         if gkind == 'haplotype' or args.labels:
             mi = S.MoleculeIndex()
-            idx = [mi.add(m, ds, q) for m, ds, q in zip(d.labels['molecule'], d.labels['dataset'],
-                                                        d.labels['qname'])]
+            idx = []
+            for m, ds, qs in zip(d.labels['molecule'], d.labels['dataset'], d.labels['qname']):
+                qs = (qs,) if isinstance(qs, str) else (tuple(qs) or ('',))
+                idx.append(mi.add(m, ds, qs[0]))
+                for q in qs[1:]:                  # every record of the molecule, so conflicting HP tags unphase it
+                    mi.add(m, ds, q)
             mt = S.molecule_table(scan, mi, haplotype_tag=args.haplotype_tag if gkind == 'haplotype' else None,
                                   regions=regions, labels_tsv=args.labels)
             for k, v in mt.labels.items():

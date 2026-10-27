@@ -245,7 +245,8 @@ def rate_data_from_marks(scan, a_type: str, b_type: str, regions=None, min_tf_bp
     Every physical molecule is one unit per contig: the records of a molecule (overlapping or not) are merged,
     their admissible stretches and A intervals united and their B points de-duplicated (points within
     ``point_tolerance`` bp are one point). With ``regions`` the windows are united, rows fetched twice are read
-    once, and geometry and points are clipped to the windows."""
+    once, and geometry and points are clipped to the windows. ``labels['qname']`` holds every contributing QNAME
+    of the molecule (for haplotype lookup)."""
     from fiberhmm.assoc.rate import RateData, compress
     require_tables(scan, ['nuc/marks.tsv.bgz'], 'rate')
     code = NUCSEG_KIND.get(a_type)
@@ -319,7 +320,7 @@ def rate_data_from_marks(scan, a_type: str, b_type: str, regions=None, min_tf_bp
             continue
         L.append(n); IV.append(iv); PT.append(pp); JN.append(junc)
         CH.append(chrom); MID.append((adm[0][0] + adm[-1][1]) // 2); MOL.append(m)
-        DS.append(ds); QN.append(min(d['qnames']) if d['qnames'] else '')
+        DS.append(ds); QN.append(tuple(sorted(d['qnames'])))
     return RateData(np.array(L, np.int64), IV, PT, np.array(CH, dtype=object), np.array(MID, np.int64),
                     np.array([f'{ds}|{m}' for ds, m in zip(DS, MOL)], dtype=object),
                     labels={'dataset': np.array(DS, dtype=object), 'qname': np.array(QN, dtype=object),
