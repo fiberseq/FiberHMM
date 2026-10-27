@@ -200,6 +200,12 @@ def territory_runs(zones: Sequence[Tuple[ScanUnit, Optional[Mapping[str, object]
         u = zones[k][0]
         return (u.right if step > 0 else u.left) is not None
 
+    def next_missing(k, step):
+        """The zone after zone k in direction step is planned, contiguous and has no result."""
+        nxt = k + step
+        return (0 <= nxt < n and (contiguous(k, nxt) if step > 0 else contiguous(nxt, k))
+                and kind[nxt] == 'missing')
+
     def extend(i, step):
         """Zero padding beyond zone i in direction step: (bases, reached_missing, first_zone_index_used)."""
         got, k, last = 0, i, i
@@ -215,13 +221,13 @@ def territory_runs(zones: Sequence[Tuple[ScanUnit, Optional[Mapping[str, object]
                 return got, False, last
             zl = zones[nxt][0].zone_end - zones[nxt][0].zone_start
             if limit is None:
-                return zl, plan_edge_open(nxt, step), nxt
+                return zl, plan_edge_open(nxt, step) or next_missing(nxt, step), nxt
             take = min(zl, limit - got)
             got += take
             last = nxt
             if got >= limit:
-                # the padding ends exactly at the plan's edge: still open there
-                return got, take == zl and plan_edge_open(nxt, step), last
+                # the padding ends exactly at the plan's edge, or next to a zone without a result: open there
+                return got, take == zl and (plan_edge_open(nxt, step) or next_missing(nxt, step)), last
             k = nxt
 
     runs = []

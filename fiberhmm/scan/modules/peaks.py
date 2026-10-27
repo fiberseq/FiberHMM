@@ -172,8 +172,8 @@ class PeaksModule(ScanModuleBase):
         ordinals = sorted({int(k.split('.', 1)[1]) for k in tracks if k.startswith('num.')})
         params = {k: settings[k] for k in DEFAULTS}
         # an open end (a planned zone without a result, or the edge of a --zones plan) zero-pads the smoothing
-        # there; a hit within the smoothing's reach of it (the stitch support) can differ from the whole
-        # contig's and is flagged open_end
+        # there; a hit that may depend on it (edge_dependent_regions: through the smoothing and the tiers'
+        # masks), or that lies within the stitch support of it, is flagged open_end
         reach = int(self.stitch_support_bp(settings))
         for i, (start, end, left_open, right_open) in enumerate(territory):
             nums = {o: tracks[f'num.{o}'][i] for o in ordinals}
@@ -184,6 +184,8 @@ class PeaksModule(ScanModuleBase):
                 if len(ordinals) > 1 else dens[ordinals[0]]
             n_reads = int(tracks['nreads'][i][0]) if rule == 'window' else 0
             res = scan_peaks(num, den, n_reads=n_reads, rule=rule, params=params)
+            dependent = edge_dependent_regions(res, den, params, rule, left_open, right_open) \
+                if (left_open or right_open) else set()
             names = (calibration or {}).get('datasets') or {}
             per_ds = {}
             if len(ordinals) > 1:
@@ -195,7 +197,8 @@ class PeaksModule(ScanModuleBase):
                     seg = res['smoothed'][s:e]
                     summit = s + int(np.argmax(seg)) if len(seg) else s
                     flags = []
-                    if (left_open and s < reach) or (right_open and e > len(den) - reach):
+                    if (left_open and s < reach) or (right_open and e > len(den) - reach) or \
+                            (s, e, int(p['layer'])) in dependent:
                         flags.append('open_end')
                     a, b = start + s, start + e
                     key = f'{kind}:{a}-{b}'
@@ -219,3 +222,62 @@ class PeaksModule(ScanModuleBase):
                         out.values.append(Value(key, names.get(str(o), str(o)), 'dataset', 'mean_signal',
                                                 float(ds_seg.mean()) if len(ds_seg) else None))
         return out
+
+
+def edge_dependent_regions(res, total, params, rule, left_open, right_open):
+    """(start, end, layer) of every tier region (peak or broad stretch) of one territory run that may differ
+    from the whole contig's because the run has an open end.
+
+    The smoothed signal can differ within ``smooth_width`` of an open end (all of it when the run is shorter
+    than the kernel, which is then clamped); per-base totals never differ. Outside the uncertain bases the
+    signal and the masks are the same as on the whole contig, so a region of a tier can differ only if it, or
+    a base next to it, is uncertain. Such a region's mask (``smooth_width // 4`` on each side) is uncertain
+    in the next tiers, as is the band ``smooth_width // 4`` around every uncertain base (a region the whole
+    contig has there and this run does not). The loop replays ``peaks_core.detect_threshold_layers``."""
+    from ..peaks_core import _find_threshold_regions
+    smoothed = np.asarray(res['smoothed'])
+    L = len(smoothed)
+    sw = int(params['smooth_width'])
+    sw4 = sw // 4
+    unsure = np.zeros(L, dtype=bool)
+    if L <= sw:
+        unsure[:] = True
+    else:
+        if left_open:
+            unsure[:sw] = True
+        if right_open:
+            unsure[max(0, L - sw):] = True
+    masked = np.zeros(L, dtype=bool)
+    local_ok = (np.asarray(total) >= int(params['min_reads'])) if rule == 'local' else None
+    max_width = int(params.get('max_peak_width') or 0)
+    out = set()
+
+    def dilate(mask, k):
+        if k <= 0 or not mask.any():
+            return mask.copy()
+        idx = np.flatnonzero(np.diff(np.concatenate([[0], mask.astype(np.int8), [0]])))
+        grown = np.zeros(L, dtype=bool)
+        for a, b in zip(idx[::2], idx[1::2]):
+            grown[max(0, a - k):min(L, b + k)] = True
+        return grown
+    for layer, threshold, _label in res['thresholds']:
+        starts, ends = _find_threshold_regions(smoothed, threshold, masked, local_ok if layer == 3 else None)
+        new_unsure = dilate(unsure, sw4)
+        for a, b in zip(starts, ends):
+            a, b = int(a), int(b)
+            if unsure[max(0, a - 1):min(L, b + 1)].any():
+                out.add((a, b, layer))
+                new_unsure[max(0, a - sw4):min(L, b + sw4)] = True
+            width = b - a
+            if width < int(params['min_width']):
+                continue
+            if max_width > 0 and width > max_width:
+                masked[max(0, a - sw4):min(L, b + sw4)] = True
+                continue
+            if layer == 3:
+                pc = np.asarray(total)[a:b]
+                if (int(pc.mean()) if pc.size > 0 else 0) < int(params['min_reads']):
+                    continue
+            masked[max(0, a - sw4):min(L, b + sw4)] = True
+        unsure = new_unsure
+    return out

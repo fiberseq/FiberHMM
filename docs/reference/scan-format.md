@@ -102,9 +102,10 @@ span, zone), not by the plan. A scan extended with more units
 the genome grid, reuses every unit it shares with an earlier scan in the
 same directory. Footprint classes and NFRs of units whose two grid
 neighbours are planned are the same in both; at an edge they fall back to
-the anchor-in-zone rule. Peaks and patches near an edge (peaks: within
-`smooth_width + min_width` of it) are flagged `open_end`; every unflagged
-one is the genome scan's. nuc's patches are a Benjamini-Hochberg selection over the
+the anchor-in-zone rule. Peaks and patches that may depend on what lies
+beyond an edge (peaks: within `smooth_width + min_width` of it, or tied to it
+through the smoothing and the tiers' masks) are flagged `open_end`; every
+unflagged one is the genome scan's. nuc's patches are a Benjamini-Hochberg selection over the
 windows a scan tests, so a smaller scan can select other patches from the
 same window statistics; its molecule-wide rows (marks, molecules, annotated
 groups) do not depend on the plan.

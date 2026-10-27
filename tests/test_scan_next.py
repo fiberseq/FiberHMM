@@ -335,3 +335,58 @@ def test_whole_molecule_legacy_calls_of_reverse_supplementaries_are_carried(tmp_
     assert sorted(int(r['start']) for r in rows) == [1000, 3000, 5000]
     m = json.loads((tmp_path / 'scan' / 'manifest.json').read_text())
     assert m['status']['records_not_carried'] == {'molly': 1}
+
+
+def _peaks_stitch(m, settings, start, num, den, left_open, right_open):
+    out = m.stitch('c', [(start, start + len(num), left_open, right_open)], {'num.0': [num], 'den.0': [den]},
+                   settings, {'tier_rule': 'local', 'row_rule': 'records', 'datasets': {'0': 'd'}})
+    return out.hits
+
+
+def test_unflagged_peaks_of_an_open_run_equal_the_whole_contig(tmp_path):
+    """Randomised: a run with open ends (a --zones subset, a missing neighbour) flags every peak that may
+    depend on the unscanned bases, through the smoothing and the tiers' masks; every unflagged peak equals
+    the whole contig's (review cases: mask propagation beyond smooth_width + min_width)."""
+    import numpy as np
+    from fiberhmm.scan.modules.peaks import PeaksModule
+    m = PeaksModule()
+    rng = np.random.default_rng(11)
+    # Codex round-2 case: tier masks move a Weak peak 52 bp from the edge (smooth 40, min width 10)
+    s = m.resolve({'smooth_width': 40, 'min_width': 10})
+    den = np.full(1000, 100, np.int32)
+    num = np.zeros(1000, np.int32)
+    num[:277], num[277:285], num[285:293], num[293:438] = 64, 35, 28, 18
+    whole = {(h.start, h.end, h.columns['tier']) for h in _peaks_stitch(m, s, 0, num, den, False, False)}
+    part = _peaks_stitch(m, s, 250, num[250:750], den[250:750], True, True)
+    assert all((h.start, h.end, h.columns['tier']) in whole for h in part if 'open_end' not in h.flags)
+    assert any('open_end' in h.flags and h.end == 425 for h in part)
+    trials = 0
+    for _ in range(300):
+        sw = int(rng.choice([10, 40, 100, 240]))
+        mw = int(rng.choice([1, 10, 80]))
+        s = m.resolve({'smooth_width': sw, 'min_width': mw, 'max_peak_width': int(rng.choice([0, 300, 2000]))})
+        L = 3000
+        den = rng.integers(0, 30, L).astype(np.int32)
+        level = np.repeat(rng.uniform(0, 1, L // 50), 50)
+        num = np.minimum(den, rng.binomial(den, level)).astype(np.int32)
+        whole = {(h.start, h.end, h.columns['tier'], h.score) for h in _peaks_stitch(m, s, 0, num, den, False, False)}
+        a = int(rng.integers(0, L // 2))
+        b = int(rng.integers(a + 1, L + 1))
+        lo, ro = a > 0, b < L
+        for h in _peaks_stitch(m, s, a, num[a:b], den[a:b], lo, ro):
+            trials += 1
+            if 'open_end' not in h.flags:
+                assert (h.start, h.end, h.columns['tier'], h.score) in whole, (sw, mw, a, b, h.start, h.end)
+    assert trials > 500
+
+
+def test_padding_next_to_a_missing_zone_is_open():
+    import numpy as np
+    from fiberhmm.scan.seams import territory_runs
+    u, _ = plan({'chrS': 750}, genome=True, unit_bp=500, stride_bp=250)
+    r = territory_runs([(u[0], {'x': np.ones(250)}, 'ok'), (u[1], None, 'empty'), (u[2], None, 'missing')],
+                       pad_bp=250)
+    assert r[0][3:] == (False, True)
+    r = territory_runs([(u[0], {'x': np.ones(250)}, 'ok'), (u[1], None, 'empty'), (u[2], None, 'missing')],
+                       pad_bp=None)
+    assert r[0][3:] == (False, True)

@@ -56,9 +56,9 @@ are listed, so listing the BAMs in another order gives the same scan.
   ids, spans and zones as in a `--genome` scan, so a genome scan can reuse
   them and they can reuse a genome scan's (see Resuming). A `--region`
   instead plans its own grid from the window's start, clipped to it. At the
-  edges of a `--zones` scan the grid goes on unscanned: a peak near the edge
-  (within `smooth_width + min_width`) or a patch that reaches it is flagged
-  `open_end`, and a footprint class or NFR at the edge is kept by its anchor
+  edges of a `--zones` scan the grid goes on unscanned: a peak that may depend
+  on what lies beyond the edge (near it, or tied to it through the tiers'
+  masks) or a patch that reaches it is flagged `open_end`, and a footprint class or NFR at the edge is kept by its anchor
   (no neighbour to reconcile with).
 - **BED units and short windows.** Each interval is a unit and owns all of
   itself. Overlapping or touching intervals are merged; an interval longer
