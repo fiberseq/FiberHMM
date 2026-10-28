@@ -478,7 +478,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--vg` | — | vg binary or wrapper script (default: vg on PATH) |
 | `--ft` | — | vg engine, BAM: fibertools-rs ft binary for its pg-pansn stages (default: ft on PATH) |
 | `-t` / `--threads` | `4` | Threads for vg, sorting and BAM I/O (default: 4) |
-| `--repair-only` | off | Only repair -i, a BAM already lifted by a vg-based tool (vg inject/surject); needs --source unless fiberhmm-lift stashed it |
+| `--repair-only` | off | Only repair -i, a BAM already lifted by a vg-based tool (vg inject/surject); needs --source unless fiberhmm-lift stashed it. Orphan supplementaries are kept with Yo:i:1 and 0x800 |
 | `--bed` | off | -i is a BED file: BED12(+N) rows (fiberhmm-extract) are lifted block by block and reassembled, other BED files row by row |
 | `--source` | — | --repair-only: the BAM that was lifted |
 | `--source-fasta` | — | --bed --engine vg: FASTA of the source assembly (each interval's sequence is surjected) |

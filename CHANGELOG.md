@@ -4,6 +4,18 @@
 
 ### Added
 
+- Scan API contracts v1.11 (`CONTRACTS.md`): iterable/callback record evidence
+  for `run_units`, sharing every module's BAM loaders and calibrations.
+- Public `fiberhmm.nuc.record_outputs` and `measured_track` helpers;
+  cached contracts/header/context in `read_nuc_groups`, with one MA parse.
+- Cooperative association cancellation/progress callbacks, dataset-specific
+  phasing calibration, M1 pooled 2×2 counts, and cross-scan M3 state inputs.
+  Explicit empty scanio windows now select nothing.
+- Fibertools-called BAMs can receive scan annotations without a FiberHMM
+  molecular declaration; the last footprint caller on every PG chain decides.
+- Lift repair retains orphan supplementaries with `Yo:i:1` and 0x800;
+  `fiberhmm-scan --inspect` now reports `units.zones`.
+
 - **`fiberhmm.assoc`** (feature hub association statistics) and
   **`fiberhmm-scan assoc`**: per-molecule co-occurrence of two feature types
   (M1), state-conditioned response at anchors against matched backgrounds

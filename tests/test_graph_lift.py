@@ -301,7 +301,7 @@ def test_hard_clipped_supplementary_without_primary_is_excluded_and_recorded(tmp
     assert "calmd=no" in pg["DS"] and "MD/NM/SA dropped" in pg["DS"]
 
 
-def test_orphan_supplementary_is_dropped_when_its_primary_does_not_lift(tmp_path):
+def test_orphan_supplementary_is_marked_when_its_primary_does_not_lift(tmp_path):
     header = _source_header()
     src = _write(tmp_path / "o.bam", header, [
         lambda h: _read(h, "q", seq=_seq(50)),
@@ -318,9 +318,12 @@ def test_orphan_supplementary_is_dropped_when_its_primary_does_not_lift(tmp_path
                 out.write(rec)
     stats = gl.repair_bam(str(tmp_path / "o.lifted2.bam"), str(tmp_path / "o.out.bam"),
                           work_dir=str(tmp_path / "o.work"), pg_args={"mode": "lift"})
-    assert stats.orphan_supplementary_dropped == 1 and stats.records_out == 0
-    # 0x800 restored on a record that was then dropped is not reported.
-    assert stats.supplementary_restored == 0
+    assert stats.orphan_supplementary_dropped == 0 and stats.records_out == 1
+    assert stats.orphan_supplementary_kept == 1
+    assert stats.supplementary_restored == 1
+    records, _ = _records(tmp_path / "o.out.bam")
+    assert records[0].is_supplementary
+    assert records[0].get_tag("Yo") == 1
 
 
 def test_supplementaries_without_a_primary_in_the_input_are_counted_at_stash(tmp_path):
@@ -347,7 +350,7 @@ def test_supplementaries_without_a_primary_in_the_input_are_counted_at_stash(tmp
     assert repair.supplementary_restored == 2 and repair.orphan_supplementary_dropped == 0
     out, hdr = _records(tmp_path / "np.out.bam")
     soft = [r for r in out if r.query_name == "soft"]
-    assert len(soft) == 1 and soft[0].is_supplementary and not soft[0].has_tag("Yo")
+    assert len(soft) == 1 and soft[0].is_supplementary and soft[0].get_tag("Yo") == 1
     assert soft[0].query_sequence == _seq(50) and soft[0].cigarstring == "20S30M"
     ds = next(pg for pg in hdr["PG"] if pg["ID"] == "fiberhmm-lift")["DS"]
     assert "orphan_supplementary_no_primary_in_input=1" in ds
@@ -1573,7 +1576,7 @@ def test_repair_only_keeps_soft_clipped_supplementary_without_primary_in_source(
         lambda h: _read(h, "gone", flag=0x800, pos=900, cigar="20S30M", seq=_seq(50, 2)),
     ])
     projected = _fake_lift(source, tmp_path / "lifted.bam", flip=True)
-    # The lift lost gone's primary: its supplementary must still be dropped.
+    # The remaining record named gone is ambiguous against the source and is still excluded.
     records, hdr = _records(projected)
     with pysam.AlignmentFile(str(tmp_path / "lifted2.bam"), "wb",
                              header=pysam.AlignmentHeader.from_dict(hdr)) as out:
@@ -1585,4 +1588,24 @@ def test_repair_only_keeps_soft_clipped_supplementary_without_primary_in_source(
                       "-o", str(out), "--tmp-dir", str(tmp_path)]) == 0
     kept, _ = _records(out)
     assert [(r.query_name, r.is_supplementary, r.has_tag("Yo")) for r in kept] == [
-        ("orphan", True, False)]
+        ("orphan", True, True)]
+
+
+def test_native_split_supplementary_without_lifted_primary_is_marked(tmp_path):
+    src = _write(tmp_path / 'src.bam', _source_header(), [
+        lambda h: _read(h, 'split', cigar='50M', seq=_seq(50))])
+    stashed = tmp_path / 'stash.bam'
+    gl.stash_bam(src, str(stashed))
+    lifted = _liftbam_like(stashed, tmp_path / 'lifted.bam', split_at=15)
+    records, hdr = _records(lifted)
+    partial = tmp_path / 'partial.bam'
+    with pysam.AlignmentFile(str(partial), 'wb', header=hdr) as bam:
+        for r in records:
+            if r.is_supplementary:
+                bam.write(r)
+    out = tmp_path / 'out.bam'
+    stats = gl.repair_bam(str(partial), str(out), work_dir=str(tmp_path / 'work'))
+    kept, hdr = _records(out)
+    assert stats.orphan_supplementary_kept == 1 and stats.records_out == 1
+    assert kept[0].is_supplementary and kept[0].get_tag('Yo') == 1
+    assert 'orphan_supplementary_marked=1' in hdr['PG'][-1]['DS']

@@ -110,8 +110,12 @@ since it carries its own `SEQ`, calls and modifications
 (`orphan_supplementary_kept`); a hard-clipped one has nothing to fill its
 clips from and is left out before the lift
 (`orphan_supplementary_no_primary_in_input`). Supplementaries whose primary
-was in the input but did not lift are dropped after it
-(`orphan_supplementary_dropped`). The counts are printed and recorded in the
+was in the input but did not lift are retained after repair, with 0x800 and
+`Yo:i:1`. The same tag marks retained input orphans. The repair counts them
+as `orphan_supplementary_kept`, records `orphan_supplementary_marked` in PG,
+and keeps the compatibility counter `orphan_supplementary_dropped` at zero.
+Supplementaries with a lifted primary have no Yo tag. Ambiguous source
+matches in repair-only mode are still excluded. The counts are printed and recorded in the
 `fiberhmm-lift` `@PG`, which also declares `coord=molecular`:
 
 ```text

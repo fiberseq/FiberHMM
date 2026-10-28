@@ -1024,7 +1024,8 @@ class RepairStats:
     records_in: int = 0
     records_out: int = 0
     supplementary_restored: int = 0
-    orphan_supplementary_dropped: int = 0
+    orphan_supplementary_dropped: int = 0  # compatibility; always zero
+    orphan_supplementary_kept: int = 0
     strand_flipped: int = 0
     st_swapped: int = 0
     hard_clips_restored: int = 0
@@ -1232,6 +1233,7 @@ def lift_pg_record(*, repair: RepairStats, calmd: bool, mode: str = "lift",
         if key in stash:
             parts.append(f"{key}={stash[key]}")
     parts.append(f"orphan_supplementary_dropped={repair.orphan_supplementary_dropped}")
+    parts.append(f"orphan_supplementary_marked={repair.orphan_supplementary_kept}")
     parts.append(f"st_swapped={repair.st_swapped}")
     parts.append(f"mapq={mapq} provenance_tags={TAG_SOURCE_MAPQ},{TAG_SOURCE_LOCUS}")
     return {
@@ -1281,7 +1283,7 @@ def repair_bam(lifted_path: str, out_path: str, *, work_dir: str,
 
     Passes over the lifted BAM: (1) count what the repair will do (for the
     @PG) and find the QNAMEs with a supplementary; (2) for those, which have
-    a lifted primary; (3) repair, drop orphan supplementaries and write with
+    a lifted primary; (3) repair, mark orphan supplementaries with Yo:i:1 and write with
     the rechained header plus the fiberhmm-lift @PG. Then sort; with
     ``target_fasta`` recompute MD/NM (``samtools calmd``) and rebuild SA;
     index. ``pg_args`` are :func:`lift_pg_record` keywords; ``source_pgs``
@@ -1306,19 +1308,17 @@ def repair_bam(lifted_path: str, out_path: str, *, work_dir: str,
             if read.is_supplementary:
                 supp_counts[read.query_name] += 1
     primary_names = set()
-    kept_orphans = set()
     if supp_counts:
         with pysam.AlignmentFile(lifted_path, "rb", check_sq=False, threads=threads) as bam:
             for read in bam.fetch(until_eof=True):
                 if (read.query_name in supp_counts and read.has_tag(TAG_FLAG)
                         and not int(read.get_tag(TAG_FLAG)) & (_SUPP | _SECONDARY)
-                        and not read.is_unmapped):
+                        and not read.is_unmapped and not read.is_supplementary
+                        and not read.is_secondary):
                     primary_names.add(read.query_name)
-                if read.query_name in supp_counts and read.has_tag(TAG_ORPHAN):
-                    kept_orphans.add(read.query_name)
-    planned.orphan_supplementary_dropped = sum(
+    planned.orphan_supplementary_kept = sum(
         n for name, n in supp_counts.items()
-        if name not in primary_names and name not in kept_orphans)
+        if name not in primary_names)
     if target_fasta:
         validate_target_fasta(header, target_fasta, used_contigs)
 
@@ -1336,12 +1336,11 @@ def repair_bam(lifted_path: str, out_path: str, *, work_dir: str,
         for read in bam.fetch(until_eof=True):
             stats.records_in += 1
             lifted_supplementary = read.is_supplementary
-            input_orphan = read.has_tag(TAG_ORPHAN)
             repair_record(read, stats, mapq)
             if read.is_supplementary:
-                if read.query_name not in primary_names and not input_orphan:
-                    stats.orphan_supplementary_dropped += 1
-                    continue
+                if read.query_name not in primary_names:
+                    read.set_tag(TAG_ORPHAN, 1, value_type="i")
+                    stats.orphan_supplementary_kept += 1
                 multi.add(read.query_name)
                 if not lifted_supplementary:
                     stats.supplementary_restored += 1    # counted only when written

@@ -57,7 +57,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 import numpy as np
 
 from . import ScanModuleBase
-from ..types import (FeatureTypeDecl, Hit, MAGroupDecl, Mark, MoleculeResult, ScalarCodec, ScoreDecl,
+from ..types import (FeatureTypeDecl, Hit, MAGroupDecl, MoleculeResult, ScalarCodec, ScoreDecl,
                      StitchResult, UnitResult, Value)
 
 CAL_SCHEMA = 'fiberhmm.nuc.scan_calibration.v1'
@@ -268,31 +268,11 @@ class NucModule(ScanModuleBase):
 
     # ------------------------------------------------------------------ molecule-wide outputs
     def molecule_outputs(self, molecule, settings, calibration) -> Optional[MoleculeResult]:
-        from fiberhmm.nuc.molecule import molecule_outputs as nuc_outputs
-        from fiberhmm.nuc.records import decode_record
-        from fiberhmm.nuc.tags import NUCMOL, encode_nucmol, group_rows  # noqa: F401
+        from fiberhmm.nuc.scan import record_outputs
         params = self._params(settings)
-        rec = molecule.record
-        read = molecule.read
-        cal = self._cal(calibration, rec.dataset_id)
-        ctx = self._context(rec.dataset_id, rec.input_index, read.header, params)
-        mol, _why = decode_record(read, ctx)
-        if mol is None:
-            return None
-        res = nuc_outputs(mol, params, cal)
-        marks: List[Mark] = []
-        for group, (spec, rows) in group_rows(res).items():
-            if group == NUCMOL:
-                continue
-            for s, n, q, name in rows:
-                a, b = _ref_envelope(mol, s, s + n)
-                marks.append(Mark(rec, group, rec.chrom, a, b, tuple(int(x) for x in q), name, (int(s), int(n))))
-        scalars = {k: (None if v is None or not np.isfinite(v) else float(v)) for k, v in res.scalars.items()}
-        from fiberhmm.nuc.tags import FLAG_BITS
-        scalars['flags'] = float(sum(1 << i for i, k in enumerate(FLAG_BITS) if res.flags.get(k)))
-        from fiberhmm.nuc.tags import digest_pieces
-        scalars['calls_digest_hi'], scalars['calls_digest_lo'] = digest_pieces(res.digest)
-        return MoleculeResult(rec, scalars, marks)
+        ctx = self._context(molecule.record.dataset_id, molecule.record.input_index, molecule.read.header, params)
+        return record_outputs(molecule.read, molecule.record, self._cal(calibration, molecule.record.dataset_id),
+                              params=params, context=ctx)[2]
 
     # ------------------------------------------------------------------ unit tracks
     def run_unit(self, unit, inputs, settings, calibration, upstream, work: Path, progress) -> UnitResult:
@@ -300,7 +280,7 @@ class NucModule(ScanModuleBase):
         from fiberhmm.nuc.enrichment import MeasuredTrack, grid_windows, window_test
         from fiberhmm.nuc.molecule import molecule_outputs as nuc_outputs
         from fiberhmm.nuc.records import decode_record
-        from fiberhmm.nuc.segment import DISORDERED, LOWINFO, REGULAR, UNDETERMINED
+        from fiberhmm.nuc.segment import REGULAR
         from fiberhmm.scan.reads import iter_records
         params = self._params(settings)
         z0, z1 = unit.zone_start, unit.zone_end
@@ -337,7 +317,6 @@ class NucModule(ScanModuleBase):
             groups_seen.append(ds.dataset_id)
             if haps:
                 groups_seen += [f'{ds.dataset_id}:HP1', f'{ds.dataset_id}:HP2']
-        state_key = {REGULAR: 'reg', DISORDERED: 'dis', UNDETERMINED: 'und', LOWINFO: 'low'}
         for ds in inputs.datasets:
             cal = self._cal(calibration, ds.dataset_id)
             for i, path in enumerate(ds.paths):
@@ -362,25 +341,13 @@ class NucModule(ScanModuleBase):
                         # reference intervals: aligned blocks; segment and event envelopes
                         blocks = [(int(r0), int(r0 + ln)) for _q0, r0, ln in mol.blocks] \
                             if mol.blocks is not None else []
-                        kind_ref: Dict[str, List[Tuple[int, int]]] = {k: [] for k in SEG_METRICS}
-                        q_ref: List[Tuple[int, int, float]] = []
+                        from fiberhmm.nuc.scan import measured_track
+                        measured, kind_ref = measured_track(mol, res)
+                        q_ref = []
                         for sgm in res.segments:
                             env = mol.mol_interval_to_ref(sgm.start, sgm.end)
-                            if env is None or env[1] <= env[0]:
-                                continue
-                            kind_ref[state_key[sgm.state]].append((int(env[0]), int(env[1])))
-                            if sgm.state == REGULAR and sgm.q_hat:
+                            if env is not None and sgm.state == REGULAR and sgm.q_hat:
                                 q_ref.append((int(env[0]), int(env[1]), float(sgm.q_hat)))
-                        for ev in res.events:
-                            env = mol.mol_interval_to_ref(ev.start, ev.end)
-                            if env is not None and env[1] > env[0]:
-                                kind_ref['uds' if ev.kind == 16 else 'mis'].append((int(env[0]), int(env[1])))
-                        # measured: aligned bases inside decoded segments, outside
-                        # low information (read ends beyond the outer dyads and
-                        # NFR-length MSPs are not segmented, so not measured)
-                        seg_cov = _union_iv(kind_ref['reg'] + kind_ref['dis'] + kind_ref['und'])
-                        measured = _intersect_iv(_union_iv(blocks), seg_cov)
-                        measured = _subtract_iv(measured, kind_ref['low'])
                         cov = mask(blocks)
                         meas = mask(measured)
                         kmask = {k: mask(kind_ref[k]) for k in SEG_METRICS}

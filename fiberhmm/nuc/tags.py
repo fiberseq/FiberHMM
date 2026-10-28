@@ -226,21 +226,21 @@ class _Calls:
         self.nucs, self.tfs, self.msps = _as_intervals(nucs), _as_intervals(tfs), _as_intervals(msps)
 
 
-def record_calls_digest(read) -> Optional[str]:
+def record_calls_digest(read, *, header=None, context=None, parsed=None, tags=None) -> Optional[str]:
     """Digest of a record's current nuc/tf/msp calls, read from MA alone (no
     marks needed, so hard-clipped records work). None without calls or when
     the header leaves the frame undecided."""
     from fiberhmm.nuc.records import FrameContext, _footprints_from_legacy, _footprints_from_ma
     from fiberhmm.io.ma_tags import annotation_tags
-    hdr = getattr(read, 'header', None)
+    hdr = header if header is not None else getattr(read, 'header', None)
     if hdr is None:
         return None
-    ctx = FrameContext(hdr)            # frames only: no observation mode needed
-    tags = annotation_tags(read)
+    ctx = context if context is not None else FrameContext(hdr)            # frames only: no observation mode needed
+    tags = annotation_tags(read) if tags is None else tags
     fp = None
     if tags is not None:
         length = int(str(tags[0]).split(';', 1)[0])
-        fp = _footprints_from_ma(read, ctx, length)
+        fp = _footprints_from_ma(read, ctx, length, parsed=parsed, tags=tags)
     if fp is None:          # no MA, or an MA without footprint groups
         fp = _footprints_from_legacy(read, ctx, int(read.query_length or 0))
         if fp is None and tags is not None:
@@ -251,8 +251,12 @@ def record_calls_digest(read) -> Optional[str]:
     return _digest(_Calls(fp['nuc'], fp['tf'], fp['msp']))
 
 
-def read_nuc_groups(read, mol=None, check_digest: bool = True) -> Dict[str, dict]:
+def read_nuc_groups(read, mol=None, check_digest: bool = True, *, contracts=None, header=None, context=None) -> Dict[str, dict]:
     """Parse the nuc groups of one record.
+
+    ``contracts`` skips header contract parsing; ``header`` overrides the record
+    header. Pass cached ``context`` (or decoded ``mol``) to skip frame parsing
+    too. Digest checking reuses the parsed MA groups.
 
     Returns ``{group: {'intervals': [(start, length)], 'q': [[...]],
     'digest': str, 'stale': bool, 'version': int}}`` plus decoded scalars
@@ -287,14 +291,14 @@ def read_nuc_groups(read, mol=None, check_digest: bool = True) -> Dict[str, dict
         return out
     # layout versions: a header contract declaring another version, or a
     # nucmol of the wrong length, is not ours to decode
-    hdr = getattr(read, 'header', None)
-    contracts = {}
-    if hdr is not None:
+    hdr = header if header is not None else getattr(read, 'header', None)
+    if contracts is None and hdr is not None:
         try:
             from fiberhmm.io.scan_ma import scan_contracts
             contracts = scan_contracts(hdr)
         except Exception:
             contracts = {}
+    contracts = contracts or {}
     for name, g in out.items():
         declared = contracts.get(name, {}).get('group_version')
         if declared is not None:
@@ -310,7 +314,7 @@ def read_nuc_groups(read, mol=None, check_digest: bool = True) -> Dict[str, dict
         vals, _flags = decode_nucmol(supported[NUCMOL]['q'][0])
         supported[NUCMOL]['digest_pieces'] = (vals.get('calls_digest_hi'), vals.get('calls_digest_lo'))
     if check_digest:
-        current = record_calls_digest(read) if mol is None else _digest(mol)
+        current = record_calls_digest(read, header=header, context=context, parsed=parsed, tags=tags) if mol is None else _digest(mol)
         for name, g in supported.items():
             if name == NUCMOL:
                 g['stale'] = current is None or g.get('digest_pieces') != digest_pieces(current)

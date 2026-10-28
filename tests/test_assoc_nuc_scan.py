@@ -496,3 +496,32 @@ def test_merged_scan_molecule_keeps_every_qname(tmp_path):
                                         ('r2', 'mol:v1 a', [(2000, 2500, 2)], [2100])])
     d = S.rate_data_from_marks(S.open_scan(scan), 'nuc.seg.regular', 'tf')
     assert d.n == 1 and set(d.labels['qname'][0]) == {'qr1', 'qr2'}
+
+
+def test_scanio_cross_scan_states_and_explicit_empty_regions(tmp_path):
+    from fiberhmm.assoc import scanio as S
+    from fiberhmm.scan.tables import TableWriter
+    marks = _write_marks_scan(tmp_path / 'a', [('r0', 'mol0', [(100, 900, 1)], [])])
+    other = tmp_path / 'b'
+    other.mkdir()
+    common = ['chrom', 'start', 'end', 'idx_start', 'idx_end']
+    writer = TableWriter(other / 'fp' / 'hits.tsv.bgz', common + ['hit_id', 'type'], {'chrT': 0})
+    writer.add('chrT', 300, 350, ['h0', 'fp.class'])
+    hits = writer.close()
+    writer = TableWriter(other / 'fp' / 'states.tsv.bgz', common + [
+        'hit_id', 'dataset_id', 'input_index', 'qname', 'record', 'molecule', 'state'], {'chrT': 0})
+    writer.add('chrT', 300, 350, ['h0', 'd1', 0, 'q0', 'r0', 'mol0', '1'])
+    states = writer.close()
+    manifest = json.loads((marks / 'manifest.json').read_text())
+    manifest['outputs']['tables'] = {'fp/hits.tsv.bgz': hits, 'fp/states.tsv.bgz': states}
+    (other / 'manifest.json').write_text(json.dumps(manifest))
+    a, b = S.open_scan(marks), S.open_scan(other)
+    data = S.rate_data_from_marks(a, 'nuc.seg.regular', 'fp.class', b_scan=b)
+    assert data.n == 1 and len(data.points[0]) == 1
+    assert S.rate_data_from_marks(a, 'nuc.seg.regular', 'fp.class', b_scan=b, regions=[]).n == 0
+    assert S.territory(a, regions=[]) == []
+    assert list(S._rows(a, 'nuc/marks.tsv.bgz', [])) == []
+    manifest['frame'] = {'kind': 'lifted'}
+    (other / 'manifest.json').write_text(json.dumps(manifest))
+    with pytest.raises(S.ScanInputError, match='coordinate frame'):
+        S.rate_data_from_marks(a, 'nuc.seg.regular', 'fp.class', b_scan=S.open_scan(other))

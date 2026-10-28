@@ -87,7 +87,11 @@ def _pg_id_base(ident: str) -> str:
 
 
 def _cl_tokens(cl) -> List[str]:
-    return [token for token in str(cl or '').lower().split() if token]
+    import shlex
+    try:
+        return shlex.split(str(cl or '').lower())
+    except ValueError:
+        return str(cl or '').lower().split()
 
 
 def _basename(token: str) -> str:
@@ -102,6 +106,8 @@ def pg_family(pg: dict) -> Optional[str]:
     overridden by an ID or CL that happens to mention a producer."""
     pn = str(pg.get('PN', '') or '').strip().lower()
     if pn:
+        if pn in _FIBERTOOLS_PROGRAMS:
+            return 'fibertools'
         if 'fibertools' in pn:
             return 'fibertools'
         return 'fiberhmm' if _FIBERHMM_NAME_RE.match(pn) else None

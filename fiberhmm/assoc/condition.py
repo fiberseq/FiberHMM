@@ -34,6 +34,8 @@ intact (NUC 2.3: closed molecules had 9x lower density).
 """
 from __future__ import annotations
 
+from .control import checkpoint, cooperative
+
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Sequence
 
@@ -282,6 +284,7 @@ def _bin_result(bd: _Bin, loci: LocusTable, *, n_perm, n_role, per_anchor, min_p
                    'le': np.zeros(len(want)), 'n': np.zeros(len(want))}
         done = 0
         while done < n_perm:
+            checkpoint("permutations", done, n_perm)
             c = min(chunk, n_perm - done)
             L = _perm_labels(cellA, stA, c, rng).astype(float)
             S1 = L @ X1A
@@ -340,6 +343,7 @@ def _bin_result(bd: _Bin, loci: LocusTable, *, n_perm, n_role, per_anchor, min_p
             nulls, n1s, n0s = [], [], []
             done = 0
             while done < n_role:
+                checkpoint("roles", done, n_role)
                 c = min(chunk, n_role - done)
                 roles = np.floor(rng.random((c, len(nmem))) * nmem[None, :]).astype(np.int64)
                 r_ = site(roles)
@@ -358,6 +362,7 @@ def _bin_result(bd: _Bin, loci: LocusTable, *, n_perm, n_role, per_anchor, min_p
     return out, pa, M, nmem
 
 
+@cooperative
 def condition(app: Appearances, loci: LocusTable, metric: SumMetric, *, bins: Optional[Sequence] = None,
               mask_rule: str = 'bin', balance: bool = True, n_perm: int = 1000, n_role: int = 1000,
               n_boot: int = 1000, per_anchor: bool = True, min_per_state: int = 8, min_locus_per_state: int = 1,

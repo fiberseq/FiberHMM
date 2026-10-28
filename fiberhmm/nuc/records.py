@@ -368,13 +368,13 @@ def _aligned_blocks(read) -> Optional[np.ndarray]:
     return np.asarray(rows, dtype=np.int64)
 
 
-def _footprints_from_ma(read, ctx: DecodeContext, read_length: int):
+def _footprints_from_ma(read, ctx: DecodeContext, read_length: int, *, parsed=None, tags=None):
     from fiberhmm.io.ma_tags import annotation_tags, parse_aq_array, parse_ma_tag
-    tags = annotation_tags(read)
+    tags = annotation_tags(read) if tags is None else tags
     if tags is None:
         return None
     ma, aq, _an, source = tags
-    parsed = parse_ma_tag(str(ma))
+    parsed = parse_ma_tag(str(ma)) if parsed is None else parsed
     if not any(t[0] in ('nuc', 'msp', 'tf') and t[3] for t in parsed['raw_types']):
         return None          # no footprint groups: the calls (if any) are in ns/nl/as/al
     if parsed['read_length'] != read_length:

@@ -76,3 +76,21 @@ informative sites.
 Each mode's main test was checked on simulated nulls with these confounders built in, with 2,000 replicates per
 test: the false-positive rate at 0.05 stayed within 4–6%. The group contrasts of M2 and M4 err on the
 conservative side (they reject less often than 5% under the null).
+
+
+Association analyses accept `cancel=lambda: should_stop` and optional
+`progress(stage, completed, total)` callbacks. Cancellation is checked at
+resampling batch boundaries and raises `fiberhmm.assoc.AssociationCancelled`;
+callback state is local to the current thread/task and nested calls inherit it.
+Callbacks do not change random streams or statistics.
+
+For dataset comparisons with different nucleosome calibration, call
+`condition_stats(..., cal_by_dataset=calibrations, dataset_of=selector,
+group='dataset')`. Each molecule uses its own dataset's period, prior, size
+classes and low-information floor. Corresponding whole-period bins are
+compared; `calibration_by_dataset` lists their physical spans and digests.
+Oscillation metrics require equal periods. M1 pooled summaries also contain
+`a`, `b`, `c`, `d` counts. M3's `scanio.rate_data_from_marks` accepts
+`b_scan=other_scan` for states in another scan of the same reference/frame.
+For scanio windows, `None` means all and `[]` means none. Annotated-scan CLI
+input and FASTA-derived density strata remain open.

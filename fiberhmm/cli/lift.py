@@ -303,8 +303,8 @@ def _report(stats, stash_info: dict) -> None:
     lost = stash_info.get("unlifted")
     print(f"{TOOL}: wrote {stats.records_out} records"
           + (f" ({lost} did not lift)" if lost else "")
-          + f"; restored 0x800 on {stats.supplementary_restored}, dropped "
-          f"{stats.orphan_supplementary_dropped} supplementaries whose primary did not lift; "
+          + f"; restored 0x800 on {stats.supplementary_restored}, kept "
+          f"{stats.orphan_supplementary_kept} orphan supplementaries (Yo:i:1); "
           f"{stats.strand_flipped} changed strand (st swapped on {stats.st_swapped}); "
           + ("MD/NM recomputed, SA rebuilt" if stats.calmd
              else "MD/NM/SA dropped (pass --target-fasta to recompute them)"),
@@ -792,7 +792,8 @@ def build_parser() -> argparse.ArgumentParser:
         description="Lift a FiberHMM BAM (or BED12) to another assembly through a pangenome "
                     "graph, repairing what the lift leaves stale: supplementary flags, hard "
                     "clips, st on strand changes, MD/NM/SA, @PG history. Footprints are "
-                    "carried in molecular coordinates. The native engine lifts through a "
+                    "carried in molecular coordinates. Supplementaries without a lifted primary "
+                    "are kept with 0x800 and Yo:i:1. The native engine lifts through a "
                     "graphlift chain map (--map) with graphlift's liftbam; the vg engine "
                     "through the GBZ (--graph) with vg + fibertools-rs pg-pansn.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -892,7 +893,8 @@ Examples:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--repair-only", action="store_true",
                       help="Only repair -i, a BAM already lifted by a vg-based tool (vg "
-                           "inject/surject); needs --source unless fiberhmm-lift stashed it")
+                           "inject/surject); needs --source unless fiberhmm-lift stashed it. "
+                           "Orphan supplementaries are kept with Yo:i:1 and 0x800")
     mode.add_argument("--bed", action="store_true",
                       help="-i is a BED file: BED12(+N) rows (fiberhmm-extract) are lifted "
                            "block by block and reassembled, other BED files row by row")

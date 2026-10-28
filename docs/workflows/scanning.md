@@ -79,10 +79,12 @@ are listed, so listing the BAMs in another order gives the same scan.
 
 `--annotate` and `--no-annotate` override the default. A scan whose modules
 write no per-molecule results (`--modules peaks`) writes no annotated BAM.
-Annotated BAMs are written only when every input's header declares molecular
-coordinates (`coord=molecular`, written by FiberHMM 2.13.2 or later); when one
-does not (older FiberHMM output, or fibertools output that FiberHMM has not
-re-called), the whole scan writes tables. Records whose calls cannot be put
+Annotated BAMs are written when every input declares molecular coordinates
+(`coord=molecular`, written by FiberHMM 2.13.2 or later), or fibertools is the
+last footprint caller on every `@PG` chain. Fibertools inputs need no FiberHMM
+re-call. PN, collision-suffixed ID and the command executable identify the
+caller; linked sorting passes preserve that provenance. Other inputs make the
+whole scan write tables. Records whose calls cannot be put
 into molecular frame are counted in the manifest
 (`status.records_not_carried`). The scan touches no other annotation of a record. An annotated BAM of
 a genome scan holds every record of its input; one of a BED or window scan
@@ -181,3 +183,14 @@ The molecule caps (`--max-discovery-molecules`,
 `--max-quantification-molecules`, `--sample-seed`) apply to `fp` and `nfr`
 as they do to those commands; an fp or nfr unit then gives the same rows as
 `fiberhmm-consensus` or `fiberhmm-nfr` run on that window with the same caps.
+
+
+Python callers can supply `run_units(..., evidence=records)` or a callback
+returning records. Supply each dataset's `header`/`headers` and yield complete
+`pysam.AlignedSegment` records; multi-input sources yield
+`(dataset_id, input_index, record)` tuples. A sorted snapshot in
+`work/_evidence` feeds the ordinary loaders and dataset calibrations. Include
+the full calibration population. Optional dataset `content_ids` preserve the
+identity of the same immutable source records; never reuse an ID after a lift
+or another record change. See [contracts §14](../../CONTRACTS.md) for equality,
+continuation and metadata rules. `--inspect` includes `units.zones`.

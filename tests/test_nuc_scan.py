@@ -629,3 +629,53 @@ def test_nuc_decodes_undeclared_inputs_once(tmp_path):
     r.set_tag('ns', [600, 1200])
     r.set_tag('nl', [147, 147])
     assert _footprints_from_legacy(r, DecodeContext(h), 1000) == 'length_mismatch'
+
+
+@pytest.mark.parametrize('reverse', [False, True])
+def test_public_record_outputs_and_patch_track(scan_bam, tsv_scan, reverse):
+    from fiberhmm.nuc import record_outputs, measured_track
+    from fiberhmm.scan.modules.nuc import NucModule
+    from fiberhmm.scan.reads import record_ref
+    from fiberhmm.scan.identity import record_sha256
+    from fiberhmm.scan.types import Dataset, FullMolecule
+    cal = _calibration(tsv_scan)
+    ds = Dataset('synth', 0, None, (scan_bam,), ('snapshot',))
+    with pysam.AlignmentFile(scan_bam) as bam:
+        read = next(r for r in bam if r.is_reverse == reverse)
+        ref = record_ref(read, ds, 0, record_sha256(read), 0, read.reference_name)
+        mol, result, scan_result = record_outputs(read, ref, cal)
+        direct = molecule_outputs(mol, cal=cal)
+        from dataclasses import asdict
+        assert result.digest == direct.digest
+        assert json.dumps([asdict(s) for s in result.segments], sort_keys=True) == json.dumps(
+            [asdict(s) for s in direct.segments], sort_keys=True)
+        module = NucModule()
+        settings = module.resolve({'calibration': 'self'})
+        assert scan_result == module.molecule_outputs(FullMolecule(ref, read, ds), settings,
+            {'datasets': {'synth': cal.to_dict()}})
+        measured, kinds = measured_track(mol, result)
+        assert set(kinds) == {'reg', 'dis', 'und', 'low', 'uds', 'mis'}
+        for a, b in measured:
+            assert a < b
+            assert not any(max(a, c) < min(b, d) for c, d in kinds['low'])
+        result.flags['low_information'] = True
+        assert measured_track(mol, result)[0] == []
+
+
+def test_measured_track_excludes_alignment_holes_and_low_information():
+    from types import SimpleNamespace
+    from fiberhmm.nuc import measured_track, make_molecule
+    from fiberhmm.nuc.molecule import MoleculeResult
+    from fiberhmm.nuc.segment import REGULAR, LOWINFO, UNDETERMINED
+    from fiberhmm.nuc.disrupted import Event
+    mol = make_molecule(1000, blocks=np.array([[0, 100, 400], [500, 700, 500]]),
+                        chrom='chrS', ref_start=100, ref_end=1200)
+    segments = [SimpleNamespace(start=a, end=b, state=k) for a, b, k in
+                [(100, 600, REGULAR), (600, 650, LOWINFO), (650, 900, UNDETERMINED)]]
+    result = MoleculeResult('mol', 1000, None, segments, {}, {}, 'digest',
+                            events=[Event(350, 550, 16, 4., 3), Event(700, 760, 17, 3., 1)])
+    measured, kinds = measured_track(mol, result)
+    assert measured == [(200, 500), (700, 800), (850, 1100)]
+    assert kinds['reg'] == [(200, 800)] and kinds['low'] == [(800, 850)]
+    assert kinds['und'] == [(850, 1100)]
+    assert kinds['uds'] == [(450, 750)] and kinds['mis'] == [(900, 960)]

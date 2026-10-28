@@ -29,7 +29,7 @@ from fiberhmm.nuc.records import (DecodeContext, NucMolecule, decode_record, ite
                                   make_molecule)
 
 __all__ = [
-    'NucParams', 'DEFAULT_PARAMS', 'parameter_schema', 'NucMolecule', 'DecodeContext',
+    'record_outputs', 'measured_track', 'NucParams', 'DEFAULT_PARAMS', 'parameter_schema', 'NucMolecule', 'DecodeContext',
     'decode_record', 'iter_molecules', 'make_molecule', 'calibrate_self', 'calibrate_thin',
     'calibrate_absolute', 'NucCalibration', 'molecule_outputs', 'MoleculeResult',
     'window_metrics', 'WindowResult', 'Observation', 'phasing', 'PhasingResult', 'mark_acf',
@@ -38,6 +38,9 @@ __all__ = [
 
 
 def __getattr__(name):
+    if name in ('record_outputs', 'measured_track'):
+        from fiberhmm.nuc import scan as m
+        return getattr(m, name)
     # lazy re-exports keep `import fiberhmm.nuc` light
     if name in ('calibrate_self', 'NucCalibration'):
         from fiberhmm.nuc import calibration as m

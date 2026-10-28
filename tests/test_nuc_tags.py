@@ -323,3 +323,19 @@ def test_records_without_calls_read_back_current_and_contracts_declare_v2():
     with pysam.AlignmentFile(path, 'rb') as inp:
         g = read_nuc_groups(next(inp))
     assert not g['nucmol']['stale']
+
+
+def test_preparsed_contracts_and_cached_header_skip_header_work(tmp_path, monkeypatch):
+    from fiberhmm.io import scan_ma
+    from fiberhmm.nuc.records import FrameContext
+    bam, read, mol, _res = _annotated_read(tmp_path)
+    expected = read_nuc_groups(read)
+    contracts = scan_ma.scan_contracts(read.header)
+    context = FrameContext(read.header)
+    monkeypatch.setattr(scan_ma, 'scan_contracts', lambda *args: pytest.fail('contracts were re-read'))
+    assert read_nuc_groups(read, contracts=contracts, context=context) == expected
+    assert read_nuc_groups(read, mol=mol, contracts=contracts) == expected
+    # A supplied header participates in both version and digest checks.
+    monkeypatch.undo()
+    hdr = read.header.to_dict()
+    assert read_nuc_groups(read, header=hdr) == expected

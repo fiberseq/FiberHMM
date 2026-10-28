@@ -23,6 +23,8 @@ Coordinates are 0-based half-open. A zero-width hit (start == end) is treated as
 """
 from __future__ import annotations
 
+from .control import checkpoint, cooperative
+
 import bisect
 import math
 from dataclasses import dataclass
@@ -557,6 +559,7 @@ class _Prep:
         done = 0
         self.n_capped = 0
         while done < n:
+            checkpoint("relocations", done, n)
             m = min(step, n - done)
             s, rt = self.draw(rng, np.broadcast_to(np.arange(self.nk), (m, self.nk)))
             if kept_apart:
@@ -673,6 +676,7 @@ SUGGESTIONS = ['strata=None (one stratum per contig)',
 
 # ----------------------------------------------------------------------------------------------- M4 test
 
+@cooperative
 def overlap_enrichment(a: HitSet, b: HitSet, territory, strata=None, *, distances=DISTANCES, cluster_gap=1000,
                        n_relocations=1000, seed=0, max_unplaced=0.10, strand_aware=True, kept_apart=True,
                        max_redraw_rounds=200, max_capped=0.01, return_hits=False) -> dict:
@@ -856,6 +860,7 @@ def _contrast_rows(arr, groups, D, plist, n_boot, rng, interval='percentile', re
             step = max(1, _CHUNK_ELEMENTS // m_)
             done = 0
             while done < n_boot:
+                checkpoint("bootstrap", done, n_boot)
                 m = min(step, n_boot - done)
                 idx = rng.integers(0, m_, size=(m, m_))
                 W = np.bincount((idx + (np.arange(m) * m_)[:, None]).ravel(), minlength=m * m_).reshape(m, m_)
@@ -891,6 +896,7 @@ def _contrast_rows(arr, groups, D, plist, n_boot, rng, interval='percentile', re
     return out
 
 
+@cooperative
 def overlap_contrast(a: HitSet, b_by_group: Mapping[str, HitSet], territory, strata=None, *, d=DISTANCES,
                      n_relocations=1000, n_boot=1000, seed=0, pairs='first', cluster_gap=1000, max_unplaced=0.10,
                      strand_aware=True, kept_apart=True, max_redraw_rounds=200, max_capped=0.01,

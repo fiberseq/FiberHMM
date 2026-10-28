@@ -133,6 +133,8 @@ class BlockBootstrap:
     def iter_item_weights(self, n_boot: int, chunk: int = 64, kind: Optional[str] = None) -> Iterator[np.ndarray]:
         done = 0
         while done < n_boot:
+            from .control import checkpoint
+            checkpoint("bootstrap", done, n_boot)
             k = min(chunk, n_boot - done)
             yield self.item_weights(k, kind)
             done += k

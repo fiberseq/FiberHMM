@@ -98,7 +98,7 @@ class ScanDir:
                                                  files=[f['name'] for f in d.get('files', [])])
                                             for d in m.get('datasets', [])],
             units={k: m.get('units', {}).get(k) for k in ('mode', 'unit_bp', 'stride_bp', 'grid_offset', 'contigs',
-                                                          'regions', 'bed', 'count')},
+                                                          'regions', 'zones', 'bed', 'count')},
             modules={n: dict(version=v.get('version'), experimental=v.get('experimental'),
                              settings_hash=v.get('settings_hash'),
                              hits=(m.get('outputs', {}).get('tables', {}).get(f'{n}/hits.tsv.bgz') or {}).get('rows'))

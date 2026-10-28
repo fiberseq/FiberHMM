@@ -425,7 +425,7 @@ def _annotated_name(ds, input_index: int, path: str) -> str:
 
 def _open_annotated(out: Path, manifest, datasets, mods, decls, command):
     import pysam
-    from fiberhmm.io.bam_header import append_ma_types, append_pg_record
+    from fiberhmm.io.bam_header import append_coord_marker, append_ma_types, append_pg_record
     from fiberhmm.io.scan_ma import scan_contract_line, with_scan_contracts
     from .peaks_reads import footprint_writer_id
     target_dir = out / 'annotated'
@@ -444,6 +444,10 @@ def _open_annotated(out: Path, manifest, datasets, mods, decls, command):
         for i, path in enumerate(ds.paths):
             src = pysam.AlignmentFile(path, 'rb')
             header = src.header
+            from fiberhmm.io.annotation_frame import ma_annotation_frame
+            if ma_annotation_frame(header) != 'molecular':
+                # Fibertools inputs need a marker once their Ma/legacy groups become MA.
+                header = append_coord_marker(header)
             if groups:
                 header = append_ma_types(header, groups)
             hd = header.to_dict()

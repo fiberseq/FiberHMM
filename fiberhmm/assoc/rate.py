@@ -26,6 +26,8 @@ Molecules with E_in = 0, E_out = 0 or no B are excluded and counted.
 """
 from __future__ import annotations
 
+from .control import checkpoint, cooperative
+
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence
 
@@ -163,6 +165,7 @@ def _prepare(d: RateData):
     used, O, Oin, Ein, Eout, ex = [], [], [], [], [], {'no_b': 0, 'no_inside': 0, 'no_outside': 0}
     merged = []
     for m in range(d.n):
+        checkpoint("molecules", m, d.n)
         L = int(d.length[m])
         iv = _merge(np.clip(d.intervals[m], 0, L))
         iv = iv[iv[:, 1] > iv[:, 0]] if len(iv) else iv
@@ -193,6 +196,7 @@ def _shift_null(merged, n_shift, rng, cut_max):
     """Null S per shift (accumulated over molecules) and per-molecule null O_in means."""
     S = np.zeros(n_shift)
     for L, iv, pts, ind in merged:
+        checkpoint("shifts")
         allowed = _allowed_junction_points(L, iv, cut_max)
         u = allowed[rng.integers(0, len(allowed), n_shift)]
         delta = (L - u) % L
@@ -200,6 +204,7 @@ def _shift_null(merged, n_shift, rng, cut_max):
     return S
 
 
+@cooperative
 def rate_ratio(d: RateData, *, n_shift: int = 1000, n_boot: int = 1000, block_bp: int = 50_000,
                cut_max: float = CUT_MAX, group: Optional[str] = None, group_kind: str = 'label',
                seed: int = 0) -> dict:
@@ -303,6 +308,7 @@ def rate_ratio(d: RateData, *, n_shift: int = 1000, n_boot: int = 1000, block_bp
     return out
 
 
+@cooperative
 def edge_association(d: RateData, *, n_shift: int = 1000, seed: int = 0, boundaries: Optional[List] = None) -> dict:
     """Mean distance (compressed coordinate) from each A boundary to the nearest B on the same molecule, against
     circular shifts of B (one offset per molecule per shift). ``boundaries`` (per molecule) overrides A's interval
@@ -314,6 +320,7 @@ def edge_association(d: RateData, *, n_shift: int = 1000, seed: int = 0, boundar
     null_sum = np.zeros(n_shift)
     used = 0
     for m in range(d.n):
+        checkpoint("molecules", m, d.n)
         L = int(d.length[m])
         pts = np.sort(d.points[m][(d.points[m] >= 0) & (d.points[m] < L)])
         if boundaries is not None:

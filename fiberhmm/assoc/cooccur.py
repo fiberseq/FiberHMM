@@ -39,6 +39,8 @@ All inputs are plain arrays (no BAM access). Molecules are physical molecules (`
 """
 from __future__ import annotations
 
+from .control import checkpoint, cooperative
+
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence
 
@@ -356,14 +358,15 @@ def _clogit_effect(it: _Items, Zm: np.ndarray) -> dict:
 def _pooled_summary(it: _Items, n_cells: int, Zm, test, *, small_n, n_flip, rng, effect=True):
     a, b, c, d = _cell_counts(it, n_cells)
     lor, lo, hi = _mh_counts(a, b, c, d)
-    out = {'n_pairs': int(len(np.unique(it.pair))) if len(it) else 0, 'n_items': int(len(it)),
+    out = dict(zip(('a', 'b', 'c', 'd'), (int(x.sum()) for x in (a, b, c, d))))
+    out.update({'n_pairs': int(len(np.unique(it.pair))) if len(it) else 0, 'n_items': int(len(it)),
            'mh_strata': {'n_cells': int(len(np.unique(it.cell))) if len(it) else 0,
                          'or_mh': float(np.exp(lor)) if np.isfinite(lor) else float('nan'),
                          'rbg_lo': float(np.exp(lo)) if np.isfinite(lo) else float('nan'),
                          'rbg_hi': float(np.exp(hi)) if np.isfinite(hi) else float('nan'),
                          'note': 'pair x stratum cells; the RBG interval assumes independent tables'},
            'p_b1_given_a1': float(a.sum() / (a.sum() + b.sum())) if a.sum() + b.sum() > 0 else float('nan'),
-           'p_b1_given_a0': float(c.sum() / (c.sum() + d.sum())) if c.sum() + d.sum() > 0 else float('nan')}
+           'p_b1_given_a0': float(c.sum() / (c.sum() + d.sum())) if c.sum() + d.sum() > 0 else float('nan')})
     mh = _mh_score(it, n_cells, small_n, n_flip, rng)
     out['mh_strata'].update({k: mh[k] for k in ('U', 'z', 'p', 'test') if k in mh})
     if test == 'strata':
@@ -385,6 +388,7 @@ def _pooled_summary(it: _Items, n_cells: int, Zm, test, *, small_n, n_flip, rng,
     return out, fit
 
 
+@cooperative
 def cooccurrence(a: FeatureStates, b: FeatureStates, molecules: MoleculeTable, *, max_distance: int = 5000,
                  group: Optional[str] = None, group_kind: str = 'label', test: str = 'adjusted',
                  basis: str = 'bins', min_molecules: int = 10, min_pool_molecules: int = 5,
@@ -420,6 +424,7 @@ def cooccurrence(a: FeatureStates, b: FeatureStates, molecules: MoleculeTable, *
 
     pair_data = []
     for pid, (i, j, nest) in enumerate(pairs):
+        checkpoint("pairs", pid, len(pairs))
         ma, sa = a.states_of(i)
         mb, sb = b.states_of(j)
         common, ia, ib = np.intersect1d(ma, mb, assume_unique=True, return_indices=True)

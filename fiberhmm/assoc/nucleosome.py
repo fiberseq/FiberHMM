@@ -34,6 +34,8 @@ with circular shifts (``fiberhmm.assoc.rate``) and the edge association.
 """
 from __future__ import annotations
 
+from .control import checkpoint, cooperative
+
 import hashlib
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -157,7 +159,7 @@ def anchor_appearances(molecules, loci: LocusTable, *, frame: str = 'anchor', P:
                        prior=None, state_fn: Optional[Callable] = None, nrl_pooled: Optional[float] = None,
                        flank_exclude: int = 2000, density_bins: int = 12, labels: Optional[Dict[str, Callable]] = None,
                        dyads: Optional[Dict[int, np.ndarray]] = None, oscillation: Optional[SumMetric] = None,
-                       index: Optional[_ChromIndex] = None, min_sites: int = 10):
+                       index: Optional[_ChromIndex] = None, min_sites: int = 10, calibration_of=None):
     """M2 appearances of molecules at loci for the phasing metrics (module docstring).
 
     Each physical molecule (its longest record) reaching the first bin on both sides of a locus, with a state,
@@ -165,7 +167,9 @@ def anchor_appearances(molecules, loci: LocusTable, *, frame: str = 'anchor', P:
     extends past the bin on both sides of the anchor, or of its barrier in the molecule frame, with at least
     ``min_sites`` informative sites on each side; unmeasured bins carry no statistics), dyad counts over the
     summary span with ``oscillation``, lambda_acc outside the anchor +/- ``flank_exclude``, and labels
-    (``labels``: name -> f(molecule)). Returns (Appearances, bins, info)."""
+    (``labels``: name -> f(molecule)). ``calibration_of(molecule)`` optionally
+    selects a calibration per molecule (as used by condition_stats). Returns
+    (Appearances, template bins, info)."""
     from fiberhmm.nuc.density import FLAT_PRIOR, lambda_acc
     from fiberhmm.nuc.params import DEFAULT_PARAMS
     from fiberhmm.nuc.phasing import anchor_offsets, barrier_at, period_bins
@@ -183,6 +187,7 @@ def anchor_appearances(molecules, loci: LocusTable, *, frame: str = 'anchor', P:
     rank = {i: r for r, i in enumerate(order)}
     masks = []
     for l in range(loci.n):
+        checkpoint("appearances", l, loci.n)
         c, p = loci.chrom[l], int(loci.pos[l])
         # records whose alignment covers the anchor; flank eligibility is decided in molecular coordinates
         # (an insertion can make the molecular flank longer than the reference span)
@@ -202,7 +207,11 @@ def anchor_appearances(molecules, loci: LocusTable, *, frame: str = 'anchor', P:
         # longest record that qualifies (barrier, a measured bin, offsets) is used
         by_key: Dict[str, list] = {}
         for item in sorted(cand):
-            by_key.setdefault(molecule_key(molecules[item[1]]), []).append(item)
+            candidate = molecules[item[1]]
+            key = molecule_key(candidate)
+            if labels and 'dataset' in labels:
+                key = (str(labels['dataset'](candidate)), key)
+            by_key.setdefault(key, []).append(item)
         for k in sorted(by_key, key=lambda k_: by_key[k_][0][0]):
             recs = by_key[k]
             if len(recs) > 1:
@@ -221,38 +230,60 @@ def anchor_appearances(molecules, loci: LocusTable, *, frame: str = 'anchor', P:
                     s0, e0 = bar[0], bar[1]
                 else:
                     s0, e0 = a, a
-                mask = _measured_bins(m, s0, e0, bins, min_sites)
+                local_cal = calibration_of(m) if calibration_of is not None else None
+                local_P = float(local_cal.nrl_pooled) if local_cal is not None else P
+                local_bins = period_bins(local_P, params)
+                local_prior = local_cal.prior if local_cal is not None else prior
+                if local_cal is not None:
+                    from fiberhmm.nuc.density import accessible_counts
+                    hits, sites = accessible_counts(m, params)
+                    if local_cal.below_floor(float(local_prior.shrink(hits, sites))):
+                        why_not = why_not or 'low_information'
+                        continue
+                mask = _measured_bins(m, s0, e0, local_bins, min_sites)
                 if not mask:
                     why_not = why_not or 'no_bin_measured'
                     continue
                 d = dy_cache.get(id(m))
                 if d is None:
-                    d = dy_cache[id(m)] = molecule_dyads(m, nrl, params)
+                    if local_cal is None:
+                        d = molecule_dyads(m, nrl, params)
+                    else:
+                        from fiberhmm.nuc.molecule import footprint_calls
+                        from fiberhmm.nuc.spacing import eligible_dyads
+                        calls = footprint_calls(m, params, local_cal) if local_cal.curve is not None else None
+                        codes = None
+                        if calls is not None:
+                            codes = np.zeros(len(m.nucs), dtype=int)
+                            sel = ~calls['is_tf']
+                            codes[calls['src_index'][sel]] = calls['coarse'][sel]
+                        d = eligible_dyads(m, local_P, params, coarse_codes=codes).centres
+                    dy_cache[id(m)] = d
                 x, why = anchor_offsets(m, d, p, 1, frame, params)
                 if x is None:
                     why_not = why_not or why
                     continue
-                chosen = (i, a, st, mask, x)
+                chosen = (i, a, st, mask, x, local_P, local_bins, local_prior)
                 break
             if chosen is None:
                 info[why_not] = info.get(why_not, 0) + 1
                 continue
-            i, a, st, mask, x = chosen
+            i, a, st, mask, x, local_P, local_bins, local_prior = chosen
             m = molecules[i]
             xr, xl = x[x > 0], -x[x < 0]
             row = np.zeros((len(bins), len(RES_COLUMNS)))
-            for b, (lo, hi) in enumerate(bins):
+            for b, (lo, hi) in enumerate(local_bins):
                 if not (mask >> b) & 1:
                     continue
-                vr = np.exp(2j * np.pi * xr[(xr >= lo) & (xr < hi)] / P)
-                vl = np.exp(2j * np.pi * xl[(xl >= lo) & (xl < hi)] / P)
+                vr = np.exp(2j * np.pi * xr[(xr >= lo) & (xr < hi)] / local_P)
+                vl = np.exp(2j * np.pi * xl[(xl >= lo) & (xl < hi)] / local_P)
                 Vr, Vl = vr.sum(), vl.sum()
                 row[b] = (Vr.real, Vr.imag, Vl.real, Vl.imag, abs(Vr) ** 2, abs(Vl) ** 2, len(vr) + len(vl))
             if oscillation is not None:
                 h = np.histogram(np.abs(x), bins=oscillation.edges)[0].astype(float)
                 osc.append(h if (mask >> (len(bins) - 1)) & 1 else np.zeros_like(h))
             mid = key_index.setdefault(k, len(key_index))
-            lam = lambda_acc(m, prior, params, exclude=(a - flank_exclude, a + flank_exclude))
+            lam = lambda_acc(m, local_prior, params, exclude=(a - flank_exclude, a + flank_exclude))
             rows_l.append(l); rows_m.append(mid); rows_s.append(int(st)); rows_d.append(lam); stats.append(row)
             masks.append(mask)
             for name, f in (labels or {}).items():
@@ -366,23 +397,54 @@ def hash_half(mol, salt: str = 'fiberhmm.assoc.held_out') -> int:
 
 
 # ------------------------------------------------------------------ the analyses
+@cooperative
 def condition_stats(molecules, anchors: Sequence[Tuple[str, int]], *, cal=None, params=None, P: Optional[float] = None,
                     frames: Sequence[str] = ('anchor', 'molecule'), backgrounds='random', k: int = 5,
                     state_fn: Optional[Callable] = None, n_perm: int = 1000, n_role: int = 1000, n_boot: int = 1000,
                     group: Optional[str] = None, group_kind: str = 'label',
                     labels: Optional[Dict[str, Callable]] = None, metrics: Sequence[str] = ('R_minus_null', 'R'),
                     oscillation: bool = False, per_anchor: bool = True, seed: int = 0,
-                    return_null: bool = False, prefetched_backgrounds=None) -> dict:
+                    return_null: bool = False, prefetched_backgrounds=None, cal_by_dataset=None,
+                    dataset_of: Optional[Callable] = None) -> dict:
     """NUC 3.8 state conditioning at ``anchors`` ((chrom, pos) list) over decoded molecules (module docstring).
 
     ``backgrounds``: 'random' (matched random positions), None (anchors only), or a list of (chrom, pos)
-    candidates. Returns per frame and metric the ``fiberhmm.assoc.condition`` result, plus the background record."""
+    candidates. Returns per frame and metric the ``fiberhmm.assoc.condition`` result, plus the background record.
+
+    ``cal_by_dataset`` maps dataset keys to NucCalibration records, selected by
+    ``dataset_of(molecule)`` or ``labels['dataset']``. Each molecule uses its
+    dataset's period, prior, size classes and low-information floor; shared bin
+    indices compare corresponding whole-period spans. The result reports the
+    physical spans/digests in ``calibration_by_dataset``. Do not combine this
+    mapping with ``cal`` or ``P``; oscillation requires equal dataset periods.
+    """
     from fiberhmm.nuc.params import DEFAULT_PARAMS
     params = params or DEFAULT_PARAMS
-    P = float(P or (cal.nrl_pooled if cal is not None else 189.0))
+    calibration_of = None
+    if cal_by_dataset is not None:
+        if cal is not None or P is not None:
+            raise ValueError('cal_by_dataset cannot be combined with cal or P')
+        dataset_of = dataset_of or (labels or {}).get('dataset')
+        if dataset_of is None:
+            raise ValueError('cal_by_dataset requires dataset_of or labels["dataset"]')
+        labels = dict(labels or {})
+        labels.setdefault('dataset', dataset_of)
+        # Resolve eagerly: a missing calibration must never silently use a pooled prior.
+        by_molecule = {id(m): cal_by_dataset[dataset_of(m)] for m in molecules}
+        calibration_of = lambda m: by_molecule[id(m)]
+        periods = [float(c.nrl_pooled) for c in by_molecule.values()]
+        if any(not np.isfinite(p) or p <= 0 for p in periods):
+            raise ValueError('dataset calibration periods must be finite and positive')
+        if oscillation and len(set(periods)) > 1:
+            raise ValueError('oscillation requires a shared period; use resultant metrics for unequal periods')
+    template_P = (cal_by_dataset[sorted(cal_by_dataset, key=str)[0]].nrl_pooled
+                  if cal_by_dataset else (cal.nrl_pooled if cal is not None else 189.0))
+    P = float(P or template_P)
     prior = cal.prior if cal is not None else None
     ix = _ChromIndex(molecules)
-    span = int(params.phase_x0 + params.phase_summary_periods * P)
+    span_bp = params.phase_x0 + params.phase_summary_periods * (
+        max(periods, default=P) if cal_by_dataset is not None else P)
+    span = int(np.ceil(span_bp)) if cal_by_dataset is not None else int(span_bp)
     bg_info = None
     if prefetched_backgrounds is not None:
         cands, mb = prefetched_backgrounds
@@ -401,13 +463,19 @@ def condition_stats(molecules, anchors: Sequence[Tuple[str, int]], *, cal=None, 
     bg_info = {kk: v for kk, v in mb.items() if kk != 'sets'}
     loci = LocusTable.from_sets(list(anchors), cands, mb['sets'])
     out = {'P': P, 'span_bp': span, 'n_anchors': len(anchors), 'backgrounds': bg_info, 'frames': {}}
+    if cal_by_dataset is not None:
+        from fiberhmm.nuc.phasing import period_bins
+        out['calibration_by_dataset'] = {str(key): {'P': float(c.nrl_pooled), 'digest': c.digest(),
+            'bins': [list(b) for b in period_bins(c.nrl_pooled, params)]} for key, c in cal_by_dataset.items()}
+        out['bin_coordinate'] = 'dataset-specific whole-period bins'
     dyads: Dict[int, np.ndarray] = {}
     for frame in frames:
+        checkpoint("frames")
         osc = oscillation_metric(params.phase_x0, params.phase_x0 + params.phase_summary_periods * P, P) \
             if oscillation else None
         app, bins, info = anchor_appearances(molecules, loci, frame=frame, P=P, params=params, prior=prior,
                                              state_fn=state_fn, nrl_pooled=P, labels=labels, dyads=dyads,
-                                             oscillation=osc, index=ix)
+                                             oscillation=osc, index=ix, calibration_of=calibration_of)
         fr = {'appearances': info, 'bins': [list(b) for b in bins], 'metrics': {}}
         for name in metrics:
             met = resultant_metric(null_adjusted=(name == 'R_minus_null'))
@@ -423,6 +491,7 @@ def condition_stats(molecules, anchors: Sequence[Tuple[str, int]], *, cal=None, 
     return out
 
 
+@cooperative
 def held_out(molecules, discover: Callable, analyse: Callable, *, salt: str = 'fiberhmm.assoc.held_out',
              seed: int = 0) -> dict:
     """Held-out discovery with cross-fitting. ``discover(molecules) -> anchors``; ``analyse(molecules, anchors,
@@ -474,6 +543,7 @@ def held_out(molecules, discover: Callable, analyse: Callable, *, salt: str = 'f
                     'of both directions'}
 
 
+@cooperative
 def reverse_association(locus, molecule, y, x, log_lambda, pattern=None, *, n_boot: int = 1000,
                         lambda_bins: int = 6, seed: int = 0) -> dict:
     """NUC 3.8 item 7: Y (anchor state) against X (a flank state), per (locus, molecule) row. CMH common OR over
@@ -534,6 +604,7 @@ def reverse_association(locus, molecule, y, x, log_lambda, pattern=None, *, n_bo
     return out
 
 
+@cooperative
 def association_stats(molecules, *, cal, params=None, x_state: str = 'regular', y: str = 'tf',
                       censor_bp: int = 500, n_shift: int = 1000, n_boot: int = 1000, group: Optional[str] = None,
                       group_kind: str = 'label', labels: Optional[Dict[str, Callable]] = None, min_tf_bp: int = 0,

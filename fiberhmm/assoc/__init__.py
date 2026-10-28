@@ -25,6 +25,7 @@ simulators (:mod:`fiberhmm.assoc.simulate`) and scan-directory readers (:mod:`fi
 """
 
 _EXPORTS = {
+    'AssociationCancelled': 'control',
     'cooccurrence': 'cooccur', 'combination_patterns': 'cooccur', 'FeatureStates': 'cooccur',
     'MoleculeTable': 'cooccur', 'covariate_basis': 'cooccur',
     'condition': 'condition', 'Appearances': 'condition', 'LocusTable': 'condition', 'SumMetric': 'condition',

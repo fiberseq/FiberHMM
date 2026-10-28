@@ -135,7 +135,8 @@ Written by [`fiberhmm-lift`](../workflows/lifting.md) (SAM user space).
 |---|---|---|
 | `Yq` | `i` | `MAPQ` of the source alignment (kept as the record's `MAPQ`) |
 | `Yp` | `Z` | source locus, `<contig>:<1-based POS>:<+/->`; marks a lifted record |
-| `Yf`, `Yh`, `Yo` | `i`, `Z`, `i` | source `FLAG`, hard clips, and a mark on soft-clipped supplementaries whose primary is not in the input; between the stash and the repair only, never in a repaired BAM |
+| `Yf`, `Yh` | `i`, `Z` | source `FLAG` and hard clips; between stash and repair only |
+| `Yo` | `i` | 1 on a repaired supplementary with no lifted primary; 0x800 is kept |
 | `Yu` | `Z` | why a record could not be lifted (`no_projection`, `contig_not_in_map`, ...); only in the `--unlifted` BAM, whose records keep their source coordinates |
 
 ## Tags FiberHMM reads
@@ -148,3 +149,9 @@ Written by [`fiberhmm-lift`](../workflows/lifting.md) (SAM user space).
 | `st` | DAF flavour of R/Y-encoded reads |
 | `HP`, `PS` | copied by `fiberhmm-extract --haplotype-fields` |
 | `ns`/`nl`/`as`/`al`, `MA`/`AQ`/`AN` | input footprints for recall, extraction, QC and every downstream command |
+
+
+`Yo:i:1` in a repaired `fiberhmm-lift` BAM marks a supplementary retained
+without a lifted primary. Its 0x800 flag is preserved; `Yp:Z` still records
+the source locus. Ordinary supplementaries have no `Yo` tag. Unrecoverable
+hard-clipped input orphans are excluded before lifting.

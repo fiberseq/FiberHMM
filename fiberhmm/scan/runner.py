@@ -119,9 +119,10 @@ def _calls_program(path) -> dict:
 
 def _declares_molecular(path) -> bool:
     import pysam
-    from fiberhmm.io.annotation_frame import ma_annotation_frame
+    from fiberhmm.io.annotation_frame import ma_annotation_frame, resolve_disabled_legacy_frame
     with pysam.AlignmentFile(str(path), 'rb', check_sq=False) as bam:
-        return ma_annotation_frame(bam.header) == 'molecular'
+        return (ma_annotation_frame(bam.header) == 'molecular'
+                or resolve_disabled_legacy_frame(bam.header) is not None)
 
 
 def _carry_record(read) -> bool:
@@ -194,7 +195,9 @@ def resolve_datasets(datasets: Sequence[Mapping[str, Any]]):
                 raise ScanRefused(f'{p}: its reference (@SQ names and lengths) differs from the first input; '
                                   'a scan needs one reference')
         items.append(dict(dataset_id=str(d['dataset_id']) if d.get('dataset_id') else None, paths=paths,
-                          chemistry=d.get('chemistry'), content_ids=[I.content_id(p) for p in paths]))
+                          chemistry=d.get('chemistry'), content_ids=list(d.get('content_ids') or [I.content_id(p) for p in paths])))
+    if any(len(x['content_ids']) != len(x['paths']) for x in items):
+        raise ScanRefused('content_ids must have one entry per input file')
     ordinals = I.canonical_order([x['content_ids'] for x in items])
     for x, o in zip(items, ordinals):
         if x['dataset_id'] is None:
@@ -503,11 +506,14 @@ def run_units(datasets: Sequence[Mapping[str, Any]], units, *, modules: Sequence
               out, annotate: Optional[bool] = None, progress=None, cancel=None, cores: int = 1,
               window_jobs: int = 0, continue_run: bool = False, units_info: Optional[Mapping[str, Any]] = None,
               registry: Optional[Mapping[str, Any]] = None, command: Optional[Sequence[str]] = None,
-              extend: bool = False) -> dict:
+              extend: bool = False, evidence=None) -> dict:
     """Compute (or extend, with ``continue_run``) a scan directory. Returns a summary dict.
 
     ``units``: the plan, as returned by :func:`fiberhmm.scan.units.plan` (``(units, info)``) or a
     sequence of :class:`ScanUnit` with ``units_info``. ``datasets``: ``[{dataset_id, paths, chemistry?}]``.
+    ``evidence`` optionally supplies records as an iterable or zero-argument
+    callback; datasets provide header/headers, and multi-input records are
+    (dataset_id, input_index, AlignedSegment) tuples. See CONTRACTS.md §14.
     ``continue_run`` finishes an interrupted scan with the same arguments; ``extend`` (with
     ``continue_run``) also accepts another plan or other module settings for the same inputs and read
     policy (a browser scan appending units): every unit result whose key still matches is reused."""
@@ -526,14 +532,6 @@ def run_units(datasets: Sequence[Mapping[str, Any]], units, *, modules: Sequence
     # Modules see only the caps the caller gave (as fiberhmm-consensus/-nfr see only their cap flags), so an
     # explicit 0 or seed 1 overrides a parameter file and an absent cap leaves the module's own value.
     explicit_caps = dict(raw_policy.get('caps') or {})
-    resolved, reference = resolve_datasets(datasets)
-    contigs = list(reference.items())
-    for u in units:
-        if u.chrom not in reference:
-            raise ScanRefused(f'unit {u.unit_id}: contig not in the BAM header')
-    mods = resolve_modules(modules, params or {}, explicit_caps, registry)
-    annotate = default_annotate(units_info) if annotate is None else bool(annotate)
-
     out.mkdir(parents=True, exist_ok=True)
     from fiberhmm.io.run_state import DirectoryBusy, DirectoryLock
     lock = DirectoryLock(out / LOCK, 'fiberhmm-scan output directory', remove=True)
@@ -542,8 +540,21 @@ def run_units(datasets: Sequence[Mapping[str, Any]], units, *, modules: Sequence
     except DirectoryBusy as error:
         raise ScanRefused(str(error)) from None
     try:
+        if evidence is not None:
+            if not continue_run and any(p.name != LOCK for p in out.iterdir()):
+                raise ScanRefused('evidence output directory is not empty; use continue_run or a new directory')
+            from .evidence import materialize_evidence
+            datasets = materialize_evidence(datasets, evidence, out / WORK / '_evidence', cancel=cancel)
+        resolved, reference = resolve_datasets(datasets)
+        contigs = list(reference.items())
+        for u in units:
+            if u.chrom not in reference:
+                raise ScanRefused(f'unit {u.unit_id}: contig not in the BAM header')
+        mods = resolve_modules(modules, params or {}, explicit_caps, registry)
+        annotate = default_annotate(units_info) if annotate is None else bool(annotate)
         return _run_locked(out, resolved, reference, contigs, units, units_info, mods, policy, annotate,
-                           progress, cancel, cores, window_jobs, continue_run, registry, command, extend)
+                           progress, cancel, cores, window_jobs, continue_run, registry, command, extend,
+                           prepared_evidence=evidence is not None)
     finally:
         lock.release()
 
@@ -579,9 +590,12 @@ def _frame_of(resolved) -> dict:
     return dict(kind='linear')
 
 
-def _check_continue(out: Path, manifest: dict, continue_run: bool, base: str, extend: bool = False) -> None:
+def _check_continue(out: Path, manifest: dict, continue_run: bool, base: str, extend: bool = False,
+                    prepared_evidence: bool = False) -> None:
     path = out / 'manifest.json'
     entries = [p for p in out.iterdir() if p.name != LOCK]
+    if prepared_evidence and not continue_run:
+        entries = [p for p in entries if p.name != WORK]
     if not continue_run:
         if entries:
             raise ScanRefused(f'{out} is not empty; existing results are never overwritten (to finish an interrupted '
@@ -626,7 +640,7 @@ def _key_view(manifest, key):
 
 
 def _run_locked(out, resolved, reference, contigs, units, units_info, mods, policy, annotate, progress, cancel,
-                cores, window_jobs, continue_run, registry, command, extend=False) -> dict:
+                cores, window_jobs, continue_run, registry, command, extend=False, prepared_evidence=False) -> dict:
     started = time.monotonic()
     # Calibration (dataset-level, before any unit): nuc only in v1.
     cal_shas: Dict[str, Optional[str]] = {}
@@ -634,7 +648,7 @@ def _run_locked(out, resolved, reference, contigs, units, units_info, mods, poli
     inputs = ScanInputs(datasets=resolved, read_policy=policy, reference=reference, plan=units, cores=cores)
     pre = _manifest_core(resolved, contigs, units, units_info, mods, policy, {})
     base = base_key(pre['reference']['contigs_sha256'], resolved, policy)
-    _check_continue(out, pre, continue_run, base, extend)
+    _check_continue(out, pre, continue_run, base, extend, prepared_evidence)
     (out / WORK).mkdir(parents=True, exist_ok=True)
     _write_json(out / WORK / 'scan_key.json', dict(scan_id=pre['scan_id'], base=base, reference=pre['reference'],
                                                   datasets=pre['datasets'], read_policy=pre['read_policy'],
@@ -706,10 +720,10 @@ def _run_locked(out, resolved, reference, contigs, units, units_info, mods, poli
     if annotate:
         foreign = [p for d in resolved for p in d.paths if not _declares_molecular(p)]
         if foreign:
-            # Scan groups are molecular; writing them into a file whose header does not declare molecular
-            # coordinates would need its other annotations carried too. Such inputs get the tables instead.
+            # Inputs without either a declaration or fibertools calling provenance need frame conversion
+            # for their other annotations; keep those scans in table mode.
             progress.report('scan', f'{len(foreign)} input(s) do not declare molecular coordinates in their header '
-                                    '(coord=molecular, written by FiberHMM >= 2.13.2): per-molecule results of every '
+                                    '(coord=molecular or fibertools calling provenance): per-molecule results of every '
                                     'input are written as tables, not annotated BAMs')
             annotate = False
     summary = finalize(out, manifest, resolved, reference, units, mods, unit_keys, annotate, progress,

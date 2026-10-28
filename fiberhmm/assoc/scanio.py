@@ -154,7 +154,7 @@ def haplotypes_from_bams(scan, mi: MoleculeIndex, tag: str = 'HP', regions=None)
             continue
         for f in ds.get('files', []):
             with pysam.AlignmentFile(f['path']) as bam:
-                it = (bam.fetch(c, s, e) for c, s, e in regions) if regions else [bam.fetch(until_eof=True)]
+                it = (bam.fetch(c, s, e) for c, s, e in regions) if regions is not None else [bam.fetch(until_eof=True)]
                 for chunk in it:
                     for r in chunk:
                         for i in wq.get(r.query_name, ()):
@@ -211,12 +211,12 @@ def territory(scan, datasets: Optional[Sequence[str]] = None, regions=None) -> L
     by_ds = defaultdict(list)
     for r in _rows(scan, 'callable.tsv.bgz'):
         by_ds[r['dataset_id']].append((r['chrom'], int(r['start']), int(r['end'])))
-    names = list(datasets) if datasets else [d['dataset_id'] for d in scan.manifest.get('datasets', [])] or \
+    names = list(datasets) if datasets is not None else [d['dataset_id'] for d in scan.manifest.get('datasets', [])] or \
         sorted(by_ds)
-    if any(not by_ds.get(d) for d in names):
+    if not names or any(not by_ds.get(d) for d in names):
         return []
     terr = [by_ds[d] for d in names]
-    if regions:
+    if regions is not None:
         terr.append([(c, int(a), int(b)) for c, a, b in regions])
     return intersect_territories(zones, *terr)
 
@@ -234,7 +234,7 @@ NUCSEG_KIND = {'nuc.seg.regular': 1, 'nuc.seg.disordered': 2, 'nuc.seg.low_infor
 
 
 def rate_data_from_marks(scan, a_type: str, b_type: str, regions=None, min_tf_bp: int = 0, mi=None,
-                         point_tolerance: int = 5):
+                         point_tolerance: int = 5, *, b_scan=None):
     """RateData for M3 from ``nuc/marks.tsv.bgz`` (reference coordinates): A = ``nuc.seg.*``/``nuc.event.*`` rows;
     B = TF footprint centres (``nucsz`` rows with the TF bit, ``b_type='tf'``) or member call centres of a state
     type (``fp.class``: states rows with state 1, ``call_start``/``call_end``). Exposure is admissible reference bp
@@ -254,7 +254,7 @@ def rate_data_from_marks(scan, a_type: str, b_type: str, regions=None, min_tf_bp
         raise ScanInputError(f'A must be one of {sorted(NUCSEG_KIND)}')
     win = None
     fetch = None
-    if regions:
+    if regions is not None:
         win = defaultdict(list)
         for c, a, b in regions:
             win[c].append((int(a), int(b)))
@@ -285,11 +285,14 @@ def rate_data_from_marks(scan, a_type: str, b_type: str, regions=None, min_tf_bp
         elif r['group'] == 'nucsz' and q and b_type == 'tf' and (q[0] & 16) and (e_ - s_) >= min_tf_bp:
             d['b'].append((s_ + e_) // 2)
     if b_type != 'tf':
+        source_b = b_scan if b_scan is not None else scan
+        if source_b.manifest.get('reference') != scan.manifest.get('reference') or source_b.manifest.get('frame') != scan.manifest.get('frame'):
+            raise ScanInputError('A and B scans must share a reference and coordinate frame')
         mod = module_of(b_type)
-        require_tables(scan, [f'{mod}/states.tsv.bgz'], 'rate')
-        hit_type = {h['hit_id']: h['type'] for h in _rows(scan, f'{mod}/hits.tsv.bgz', fetch)}
+        require_tables(source_b, [f'{mod}/states.tsv.bgz'], 'rate')
+        hit_type = {h['hit_id']: h['type'] for h in _rows(source_b, f'{mod}/hits.tsv.bgz', fetch)}
         seen_states = set()
-        for r in _rows(scan, f'{mod}/states.tsv.bgz', fetch):
+        for r in _rows(source_b, f'{mod}/states.tsv.bgz', fetch):
             if r['state'] != '1' or hit_type.get(r['hit_id']) != b_type:
                 continue
             sk = (r['dataset_id'], r.get('input_index', '0'), r['record'], r['hit_id'])
