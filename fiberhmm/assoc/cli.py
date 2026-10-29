@@ -96,8 +96,17 @@ def _json_default(o):
     return str(o)
 
 
+def _with_defaults(args):
+    """Programmatic callers may pass a Namespace without newer options: fill them with the parser's defaults."""
+    for action in _parser()._actions:
+        if action.dest != 'help' and not hasattr(args, action.dest):
+            setattr(args, action.dest, action.default)
+    return args
+
+
 def run(args) -> dict:
     from fiberhmm.assoc import scanio as S
+    args = _with_defaults(args)
     if min(args.background_k, args.background_step, args.background_min_sep, args.site_window, args.site_bin_bp) <= 0:
         raise S.ScanInputError('background and site-density sizes must be positive')
     if args.background_width is not None and args.background_width <= 0:
