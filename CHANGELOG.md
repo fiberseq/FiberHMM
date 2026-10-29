@@ -122,6 +122,13 @@
 
 ### Fixed
 
+- M2 group contrasts use the joint two-way bootstrap covariance for chained
+  loci, resample whole matched-set × molecule intersections in its subtraction
+  term, and count contributing clusters separately per group. Two-group
+  contrasts use group-specific CR1 factors and a capped Welch reference.
+  The former molecule-only variance made sparse confounded-null contrasts
+  conservative. Contrast results now include their bootstrap support counts.
+
 - **fibertools-rs ≥ 0.13 `Ma`/`Aq` input is read everywhere.** `fiberhmm-recall-tfs`
   carries fibertools' `fire.Q` (and other non-footprint) groups into the `MA`
   it writes, and `fiberhmm-call`/`-recall-tfs` drop the superseded `Ma`/`Aq`/`An`

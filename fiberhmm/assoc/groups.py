@@ -98,12 +98,15 @@ def post_selection_check(tested: Sequence[Tuple[str, int, int]], cluster_regions
 
 
 def group_contrast(estimates: Dict[str, float], boot, names: Optional[Dict[str, str]] = None,
-                   reference: Optional[str] = None, part: Optional[str] = None) -> dict:
+                   reference: Optional[str] = None, part: Optional[str] = None,
+                   cluster_counts: Optional[Dict[str, int]] = None) -> dict:
     """Interaction contrast between groups: differences against ``reference`` (the first group) and a Wald
     chi-square with the bootstrap covariance. ``boot`` is a :class:`fiberhmm.assoc.resample.BootDraws` (``names``
     maps group -> statistic name; default the group name) or a dict {group: draws}. ``part``: in two-way mode,
-    use one draw set only (M2 contrasts use 'molecules': the groups are disjoint in molecules and locus effects
-    cancel within each Delta)."""
+    explicitly use one draw set instead of the full crossed covariance. For two
+    groups, ``cluster_counts`` applies each group's own CR1 correction and a
+    Welch-Satterthwaite reference, capped by the joint cluster degrees of freedom.
+    """
     from scipy.stats import chi2, f as fdist, norm, t as tdist
     from fiberhmm.assoc.resample import BootDraws, boot_p_two, percentile_ci
     groups = [g for g in estimates]
@@ -118,7 +121,22 @@ def group_contrast(estimates: Dict[str, float], boot, names: Optional[Dict[str, 
     allg = [ref] + others
     part = part if boot.mode == 'twoway' else None
     fac, df = boot.correction(part)
-    cov = boot.cov([names[g] for g in allg], part) * fac
+    cov = boot.cov([names[g] for g in allg], part)
+    if cluster_counts is not None and len(allg) == 2:
+        counts = np.array([cluster_counts[g] for g in allg], float)
+        if np.all(counts >= 2):
+            scale = np.sqrt(counts / (counts - 1))
+            cov = cov * np.outer(scale, scale)
+            v = np.diag(cov)
+            denom = np.sum(v ** 2 / (counts - 1))
+            if np.isfinite(denom) and denom > 0:
+                df = min(df, float(np.sum(v) ** 2 / denom))
+            fac = 1.0
+        else:
+            fac, df = float('nan'), float('nan')
+            cov = cov * fac
+    else:
+        cov = cov * fac
     A = np.zeros((len(others), len(allg)))
     A[:, 0] = -1
     A[np.arange(len(others)), np.arange(1, len(allg))] = 1
@@ -142,6 +160,10 @@ def group_contrast(estimates: Dict[str, float], boot, names: Optional[Dict[str, 
         rows.append(row)
     out = {'groups': groups, 'reference': ref, 'differences': rows,
            'variance': boot.mode if part is None else f'{boot.mode} ({part} part)'}
+    if cluster_counts is not None and len(allg) == 2:
+        out['df_method'] = 'Welch-Satterthwaite, capped by joint cluster df'
+        if any(cluster_counts[g] < 2 for g in allg):
+            out['note'] = 'fewer than two contributing clusters in a group; no contrast inference'
     if np.all(np.isfinite(cd)) and np.all(np.isfinite(dobs)) and np.isfinite(fac):
         try:
             stat = float(dobs @ np.linalg.solve(cd, dobs))

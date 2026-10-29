@@ -74,8 +74,12 @@ informative sites.
 - **Selection.** Anchors discovered from the tested molecules use held-out discovery.
 
 Each mode's main test was checked on simulated nulls with these confounders built in, with 2,000 replicates per
-test: the false-positive rate at 0.05 stayed within 4–6%. The group contrasts of M2 and M4 err on the
-conservative side (they reject less often than 5% under the null).
+test: the false-positive rate at 0.05 stayed within 4–6%. M2 group contrasts use
+the joint two-way block-bootstrap covariance, whole matched-set × molecule
+intersections, and group-specific small-sample inference; their dataset and
+haplotype null FPRs are 4.93% and 5.06% in a 1,200-replicate rerun each. See the
+[calibration report](assoc_m2_calibration/README.md) for support counts, KS tests,
+power, and main-test identity checks. M4 group contrasts remain conservative.
 
 
 Association analyses accept `cancel=lambda: should_stop` and optional

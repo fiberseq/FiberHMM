@@ -22,28 +22,30 @@ intact (NUC 2.3: closed molecules had 9x lower density).
   each set plays the anchor** (1,000 draws of one role per set). Every locus keeps its own molecules and
   self-seeding. The same draws test the per-state site contrasts M_anchor(S) - M_random(S) (``site_state1``)
   and M_anchor(not S) - M_random(not S) (``site_state0``).
-- Intervals: a bootstrap over locus groups (sets that share molecules are joined; pigeonhole fallback).
+- Intervals: a bootstrap over locus groups (sets that share molecules are joined; two-way fallback).
 - Per anchor: Delta_a when each state has at least ``min_per_state`` (8) molecules in cells holding both states;
   within-anchor permutation (fixed 1,000, which also gives the SE), BH across anchors, and empirical-Bayes
   shrinkage for ranking. The aggregate is the primary result.
 - Groups: Delta per group by permutation within group x cell; the difference of the groups' Deltas gets a joint
-  locus-group bootstrap interval (Wald). When locus groups chain, the contrast's variance comes from resampling
-  whole molecules (the groups are disjoint in molecules and locus effects cancel within each Delta; the two-way
-  variance was noisy for contrasts and rejected at about 10% under the null, molecules alone at about 1%).
+  locus-group bootstrap interval (Wald), with two-way clustered variance when locus groups chain. The
+  subtraction term resamples whole (matched set, molecule) intersections. The few-clusters correction counts
+  only units and molecules that contribute to the contrast; unmatched or ineligible sets supply no degrees
+  of freedom. Two-group contrasts use group-specific CR1 factors and a Welch-Satterthwaite reference capped
+  by the joint cluster degrees of freedom; each group needs at least two contributing clusters.
   Unphased molecules are left out of haplotype contrasts (D14).
 """
 from __future__ import annotations
 
 from .control import checkpoint, cooperative
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable, Dict, List, Optional, Sequence
 
 import numpy as np
 
 from fiberhmm.assoc import strata as ST
 from fiberhmm.assoc.groups import group_contrast, group_labels
-from fiberhmm.assoc.resample import BlockBootstrap, bh, eb_shrink, locus_groups, perm_p_two_from_tails
+from fiberhmm.assoc.resample import BlockBootstrap, BootDraws, bh, eb_shrink, locus_groups, perm_p_two_from_tails
 
 
 @dataclass
@@ -414,7 +416,10 @@ def condition(app: Appearances, loci: LocusTable, metric: SumMetric, *, bins: Op
             gres[g], _pa, _m, _n = _bin_result(gbd[g], loci, n_perm=n_perm, n_role=n_role, per_anchor=False,
                                                min_per_state=min_per_state, rng=rng)
         if bb is not None:
-            boot = _boot_bin(bd, loci, bb, n_boot, gmain, group_names, gbd)
+            boot = _boot_bin(bd, loci, bb, n_boot, gmain, group_names, gbd,
+                             return_contrast=len(group_names) >= 2)
+            if len(group_names) >= 2:
+                boot, contrast_boot = boot
             for key in ('delta_anchor', 'delta_random', 'delta_site', 'site_state1', 'site_state0'):
                 if key in res and f'all|{key}' in boot.names:
                     res[key + '_ci'] = boot.summary(f'all|{key}', res[key])
@@ -426,10 +431,13 @@ def condition(app: Appearances, loci: LocusTable, metric: SumMetric, *, bins: Op
                 key = 'delta_site' if all('delta_site' in gres[g] for g in group_names) else 'delta_anchor'
                 if all(f'{g}|{key}' in boot.names for g in group_names):
                     est = {g: gres[g][key] for g in group_names}
-                    res['interaction'] = group_contrast(est, boot, {g: f'{g}|{key}' for g in group_names},
-                                                        part='molecules')
+                    contrast_boot = _contrast_bootstrap(contrast_boot, bb, loci, gmain, gbd, key)
+                    res['interaction'] = group_contrast(est, contrast_boot,
+                                                        {g: f'{g}|{key}' for g in group_names},
+                                                        cluster_counts=contrast_boot.info['group_clusters'])
                     res['interaction']['statistic'] = key
                     res['interaction']['test'] = 'difference of group Deltas, joint locus-group bootstrap (Wald)'
+                    res['interaction']['bootstrap_support'] = contrast_boot.info
         if gres:
             res['groups'] = gres
         out['bins'].append(res)
@@ -461,7 +469,56 @@ def condition(app: Appearances, loci: LocusTable, metric: SumMetric, *, bins: Op
     return out
 
 
-def _boot_bin(bd: _Bin, loci: LocusTable, bb: BlockBootstrap, n_boot, gmain, group_names, gbd):
+def _contrast_bootstrap(boot: BootDraws, bb: BlockBootstrap, loci: LocusTable, gmain, gbd, key):
+    """Keep joint draws, but count only the contrast's contributing resampling clusters.
+
+    Group-specific stratification can leave many loci with no balanced observations,
+    especially after excluding unphased molecules. Those loci have zero bootstrap
+    contribution and cannot increase the reference degrees of freedom. This changes
+    only contrast inference; the pooled and per-group intervals retain their draws.
+    """
+    active = np.zeros(len(bb.item_unit), bool)
+    group_clusters = {}
+    for g, b_ in gbd.items():
+        if key == 'delta_site':
+            members, _ = _sets(loci, b_.locus_ok)
+            used = np.zeros(loci.n, bool)
+            used[members[members >= 0]] = True
+        else:
+            used = loci.is_anchor & b_.locus_ok
+        take = used[b_.locus]
+        if b_.balance:
+            n1 = np.bincount(b_.cell, weights=b_.state, minlength=b_.nc)
+            n0 = np.bincount(b_.cell, weights=1 - b_.state, minlength=b_.nc)
+            take &= ((n1 > 0) & (n0 > 0))[b_.cell]
+        cols = np.flatnonzero(gmain == g)
+        rows = cols[b_.idx[take]]
+        active[rows] = True
+        group_units = np.unique(bb.item_unit[rows])
+        group_molecules = np.unique(bb.item_mol[rows])
+        if boot.mode == 'groups':
+            group_clusters[g] = len(np.unique(bb.unit_group[group_units]))
+        elif boot.mode == 'molecules':
+            group_clusters[g] = len(group_molecules)
+        else:
+            group_clusters[g] = min(len(group_units), len(group_molecules))
+    units = np.unique(bb.item_unit[active])
+    molecules = np.unique(bb.item_mol[active])
+    groups = np.unique(bb.unit_group[units])
+    if boot.mode == 'groups':
+        clusters = len(groups)
+    elif boot.mode == 'molecules':
+        clusters = len(molecules)
+    else:
+        clusters = min(len(units), len(molecules))
+    intersections = len(np.unique(ST.combine(bb.item_unit[active], bb.item_mol[active])))
+    info = dict(units=len(units), molecules=len(molecules), intersections=intersections,
+                locus_groups=len(groups), clusters=clusters, group_clusters=group_clusters)
+    return replace(boot, info=info)
+
+
+def _boot_bin(bd: _Bin, loci: LocusTable, bb: BlockBootstrap, n_boot, gmain, group_names, gbd,
+              *, return_contrast=False):
     """Bootstrap of Delta_anchor, Delta_random and Delta_site for one bin (overall and per group), from shared
     weight draws over the analysed appearances. Each target uses its own eligible loci and sets, as its point
     estimate does. Statistic names are '<target>|<statistic>'."""
@@ -528,4 +585,28 @@ def _boot_bin(bd: _Bin, loci: LocusTable, bb: BlockBootstrap, n_boot, gmain, gro
                 out[f'{key}|site_state1'] = np.asarray(b_.metric(a1) - b_.metric(r1))
                 out[f'{key}|site_state0'] = np.asarray(b_.metric(a0) - b_.metric(r0))
         return out
-    return bb.collect(fn, n_boot)
+    boot = bb.collect(fn, n_boot)
+    if not return_contrast:
+        return boot
+    if bb.mode != 'twoway':
+        return boot, boot
+
+    # The intersection of the two clustering axes is (matched set, molecule),
+    # which can contain several appearances. Resampling those appearances
+    # independently would split a physical molecule within its matched set.
+    # Keep the original interval draws and RNG stream; only the contrast gets
+    # this intersection component in place of the appearance component.
+    from copy import deepcopy
+    rng = deepcopy(bb.rng)
+    intersection = ST.combine(bb.item_unit, bb.item_mol)
+    n = int(intersection.max()) + 1
+    chunk = max(1, min(64, int(2e7 // max(len(intersection), 1))))
+    acc = {}
+    for start in range(0, n_boot, chunk):
+        checkpoint('bootstrap', start, n_boot)
+        count = min(chunk, n_boot - start)
+        weights = rng.multinomial(n, np.full(n, 1.0 / n), size=count)[:, intersection].astype(float)
+        for name, values in fn(weights).items():
+            acc.setdefault(name, []).extend(np.asarray(values, float).tolist())
+    items = {name: np.asarray(values) for name, values in acc.items()}
+    return boot, replace(boot, parts=dict(boot.parts, items=items))
