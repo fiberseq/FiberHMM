@@ -77,9 +77,9 @@ Each mode's main test was checked on simulated nulls with these confounders buil
 test: the false-positive rate at 0.05 stayed within 4–6%. M2 group contrasts use
 the joint two-way block-bootstrap covariance, whole matched-set × molecule
 intersections, and group-specific small-sample inference; their dataset and
-haplotype null FPRs are 4.93% and 5.06% in a 1,200-replicate rerun each. See the
-[calibration report](assoc_m2_calibration/README.md) for support counts, KS tests,
-power, and main-test identity checks. M4 group contrasts remain conservative.
+haplotype null FPRs are 4.93% and 5.06% in a 1,200-replicate rerun each (KS p 0.30
+and 0.34); `scripts/validation/calibrate_assoc.py` reproduces the calibration. M4
+group contrasts remain conservative.
 
 
 Association analyses accept `cancel=lambda: should_stop` and optional
