@@ -53,7 +53,27 @@ def _pack(X, y, strata, beta):
     return Xp, yp, rows, valid, kk.astype(np.int64), flip
 
 
+_DP_MAX_ELEMENTS = 1_000_000
+
+
 def _dp(Xp, valid, kk, beta, need_q=True):
+    """Bound dynamic-programming workspace by batching independent strata.
+
+    Each stratum keeps its original recurrence and rounding. Concatenation
+    restores the original order before likelihood, gradient and Hessian sums.
+    """
+    S, _n, p = Xp.shape
+    width = (int(kk.max()) + 1) * (max(1, p*p) if need_q else max(1, p)) if S else 1
+    block = max(1, _DP_MAX_ELEMENTS // width)
+    if S <= block:
+        return _dp_full(Xp, valid, kk, beta, need_q)
+    parts = [_dp_full(Xp[a:a+block], valid[a:a+block], kk[a:a+block], beta, need_q)
+             for a in range(0, S, block)]
+    return tuple(None if parts[0][i] is None else np.concatenate([part[i] for part in parts], axis=0)
+                 for i in range(4))
+
+
+def _dp_full(Xp, valid, kk, beta, need_q=True):
     """log-likelihood pieces per stratum: (log e_k, mean of sum_S x, covariance of sum_S x)."""
     S, n_max, p = Xp.shape
     eta = Xp @ beta

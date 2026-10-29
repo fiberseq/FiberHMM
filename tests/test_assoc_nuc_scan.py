@@ -525,3 +525,30 @@ def test_scanio_cross_scan_states_and_explicit_empty_regions(tmp_path):
     (other / 'manifest.json').write_text(json.dumps(manifest))
     with pytest.raises(S.ScanInputError, match='coordinate frame'):
         S.rate_data_from_marks(a, 'nuc.seg.regular', 'fp.class', b_scan=S.open_scan(other))
+
+
+def test_real_nuc_scan_annotated_marks_equal_table_inputs(nuc_scan, tmp_path):
+    """The scan writer's real MA contract and geometry feed the same M3 arrays."""
+    import shutil
+    from fiberhmm.assoc import scanio as S
+    from fiberhmm.scan import run_units
+    from fiberhmm.scan.units import plan
+    before = S.open_scan(nuc_scan)
+    expected = S.rate_data_from_marks(before, 'nuc.seg.regular', 'tf')
+    out = tmp_path / 'annotated'
+    shutil.copytree(nuc_scan, out)
+    manifest = before.manifest
+    datasets = [dict(dataset_id=d['dataset_id'], chemistry=d.get('chemistry'),
+                     paths=[f['path'] for f in d['files']]) for d in manifest['datasets']]
+    run_units(datasets, plan(dict(manifest['reference']['contigs']), genome=True, contigs=['chrS']),
+              modules=['nuc'], params={'nuc': manifest['modules']['nuc']['settings']},
+              out=out, annotate=True, continue_run=True)
+    after = S.open_scan(out)
+    assert after.manifest['outputs']['annotate']
+    actual = S.rate_data_from_marks(after, 'nuc.seg.regular', 'tf')
+    assert actual.length.tobytes() == expected.length.tobytes()
+    assert actual.molecule_ids.tolist() == expected.molecule_ids.tolist()
+    for a, b in zip(actual.intervals, expected.intervals):
+        assert a.tobytes() == b.tobytes()
+    for a, b in zip(actual.points, expected.points):
+        assert a.tobytes() == b.tobytes()

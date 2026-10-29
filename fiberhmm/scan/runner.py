@@ -28,7 +28,7 @@ from .seams import reconcile_anchor, territory_runs
 from .tables import COMMON, TableWriter
 from .types import (SCHEMA, Dataset, FullMolecule, ScanInputs, ScanUnit, molecule_result_from_json,
                     molecule_result_to_json, unit_result_from_json, unit_result_to_json)
-from .units import UnitIndex, default_annotate
+from .units import default_annotate
 
 LOCK = '.scan.lock'
 RUN_JSON = 'run.json'
@@ -179,6 +179,8 @@ def resolve_datasets(datasets: Sequence[Mapping[str, Any]]):
     items = []
     reference = None
     for i, d in enumerate(datasets):
+        from .signal import validate_spec
+        validate_spec(d)
         paths = d.get('paths') or ([d['path']] if d.get('path') else [])
         if isinstance(paths, str):
             paths = [paths]
@@ -354,13 +356,30 @@ def _load_tracks(folder: Path) -> Optional[dict]:
         return {k: data[k] for k in data.files}
 
 
+_TASK_CONTEXT = {}
+
+
+def _task_spec(spec):
+    """Load one immutable scan context per worker, instead of shipping the plan
+    and all module keys with each unit (quadratic in a genome-wide unit count)."""
+    path = spec.get('context_path')
+    if path is None:
+        return spec, tuple(ScanUnit.from_json(u) for u in spec['plan'])
+    if _TASK_CONTEXT.get('path') != path:
+        common = _read_json(Path(path))
+        _TASK_CONTEXT.clear()
+        _TASK_CONTEXT.update(path=path, common=common,
+                             plan=tuple(ScanUnit.from_json(u) for u in common['plan']))
+    return dict(_TASK_CONTEXT['common'], **{k: v for k, v in spec.items() if k != 'context_path'}), _TASK_CONTEXT['plan']
+
+
 def run_unit_task(spec: dict) -> dict:
     """Run every module of one unit (in this process or a worker); returns the unit's summary."""
+    spec, plan_units = _task_spec(spec)
     out = Path(spec['out'])
     unit = ScanUnit.from_json(spec['unit'])
     datasets = tuple(Dataset(d['dataset_id'], d['ordinal'], d['chemistry'], tuple(d['paths']),
                              tuple(d['content_ids'])) for d in spec['datasets'])
-    plan_units = tuple(ScanUnit.from_json(u) for u in spec['plan'])
     inputs = ScanInputs(datasets=datasets, read_policy=spec['read_policy'], reference=spec['reference'],
                         plan=plan_units, cores=int(spec['cores']))
     log_path = out / WORK / 'logs' / (I.unit_dir_name(unit.unit_id) + '.log')
@@ -396,7 +415,7 @@ def run_unit_task(spec: dict) -> dict:
         upstream_results: Dict[str, Any] = {}
         molecular_input: Dict[str, bool] = {}
         module_status = {}
-        index = UnitIndex(plan_units)
+        module_seconds = {}
         for m in spec['modules']:
             name = m['name']
             folder = _unit_dir(out, name, unit)
@@ -407,6 +426,7 @@ def run_unit_task(spec: dict) -> dict:
             if folder.exists():
                 shutil.rmtree(folder)
             folder.mkdir(parents=True)
+            module_started = time.monotonic()
             mod = load_module(name, registry)
             settings = m['settings']
             calibration = m.get('calibration')
@@ -449,8 +469,9 @@ def run_unit_task(spec: dict) -> dict:
                 _write_json(folder / 'skipped.json.gz', [r.to_json() for r in skipped])
             _publish_marker(folder, key, dict(status=result.status, unit=unit.unit_id, module=name))
             module_status[name] = result.status
+            module_seconds[name] = time.monotonic() - module_started
         return dict(unit=unit.unit_id, index=unit.index, records=survey['records'], status='empty' if empty else 'done',
-                    modules=module_status)
+                    modules=module_status, module_seconds=module_seconds)
 
 
 # ------------------------------------------------------------------ dispatch
@@ -545,6 +566,13 @@ def run_units(datasets: Sequence[Mapping[str, Any]], units, *, modules: Sequence
                 raise ScanRefused('evidence output directory is not empty; use continue_run or a new directory')
             from .evidence import materialize_evidence
             datasets = materialize_evidence(datasets, evidence, out / WORK / '_evidence', cancel=cancel)
+        signal_input = any(d.get('input_type') == 'signal-bam' for d in datasets)
+        if signal_input:
+            if not continue_run and any(p.name not in (LOCK,) for p in out.iterdir()) and evidence is None:
+                raise ScanRefused('signal output directory is not empty; use continue_run or a new directory')
+            from .signal import materialize
+            datasets = materialize(datasets, out / WORK / '_signal',
+                                   cancel=cancel.is_set if cancel is not None else None)
         resolved, reference = resolve_datasets(datasets)
         contigs = list(reference.items())
         for u in units:
@@ -554,7 +582,7 @@ def run_units(datasets: Sequence[Mapping[str, Any]], units, *, modules: Sequence
         annotate = default_annotate(units_info) if annotate is None else bool(annotate)
         return _run_locked(out, resolved, reference, contigs, units, units_info, mods, policy, annotate,
                            progress, cancel, cores, window_jobs, continue_run, registry, command, extend,
-                           prepared_evidence=evidence is not None)
+                           prepared_evidence=evidence is not None or signal_input)
     finally:
         lock.release()
 
@@ -566,6 +594,10 @@ def _manifest_core(resolved, contigs, units, units_info, mods, policy, cal_shas)
                  for i, (p, cid) in enumerate(zip(d.paths, d.content_ids))]
         for f in files:
             f['fiberhmm_calls'] = _calls_program(f['path'])
+            from .signal import input_metadata
+            signal = input_metadata(f['path'])
+            if signal:
+                f['signal_input'] = signal[-1]
         datasets.append(dict(dataset_id=d.dataset_id, ordinal=d.ordinal, chemistry=d.chemistry, files=files))
     from fiberhmm import __version__
     manifest = dict(schema=SCHEMA, fiberhmm=dict(version=__version__),
@@ -645,6 +677,7 @@ def _run_locked(out, resolved, reference, contigs, units, units_info, mods, poli
     # Calibration (dataset-level, before any unit): nuc only in v1.
     cal_shas: Dict[str, Optional[str]] = {}
     calibrations: Dict[str, Optional[dict]] = {}
+    calibration_seconds = {}
     inputs = ScanInputs(datasets=resolved, read_policy=policy, reference=reference, plan=units, cores=cores)
     pre = _manifest_core(resolved, contigs, units, units_info, mods, policy, {})
     base = base_key(pre['reference']['contigs_sha256'], resolved, policy)
@@ -655,6 +688,7 @@ def _run_locked(out, resolved, reference, contigs, units, units_info, mods, poli
                                                   units=pre['units'], modules=pre['modules']))
     plan_digest = I.digest([u.to_json() for u in units])
     for name, mod, settings in mods:
+        calibration_started = time.monotonic()
         # Calibration runs once per scan; a cached record is reused only for the same inputs, module
         # settings and plan.
         cal_dir = out / WORK / name / '_calibration'
@@ -680,6 +714,7 @@ def _run_locked(out, resolved, reference, contigs, units, units_info, mods, poli
             if cal_path.is_file():
                 cal_path.unlink()
             cal_shas[name] = None
+        calibration_seconds[name] = time.monotonic() - calibration_started
     manifest = _manifest_core(resolved, contigs, units, units_info, mods, policy, cal_shas)
     scan_id = manifest['scan_id']
     # Unit keys per module (upstream keys chained).
@@ -708,12 +743,15 @@ def _run_locked(out, resolved, reference, contigs, units, units_info, mods, poli
     jobs, inner = _plan_jobs(len(pending), cores, window_jobs)
     plan_json = [u.to_json() for u in units]
     ds_json = [d.to_json() for d in resolved]
-    specs = [dict(out=str(out), unit=u.to_json(), datasets=ds_json, plan=plan_json, read_policy=policy,
-                  reference=reference, cores=inner, modules=module_specs, scan_id_core=core,
-                  registry=registry) for u in pending]
+    common = dict(out=str(out), datasets=ds_json, plan=plan_json, read_policy=policy,
+                  reference=reference, cores=inner, modules=module_specs, scan_id_core=core)
+    context_path = out / WORK / ('dispatch_' + I.digest(common, 16) + '.json.gz')
+    if pending and not context_path.exists():
+        _write_json(context_path, common)
+    specs = [dict(context_path=str(context_path), unit=u.to_json(), registry=registry) for u in pending]
     progress.report('units', f'{reused} complete from an earlier attempt; {len(pending)} to run ({jobs} at a time)'
                     if reused else f'{len(pending)} to run ({jobs} at a time)', completed=reused, total=len(units))
-    _dispatch(specs, jobs, progress, cancel)
+    completed = _dispatch(specs, jobs, progress, cancel)
     from .finalize import finalize
     # No module writes per-molecule MA groups (a peaks-only scan): nothing to annotate.
     annotate = bool(annotate) and any(m.ma_groups() for _n, m, _s in mods)
@@ -726,9 +764,14 @@ def _run_locked(out, resolved, reference, contigs, units, units_info, mods, poli
                                     '(coord=molecular or fibertools calling provenance): per-molecule results of every '
                                     'input are written as tables, not annotated BAMs')
             annotate = False
+    finalize_started = time.monotonic()
     summary = finalize(out, manifest, resolved, reference, units, mods, unit_keys, annotate, progress,
                        command=command, calibrations=calibrations)
     run = dict(attempts=_attempts(out, cores, window_jobs, time.monotonic() - started, len(pending), reused))
+    run['attempts'][-1]['calibration_seconds'] = calibration_seconds
+    run['attempts'][-1]['module_unit_seconds'] = {n: sum(x.get('module_seconds', {}).get(n, 0.) for x in completed)
+                                               for n, _m, _s in mods}
+    run['attempts'][-1]['finalize_seconds'] = time.monotonic() - finalize_started
     _write_json(out / RUN_JSON, run, indent=1)
     return summary
 

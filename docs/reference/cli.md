@@ -644,6 +644,8 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--zones` | — | Scan only the genome-grid units whose owned zones meet this window (0-based, half-open; repeatable; implies --genome). Units keep their genome-grid spans (not clipped to the window), so their results are the genome scan's (the Python API's run_units(..., extend=True) reuses them across plans; --continue needs the same plan). FiberBrowser's view scans print this form |
 | `--modules` | `fp,nfr,peaks` | Comma-separated modules (default fp,nfr,peaks; nfr is an EXPERIMENTAL preview) |
 | `--parameters` | — | JSON {"fp": {...}, "nfr": {...}, "peaks": {...}, "read_policy": {...}}; see --schema |
+| `--input-type` | `called-bam` | --bam input type; signal-bam filters producer-scored schema 5 records before all modules Choices: `called-bam`, `signal-bam`. |
+| `--signal-filters` | — | JSON file of boolean hideBackground, excludeUnscored, requireDetectable, requireStructure predicates (with --input-type signal-bam) |
 | `--chemistry` | — | Chemistry for --bam inputs whose header does not declare one Choices: `ddda`, `dddb`, `hia5-pacbio`, `hia5-nanopore`. |
 | `--unit-bp` | `50000` | Grid unit span (default 50000; at most the engines' 50 kb budget) |
 | `--stride-bp` | `25000` | Grid stride = owned zone (default 25000) |
@@ -660,6 +662,39 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `-o` / `--output` | — | New or empty scan directory (with --continue: the interrupted scan's) |
 | `--schema` | off | Print every module's parameters with defaults as JSON |
 | `--inspect` | — | Print a scan directory's summary and validate its tables, indexes and annotated BAMs (exit 1 on problems) |
+
+### fiberhmm-scan assoc
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `scan_dir` | required | A finished fiberhmm-scan directory |
+| `--mode` | required | cooccur (M1), condition (M2), rate (M3), overlap (M4) Choices: `cooccur`, `condition`, `rate`, `overlap`. |
+| `--a` | required | Feature type A (e.g. nfr.region, fp.class, nuc.seg.regular, peaks.peak) |
+| `--b` | — | Feature type B (cooccur, overlap); rate: tf (TF footprint centres from nuc marks) or a state type whose member calls are the points (fp.class) |
+| `--response` | — | condition: per-molecule response MODULE:SCALAR (e.g. nuc:nrl, nfr:openness) |
+| `--bed` | — | condition: anchors are the --a hits whose anchor lies in these intervals (e.g. an enhancer BED); other --a hits are their matched backgrounds. Without it every hit is an anchor and only Delta_anchor and per-anchor rows are reported |
+| `--backgrounds` | `hits` | condition: other hits outside --bed (default), random loci with a transferable state rule (currently nfr.region), or none Choices: `hits`, `random`, `none`. |
+| `--background-k` | `5` | condition: backgrounds per anchor (default 5) |
+| `--background-step` | `500` | condition: random candidate grid step in bp |
+| `--background-min-sep` | `3000` | condition: minimum separation in bp |
+| `--background-width` | — | condition: random interval width in bp; default median anchor hit width; the scan state rule is evaluated over this interval |
+| `--fasta` | — | Indexed reference FASTA: condition matching covariate or overlap density strata |
+| `--site-bases` | `AT` | Opportunity bases counted in FASTA (default AT; C/G for strand-specific deaminase contexts); density excludes ambiguous bases |
+| `--site-window` | `1000` | condition: site-density window in bp |
+| `--site-bin-bp` | `10000` | overlap: site-density stratum window in bp |
+| `--region` | — | Restrict to windows (repeatable) |
+| `--group` | — | Group contrast: dataset or haplotype (haplotype from the input BAMs' HP tags; unphased molecules are reported apart) Choices: `dataset`, `haplotype`. |
+| `--haplotype-tag` | `HP` | BAM tag holding the haplotype (default HP) |
+| `--labels` | — | TSV with a molecule column and label columns (other groups, replicates) |
+| `--group-label` | — | With --labels: the label column to contrast |
+| `--density` | `rho_read` | nuc molecule scalar used as the mark-density covariate (default rho_read) Choices: `rho_read`, `lambda_acc`. |
+| `--max-distance` | `5000` | cooccur: maximum anchor distance (default 5000) |
+| `--test` | `adjusted` | cooccur: pooled test Choices: `adjusted`, `strata`. |
+| `--strata` | — | overlap: BED of strata (chrom start end label); default one stratum per contig |
+| `--n-perm` | `1000` | Permutations / shifts / relocations (default 1000) |
+| `--n-boot` | `1000` | Bootstrap draws (default 1000) |
+| `--seed` | `0` |  |
+| `-o` / `--output` | required | Output directory |
 
 ## fiberhmm-footprint-model
 

@@ -1,7 +1,7 @@
 # Associating features
 
 `fiberhmm.assoc` tests whether two kinds of features go together on the same molecules or at the same loci. It
-works on what `fiberhmm-scan` writes, or on plain arrays from the Python API. It never reads BAM records itself.
+works on what `fiberhmm-scan` writes, or on plain arrays from the Python API. The statistical functions use arrays; scan-directory readers also accept annotated BAMs.
 
 There are four modes.
 
@@ -16,8 +16,7 @@ Every mode reports an effect with an interval and a p-value, and counts what it 
 
 ## From a scan directory
 
-M1–M3 read the per-molecule tables (`states`, `marks`, `molecules`). A scan writes them in table mode
-(`--no-annotate`; the default for BED-scoped scans). M4 needs only hits and the callable territory.
+M1–M3 read either per-molecule tables (`states`, `marks`, `molecules`) or the annotated BAMs listed in the manifest. Annotated scalars use their declared byte-codec precision; tables retain exact values. Haplotype lookup can use the annotated files, so these modes do not need the original BAM paths. M4 needs hits and callable territory.
 
 ```bash
 fiberhmm-scan --bam a.bam --bed units.bed --modules fp,nfr,nuc,peaks --no-annotate -o scan/
@@ -96,5 +95,34 @@ compared; `calibration_by_dataset` lists their physical spans and digests.
 Oscillation metrics require equal periods. M1 pooled summaries also contain
 `a`, `b`, `c`, `d` counts. M3's `scanio.rate_data_from_marks` accepts
 `b_scan=other_scan` for states in another scan of the same reference/frame.
-For scanio windows, `None` means all and `[]` means none. Annotated-scan CLI
-input and FASTA-derived density strata remain open.
+For scanio windows, `None` means all and `[]` means none. Annotated-scan CLI inputs and FASTA-derived density strata are supported (contracts v1.12).
+
+## Random backgrounds and reference density
+
+For a transferable state rule, M2 can evaluate random loci within the scan's
+computed callable territory. Currently the supported type is `nfr.region`.
+It uses the scan's NFR loader settings and source evidence; source BAMs must
+remain available for evaluating states at new positions.
+
+```bash
+fiberhmm-scan assoc scan/ --mode condition --a nfr.region --response nuc:nrl \
+  --bed anchors.bed --backgrounds random --background-k 5 \
+  --fasta reference.fa --site-bases AT -o random_condition/
+
+fiberhmm-scan assoc scan/ --mode overlap --a peaks.peak --b nfr.region \
+  --fasta reference.fa --site-bases AT --site-bin-bp 10000 -o density_overlap/
+```
+
+Candidates come from a jittered 500 bp grid, with 3 kb separation from every
+anchor and previously selected background. Their fixed interval width defaults
+to the median anchor width; `--background-width` overrides it. M2 matches depth
+deciles, and with FASTA also site-density deciles. Hit backgrounds additionally
+match prevalence. Shortfalls are reported; constraints are never relaxed.
+`--backgrounds none` reports anchor conditioning without matched site contrasts.
+
+The FASTA must already be indexed and agree with the scan's reference names and
+lengths. Site density counts an explicit subset of ACGT over unambiguous bases
+(default AT; choose C/G for a strand-specific deaminase context). M2 uses 1 kb
+windows (`--site-window`); M4 uses density terciles crossed with chromosome in
+10 kb windows of the callable territory. M4 accepts either `--fasta` or an
+explicit `--strata` BED. Coverage matching is not inferred by this FASTA option.

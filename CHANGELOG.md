@@ -4,6 +4,23 @@
 
 ### Added
 
+- Scan contracts v1.12: association M1–M3 reads annotated BAMs, including
+  decoded scalar codecs, molecular mark projection and annotated haplotypes.
+- Association CLI M2 random transferable backgrounds (`nfr.region`), and
+  indexed FASTA site density for M2 matching or M4 relocation strata.
+- Explicit schema 5 signal-BAM scan inputs, with producer-evidence predicates
+  applied once before every module, calibration, sampling and callable survey.
+- Reproducible scan and association scaling benchmarks
+  (`tools/benchmark_scan.py`, `tools/benchmark_assoc.py`).
+- Background matching consumes candidate pools once and checks separation in
+  spatial bins, preserving selected sets and eliminating quadratic rescans.
+  M2 permutation batches and conditional-logistic DP workspace are bounded.
+- Scan workers load shared plans once; repeated deterministic discovery fits
+  and nuc record outputs are cached, and MA projection intersects CIGAR blocks.
+  Execution timings are recorded in run.json, outside byte-identity outputs.
+- Scan table sorting spills bounded batches with stable merge order; nuc stitch
+  tracks expand on demand, with patch summaries reading only their slices.
+
 - Scan API contracts v1.11 (`CONTRACTS.md`): iterable/callback record evidence
   for `run_units`, sharing every module's BAM loaders and calibrations.
 - Public `fiberhmm.nuc.record_outputs` and `measured_track` helpers;

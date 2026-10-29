@@ -194,3 +194,48 @@ the full calibration population. Optional dataset `content_ids` preserve the
 identity of the same immutable source records; never reuse an ID after a lift
 or another record change. See [contracts §14](../../CONTRACTS.md) for equality,
 continuation and metadata rules. `--inspect` includes `units.zones`.
+
+## Signal-BAM inputs
+
+An explicit `signal-bam` input is an already called BAM with producer-supplied
+schema 5 whole-alignment signal evidence (`FIBERHMM-SIGNAL:v1:` provenance,
+`tag_schema: 5`). This narrow interpretation of hub request 7 accepts the current
+signal format. It does not score raw signal or convert legacy signal schemas.
+
+```json
+{"hideBackground": true, "excludeUnscored": true,
+ "requireDetectable": false, "requireStructure": false}
+```
+
+Save the predicates as `predicates.json`, then run:
+
+```bash
+fiberhmm-scan --bam called_signal.bam --input-type signal-bam \
+  --signal-filters predicates.json --genome --modules fp,nfr,peaks,nuc -o scan/
+```
+
+For mixed inputs, each `--datasets` entry supplies `input_type` and optional
+`signal_filters`. Unspecified predicates are false; ordinary called BAMs keep
+their existing behavior. Complete retained records are snapshotted once under
+`work/_signal` before survey, calibration, sampling and module loading. Every
+module and the callable territory therefore see the same filtered population.
+Snapshots preserve the original records and record the filter policy and source
+content identity. Changing the predicates changes evidence identity, so a
+continued scan cannot silently reuse results from another population.
+
+The producer codes are `bg=1` background, `0` detectable, `-1` unclassified,
+`-2` unscored. Optional `me` JSON supplies status and structure. Unknown or
+inconsistent evidence obeys the unknown/unscored gate; requiring structure needs
+`supported` and a finite numeric score. See contracts v1.12 in `CONTRACTS.md`.
+
+Execution timings are recorded in `run.json` (excluded from reproducible
+outputs): calibration seconds per module, summed unit seconds per module, and
+finalization wall time. Unit seconds include loaders, per-record outputs and
+scratch writes; concurrent units overlap, so their sum is worker time rather
+than elapsed scan time. Empty or reused units contribute no new module work.
+
+Large tables use bounded sorted runs and a stable external merge. Nuc stitching
+assembles only requested tracks and patch slices from unit archives, avoiding
+an eager copy of all contig tracks. Some statistical work arrays still span a
+whole contig. Performance measurements and their extrapolation limits are in
+[the performance report](../reference/scan-performance.md).

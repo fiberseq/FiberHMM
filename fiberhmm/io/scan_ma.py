@@ -355,11 +355,28 @@ def project_to_molecule(read, start: int, end: int, ma_length: Optional[int] = N
     The span is the record's aligned bases inside it (None when there are
     none). The molecular frame is the original read 5'->3'; it includes hard
     clips when the MA read length covers the whole molecule."""
-    pairs = read.get_aligned_pairs(matches_only=True)
-    qs = [q for q, r in pairs if start <= r < max(end, start + 1)]
-    if not qs:
+    # Intersect the reference span with CIGAR blocks. Expanding every aligned
+    # base into Python tuples for every mark makes annotation scale with read
+    # length times mark count rather than with CIGAR size.
+    query, ref = 0, int(read.reference_start)
+    lo, hi = None, None
+    import math
+    lower, limit = math.ceil(start), math.ceil(max(end, start + 1))
+    for op, n in read.cigartuples or []:
+        if op in (0, 7, 8):
+            a, b = max(lower, ref), min(limit, ref + n)
+            if b > a:
+                q0, q1 = query + a - ref, query + b - ref
+                lo = q0 if lo is None else min(lo, q0)
+                hi = q1 if hi is None else max(hi, q1)
+            query += n
+            ref += n
+        elif op in (1, 4, 6):
+            query += n
+        elif op in (2, 3):
+            ref += n
+    if lo is None:
         return None
-    lo, hi = min(qs), max(qs) + 1
     cigar = read.cigartuples or []
     lead = cigar[0][1] if cigar and cigar[0][0] == 5 else 0
     trail = cigar[-1][1] if len(cigar) > 1 and cigar[-1][0] == 5 else 0

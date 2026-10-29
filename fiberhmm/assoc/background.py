@@ -69,22 +69,26 @@ def matched_backgrounds(anchors: Sequence[Tuple[str, int]], candidates: Sequence
         pools.setdefault(c_key[j], []).append(int(j))
     for key in pools:
         rng.shuffle(pools[key])
-    chosen_pos: Dict[str, list] = {}
+    from collections import deque
+    pools = {key: deque(pool) for key, pool in pools.items()}
+    chosen_pos: Dict[tuple, list] = {}
     used = np.zeros(len(c_pos), bool)
     sets = []
     shortfall = 0
     for i in rng.permutation(len(a_pos)):
         got = []
-        for j in pools.get(a_key[i], []):
-            if len(got) >= k:
-                break
-            if used[j]:
-                continue
-            cp = chosen_pos.setdefault(c_chrom[j], [])
-            if cp and np.min(np.abs(np.asarray(cp) - c_pos[j])) < min_sep:
+        pool = pools.get(a_key[i])
+        while pool and len(got) < k:
+            j = pool.popleft()
+            # Rejected candidates can never become eligible later: chosen
+            # backgrounds only accumulate. Each shuffled pool is consumed once.
+            cell = int(c_pos[j]) // max(1, min_sep)
+            nearby = (p for b in (cell - 1, cell, cell + 1)
+                      for p in chosen_pos.get((c_chrom[j], b), ()))
+            if any(abs(p - int(c_pos[j])) < min_sep for p in nearby):
                 continue
             used[j] = True
-            cp.append(int(c_pos[j]))
+            chosen_pos.setdefault((c_chrom[j], cell), []).append(int(c_pos[j]))
             got.append(j)
         if len(got) < k:
             shortfall += 1

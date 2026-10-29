@@ -48,6 +48,10 @@ def _parser():
                    help=f'Comma-separated modules (default {DEFAULT_MODULES}; nfr is an EXPERIMENTAL preview)')
     p.add_argument('--parameters', help='JSON {"fp": {...}, "nfr": {...}, "peaks": {...}, "read_policy": {...}}; '
                                         'see --schema')
+    p.add_argument('--input-type', choices=['called-bam', 'signal-bam'], default='called-bam',
+                   help='--bam input type; signal-bam filters producer-scored schema 5 records before all modules')
+    p.add_argument('--signal-filters', help='JSON file of boolean hideBackground, excludeUnscored, '
+                   'requireDetectable, requireStructure predicates (with --input-type signal-bam)')
     p.add_argument('--chemistry', choices=['ddda', 'dddb', 'hia5-pacbio', 'hia5-nanopore'],
                    help='Chemistry for --bam inputs whose header does not declare one')
     p.add_argument('--unit-bp', type=int, default=50_000, help='Grid unit span (default 50000; at most the engines\' '
@@ -183,12 +187,16 @@ def _main(argv=None):
         params = json.loads(Path(args.parameters).read_text())
         if not isinstance(params, dict):
             p.error('--parameters must hold a JSON object of module groups')
+    if args.datasets and (args.input_type != 'called-bam' or args.signal_filters):
+        p.error('with --datasets put input_type and signal_filters in each dataset specification')
     if args.datasets:
         datasets = json.loads(Path(args.datasets).read_text())
     else:
         # labelled by canonical order (dataset_<ordinal + 1>, ordinal = rank by content id), not by --bam
         # position, so a scan with the BAMs listed in another order has the same keys and rows
-        datasets = [dict(paths=[str(Path(b).expanduser().resolve())], chemistry=args.chemistry) for b in args.bam]
+        datasets = [dict(paths=[str(Path(b).expanduser().resolve())], chemistry=args.chemistry, input_type=args.input_type,
+                              signal_filters=json.loads(Path(args.signal_filters).read_text())
+                              if args.signal_filters else {}) for b in args.bam]
     read_policy = dict(params.pop('read_policy', {}) or {})
     from fiberhmm.inference.depth_cap import NAMES
     caps = dict(read_policy.get('caps', {}))

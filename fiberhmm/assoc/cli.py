@@ -5,9 +5,9 @@
     fiberhmm-scan assoc SCAN_DIR --mode rate --a nuc.seg.regular --b tf -o out/
     fiberhmm-scan assoc SCAN_DIR --mode overlap --a peaks.peak --b nfr.region -o out/
 
-Modes: ``cooccur`` (M1), ``condition`` (M2), ``rate`` (M3), ``overlap`` (M4). M1-M3 read the per-molecule tables
-(``states``, ``marks``, ``molecules``), which a scan writes in table mode (``--no-annotate``; the default for BED
-scopes). M4 reads hits and the callable territory. Writes ``result.json`` (and ``pairs.tsv`` / ``anchors.tsv``
+Modes: ``cooccur`` (M1), ``condition`` (M2), ``rate`` (M3), ``overlap`` (M4). M1-M3 read tables or
+annotated BAMs declared by the scan. Annotated scalars use their declared codec precision.
+M4 reads hits and the callable territory. Writes ``result.json`` (and ``pairs.tsv`` / ``anchors.tsv``
 where the mode has per-pair or per-anchor rows) to the output directory.
 """
 from __future__ import annotations
@@ -33,6 +33,19 @@ def _parser():
     p.add_argument('--bed', help='condition: anchors are the --a hits whose anchor lies in these intervals (e.g. an '
                                  'enhancer BED); other --a hits are their matched backgrounds. Without it every hit '
                                  'is an anchor and only Delta_anchor and per-anchor rows are reported')
+    p.add_argument('--backgrounds', choices=['hits', 'random', 'none'], default='hits',
+                   help='condition: other hits outside --bed (default), random loci with a transferable state '
+                        'rule (currently nfr.region), or none')
+    p.add_argument('--background-k', type=int, default=5, help='condition: backgrounds per anchor (default 5)')
+    p.add_argument('--background-step', type=int, default=500, help='condition: random candidate grid step in bp')
+    p.add_argument('--background-min-sep', type=int, default=3000, help='condition: minimum separation in bp')
+    p.add_argument('--background-width', type=int, help='condition: random interval width in bp; default median '
+                   'anchor hit width; the scan state rule is evaluated over this interval')
+    p.add_argument('--fasta', help='Indexed reference FASTA: condition matching covariate or overlap density strata')
+    p.add_argument('--site-bases', default='AT', help='Opportunity bases counted in FASTA (default AT; C/G for '
+                   'strand-specific deaminase contexts); density excludes ambiguous bases')
+    p.add_argument('--site-window', type=int, default=1000, help='condition: site-density window in bp')
+    p.add_argument('--site-bin-bp', type=int, default=10000, help='overlap: site-density stratum window in bp')
     p.add_argument('--region', action='append', metavar='CHROM:START-END', help='Restrict to windows (repeatable)')
     p.add_argument('--group', choices=['dataset', 'haplotype'], help='Group contrast: dataset or haplotype '
                                                                      '(haplotype from the input BAMs\' HP tags; '
@@ -85,6 +98,12 @@ def _json_default(o):
 
 def run(args) -> dict:
     from fiberhmm.assoc import scanio as S
+    if min(args.background_k, args.background_step, args.background_min_sep, args.site_window, args.site_bin_bp) <= 0:
+        raise S.ScanInputError('background and site-density sizes must be positive')
+    if args.background_width is not None and args.background_width <= 0:
+        raise S.ScanInputError('--background-width must be positive')
+    if args.fasta and args.strata:
+        raise S.ScanInputError('choose --strata or --fasta for overlap strata')
     scan = S.open_scan(args.scan_dir)
     regions = _regions(args.region)
     group, gkind = None, 'label'
@@ -95,7 +114,10 @@ def run(args) -> dict:
     elif args.group_label:
         group = args.group_label
     meta = {'scan_id': scan.manifest.get('scan_id'), 'mode': args.mode, 'a': args.a, 'b': args.b,
-            'regions': regions, 'group': group}
+            'regions': regions, 'group': group,
+            'scalar_precision': 'MA codecs' if scan.manifest.get('outputs', {}).get('annotate') else 'exact tables'}
+    if args.fasta:
+        meta['site_density'] = dict(bases=args.site_bases, window=args.site_window, bin_bp=args.site_bin_bp)
     if args.mode == 'cooccur':
         from fiberhmm.assoc.cooccur import cooccurrence
         if not args.b:
@@ -139,6 +161,9 @@ def run(args) -> dict:
         if args.strata:
             strata = [(c, int(s), int(e), lab) for c, s, e, lab in
                       (line.split()[:4] for line in Path(args.strata).read_text().splitlines() if line.strip())]
+        if args.fasta:
+            from .sites import density_strata
+            strata = density_strata(scan, args.fasta, terr, bases=args.site_bases, bin_bp=args.site_bin_bp)
         A = S.read_hits(scan, args.a, regions)
         B = S.read_hits(scan, args.b, regions)
         res = {'A->B': overlap_enrichment(A, B, terr, strata, n_relocations=args.n_perm, seed=args.seed),
@@ -148,10 +173,32 @@ def run(args) -> dict:
     return res
 
 
+
+def _in_bed(chrom, positions, intervals):
+    """Vectorized interval membership, including nested/overlapping BED rows."""
+    import numpy as np
+    from collections import defaultdict
+    by_chrom, hits = defaultdict(list), defaultdict(list)
+    for c, a, b in intervals:
+        by_chrom[c].append((a, b))
+    for i, c in enumerate(chrom):
+        hits[c].append(i)
+    out = np.zeros(len(positions), bool)
+    positions = np.asarray(positions)
+    for c in by_chrom.keys() & hits.keys():
+        rows = sorted(by_chrom[c])
+        starts = np.array([a for a, b in rows])
+        ends = np.maximum.accumulate([b for a, b in rows])
+        indices = np.array(hits[c])
+        points = positions[indices]
+        j = np.searchsorted(starts, points, side='right')-1
+        out[indices] = (j >= 0) & (points < ends[np.maximum(j, 0)])
+    return out
+
 def _condition_from_scan(scan, args, regions, group, gkind):
     """M2 from scan files: anchors are --a hits with their states, the response a per-molecule scalar
-    (--response module:scalar); matched backgrounds are other hits of the same type (the non-transferable rule),
-    matched on prevalence and depth deciles."""
+    (--response module:scalar); backgrounds are other hits, random loci evaluated by a transferable rule, or none.
+    Matching uses depth, optional reference density and (for hit backgrounds) prevalence."""
     import numpy as np
     from fiberhmm.assoc import scanio as S
     from fiberhmm.assoc import strata as ST
@@ -163,6 +210,47 @@ def _condition_from_scan(scan, args, regions, group, gkind):
     S.require_tables(scan, [f'{rmod}/molecules.tsv.bgz'], 'condition')
     mi = S.MoleculeIndex()
     A = S.read_states(scan, args.a, mi, regions)
+    n = A.n_hits
+    depth = np.bincount(A.hit, minlength=n).astype(float)
+    prev = np.bincount(A.hit, weights=A.state, minlength=n) / np.maximum(depth, 1)
+    order = np.arange(n)
+    if args.bed:
+        bed = [(c, int(a), int(b)) for c, a, b in (line.split()[:3] for line in Path(args.bed).read_text().splitlines()
+                                                   if line.strip() and not line.startswith(('#', 'track')))]
+        inside = _in_bed(A.chrom, A.anchor, bed)
+        anchors, cands = order[inside], order[~inside]
+        if not len(anchors):
+            raise S.ScanInputError(f'no {args.a} hit lies in --bed')
+    else:
+        anchors, cands = order, order[:0]
+    random_positions = None
+    if args.backgrounds == 'random':
+        from fiberhmm.assoc.background import candidate_positions
+        from fiberhmm.assoc.cooccur import FeatureStates
+        width = args.background_width or max(1, int(np.median(A.end[anchors] - A.start[anchors])))
+        random_positions = candidate_positions(S.territory(scan, regions=regions), step=args.background_step,
+                                                margin=(width + 1) // 2, seed=args.seed)
+        C = S.transferable_states(scan, args.a, random_positions, width, mi, regions)
+        offset = A.n_hits
+        A = FeatureStates(A.type_id, np.r_[A.hit_ids, C.hit_ids], np.r_[A.chrom, C.chrom],
+                          np.r_[A.start, C.start], np.r_[A.end, C.end], np.r_[A.anchor, C.anchor],
+                          np.r_[A.hit, C.hit + offset], np.r_[A.molecule, C.molecule], np.r_[A.state, C.state])
+        cands = np.arange(offset, A.n_hits)
+        depth = np.bincount(A.hit, minlength=A.n_hits).astype(float)
+        prev = np.bincount(A.hit, weights=A.state, minlength=A.n_hits) / np.maximum(depth, 1)
+    elif args.backgrounds == 'none':
+        cands = order[:0]
+    acov, ccov = {'depth': depth[anchors]}, {'depth': depth[cands]}
+    if args.backgrounds == 'hits':
+        acov['prevalence'], ccov['prevalence'] = prev[anchors], prev[cands]
+    if args.fasta:
+        from .sites import locus_density
+        sd = locus_density(scan, args.fasta, A.chrom, A.anchor, bases=args.site_bases, window=args.site_window)
+        acov['site_density'], ccov['site_density'] = sd[anchors], sd[cands]
+    mb = matched_backgrounds([(A.chrom[i], int(A.anchor[i])) for i in anchors],
+                             [(A.chrom[j], int(A.anchor[j])) for j in cands],
+                             anchor_covariates=acov, candidate_covariates=ccov,
+                             k=args.background_k, n_bins=10, min_sep=args.background_min_sep, seed=args.seed)
     y = S.molecule_scalars(scan, rmod, [rcol], mi, regions)[rcol]
     dens = S.molecule_scalars(scan, 'nuc', [args.density], mi, regions)[args.density]
     hap = S.haplotypes_from_bams(scan, mi, args.haplotype_tag, regions) if gkind == 'haplotype' else None
@@ -172,24 +260,6 @@ def _condition_from_scan(scan, args, regions, group, gkind):
         extra = {k: v for k, v in mt.labels.items() if k != 'dataset'}
     if group is not None and group not in ('dataset', 'haplotype') and group not in extra:
         raise S.ScanInputError(f'--group-label {group!r} is not a column of --labels')
-    n = A.n_hits
-    depth = np.bincount(A.hit, minlength=n).astype(float)
-    prev = np.bincount(A.hit, weights=A.state, minlength=n) / np.maximum(depth, 1)
-    order = np.arange(n)
-    if args.bed:
-        bed = [(c, int(a), int(b)) for c, a, b in (line.split()[:3] for line in Path(args.bed).read_text().splitlines()
-                                                   if line.strip() and not line.startswith(('#', 'track')))]
-        inside = np.array([any(c == A.chrom[i] and a <= A.anchor[i] < b for c, a, b in bed) for i in order], bool)
-        anchors, cands = order[inside], order[~inside]
-        if not len(anchors):
-            raise S.ScanInputError(f'no {args.a} hit lies in --bed')
-    else:
-        anchors, cands = order, order[:0]
-    mb = matched_backgrounds([(A.chrom[i], int(A.anchor[i])) for i in anchors],
-                             [(A.chrom[j], int(A.anchor[j])) for j in cands],
-                             anchor_covariates={'prevalence': prev[anchors], 'depth': depth[anchors]},
-                             candidate_covariates={'prevalence': prev[cands], 'depth': depth[cands]},
-                             k=5, n_bins=10, min_sep=3000, seed=args.seed)
     loci = LocusTable.from_sets([(A.chrom[i], int(A.anchor[i])) for i in anchors],
                                 [(A.chrom[j], int(A.anchor[j])) for j in cands], mb['sets'])
     hit_of_locus = list(anchors) + [cands[j] for _a, js in mb['sets'] for j in js]
@@ -214,8 +284,10 @@ def _condition_from_scan(scan, args, regions, group, gkind):
     res = condition(app, loci, mean_metric(f'mean {rcol}'), bins=['molecule'], n_perm=args.n_perm,
                     n_role=args.n_perm, n_boot=args.n_boot, group=group, group_kind=gkind, seed=args.seed)
     res['backgrounds'] = {k: v for k, v in mb.items() if k != 'sets'}
-    res['backgrounds']['rule'] = ('other hits of the same type outside --bed (the non-transferable rule), matched on '
-                                  'prevalence and depth deciles' if args.bed else 'none (no --bed)')
+    res['backgrounds']['rule'] = args.backgrounds
+    if random_positions is not None:
+        res['backgrounds']['width_bp'] = width
+        res['backgrounds']['state_rule'] = args.a
     return res
 
 

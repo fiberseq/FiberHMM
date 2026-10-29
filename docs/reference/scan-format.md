@@ -165,3 +165,20 @@ every contig first, `combine_statistics` once, and passes the result to
 state of a transferable feature type on one record without a scan (`1`
 open, `0` closed, `.` not callable), by the rule and with the nucleosomes
 the scan uses (`fiberhmm.scan.states`).
+
+## Additions in contracts v1.12
+
+Association readers accept manifest-listed annotated BAMs as well as tables.
+State groups join by their AN hit IDs; marks project through CIGAR blocks;
+scalars decode through declared codecs and retain that codec precision.
+Haplotype lookup can use the annotated BAMs. Random transferable M2 backgrounds
+still need source evidence to evaluate new positions. The CLI also accepts an
+indexed FASTA for M2 matching density and M4 density strata.
+
+Explicit `input_type: "signal-bam"` dataset specifications filter schema 5
+producer signal evidence before all scan loaders. Their sorted persistent
+snapshots are under `work/_signal`; manifest file entries include
+`signal_input` with the predicate policy and original source content ID.
+Snapshot content IDs identify the filtered evidence. Existing table columns,
+MA groups and default scan behavior are unchanged. The complete mirrored
+contract is `CONTRACTS.md`, §15.

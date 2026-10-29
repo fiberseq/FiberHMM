@@ -19,6 +19,8 @@ from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Seque
 
 COMMON = ('chrom', 'start', 'end', 'idx_start', 'idx_end')
 TBI_MAX = (1 << 29) - 1
+_SORT_ROWS = 50_000
+_MERGE_FANIN = 32
 
 
 def index_path(path) -> Path:
@@ -59,7 +61,7 @@ def index_span(start: int, end: int):
 
 
 class TableWriter:
-    """Collects rows of one table and publishes it sorted, BGZF-compressed and tabix-indexed."""
+    """Publishes a sorted, BGZF-compressed, indexed table using bounded merge-sort runs."""
 
     def __init__(self, path, columns: Sequence[str], contig_order: Mapping[str, int]):
         self.path = Path(path)
@@ -68,6 +70,11 @@ class TableWriter:
             raise ValueError(f'{self.path.name}: a scan table must start with {COMMON}')
         self.order = dict(contig_order)
         self._rows: List[tuple] = []
+        self._count = 0
+        self._csi = False
+        self._sort_dir = None
+        self._runs = []
+        self._run_number = 0
 
     def add(self, chrom: str, start: int, end: int, values: Sequence[Any]) -> None:
         if len(values) != len(self.columns) - 5:
@@ -77,25 +84,89 @@ class TableWriter:
         a, b = index_span(start, end)
         self._rows.append((self.order[chrom], a, b, chrom, int(start), int(end),
                            tuple(cell(v) for v in values)))
+        self._count += 1
+        self._csi |= b > TBI_MAX
+        if len(self._rows) >= _SORT_ROWS:
+            self._spill()
 
     def __len__(self) -> int:
-        return len(self._rows)
+        return self._count
+
+    @staticmethod
+    def _key(row):
+        return row[0], row[1], row[2], row[6]
+
+    def _new_run(self):
+        if self._sort_dir is None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self._sort_dir = tempfile.TemporaryDirectory(prefix='.' + self.path.name + '.sort.',
+                                                         dir=self.path.parent)
+        self._run_number += 1
+        return Path(self._sort_dir.name) / str(self._run_number)
+
+    def _spill(self):
+        import pickle
+        if not self._rows:
+            return
+        self._rows.sort(key=self._key)
+        path = self._new_run()
+        with open(path, 'wb') as handle:
+            for row in self._rows:
+                pickle.dump(row, handle, protocol=4)
+        self._runs.append(path)
+        self._rows = []
+
+    def _merge(self, paths):
+        import heapq
+        import pickle
+        from contextlib import ExitStack
+        def rows(handle):
+            while True:
+                try:
+                    yield pickle.load(handle)
+                except EOFError:
+                    return
+        with ExitStack() as stack:
+            streams = [rows(stack.enter_context(open(path, 'rb'))) for path in paths]
+            # heapq.merge is stable between streams, preserving insertion order
+            # even when zero-width and one-base rows have identical sort keys.
+            yield from heapq.merge(*streams, key=self._key)
+
+    def _sorted_rows(self):
+        import pickle
+        if not self._runs:
+            self._rows.sort(key=self._key)
+            yield from self._rows
+            return
+        self._spill()
+        while len(self._runs) > _MERGE_FANIN:
+            merged = []
+            for i in range(0, len(self._runs), _MERGE_FANIN):
+                paths = self._runs[i:i + _MERGE_FANIN]
+                dest = self._new_run()
+                with open(dest, 'wb') as handle:
+                    for row in self._merge(paths):
+                        pickle.dump(row, handle, protocol=4)
+                for path in paths:
+                    path.unlink()
+                merged.append(dest)
+            self._runs = merged
+        yield from self._merge(self._runs)
 
     def close(self) -> dict:
         """Write ``path`` and ``path.tbi``; returns ``{"rows", "sha256"}`` of the compressed table."""
         import pysam
-        self._rows.sort(key=lambda r: (r[0], r[1], r[2], r[6]))
         self.path.parent.mkdir(parents=True, exist_ok=True)
         fd, raw = tempfile.mkstemp(prefix='.' + self.path.name + '.', suffix='.tsv', dir=self.path.parent)
         try:
             with os.fdopen(fd, 'w', newline='') as handle:
                 handle.write('#' + '\t'.join(self.columns) + '\n')
-                for _o, a, b, chrom, start, end, cells in self._rows:
+                for _o, a, b, chrom, start, end, cells in self._sorted_rows():
                     handle.write('\t'.join((chrom, str(start), str(end), str(a), str(b), *cells)) + '\n')
             tmp_gz = raw + '.bgz'
             pysam.tabix_compress(raw, tmp_gz, force=True)
             # TBI addresses positions below 2^29; a table reaching further gets a CSI index instead.
-            csi = any(r[2] > TBI_MAX for r in self._rows)
+            csi = self._csi
             pysam.tabix_index(tmp_gz, seq_col=0, start_col=3, end_col=4, zerobased=True,
                               meta_char='#', force=True, csi=csi)
             suffix = '.csi' if csi else '.tbi'
@@ -108,7 +179,13 @@ class TableWriter:
             for leftover in (raw, raw + '.bgz', raw + '.bgz.tbi', raw + '.bgz.csi'):
                 if os.path.exists(leftover):
                     os.unlink(leftover)
-        n = len(self._rows)
+            if self._sort_dir is not None:
+                self._sort_dir.cleanup()
+                self._sort_dir = None
+                self._runs = []
+        n = self._count
+        self._count = 0
+        self._csi = False
         self._rows = []
         return dict(rows=n, sha256=sha256_file(self.path))
 

@@ -195,6 +195,9 @@ def render_command(name: str, module: str, function: str) -> list[str]:
         else:
             lines.append("No options.")
         lines.append("")
+    if name == 'fiberhmm-scan':
+        assoc = capture_parser('fiberhmm.assoc.cli', 'main')
+        lines.extend(['### fiberhmm-scan assoc', '', *_table(assoc), ''])
     return lines
 
 

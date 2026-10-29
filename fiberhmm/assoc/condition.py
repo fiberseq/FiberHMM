@@ -210,19 +210,20 @@ class _Bin:
         return self.metric(S1) - self.metric(S0)
 
 
-def _perm_labels(cell, state, n_perm, rng):
+def _perm_labels(cell, state, n_perm, rng, *, one_at=None):
     """(n_perm, n) boolean label matrices: state permuted within cells."""
     n = len(cell)
     if n == 0:
         return np.zeros((n_perm, 0), bool)
-    order0 = np.argsort(cell, kind='stable')
-    cs = cell[order0]
-    starts = np.flatnonzero(np.r_[True, cs[1:] != cs[:-1]])
-    ones = np.add.reduceat(state[order0], starts)
-    pos = np.arange(n)
-    gstart = np.repeat(starts, np.diff(np.r_[starts, n]))
-    gones = np.repeat(ones, np.diff(np.r_[starts, n]))
-    one_at = (pos - gstart) < gones
+    if one_at is None:
+        order0 = np.argsort(cell, kind='stable')
+        cs = cell[order0]
+        starts = np.flatnonzero(np.r_[True, cs[1:] != cs[:-1]])
+        ones = np.add.reduceat(state[order0], starts)
+        pos = np.arange(n)
+        gstart = np.repeat(starts, np.diff(np.r_[starts, n]))
+        gones = np.repeat(ones, np.diff(np.r_[starts, n]))
+        one_at = (pos - gstart) < gones
     keys = cell[None, :] + rng.random((n_perm, n))
     order = np.argsort(keys, axis=1, kind='stable')
     L = np.zeros((n_perm, n), bool)
@@ -270,9 +271,16 @@ def _bin_result(bd: _Bin, loci: LocusTable, *, n_perm, n_role, per_anchor, min_p
     null = []
     pa = None
     if n_perm and len(ai):
+        chunk = max(1, min(chunk, 2_000_000 // len(ai)))
         cellA, stA = bd.cell[ai], bd.state[ai]
         X1A, X0A = bd.X1[ai], bd.X0[ai]
         locA = bd.locus[ai]
+        # Cell membership is fixed across batches; derive the layout once.
+        order0 = np.argsort(cellA, kind='stable')
+        starts = np.flatnonzero(np.r_[True, np.diff(cellA[order0]) != 0])
+        sizes = np.diff(np.r_[starts, len(cellA)])
+        ones = np.add.reduceat(stA[order0], starts)
+        one_at = np.arange(len(cellA)) - np.repeat(starts, sizes) < np.repeat(ones, sizes)
         want = np.flatnonzero(anc & (bd.n1_bal >= min_per_state) & (bd.n0_bal >= min_per_state)) if per_anchor \
             else np.zeros(0, np.int64)
         if len(want):
@@ -288,7 +296,7 @@ def _bin_result(bd: _Bin, loci: LocusTable, *, n_perm, n_role, per_anchor, min_p
         while done < n_perm:
             checkpoint("permutations", done, n_perm)
             c = min(chunk, n_perm - done)
-            L = _perm_labels(cellA, stA, c, rng).astype(float)
+            L = _perm_labels(cellA, stA, c, rng, one_at=one_at).astype(float)
             S1 = L @ X1A
             S0 = (1 - L) @ X0A
             null.extend(bd.delta(S1, S0).tolist())

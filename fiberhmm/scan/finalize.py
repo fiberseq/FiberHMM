@@ -348,6 +348,9 @@ def _load_tracks(folder: Path, names=None):
 
 def _stitch_inputs(out: Path, name: str, mod, settings, cunits, status, names=None, results=None):
     """One contig's territory runs and concatenated tracks for a stitch module (``names``: only these tracks)."""
+    if getattr(mod, '_lazy_stitch_tracks', False):
+        from .tracks import stitch_inputs
+        return stitch_inputs(out, name, mod, settings, cunits, status, names, results)
     zones = []
     for u in cunits:
         st = status[u.unit_id]

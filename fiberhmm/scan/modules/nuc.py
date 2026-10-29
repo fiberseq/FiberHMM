@@ -79,6 +79,7 @@ class NucModule(ScanModuleBase):
     reconcile = 'stitch'
     max_support_bp = 12_500
     wants_molecules = True
+    _lazy_stitch_tracks = True
     # fiberhmm.nuc.records decodes each annotation's frame from the record's header (DecodeContext), so it gets
     # the stored record: an orchestrator carry would be mirrored a second time on reverse reads
     molecule_frame = 'source'
@@ -86,6 +87,8 @@ class NucModule(ScanModuleBase):
     def __init__(self):
         self._cals: Dict[Tuple[int, str], Any] = {}
         self._ctx: Dict[Tuple[str, int], Any] = {}
+        self._record_cache = {}
+        self._cache_scope = None
 
     # ------------------------------------------------------------------ declarations
     def parameter_schema(self) -> dict:
@@ -267,21 +270,32 @@ class NucModule(ScanModuleBase):
         return out
 
     # ------------------------------------------------------------------ molecule-wide outputs
-    def molecule_outputs(self, molecule, settings, calibration) -> Optional[MoleculeResult]:
+    def _record_outputs(self, read, record, settings, calibration):
         from fiberhmm.nuc.scan import record_outputs
-        params = self._params(settings)
-        ctx = self._context(molecule.record.dataset_id, molecule.record.input_index, molecule.read.header, params)
-        return record_outputs(molecule.read, molecule.record, self._cal(calibration, molecule.record.dataset_id),
-                              params=params, context=ctx)[2]
+        scope = self._cache_scope
+        if scope is None or scope[0] is not settings or scope[1] is not calibration:
+            self._record_cache.clear()
+            self._cache_scope = (settings, calibration)
+        key = (record.dataset_id, record.input_index, record.record)
+        if key not in self._record_cache:
+            params = self._params(settings)
+            ctx = self._context(record.dataset_id, record.input_index, read.header, params)
+            value = record_outputs(read, record, self._cal(calibration, record.dataset_id),
+                                   params=params, context=ctx)
+            if len(self._record_cache) >= 512:
+                self._record_cache.pop(next(iter(self._record_cache)))
+            self._record_cache[key] = value
+        return self._record_cache[key]
+
+    def molecule_outputs(self, molecule, settings, calibration) -> Optional[MoleculeResult]:
+        return self._record_outputs(molecule.read, molecule.record, settings, calibration)[2]
 
     # ------------------------------------------------------------------ unit tracks
     def run_unit(self, unit, inputs, settings, calibration, upstream, work: Path, progress) -> UnitResult:
         import pysam
         from fiberhmm.nuc.enrichment import MeasuredTrack, grid_windows, window_test
-        from fiberhmm.nuc.molecule import molecule_outputs as nuc_outputs
-        from fiberhmm.nuc.records import decode_record
         from fiberhmm.nuc.segment import REGULAR
-        from fiberhmm.scan.reads import iter_records
+        from fiberhmm.scan.reads import iter_records, record_ref
         params = self._params(settings)
         z0, z1 = unit.zone_start, unit.zone_end
         n = z1 - z0
@@ -323,14 +337,13 @@ class NucModule(ScanModuleBase):
                 with pysam.AlignmentFile(path, 'rb') as bam:
                     if unit.chrom not in bam.references:
                         continue
-                    ctx = self._context(ds.dataset_id, i, bam.header, params)
                     for read, _sha, _occ in iter_records(bam, unit.chrom, z0, z1 + reach, filters):
                         if read.is_supplementary:
                             continue
-                        mol, _why = decode_record(read, ctx)
+                        record = record_ref(read, ds, i, _sha, _occ, unit.chrom)
+                        mol, res, _mr = self._record_outputs(read, record, settings, calibration)
                         if mol is None:
                             continue
-                        res = nuc_outputs(mol, params, cal)
                         if res.flags.get('low_information') or not res.segments:
                             # below the floor (D8), too short or nothing to segment:
                             # not measured anywhere
@@ -509,11 +522,12 @@ class NucModule(ScanModuleBase):
         q = float(settings['enrich_fdr'])
 
         def getter(run_index):
-            def get(name):
+            def get(name, selection=None):
                 arrs = tracks.get(name)
                 if arrs is None or arrs[run_index] is None:
                     return None
-                return np.asarray(arrs[run_index], dtype=float)
+                arr = arrs[run_index]
+                return np.asarray(arr if selection is None else arr[selection], dtype=float)
             return get
 
         def kind_of(g):
@@ -553,8 +567,7 @@ class NucModule(ScanModuleBase):
                 sig = [r for r, ok in zip(rows, rej) if ok and r[0] == run_index]
                 if not sig:
                     continue
-                den_all = get('measured:all')
-                L = len(den_all)
+                L = t1-t0
                 for a, b in merge_windows([r[1] for r in sig], EW):
                     b = min(b, L)
                     inside = [r for r in sig if a <= r[1] < b]
@@ -562,15 +575,14 @@ class NucModule(ScanModuleBase):
                     open_end = (a == 0 and left_open) or (b == L and right_open)
                     vals = []
                     for g in groups:
-                        dg, ng = get(f'measured:{g}'), get(f'{kind}:{g}')
+                        dg, ng = get(f'measured:{g}', slice(a, b)), get(f'{kind}:{g}', slice(a, b))
                         if dg is None or ng is None:
                             continue
-                        dg, ng = dg[a:b], ng[a:b]
                         fg = float(ng.sum() / dg.sum()) if dg.sum() > 0 else None
                         vals.append((g, kind_of(g), fg, int(np.median(dg)) if len(dg) else 0))
                     qh = None
                     if kind == 'reg':
-                        qs, rn = get('qsum:all')[a:b].sum(), get('reg:all')[a:b].sum()
+                        qs, rn = get('qsum:all', slice(a, b)).sum(), get('reg:all', slice(a, b)).sum()
                         qh = float(qs / rn) if rn > 0 else None
                         regular_patches.append((s, e))
                     p_min = min(r[2] for r in inside)
@@ -637,14 +649,15 @@ class NucModule(ScanModuleBase):
                                         columns={'q_hat': '', 'P': round(Pm, 1), 'width': e - s,
                                                  'open_end': int(open_end)}))
                     for g in groups:
-                        Rg, ng, Cg = get(f'phase_R:{g}'), get(f'phase_null:{g}'), get(f'phase_C:{g}')
+                        Rg, ng, Cg = (get(f'{prefix}:{g}', slice(a, b)) for prefix in
+                                      ('phase_R', 'phase_null', 'phase_C'))
                         if Rg is None:
                             continue
-                        vals = [Rg[k_] - ng[k_] for k_ in inwin if np.isfinite(Rg[k_])]
+                        vals = [Rg[k_-a] - ng[k_-a] for k_ in inwin if np.isfinite(Rg[k_-a])]
                         out.values.append(Value(key, g, kind_of(g), 'R_minus_null',
                                                 float(np.max(vals)) if vals else None))
                         if Cg is not None:
-                            cs = [Cg[k_] for k_ in inwin if np.isfinite(Cg[k_])]
+                            cs = [Cg[k_-a] for k_ in inwin if np.isfinite(Cg[k_-a])]
                             out.values.append(Value(key, g, kind_of(g), 'coherence',
                                                     float(np.median(cs)) if cs else None))
                     out.values.append(Value(key, 'all', 'all', 'P', Pm))
