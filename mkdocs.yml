@@ -113,6 +113,7 @@ nav:
       - Bundled models: reference/models.md
       - Consensus output files: reference/consensus-outputs.md
       - Scan directory format: reference/scan-format.md
+      - Scan performance: reference/scan-performance.md
       - Python API: reference/python-api.md
       - Environment variables: reference/environment.md
   - Troubleshooting: troubleshooting.md
