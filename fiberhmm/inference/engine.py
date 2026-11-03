@@ -1027,11 +1027,27 @@ def _is_iupac_daf_chimera(read, query_sequence: str, excluded_query_positions,
     from fiberhmm.daf.encoder import is_daf_chimera
     min_seg = _DAF_CHIMERA_CFG['min_seg'] if min_seg is None else min_seg
     purity = _DAF_CHIMERA_CFG['purity'] if purity is None else purity
+    events = _iupac_chimera_events(read, query_sequence, excluded_query_positions,
+                                   ref_fasta, min_seg=min_seg)
+    if events is None:
+        return False
+    return is_daf_chimera(events[0], events[1],
+                          min_seg_events=min_seg,
+                          purity=purity)
+
+
+def _iupac_chimera_events(read, query_sequence: str, excluded_query_positions,
+                          ref_fasta=None, *, min_seg=0):
+    """Sorted (CT, GA) event query positions of an R/Y-encoded DAF read.
+
+    None when neither IUPAC flavour reaches ``min_seg`` events (no chimera
+    is possible then; the raw-mismatch lookup is skipped).
+    """
     seq_arr = np.frombuffer(query_sequence.upper().encode('ascii'), dtype=np.uint8)
     ct = set(np.flatnonzero(seq_arr == ord('Y')).tolist())
     ga = set(np.flatnonzero(seq_arr == ord('R')).tolist())
     if max(len(ct), len(ga)) < min_seg:
-        return False
+        return None
     rest = getattr(read, '_daf_md_result', None)
     if rest is None:
         rest = _daf_raw_mismatch_lists(read, ref_fasta)
@@ -1041,9 +1057,7 @@ def _is_iupac_daf_chimera(read, query_sequence: str, excluded_query_positions,
     if excluded_query_positions:
         ct.difference_update(excluded_query_positions)
         ga.difference_update(excluded_query_positions)
-    return is_daf_chimera(sorted(ct), sorted(ga),
-                          min_seg_events=min_seg,
-                          purity=purity)
+    return sorted(ct), sorted(ga)
 
 
 def _with_unknown(fiber_read: dict, unknown_positions, read=None) -> dict:

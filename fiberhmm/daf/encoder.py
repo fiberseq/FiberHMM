@@ -273,19 +273,44 @@ def is_daf_chimera(ct_positions, ga_positions,
     not form a pure segment, so they are not flagged -- robust to the low
     deamination rate of under-deaminating enzymes like DddB.
 
-    Returns True if the read looks chimeric.
+    Returns True if the read looks chimeric. Same-strand chimeras (two
+    molecules deaminated on the same strand) cannot be seen by this test.
     """
+    return _chimera_scan(ct_positions, ga_positions, min_seg_events, purity,
+                         first_only=True) is not None
+
+
+def daf_chimera_split(ct_positions, ga_positions,
+                      min_seg_events: int = 5, purity: float = 0.8):
+    """The best strand-swap split of a chimeric read, or None.
+
+    Uses the same test as :func:`is_daf_chimera` (it returns None exactly
+    when that returns False). Among the qualifying breakpoints it picks the
+    one that assigns the most events to their segment's strand (ties: the
+    first). Returns a dict with ``left_strand``/``right_strand`` ('CT' or
+    'GA'), ``left_last`` (query position of the last left-strand event in the
+    left segment) and ``right_first`` (query position of the first
+    right-strand event in the right segment). The query interval between them
+    is the breakpoint gap, where the switch happened at an unknown point.
+    """
+    return _chimera_scan(ct_positions, ga_positions, min_seg_events, purity,
+                         first_only=False)
+
+
+def _chimera_scan(ct_positions, ga_positions, min_seg_events, purity,
+                  first_only):
     nct = len(ct_positions)
     nga = len(ga_positions)
     if min(nct, nga) < min_seg_events:
-        return False
+        return None
 
     events = sorted([(int(p), 1) for p in ct_positions]
                     + [(int(p), -1) for p in ga_positions])
     n = len(events)
     if n < 2 * min_seg_events:
-        return False
+        return None
 
+    best = None   # (assigned, k, orientation)
     ct_left = 0
     for k in range(1, n):                       # breakpoint: left=[0,k), right=[k,n)
         if events[k - 1][1] == 1:
@@ -300,12 +325,26 @@ def is_daf_chimera(ct_positions, ga_positions,
         # orientation A: CT segment then GA segment
         if (ct_left >= min_seg_events and ga_right >= min_seg_events
                 and ct_left >= purity * left_n and ga_right >= purity * right_n):
-            return True
+            if first_only:
+                return True
+            if best is None or ct_left + ga_right > best[0]:
+                best = (ct_left + ga_right, k, 'CT')
         # orientation B: GA segment then CT segment
         if (ga_left >= min_seg_events and ct_right >= min_seg_events
                 and ga_left >= purity * left_n and ct_right >= purity * right_n):
-            return True
-    return False
+            if first_only:
+                return True
+            if best is None or ga_left + ct_right > best[0]:
+                best = (ga_left + ct_right, k, 'GA')
+    if best is None:
+        return None
+    _, k, left = best
+    right = 'GA' if left == 'CT' else 'CT'
+    sign = 1 if left == 'CT' else -1
+    left_last = max(p for p, s in events[:k] if s == sign)
+    right_first = min(p for p, s in events[k:] if s == -sign)
+    return {'left_strand': left, 'right_strand': right,
+            'left_last': left_last, 'right_first': right_first}
 
 
 def encode_read_daf(
