@@ -1,4 +1,5 @@
 """Planted arrays, honest discovery, state rules, and optional local embryo regression."""
+import os
 from dataclasses import replace
 from pathlib import Path
 
@@ -205,7 +206,8 @@ def test_batched_projection_preserves_deletion_and_outside_rules(reverse):
     np.testing.assert_array_equal(m.ref_to_mol(positions),expected)
 
 
-EMBRYO = Path('/Users/tt7739/fiberhmm_work/pglift_20261017/native/embryo_recall')
+# Local embryo BAMs (ind_hia5.v3.bam, ind_dddb.v3.bam); the test is skipped unless this names their folder.
+EMBRYO = Path(os.environ.get('FIBERHMM_TEST_EMBRYO_DIR', '/nonexistent'))
 
 
 @pytest.mark.skipif(not all((EMBRYO/f'ind_{c}.v3.bam').exists() for c in ('hia5','dddb')),
