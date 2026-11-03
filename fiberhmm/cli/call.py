@@ -230,7 +230,8 @@ def parse_args():
                    help='DAF strand-swap chimeras: flag (default) retains reads '
                         'uncalled with SAM 0x200 and xc:Z:strand_swap; remove drops '
                         'all records of the read; keep disables detection and '
-                        'attempts calls. No strand-swap detection for m6A modes.')
+                        'clears earlier FiberHMM chimera marks and attempts calls. '
+                        'No strand-swap detection for m6A modes.')
     p.add_argument('--keep-chimeras', action='store_true',
                    help='Deprecated alias for --chimeras keep (DAF only).')
     p.add_argument('--chimera-min-seg', type=int, default=5,
@@ -498,7 +499,8 @@ def _resolve_derived_tf_edge_gap(args, recall_nucs: bool):
 
 
 def _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
-                       recall_nucs, input_bam, include_unmapped=False) -> int:
+                       recall_nucs, input_bam, include_unmapped=False,
+                       precall_chimeric_names=None) -> int:
     """Resolve --phase-nrl (off / auto / fixed bp) to an int (0 = off).
 
     ``input_bam`` is the BAM to sample for auto-estimation -- the deduped
@@ -531,6 +533,7 @@ def _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
         nuc_min_size=args.nuc_min_size, msp_min_size=args.msp_min_size,
         prob_threshold=args.prob_threshold, edge_trim=args.edge_trim,
         include_unmapped=include_unmapped,
+        precall_chimeric_names=precall_chimeric_names,
     )
     ci = res['ci']
     ci_str = f" CI[{ci[0]:.0f}-{ci[1]:.0f}]" if ci else ""
@@ -1411,8 +1414,10 @@ def _main(args):
 
         # Only DAF flag/remove need a QNAME decision pass. In particular m6A
         # and keep retain the original working path without copying/scanning.
+        # Keep still supplies an authoritative empty decision to consumers,
+        # which clear old marks as they read each record.
         if mode == 'daf' and args.chimeras != 'keep':
-            from fiberhmm.inference.chimeras import prepare_chimeras, seekable_input
+            from fiberhmm.inference.chimeras import ChimeraDecisions, prepare_chimeras, seekable_input
             spool = None
             if not seekable_input(working_input):
                 import tempfile
@@ -1421,7 +1426,7 @@ def _main(args):
                     prefix='.fiberhmm_chimeras_',
                     dir=None if stdout_mode else str(Path(args.output).parent))
                 spool = str(Path(chimera_tmpdir.name) / 'source.bam')
-            chimeric_names = set()
+            chimeric_names = ChimeraDecisions()
             chimera_stats = prepare_chimeras(
                 working_input, mode=args.chimeras,
                 min_seg=args.chimera_min_seg, purity=args.chimera_purity,
@@ -1429,7 +1434,7 @@ def _main(args):
                 snp_mask=snp_mask_path, min_mapq=args.min_mapq,
                 min_read_length=args.min_read_length, process_unmapped=process_unmapped,
                 io_threads=args.io_threads, chimeric_names=chimeric_names,
-                spool_bam=spool)
+                spool_bam=spool, alignments=args.alignments)
             if spool is not None:
                 working_input = spool
             print(f"  DAF strand-swap chimeras: {chimera_stats['n_chimeric']:,} / "
@@ -1438,6 +1443,7 @@ def _main(args):
                   f"{chimera_stats['n_records_affected']:,} records)", file=sys.stderr)
         elif mode == 'daf':
             from fiberhmm.inference.chimeras import empty_chimera_stats
+            chimeric_names = set()
             chimera_stats = empty_chimera_stats('keep', args.chimera_min_seg,
                                                args.chimera_purity)
 
@@ -1456,7 +1462,8 @@ def _main(args):
         # Resolve the Pass-2 phase prior: off / auto-estimate / fixed bp.
         phase_nrl = _resolve_phase_nrl(
             args, apply_model_path, nuc_model_path or recall_model_path, mode, k,
-            recall_nucs, working_input, include_unmapped=process_unmapped)
+            recall_nucs, working_input, include_unmapped=process_unmapped,
+            precall_chimeric_names=chimeric_names)
 
         # DddA uses phase-aware radial nucleosome inference; other enzymes use the
         # accessible-cut Kadane split (no profile).
@@ -1755,19 +1762,31 @@ def _main(args):
             temporary.replace(dedup_report_path)
             print(f"  PCR deduplication report: {dedup_report_path}", file=sys.stderr)
 
-        if chimera_stats is not None and not stdout_mode and mode == 'daf':
+        if not stdout_mode:
             import json
             from pathlib import Path
             report = Path(args.output).parent / 'qc' / (Path(args.output).stem + '.chimeras.json')
-            report.parent.mkdir(parents=True, exist_ok=True)
-            temporary = report.with_suffix('.json.tmp')
-            temporary.write_text(json.dumps({'schema_version': 1, 'statistics': chimera_stats},
-                                            indent=2, sort_keys=True) + '\n')
-            temporary.replace(report)
+            if mode != 'daf':
+                # Only remove after the new BAM has been published successfully.
+                report.unlink(missing_ok=True)
+            elif chimera_stats is not None and Path(args.output).is_file():
+                from fiberhmm.io.run_state import sha256_file
+                report.parent.mkdir(parents=True, exist_ok=True)
+                temporary = report.with_suffix('.json.tmp')
+                payload = {
+                    'schema_version': 1,
+                    'assay': {'mode': mode, 'enzyme': args.enzyme or 'custom'},
+                    # Bind the report to the published BAM, including its @PG
+                    # history, without changing resumable-call provenance.
+                    'output_sha256': sha256_file(args.output),
+                    'statistics': chimera_stats,
+                }
+                temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n')
+                temporary.replace(report)
 
         # Bounded post-call QC. Indexed BAMs are sampled via random genomic
-        # windows; unindexed outputs use a capped prefix reservoir. This never
-        # rescans the whole BAM and is deliberately independent of deduplication.
+        # windows; unindexed outputs use a capped prefix reservoir. Sampling
+        # is bounded; chimera report validation separately hashes the BAM.
         if args.qc:
             if stdout_mode:
                 print("  NOTE: automatic QC skipped for stdout BAM output; run "

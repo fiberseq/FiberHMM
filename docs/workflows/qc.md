@@ -115,6 +115,9 @@ with `plot: not written (install matplotlib)`.
   `n_chimeric`, `fraction`, `min_seg` and `purity`. Integrated call's exact
   counts before removal are authoritative (`full_run: true`,
   `full_run_statistics`); standalone QC reloads `qc/<stem>.chimeras.json`.
+  Without that sidecar, default auto-mode QC uses the resolved assay and
+  the BAM's `chimeras=` header provenance, reporting the marked fraction
+  within its bounded sample rather than full-run counts.
   Sampled marks and the state sampler's chimera skips are retained as sample
   context. Marked chimeras are excluded from rate and footprint panels. TSV columns
   and a line beside the PDF/PNG duplication panel report the same counts.

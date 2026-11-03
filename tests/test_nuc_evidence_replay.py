@@ -141,3 +141,67 @@ def test_portable_insertion_evidence_rescues_an_otherwise_empty_record():
     assert why == 'ok' and m.hits[110] and m.n_hits == 1
     fr = fiber_read_from_record(r, CallerSettings.from_header(r.header))
     assert fr['m6a_query_positions'] == {110}
+
+
+@pytest.mark.parametrize('prior_qcfail', [False, True])
+def test_replay_insertion_key_survives_chimera_cleanup(prior_qcfail):
+    from fiberhmm.inference.chimeras import clear_chimera_mark, mark_chimera
+    r = _read(_header())
+    _calls(r)
+    r.is_qcfail = prior_qcfail
+    ev = ReadInsertEvidence(known=set(range(100, 120)), mods={110}, strand=0)
+    with engine.daf_insert_evidence_scope({record_key(r): ev}):
+        strip_for_fused_call(r)
+    _calls(r)
+    mark_chimera(r)
+    assert decode_record(r, None) == (None, 'chimera')
+    clear_chimera_mark(r)
+    assert r.is_qcfail == prior_qcfail
+    mol, reason = decode_record(r, DecodeContext(r.header))
+    assert reason == 'ok' and mol.hits[110] and mol.informative[111]
+    # Foreign xc values and QC failures are not FiberHMM chimera marks.
+    r.set_tag('xc', 'foreign')
+    r.is_qcfail = True
+    mol, reason = decode_record(r, DecodeContext(r.header))
+    assert reason == 'ok' and mol.hits[110]
+
+
+@pytest.mark.parametrize('mode', ['flag', 'remove', 'keep'])
+def test_nuc_replays_published_decisions_for_unnamed_records(tmp_path, mode, monkeypatch):
+    from fiberhmm.inference.chimeras import mark_chimera
+    from fiberhmm.nuc.records import iter_molecules
+    h = _header()
+    hd = h.to_dict()
+    hd['PG'][-1]['DS'] += ' chimeras=' + mode
+    h = pysam.AlignmentHeader.from_dict(hd)
+    swap, clean = _read(h), _read(h)
+    swap.query_sequence = 'ACGY' * 25 + 'ACRT' * 25 + 'ACGY' * 10
+    swap.cigarstring = '240M'
+    clean.cigarstring = '240M'
+    for r in (swap, clean):
+        r.query_name = '*'
+        _calls(r)
+    if mode == 'flag':
+        mark_chimera(swap)
+    current = [clean] if mode == 'remove' else [swap, clean]
+    path = tmp_path / 'decided.bam'
+    with pysam.AlignmentFile(path, 'wb', header=h) as bam:
+        for r in current * 2:
+            bam.write(r)
+    # A reader may coexist with a fresh caller whose default detection is on.
+    monkeypatch.setattr(engine, '_DAF_CHIMERA_CFG', {'filter': True, 'min_seg': 5, 'purity': 0.8})
+    with pysam.AlignmentFile(path, 'rb') as bam:
+        ctx = DecodeContext(bam.header)
+        settings = CallerSettings.from_header(bam.header)
+        for r in bam:
+            mol, reason = decode_record(r, ctx)
+            recalled = fiber_read_from_record(r, settings)
+            if r.is_qcfail:
+                assert reason == 'chimera' and mol is None and recalled is None
+            else:
+                assert reason == 'ok' and mol is not None and recalled is not None
+    stats = {}
+    molecules = list(iter_molecules(str(path), stats=stats))
+    assert len(molecules) == (4 if mode == 'keep' else 2)
+    assert stats.get('chimera', 0) == (2 if mode == 'flag' else 0)
+    assert engine._DAF_CHIMERA_CFG['filter']  # replay does not change caller policy

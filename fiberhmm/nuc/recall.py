@@ -297,7 +297,9 @@ def fiber_read_from_record(read, settings: CallerSettings, evidence=None) -> Opt
         from fiberhmm.daf.replay import EvidenceReplay
         evidence = EvidenceReplay(read.header, settings.mode)
     with evidence.scope(read):
-        fr = _extract_fiber_read_from_pysam(read, settings.mode, settings.prob_threshold)
+        # Replay the published decision; do not re-detect keep-mode records.
+        fr = _extract_fiber_read_from_pysam(
+            read, settings.mode, settings.prob_threshold, filter_chimeras=False)
     if fr is None or fr is CHIMERA_SKIP:
         return None
     if settings.mode == 'daf' and fr.get('_daf_strand') not in ('+', '-'):
