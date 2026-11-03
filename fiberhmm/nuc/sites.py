@@ -149,6 +149,51 @@ def _bin_bases(mol,start,end,step):
     return _callable_bins(blocks,mol.no_call,mol.is_reverse,mol.length,start,end,step)
 
 
+def _add_profiles(ms, refs, rows, valid, states, anchor_column, window, checkpoint):
+    """25 bp reference-aligned dyad density, using already decoded dyads.
+
+    Each state uses its own exact callable-base exposure (gaps/no-call bases
+    excluded). Binning each molecule once bounds memory independently of depth.
+    No coverage is null, rather than a misleading zero-density segment.
+    """
+    step = 25
+    start = max(0, window[1]-1025)
+    end = window[2]+1025
+    nb = (end-start+step-1)//step
+    pending = []
+    for j, row in enumerate(rows):
+        centres = start + (np.arange(nb)+.5)*step - row['pos']
+        indices = np.flatnonzero(abs(centres) <= 1000)
+        groups = ('open', 'occluded') if row['kind']=='anchor' else ('all',)
+        pending.append((j, indices, dict(x=centres[indices].tolist(), bin_bp=step,
+                                       unit='dyads per callable kb',
+                                       **{g: np.zeros((2,len(indices))) for g in groups})))
+    for i, m in enumerate(ms):
+        checkpoint()
+        bp = _bin_bases(m, start, end, step)
+        d = refs[i]
+        d = d[(d>=start) & (d<end)]
+        d = d[callable_positions(m,d)]
+        counts = np.bincount(((d-start)//step).astype(int), minlength=nb)
+        for j, indices, profile in pending:
+            if not valid[i,j]:
+                continue
+            if rows[j]['kind']=='anchor':
+                state = states[i,anchor_column[j]]
+                if state>2:
+                    continue
+                group = 'open' if state<=1 else 'occluded'
+            else:
+                group = 'all'
+            profile[group][0] += counts[indices]
+            profile[group][1] += bp[indices]
+    for j, _, profile in pending:
+        for group in ('open','occluded') if rows[j]['kind']=='anchor' else ('all',):
+            counts, bases = profile[group]
+            profile[group] = np.divide(1000*counts,bases,out=np.full(len(bases),np.nan),where=bases>0).tolist()
+        yield j, profile
+
+
 def _fraction(hit, valid):
     n = int(valid.sum())
     k = int(np.sum(hit & valid))
@@ -299,8 +344,9 @@ def analyse_sites(observations, window, *, chemistries=None, periods=None, param
     for key, ms in obs.items():
         checkpoint()
         valid = np.array([callable_positions(m, positions) for m in ms], bool).reshape(len(ms), len(positions))
-        near = np.array([_nearest(m.mol_to_ref(dy[id(m)])[m.mol_to_ref(dy[id(m)]) >= 0], positions,
-                                 p.fuzziness_cap_bp) for m in ms]).reshape(len(ms), len(positions))
+        refs = [m.mol_to_ref(dy[id(m)]) for m in ms]
+        refs = [d[d>=0] for d in refs]
+        near = np.array([_nearest(d, positions, p.fuzziness_cap_bp) for d in refs]).reshape(len(ms), len(positions))
         near[~valid] = np.nan
         hit = abs(near-positions) <= p.positioning_bp
         held = np.array([hash_half(m) == 1 for m in ms],dtype=bool)
@@ -337,14 +383,19 @@ def analyse_sites(observations, window, *, chemistries=None, periods=None, param
                 col = anchor_column[j]
                 sample['states'] = {s: _fraction(state_matrix[:,col] == i, valid[:, j])
                                     for i,s in enumerate(('open', 'bound', 'occluded', 'unclassified'))}
+                sample['states']['open_total'] = _fraction(state_matrix[:,col]<=1, valid[:,j])
                 sample['occluder_dyad'] = _mean(occluder_matrix[:,col], row['pos'])
                 sample['minus1'] = row['minus1']
                 sample['plus1'] = row['plus1']
                 sample['flanks'] = {}
+                sample['flank_positioning'] = {}
                 for side in ('minus1','plus1'):
                     fj = next((jj for jj,rr in enumerate(rows) if rr['kind']=='site' and rr['pos']==row[side]),None)
                     sample['flanks'][side] = _mean(near[state_matrix[:,col]<=1,fj],row['pos']) if fj is not None else _mean([])
+                    sample['flank_positioning'][side] = _fraction(hit[:,fj],valid[:,fj] & (state_matrix[:,col]<=1)) if fj is not None else _fraction(np.zeros(len(ms),bool),np.zeros(len(ms),bool))
             row['samples'][key] = sample
+        for j, profile in _add_profiles(ms,refs,rows,valid,state_matrix,anchor_column,window,checkpoint):
+            rows[j]['samples'][key]['profile'] = profile
     if phasing:
         # Columns are independent conditional analyses, with separate random
         # streams. Bound parallelism and propagate cooperative cancellation.
@@ -363,7 +414,7 @@ def analyse_sites(observations, window, *, chemistries=None, periods=None, param
                 c.update(a=a, b=b)
                 if row['kind']=='anchor':
                     c['states'] = {state:_fraction_difference(row['samples'][a]['states'][state],row['samples'][b]['states'][state])
-                                   for state in ('open','bound','occluded')}
+                                   for state in ('open','bound','occluded','open_total')}
                     pa = row['samples'][a].get('phasing',{}).get('molecule',{})
                     pb = row['samples'][b].get('phasing',{}).get('molecule',{})
                     ca,cb = pa.get('ci') or {},pb.get('ci') or {}
@@ -385,7 +436,7 @@ def analyse_sites(observations, window, *, chemistries=None, periods=None, param
                                      (s['held_out_over_baseline'] or 0 for s in row['samples'].values()), default=0)
     _bh(all_contrasts)
     _bh([c['shift'] for c in all_contrasts if 'shift' in c])
-    for state in ('open','bound','occluded'):
+    for state in ('open','bound','occluded','open_total'):
         _bh([c['states'][state] for c in all_contrasts if c.get('states',{}).get(state)])
     _bh([c['phasing'] for c in all_contrasts if 'phasing' in c])
     return dict(window=dict(chrom=chrom, start=start, end=end), rows=sorted(rows, key=lambda r: (r['kind']!='anchor', -r['rank_score'], r['pos'])),
