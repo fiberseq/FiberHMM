@@ -406,6 +406,52 @@ def test_standalone_qc_grades_flag_mode_from_the_sample(tmp_path):
     assert (chim['grade']['status'], chim['grade']['severity']) == ('WARN', 'high')
 
 
+def test_qc_with_a_303_sidecar_grades_from_the_sample(tmp_path):
+    """A 3.0.3 sidecar has no strict count: grade on the sample, not a mix."""
+    ref = reference()
+    bam = library(tmp_path, ref, n_clean=100, n_strong=40, n_weak=0)
+    _call(bam, tmp_path / 'calls.bam', '--no-qc')
+    sidecar = tmp_path / 'qc/calls.chimeras.json'
+    payload = json.loads(sidecar.read_text())
+    keys_303 = ('detected', 'mode', 'n_reads_checked', 'n_chimeric', 'fraction', 'min_seg',
+                'purity', 'n_records_affected', 'n_stale_marks_cleared', 'full_run',
+                'count_unit')
+    payload['statistics'] = {k: payload['statistics'][k] for k in keys_303}
+    payload['statistics']['n_reads_checked'] = 10_000   # distinguishable from the sample
+    sidecar.write_text(json.dumps(payload))
+    from fiberhmm.qc.core import run_qc
+    result = run_qc(str(tmp_path / 'calls.bam'), output_prefix=str(tmp_path / 'sa'),
+                    mode='daf', enzyme='dddb', sample_reads=500,
+                    state_source='none', stream=None)
+    chim = result['chimeras']
+    assert chim['full_run'] is True and chim['n_reads_checked'] == 10_000
+    assert chim['grade']['source'] == 'bounded sample'
+    assert chim['grade']['fraction'] == pytest.approx(40 / 140)
+    assert chim['fraction_strict'] is None and chim['n_chimeric_strict'] is None
+
+
+def test_unmapped_records_share_one_region(tmp_path):
+    ref = reference()
+    hdr = header()
+    reads = [make_read(hdr, ref, f'm{i}', 2000, [(0, 3000)], clean('CT'), seed=i)
+             for i in range(25)]
+    for i in range(25):
+        read = pysam.AlignedSegment(hdr)
+        read.query_name = f'u{i}'
+        read.flag = 4
+        read.reference_id = -1
+        read.reference_start = -1
+        read.query_sequence = ref[100:2100]
+        reads.append(read)
+    path = tmp_path / 'unmapped.bam'
+    with pysam.AlignmentFile(str(path), 'wb', header=hdr) as out:
+        for read in reads:
+            out.write(read)
+    stats = prepare_chimeras(str(path), mode='flag', process_unmapped=True)
+    regions = {row['region']: row['n_reads_checked'] for row in stats['regions']['rows']}
+    assert regions['unmapped'] == 25 and sum(regions.values()) == 50
+
+
 def test_non_daf_qc_has_no_chimera_grade(tmp_path):
     from fiberhmm.qc.core import _grade_chimera_block
     block = {'mode': 'n/a', 'n_reads_checked': 0}

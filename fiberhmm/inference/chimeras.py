@@ -270,7 +270,7 @@ def _region_rows(bin_of, bin_spans, anonymous_bins, chimeric, strict):
                 end = max(bin_spans[(chrom, i)][1] for i in group)
                 regions.append(dict(
                     chrom=chrom, start=int(start), end=int(end),
-                    region=f'{chrom}:{start + 1}-{end}',
+                    region='unmapped' if chrom == '*' else f'{chrom}:{start + 1}-{end}',
                     n_reads_checked=checked, n_chimeric=default,
                     fraction=default / checked if checked else None,
                     n_chimeric_strict=strict_n,
@@ -380,11 +380,18 @@ def prepare_chimeras(input_bam, output_bam=None, *, mode='flag', daf=True,
                 clear_chimera_mark(read)
                 pieces = None
                 if daf and mode != 'keep' and streaming_skip_reason(read, config) is None:
-                    key = (read.reference_name, int(read.reference_start) // REGION_BIN_BP)
+                    # Unmapped records (--process-unmapped) share one region.
+                    if read.is_unmapped or read.reference_name is None:
+                        key = ('*', 0)
+                        start = end = 0
+                    else:
+                        key = (read.reference_name,
+                               int(read.reference_start) // REGION_BIN_BP)
+                        start = int(read.reference_start)
+                        end = int(read.reference_end or start)
                     span = bin_spans.get(key)
-                    end = read.reference_end or read.reference_start
-                    bin_spans[key] = ((read.reference_start, end) if span is None else
-                                      (min(span[0], read.reference_start), max(span[1], end)))
+                    bin_spans[key] = ((start, end) if span is None else
+                                      (min(span[0], start), max(span[1], end)))
                     if named:
                         name = read.query_name
                         if (name not in bin_of

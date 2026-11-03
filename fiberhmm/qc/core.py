@@ -2874,10 +2874,11 @@ def _grade_chimera_block(chimeras: dict, full_run: bool) -> None:
         chimeras['grade'] = None
         return
     sample = chimeras.get('sample') if full_run else chimeras
+    run = (chimeras.get('full_run_statistics') or {}) if full_run else {}
     checked, strict, source = None, None, None
-    if full_run and chimeras.get('n_chimeric_strict') is not None:
-        checked, strict, source = (chimeras.get('n_reads_checked'),
-                                   chimeras['n_chimeric_strict'], 'full run')
+    if full_run and run.get('n_chimeric_strict') is not None:
+        checked, strict, source = (run.get('n_reads_checked'),
+                                   run['n_chimeric_strict'], 'full run')
     elif mode == 'flag' and sample and sample.get('n_chimeric_strict') is not None:
         checked, strict, source = (sample.get('n_reads_checked'),
                                    sample['n_chimeric_strict'], 'bounded sample')
