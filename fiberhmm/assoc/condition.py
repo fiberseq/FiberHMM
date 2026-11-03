@@ -297,8 +297,10 @@ def _bin_result(bd: _Bin, loci: LocusTable, *, n_perm, n_role, per_anchor, min_p
             checkpoint("permutations", done, n_perm)
             c = min(chunk, n_perm - done)
             L = _perm_labels(cellA, stA, c, rng, one_at=one_at).astype(float)
-            S1 = L @ X1A
-            S0 = (1 - L) @ X0A
+            # Tiny output width: einsum avoids starting a large BLAS thread
+            # team for every resampling batch in a single-locus analysis.
+            S1 = np.einsum('ij,jk->ik', L, X1A, optimize=False)
+            S0 = np.einsum('ij,jk->ik', 1-L, X0A, optimize=False)
             null.extend(bd.delta(S1, S0).tolist())
             if len(want):
                 S1l = np.stack([(L * X1A[:, j]) @ G for j in range(X1A.shape[1])], axis=-1)
@@ -377,10 +379,16 @@ def condition(app: Appearances, loci: LocusTable, metric: SumMetric, *, bins: Op
               mask_rule: str = 'bin', balance: bool = True, n_perm: int = 1000, n_role: int = 1000,
               n_boot: int = 1000, per_anchor: bool = True, min_per_state: int = 8, min_locus_per_state: int = 1,
               group: Optional[str] = None, group_kind: str = 'label', seed: int = 0,
-              max_anchor_rows: Optional[int] = 5000, return_null: bool = False) -> dict:
+              max_anchor_rows: Optional[int] = 5000, return_null: bool = False,
+              bootstrap_unit: str = 'locus') -> dict:
     """M2 state-conditioned response (module docstring). ``bins``: labels of the ``app.stats`` bins (default
     0..n_bins-1). ``group``: an ``app.labels`` key for group contrasts. ``return_null``: keep the permutation
-    draws (``null_within``, ``null_site``) in each bin, for cross-fitting."""
+    draws (``null_within``, ``null_site``) in each bin, for cross-fitting.
+    ``bootstrap_unit='molecule'`` conditions on these fixed loci and resamples
+    physical molecules; its interval cannot establish replication across loci
+    or biological replicates. The default retains locus-group inference."""
+    if bootstrap_unit not in ('locus', 'molecule'):
+        raise ValueError('bootstrap_unit must be locus or molecule')
     if mask_rule not in ('bin', 'exact'):
         raise ValueError("mask_rule must be 'bin' or 'exact'")
     nb = app.n_bins
@@ -408,7 +416,8 @@ def condition(app: Appearances, loci: LocusTable, metric: SumMetric, *, bins: Op
     bb = None
     if n_boot and len(main.locus):
         ug = locus_groups(unit, main.molecule, int(unit_of_locus.max()) + 1)
-        bb = BlockBootstrap(ug, unit, main.molecule, seed=seed + 1)
+        bb = BlockBootstrap(ug, unit, main.molecule, seed=seed + 1,
+                            **(dict(max_group_share=0., fallback='molecules') if bootstrap_unit=='molecule' else {}))
         out['bootstrap'] = bb.describe()
     anchor_rows = []
     group_names = ginfo['groups'] if glab is not None else []
@@ -572,8 +581,8 @@ def _boot_bin(bd: _Bin, loci: LocusTable, bb: BlockBootstrap, n_boot, gmain, gro
             cols = np.flatnonzero(b_.P == pw)
             c1 = W * (w1[:, b_.cell] ** pw) * (st * sel)[None, :]
             c0 = W * (w0[:, b_.cell] ** pw) * ((1 - st) * sel)[None, :]
-            S1[:, cols] = c1 @ b_.X[:, cols]
-            S0[:, cols] = c0 @ b_.X[:, cols]
+            S1[:, cols] = np.einsum('ij,jk->ik',c1,b_.X[:,cols],optimize=False)
+            S0[:, cols] = np.einsum('ij,jk->ik',c0,b_.X[:,cols],optimize=False)
         return S1, S0
 
     def fn(Wall):

@@ -310,6 +310,81 @@ def _measured_bins(mol, s0: int, e0: int, bins, min_sites: int) -> int:
     return mask
 
 
+def vectorized_anchor_appearances(molecules, loci, *, frame='anchor', P=189., params=None, prior=None,
+                                   min_sites=10, flank_exclude=2000, density_bins=12, dyads=None,
+                                   summary_only=False, open_histogram=None):
+    """The standard appearance statistics, evaluated across loci in NumPy.
+
+    Restricted to unique physical molecules and the standard binary barrier
+    rule. The general path handles conflicting records, custom rules, labels
+    and dataset calibrations. This is an execution optimization, with the same
+    masks, MSP interiors, density strata, whole-period vectors and phase null.
+    """
+    from fiberhmm.nuc.params import DEFAULT_PARAMS
+    from fiberhmm.nuc.phasing import period_bins
+    from fiberhmm.nuc.density import FLAT_PRIOR, _interior_index_ranges
+    params, prior = params or DEFAULT_PARAMS, prior or FLAT_PRIOR
+    all_bins = period_bins(P, params)
+    bins = all_bins[-1:] if summary_only else all_bins
+    pieces = []
+    info = dict(no_state=0, anchor_absent=0, no_barrier=0, appearances=0, molecules=0)
+    keys = [molecule_key(m) for m in molecules]
+    if len(set(keys)) != len(keys):
+        raise ValueError('Vectorized appearances require unique physical molecules')
+    dyads = {} if dyads is None else dyads
+    # The reference path emits loci first, then longest eligible physical molecule.
+    order = sorted(range(len(molecules)), key=lambda i: (-molecules[i].length, molecules[i].name or ''))
+    for rank, mid in enumerate(order):
+        checkpoint('appearances', rank, len(order))
+        m = molecules[mid]
+        loc = np.flatnonzero((loci.chrom == m.chrom) & (loci.pos >= m.ref_start) & (loci.pos < m.ref_end))
+        if not len(loc):
+            continue
+        a = m.ref_to_mol(loci.pos[loc])
+        good = a >= 0
+        info['anchor_absent'] += int((~good).sum())
+        loc, a = loc[good], a[good]
+        if not len(loc):
+            continue
+        from fiberhmm.assoc._nuc_appearances import appearance_batch
+        d = dyads.get(id(m))
+        if d is None:
+            d = molecule_dyads(m, P, params)
+            dyads[id(m)] = d
+        if frame not in ('anchor','molecule'):
+            raise ValueError('Unknown frame')
+        ip, il, ih = _interior_index_ranges(m, m.msps, params.msp_boundary_sites)
+        ch = np.r_[0,np.cumsum(m.hits[ip],dtype=np.int64)]
+        _hc, cum_inf = m._cums()
+        state,full_mask,stats,marks,counts,hist = appearance_batch(
+            a,m.msps,m.nucs,d,cum_inf,ip,il,ih,ch,m.length,m.is_reverse,
+            np.asarray(all_bins,dtype=float),P,params.barrier_slop,params.barrier_min_msp,
+            min_sites,flank_exclude,frame=='molecule',summary_only,
+            open_histogram.shape[1] if open_histogram is not None else 0)
+        info['no_state'] += int((state<0).sum())
+        info['no_bin_measured'] = info.get('no_bin_measured',0)+int(((state>=0)&(full_mask==0)).sum())
+        keep = (state>=0)&(full_mask!=0)
+        if not keep.any():
+            continue
+        if open_histogram is not None:
+            open_histogram[loc] += hist
+        loc,state,stats,marks,counts = [z[keep] for z in (loc,state,stats,marks,counts)]
+        mask = ((full_mask[keep]>>(len(all_bins)-1))&1) if summary_only else full_mask[keep]
+        density = prior.shrink(marks,counts)
+        pieces.append((loc,np.full(len(loc),mid),state,mask,stats,density,np.full(len(loc),rank)))
+    if pieces:
+        loc, mid, state, mask, stats, density, ranks = [np.concatenate([p[j] for p in pieces]) for j in range(7)]
+        idx = np.lexsort((ranks,loc))
+        loc, mid, state, mask, stats, density = [z[idx] for z in (loc,mid,state,mask,stats,density)]
+    else:
+        loc=mid=state=mask=np.empty(0,np.int64)
+        density=np.empty(0)
+        stats=np.zeros((0,len(bins),7))
+    info['appearances'], info['molecules'] = len(loc), len(np.unique(mid))
+    return Appearances(loc,mid,state,ST.density_bins(density,density_bins) if len(loc) else np.empty(0,np.int64),
+                       mask,stats,{},density=density), bins, info
+
+
 def _with_osc(app: Appearances) -> Appearances:
     summary = (app.mask >> (app.n_bins - 1)) & 1
     return Appearances(app.locus, app.molecule, app.state, app.stratum, summary.astype(np.int64),
@@ -397,7 +472,8 @@ def condition_stats(molecules, anchors: Sequence[Tuple[str, int]], *, cal=None, 
                     labels: Optional[Dict[str, Callable]] = None, metrics: Sequence[str] = ('R_minus_null', 'R'),
                     oscillation: bool = False, per_anchor: bool = True, seed: int = 0,
                     return_null: bool = False, prefetched_backgrounds=None, cal_by_dataset=None,
-                    dataset_of: Optional[Callable] = None) -> dict:
+                    dataset_of: Optional[Callable] = None, prefetched_appearances=None,
+                    vectorized: bool = False, bootstrap_unit: str = 'locus') -> dict:
     """NUC 3.8 state conditioning at ``anchors`` ((chrom, pos) list) over decoded molecules (module docstring).
 
     ``backgrounds``: 'random' (matched random positions), None (anchors only), or a list of (chrom, pos)
@@ -465,7 +541,13 @@ def condition_stats(molecules, anchors: Sequence[Tuple[str, int]], *, cal=None, 
         checkpoint("frames")
         osc = oscillation_metric(params.phase_x0, params.phase_x0 + params.phase_summary_periods * P, P) \
             if oscillation else None
-        app, bins, info = anchor_appearances(molecules, loci, frame=frame, P=P, params=params, prior=prior,
+        if prefetched_appearances is not None:
+            app, bins, info = prefetched_appearances[frame]
+        elif vectorized and not (cal_by_dataset or labels or state_fn or oscillation):
+            app, bins, info = vectorized_anchor_appearances(molecules, loci, frame=frame, P=P,
+                                                           params=params, prior=prior, dyads=dyads)
+        else:
+            app, bins, info = anchor_appearances(molecules, loci, frame=frame, P=P, params=params, prior=prior,
                                              state_fn=state_fn, nrl_pooled=P, labels=labels, dyads=dyads,
                                              oscillation=osc, index=ix, calibration_of=calibration_of)
         fr = {'appearances': info, 'bins': [list(b) for b in bins], 'metrics': {}}
@@ -474,11 +556,12 @@ def condition_stats(molecules, anchors: Sequence[Tuple[str, int]], *, cal=None, 
             fr['metrics'][name] = condition(app, loci, met, bins=[f'{lo:.0f}-{hi:.0f}' for lo, hi in bins],
                                             n_perm=n_perm, n_role=n_role, n_boot=n_boot, group=group,
                                             group_kind=group_kind, per_anchor=per_anchor, seed=seed,
-                                            return_null=return_null)
+                                            return_null=return_null, bootstrap_unit=bootstrap_unit)
         if osc is not None and len(app.locus):
             fr['metrics']['A_over_D0'] = condition(_with_osc(app), loci, osc, bins=['summary'], n_perm=n_perm,
                                                    n_role=n_role, n_boot=n_boot, group=group, group_kind=group_kind,
-                                                   per_anchor=False, seed=seed, return_null=return_null)
+                                                   per_anchor=False, seed=seed, return_null=return_null,
+                                                   bootstrap_unit=bootstrap_unit)
         out['frames'][frame] = fr
     return out
 
