@@ -268,7 +268,8 @@ def make_piece(read, header, qs, qe, index, gap):
             cut = cut_modifications(read, qs, qe, mm_tag, ml_tag)
             if cut is not None:
                 piece.set_tag(mm_tag, cut[0], value_type='Z')
-                piece.set_tag(ml_tag, cut[1])
+                if len(cut[1]) or read.has_tag(ml_tag):
+                    piece.set_tag(ml_tag, cut[1])
                 kept_modifications = True
     if kept_modifications and read.has_tag('MN'):
         piece.set_tag('MN', qe - qs, value_type='i')
