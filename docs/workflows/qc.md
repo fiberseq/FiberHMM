@@ -120,8 +120,30 @@ with `plot: not written (install matplotlib)`.
   within its bounded sample rather than full-run counts.
   Sampled marks and the state sampler's chimera skips are retained as sample
   context. Marked chimeras are excluded from rate and footprint panels. TSV columns
-  and a line beside the PDF/PNG duplication panel report the same counts.
+  and the PDF/PNG chimera row report the same counts.
   Detection is DAF-specific; m6A runs report mode `n/a`.
+- **DAF chimera row** (3.0.4). The `chimeras` section also has the strict
+  count (`n_chimeric_strict`, `fraction_strict`; `min_seg` 10, purity 0.9),
+  a `grade` of the strict fraction (`status` PASS below 5%, WARN from 5%,
+  with `severity` `moderate` or, from 15%, `high`; INSUFFICIENT below 100
+  checked reads), a `regions` table (per-region default and strict
+  fractions; also written to `<prefix>.qc.chimera_regions.tsv`), `split`
+  statistics for split mode and a fixed `note`: same-strand chimeras cannot
+  be detected, so the true rate is higher, and read counts and occupancy
+  from a library with many chimeras should be taken with caution. The text
+  summary prints a chimera block and the PDF/PNG a coloured status box under
+  the duplication panel; TSV columns `chimeras_n_chimeric_strict`,
+  `chimeras_fraction_strict`, `chimeras_status` and `chimeras_severity`
+  follow the existing columns. The grade comes from the call's full-run
+  counts when available; standalone QC of a flag-mode BAM without the
+  sidecar re-tests the sampled flagged reads with the strict detector
+  (after QC's SNP mask). Remove and split BAMs without their sidecar are not
+  graded.
+  A chimera WARN turns an overall PASS into WARN (`overall.warned_by:
+  ["chimeras"]`); it never fails a sample and is not part of the score,
+  since flagged chimeras are excluded from calls and the remaining reads
+  are usable. Without a chimera WARN, and for every non-DAF run, the
+  overall verdict is as before.
 
 If the run's ML threshold differs by more than 5 from the reference's
 calibration threshold, the rate score is capped at WARN and the mismatch is

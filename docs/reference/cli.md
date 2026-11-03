@@ -62,7 +62,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--snp-screen` | `auto` | DAF recurrent-SNP screen and mask (default auto: after a depth preflight). Choices: `auto`, `on`, `off`. |
 | `--snp-mask` | — | DAF: your own BED of SNP sites to exclude. |
 | `--daf-mask-unaligned` / `--no-daf-mask-unaligned` | on | DAF: treat insertion and soft-clip bases as no evidence and leave unaligned stretches &gt;= 50 bp uncalled (default on). |
-| `--chimeras` | — | DAF strand-swap chimeras: flag (default) retains reads marked and uncalled; remove drops them; keep disables detection. Choices: `flag`, `remove`, `keep`. |
+| `--chimeras` | — | DAF strand-swap chimeras: flag (default) retains reads marked and uncalled; remove drops them; keep disables detection; split cuts each chimeric alignment into two single-strand pieces that are called separately (see fiberhmm-call). Choices: `flag`, `remove`, `keep`, `split`. |
 | `--chimera-filter` / `--no-chimera-filter` | on | Legacy alias: --chimera-filter means --chimeras flag; --no-chimera-filter means --chimeras keep. An explicit --chimeras takes precedence. |
 | `--alignments` | `primary-supplementary` | Alignment records to keep and call (default primary-supplementary: a read's primary and supplementary records, i.e. both sides of a split alignment, on linear contigs; secondary records are dropped). primary: the primary record only; all: as primary-supplementary here (the aligner step never keeps secondary records) and passed to fiberhmm-call. Choices: `primary`, `primary-supplementary`, `all`. |
 | `--primary` | — | Same as --alignments primary. |
@@ -129,7 +129,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--split-min-llr` | `4.0` | Min accessible-run LLR to split a nucleosome; for DddA, the molecule-local linker-residue configuration LLR (default 4.0). |
 | `--split-min-opps` | `3` | Min informative positions in a nucleosome-splitting cut or DddA linker residue (default 3). |
 | `--ddda-derived-tf-max-edge-gap` | `12` | DddA phase-aware radial recall only: TF calls exposed solely by nucleosome refinement must have a deamination hit within BP on both sides (default 12). Original HMM-accessible TF scan space is unchanged. Use -1 to disable the safeguard. |
-| `--chimeras` | `flag` | DAF strand-swap chimeras: flag (default) retains reads uncalled with SAM 0x200 and xc:Z:strand_swap; remove drops all records of the read; keep disables detection and clears earlier FiberHMM chimera marks and attempts calls. No strand-swap detection for m6A modes. Choices: `flag`, `remove`, `keep`. |
+| `--chimeras` | `flag` | DAF strand-swap chimeras: flag (default) retains reads uncalled with SAM 0x200 and xc:Z:strand_swap; remove drops all records of the read; keep disables detection and clears earlier FiberHMM chimera marks and attempts calls; split cuts each chimeric alignment at its breakpoint gap into two single-strand pieces (&lt;name&gt;/c0, &lt;name&gt;/c1; the gap is dropped, pieces shorter than --min-read-length are dropped, MM/ML are removed) that are called separately. No strand-swap detection for m6A modes. Choices: `flag`, `remove`, `keep`, `split`. |
 | `--keep-chimeras` | off | Deprecated alias for --chimeras keep (DAF only). |
 | `--chimera-min-seg` | `5` | DAF chimera: min same-strand deamination events per segment to call a swap (default 5). |
 | `--chimera-purity` | `0.8` | DAF chimera: min same-strand purity per segment (default 0.8). |

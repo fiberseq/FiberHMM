@@ -39,7 +39,7 @@ FiberHMM fused apply+recall; coord=molecular (ns/nl/as/al/MA in molecular origin
 `primary_only=on` only with `--alignments primary`. DAF runs record
 `daf_unaligned_mask=on|off` and
 `daf_insert_consensus=off|on/<used>of<clusters>/min<N>` (`n/a` outside DAF).
-`chimeras=flag|remove|keep` records the selected mode once. The legacy
+`chimeras=flag|remove|keep|split` records the selected mode once. The legacy
 `chimera_filter` key stays `on` for flag/remove and `off` for keep. These
 settings only enable detection in DAF mode.
 

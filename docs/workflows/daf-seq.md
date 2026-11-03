@@ -204,7 +204,8 @@ set SAM QC-fail `0x200`, and write the local tag `xc:Z:strand_swap` naming
 the reason. All supplementary and secondary records of that read receive
 the same mark. `--chimeras remove` drops all records of detected reads;
 `--chimeras keep` disables detection and attempts calls. `--keep-chimeras`
-is a deprecated alias for `--chimeras keep`.
+is a deprecated alias for `--chimeras keep`. `--chimeras split` is
+described below.
 
 Re-running flag/remove clears earlier `xc:Z:strand_swap` marks and recomputes
 decisions using the run's alignment selection. Only the current run's decision
@@ -234,6 +235,64 @@ BAM for standalone QC to reproduce remove-mode counts. QC TSV and PDF/PNG
 report chimeras alongside PCR duplication.
 Without the sidecar, standalone QC with the default auto assay mode reports
 the DAF policy from the BAM header and the fraction of marked sampled reads.
+
+### How many reads are chimeric
+
+Each run counts chimeras twice in the same pass: with the default detector
+above (the upper estimate) and with a strict one (`min_seg` 10, purity 0.9;
+the conservative floor). Flag, remove and split act on the default decision
+only. The strict fraction is graded: PASS below 5%, WARN from 5%, and WARN
+with severity `high` from 15%. At 5% or more `fiberhmm-call` and
+`fiberhmm-pipeline` print a `WARNING:` line on stderr (in the pipeline log
+too). The counts, grade and a per-region table (reads grouped by the 10-kb
+start bin of their primary record; adjacent occupied bins form a region)
+are in `qc/<stem>.chimeras.json` and the QC report.
+
+Two-strand chimeras are the only kind this test can see. A chimera of two
+molecules deaminated on the same strand looks like an ordinary read, so the
+true chimera rate is higher than either count. Read counts and occupancy
+from a library with many chimeras should be taken with caution. Every
+chimera report carries this note.
+
+### Split mode
+
+`--chimeras split` is an option for recovering data from chimeric reads; it
+is not the default. For each alignment record that is itself chimeric, the
+best split of the default detector gives a breakpoint gap: from the last
+event of the first segment's strand to the first event of the second
+segment's strand. Where the switch happened inside the gap is unknown, so
+the gap is dropped and the record is written as two single-strand records:
+
+- `<name>/c0` (the left piece on the reference) ends on its last own-strand
+  event; `<name>/c1` starts on its first own-strand event. Neither piece
+  ends in an event-free stretch made by the cut, so the cut does not create
+  footprints at the inner edges.
+- CIGAR, SEQ, QUAL and MD are cut together, `NM` is recomputed and the
+  reference start is adjusted. Outer soft and hard clips stay with their
+  piece.
+- Tags: `xc:Z:split`, `xi:i` (piece index), `xn:Z` (original read name) and
+  `xb:B:i` (the gap as `[start, end)`, 0-based on the record's reference).
+  Only `RG`, `ds`, `di`, `qs`, `du`, `ch`, `rn` and `fn` are copied.
+  `MM`/`ML` and every other position-dependent tag (`SA`, the DAF strand tag
+  `st`, earlier FiberHMM calls) are dropped; for DddA this includes MM-based
+  CpG evidence.
+- Pieces keep the record's flags and are not QC-fail. Pieces shorter than
+  `--min-read-length` (aligned bases) are dropped and counted; a record with
+  no piece left is kept whole and flagged.
+- Other records of a chimeric read (supplementary or secondary records that
+  are not chimeric themselves, or are not selected by `--alignments`) are
+  flagged as in flag mode. Unnamed records are not split. A piece that still
+  shows a swap (a read with several switches) is flagged.
+- Each piece is called with its own strand. Split mode runs before the
+  insert-consensus pre-pass, so pieces carry their own insertion evidence.
+
+The pieces are written to a private temporary BAM (sorted and indexed when
+the input is coordinate-sorted). The chimeras sidecar and QC report list
+records split, pieces written, pieces dropped as too short, the fraction of
+chimeric bases kept, and the distributions of the reference gap and piece
+lengths. Caveats: the switch point is only bracketed, not found; two
+pieces of one read are two molecules of unknown relation (they may be PCR
+copies or unrelated fragments); and same-strand chimeras are not split.
 
 Extract, consensus/recall inputs and posterior export exclude `0x200` +
 `xc:Z:strand_swap` records by default. `fiberhmm-footprint-model` takes
