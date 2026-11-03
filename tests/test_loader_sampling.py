@@ -82,6 +82,7 @@ def test_scan_never_decodes_tags_or_sequence(monkeypatch):
     class Read:
         query_name = 'a'; reference_start = 10; reference_end = 80
         is_unmapped = is_secondary = is_supplementary = False
+        is_qcfail = False  # a flag bit, like the others; the chimera tag is read only for QC-fail reads
         mapping_quality = 60
         def __getattr__(self, name):
             raise AssertionError(f'expensive read field {name}')
