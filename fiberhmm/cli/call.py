@@ -226,11 +226,15 @@ def parse_args():
                    help=argparse.SUPPRESS)  # retired experimental mode (3.0); kept only to reproduce earlier calls
 
     # --- DAF chimera filter (mode=daf only) ---
-    p.add_argument('--chimeras', choices=['flag', 'remove', 'keep'], default='flag',
+    p.add_argument('--chimeras', choices=['flag', 'remove', 'keep', 'split'], default='flag',
                    help='DAF strand-swap chimeras: flag (default) retains reads '
                         'uncalled with SAM 0x200 and xc:Z:strand_swap; remove drops '
                         'all records of the read; keep disables detection and '
-                        'clears earlier FiberHMM chimera marks and attempts calls. '
+                        'clears earlier FiberHMM chimera marks and attempts calls; '
+                        'split cuts each chimeric alignment at its breakpoint gap '
+                        'into two single-strand pieces (<name>/c0, <name>/c1; the '
+                        'gap is dropped, pieces shorter than --min-read-length are '
+                        'dropped, MM/ML are removed) that are called separately. '
                         'No strand-swap detection for m6A modes.')
     p.add_argument('--keep-chimeras', action='store_true',
                    help='Deprecated alias for --chimeras keep (DAF only).')
@@ -893,6 +897,58 @@ def _validate_model_context(model_paths, k):
             sys.exit(2)
 
 
+def _chimera_pass(args, mode, working_input, snp_mask_path, process_unmapped,
+                  stdout_mode):
+    """DAF chimera decisions (and split pieces): (input, names, stats, tmpdir).
+
+    Only DAF flag/remove/split need a QNAME decision pass. In particular m6A
+    and keep retain the original working path without copying/scanning.
+    Keep still supplies an authoritative empty decision to consumers, which
+    clear old marks as they read each record.
+    """
+    chimera_tmpdir = None
+    if mode == 'daf' and args.chimeras != 'keep':
+        from fiberhmm.inference.chimeras import (
+            ChimeraDecisions, chimera_summary_lines, chimera_warning,
+            prepare_chimeras, seekable_input,
+        )
+        spool = None
+        # Split mode always writes the pieces to a private spool.
+        if args.chimeras == 'split' or not seekable_input(working_input):
+            import tempfile
+            from pathlib import Path
+            chimera_tmpdir = tempfile.TemporaryDirectory(
+                prefix='.fiberhmm_chimeras_',
+                dir=None if stdout_mode else str(Path(args.output).parent))
+            spool = str(Path(chimera_tmpdir.name) / 'source.bam')
+        chimeric_names = ChimeraDecisions()
+        chimera_stats = prepare_chimeras(
+            working_input, mode=args.chimeras,
+            min_seg=args.chimera_min_seg, purity=args.chimera_purity,
+            prob_threshold=args.prob_threshold, reference=args.reference,
+            snp_mask=snp_mask_path, min_mapq=args.min_mapq,
+            min_read_length=args.min_read_length, process_unmapped=process_unmapped,
+            io_threads=args.io_threads, chimeric_names=chimeric_names,
+            spool_bam=spool, alignments=args.alignments)
+        if spool is not None:
+            working_input = spool
+        print(f"  DAF strand-swap chimeras: {chimera_stats['n_chimeric']:,} / "
+              f"{chimera_stats['n_reads_checked']:,} checked reads "
+              f"(mode={args.chimeras}; "
+              f"{chimera_stats['n_records_affected']:,} records)", file=sys.stderr)
+        for line in chimera_summary_lines(chimera_stats, indent='    ')[1:]:
+            print(line, file=sys.stderr)
+        warning = chimera_warning(chimera_stats)
+        if warning:
+            print(f"\n  {warning}\n", file=sys.stderr)
+        return working_input, chimeric_names, chimera_stats, chimera_tmpdir
+    if mode == 'daf':
+        from fiberhmm.inference.chimeras import empty_chimera_stats
+        return working_input, set(), empty_chimera_stats(
+            'keep', args.chimera_min_seg, args.chimera_purity), None
+    return working_input, None, None, None
+
+
 def main():
     args = parse_args()
     from fiberhmm.inference.read_filters import MostlyUnmappedError
@@ -1369,6 +1425,15 @@ def _main(args):
 
             snp_mask_sites = mask_summary(snp_mask_path)['n_sites']
 
+        # Split mode cuts chimeras before the insert-consensus pre-pass, so
+        # the pieces (new records) carry their own insertion evidence.
+        chimeras_prepared = False
+        if mode == 'daf' and args.chimeras == 'split':
+            working_input, chimeric_names, chimera_stats, chimera_tmpdir = \
+                _chimera_pass(args, mode, working_input, snp_mask_path,
+                              process_unmapped, stdout_mode)
+            chimeras_prepared = True
+
         # DAF insert consensus pre-pass: evidence inside insertions carried by
         # enough reads (fiberhmm.daf.insert_consensus).
         insert_evidence_path = None
@@ -1412,40 +1477,10 @@ def _main(args):
         from fiberhmm.inference.engine import configure_daf_insert_evidence
         configure_daf_insert_evidence(insert_evidence_path)
 
-        # Only DAF flag/remove need a QNAME decision pass. In particular m6A
-        # and keep retain the original working path without copying/scanning.
-        # Keep still supplies an authoritative empty decision to consumers,
-        # which clear old marks as they read each record.
-        if mode == 'daf' and args.chimeras != 'keep':
-            from fiberhmm.inference.chimeras import ChimeraDecisions, prepare_chimeras, seekable_input
-            spool = None
-            if not seekable_input(working_input):
-                import tempfile
-                from pathlib import Path
-                chimera_tmpdir = tempfile.TemporaryDirectory(
-                    prefix='.fiberhmm_chimeras_',
-                    dir=None if stdout_mode else str(Path(args.output).parent))
-                spool = str(Path(chimera_tmpdir.name) / 'source.bam')
-            chimeric_names = ChimeraDecisions()
-            chimera_stats = prepare_chimeras(
-                working_input, mode=args.chimeras,
-                min_seg=args.chimera_min_seg, purity=args.chimera_purity,
-                prob_threshold=args.prob_threshold, reference=args.reference,
-                snp_mask=snp_mask_path, min_mapq=args.min_mapq,
-                min_read_length=args.min_read_length, process_unmapped=process_unmapped,
-                io_threads=args.io_threads, chimeric_names=chimeric_names,
-                spool_bam=spool, alignments=args.alignments)
-            if spool is not None:
-                working_input = spool
-            print(f"  DAF strand-swap chimeras: {chimera_stats['n_chimeric']:,} / "
-                  f"{chimera_stats['n_reads_checked']:,} checked reads "
-                  f"(mode={args.chimeras}; "
-                  f"{chimera_stats['n_records_affected']:,} records)", file=sys.stderr)
-        elif mode == 'daf':
-            from fiberhmm.inference.chimeras import empty_chimera_stats
-            chimeric_names = set()
-            chimera_stats = empty_chimera_stats('keep', args.chimera_min_seg,
-                                               args.chimera_purity)
+        if not chimeras_prepared:
+            working_input, chimeric_names, chimera_stats, chimera_tmpdir = \
+                _chimera_pass(args, mode, working_input, snp_mask_path,
+                              process_unmapped, stdout_mode)
 
         # Pass 1 owns detection. Payload construction and worker extraction
         # must not repeat its mismatch walk on the surviving reads.

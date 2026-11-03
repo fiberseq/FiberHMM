@@ -143,9 +143,11 @@ def build_parser() -> argparse.ArgumentParser:
                       help="DAF: treat insertion and soft-clip bases as no evidence "
                            "and leave unaligned stretches >= 50 bp uncalled "
                            "(default on).")
-    call.add_argument("--chimeras", choices=["flag", "remove", "keep"], default=None,
+    call.add_argument("--chimeras", choices=["flag", "remove", "keep", "split"], default=None,
                       help="DAF strand-swap chimeras: flag (default) retains reads "
-                           "marked and uncalled; remove drops them; keep disables detection.")
+                           "marked and uncalled; remove drops them; keep disables detection; "
+                           "split cuts each chimeric alignment into two single-strand "
+                           "pieces that are called separately (see fiberhmm-call).")
     call.add_argument("--chimera-filter", action=argparse.BooleanOptionalAction,
                       default=True,
                       help="Legacy alias: --chimera-filter means --chimeras flag; "
