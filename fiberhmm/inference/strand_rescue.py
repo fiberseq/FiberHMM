@@ -1197,6 +1197,9 @@ def hard_observations(
     prob_threshold: Optional[int],
 ):
     """Encode hard assay calls and return the physical/read-strand group."""
+    from fiberhmm.inference.chimeras import is_marked_chimera
+    if is_marked_chimera(read):
+        return None
     sequence = read.query_sequence
     if not sequence:
         return None
@@ -1320,6 +1323,7 @@ def load_region_evidence(
     fetch_record_count = 0
     annotation_overlap_excluded_count = 0
     read_name_excluded_count = 0
+    chimera_excluded_count = 0
     with pysam.AlignmentFile(bam_path, "rb") as bam:
         group_frame = None
         if ma_annotation_frame == 'auto':
@@ -1359,6 +1363,10 @@ def load_region_evidence(
             iterator = bam.fetch(chrom, start, end)
         for input_record_ordinal, read in enumerate(iterator):
             fetch_record_count = input_record_ordinal + 1
+            from fiberhmm.inference.chimeras import is_marked_chimera
+            if is_marked_chimera(read):
+                chimera_excluded_count += 1
+                continue
             if read.is_unmapped or read.is_secondary or read.is_supplementary:
                 continue
             if read.mapping_quality < min_mapq:
@@ -1575,6 +1583,7 @@ def load_region_evidence(
                 "input_index": int(input_index),
                 "library_id": library_id,
                 "fetch_record_count": int(fetch_record_count),
+                "chimera_excluded_count": chimera_excluded_count,
                 "eligible_read_count": len(reads),
                 "truncated_at_max_reads": bool(
                     max_reads and len(reads) >= max_reads

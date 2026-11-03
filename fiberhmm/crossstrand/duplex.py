@@ -158,7 +158,8 @@ def build_pattern_feature(read, index: int, params: DuplexParams,
     """
     if read.is_unmapped or read.is_secondary or read.is_supplementary:
         return None
-    if read.is_duplicate:
+    from fiberhmm.inference.chimeras import is_marked_chimera
+    if is_marked_chimera(read) or read.is_duplicate:
         return None
     if read.query_sequence is None or not read.has_tag("MA"):
         return None

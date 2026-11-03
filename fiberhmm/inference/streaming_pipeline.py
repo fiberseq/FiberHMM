@@ -119,6 +119,8 @@ def _process_bam_streaming_pipeline_fused(
     fail_on_mostly_unmapped: bool = False,
     cpg_mask_policy: Optional[str] = None,
     index_output: bool = False,
+    precall_chimeric_names=None,
+    chimera_mode: str = 'flag',
 ):
     """Fused apply+recall streaming pipeline.
 
@@ -133,6 +135,8 @@ def _process_bam_streaming_pipeline_fused(
     require_recall_models(recall_model_path or model_path,
                           nuc_model_path if recall_nucs else None)
     configure_daf_snp_mask(daf_snp_mask_path)
+    if precall_chimeric_names is not None:
+        from .chimeras import clear_chimera_mark, mark_chimera
     ref_fasta = None
     pysam.set_verbosity(0)
     max_inflight = n_cores + 2
@@ -160,6 +164,7 @@ def _process_bam_streaming_pipeline_fused(
         train_rids=train_rids,
         mode=mode,
         has_reference=bool(ref_fasta_path),
+        honor_chimera_marks=filter_chimeras,
     )
 
     _log = sys.stderr if output_bam == '-' else sys.stdout
@@ -237,6 +242,16 @@ def _process_bam_streaming_pipeline_fused(
 
                 try:
                     for read in inbam.fetch(until_eof=True):
+                        if precall_chimeric_names is not None:
+                            clear_chimera_mark(read)
+                            if read.query_name in precall_chimeric_names:
+                                if chimera_mode == 'remove':
+                                    skipped += 1
+                                    skip_reasons['chimera'] += 1
+                                else:
+                                    mark_chimera(read)
+                                    _buffer_skip(read, 'chimera')
+                                continue
                         skip_reason = streaming_skip_reason(read, filter_config)
                         if skip_reason:
                             _buffer_skip(read, skip_reason)
@@ -306,6 +321,8 @@ def _process_bam_streaming_pipeline_fused(
         progress(f"  Fused: {total_reads:,} | Skipped: {skipped:,} | "
                  f"With footprints: {reads_with_fp:,} | {rate:.1f} r/s",
                  file=_log, final=True)
+        skip_reasons['chimera'] += counters.get('chimera', 0)
+        skipped += counters.get('chimera', 0)
         _print_skip_reasons(skip_reasons, total_reads, skipped, _log)
         if counters.get('chimera'):
             print(f"  DAF strand-swap chimeras filtered: {counters['chimera']:,}",

@@ -302,6 +302,10 @@ def run_pairing(in_bam: str, out_bam: str, reference_path: Optional[str],
                 if read.reference_start < previous_start:
                     raise ValueError("input BAM is not coordinate sorted")
                 previous_start = read.reference_start
+                from fiberhmm.inference.chimeras import is_marked_chimera
+                if is_marked_chimera(read):
+                    counts['chimera_reads'] += 1
+                    continue
                 if read.is_duplicate:
                     # 0x400 PCR copies (fiberhmm-dedup / call --dedup mark and
                     # retain them) are not pairing candidates: a copy competes

@@ -1,5 +1,26 @@
 # Changelog
 
+## 3.0.3
+
+### Changed
+
+- **`fiberhmm-call` now flags DAF strand-swap chimeras instead of passing
+  them through unmarked.** Reads with C-to-T deaminations in one segment and
+  G-to-A in another were already left uncalled, but they were written with no
+  mark, so they looked like ordinary reads without footprints. They now carry
+  the SAM QC-fail flag (0x200) and `xc:Z:strand_swap`, on every record of the
+  read. `--chimeras flag` is the default; `--chimeras remove` drops them, and
+  `--chimeras keep` turns detection off (`--keep-chimeras` is kept as an
+  alias). Re-running a call clears and recomputes FiberHMM's own marks and
+  leaves QC failures set by other tools alone. `fiberhmm-pipeline` takes the
+  same `--chimeras` option.
+- The QC report (JSON, TSV, PDF/PNG) has a chimera section next to
+  deduplication, with the full-run count and fraction.
+- `fiberhmm-extract`, consensus/recall and posterior export skip flagged
+  chimeras by default, as they skip duplicates.
+- Detection is DAF-only. m6A calls (Hia5, PacBio or nanopore) skip the
+  chimera pass entirely and their output records are unchanged.
+
 ## 3.0.2
 
 ### Fixed

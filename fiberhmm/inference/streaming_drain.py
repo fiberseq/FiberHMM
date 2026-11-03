@@ -165,6 +165,8 @@ def _drain_oldest_fused_chunk(
         next(payload_iter)
         result = next(result_iter)
         if result == CHIMERA_RESULT:
+            from .chimeras import mark_chimera
+            mark_chimera(read_obj)
             counters['chimera'] = counters.get('chimera', 0) + 1
         elif result is not None:
             write_fused_recall_tags(

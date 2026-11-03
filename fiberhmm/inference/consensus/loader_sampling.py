@@ -36,7 +36,10 @@ def scan(paths, region, minimum_mapq):
         chrom, lo, hi, _ = _resolve_bam_fetch_region(path, region['chrom'], region['start'], region['end'])
         with pysam.AlignmentFile(path, 'rb') as bam:
             for read in bam.fetch(chrom, lo, hi):
+                from fiberhmm.inference.chimeras import is_marked_chimera
                 seen += 1
+                if is_marked_chimera(read):
+                    continue
                 if read.is_unmapped or read.is_secondary or read.is_supplementary or read.mapping_quality < minimum_mapq:
                     continue
                 rows.append((read.query_name, read.reference_start, read.reference_end))

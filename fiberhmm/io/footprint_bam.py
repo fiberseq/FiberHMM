@@ -50,6 +50,7 @@ class BamFootprintDiagnostics:
     skipped_secondary: int
     skipped_supplementary: int
     skipped_qcfail: int
+    skipped_chimera: int
     skipped_duplicate: int
     skipped_low_mapq: int
     skipped_missing_ma: int
@@ -299,6 +300,7 @@ def load_footprint_molecules_from_bam(
     regions: Sequence[str] = (),
     min_mapq: int = 0,
     include_duplicates: bool = False,
+    include_chimeras: bool = False,
     minimum_projection_fraction: float = 0.95,
     invalid_stratum_tag_policy: str = "error",
 ) -> BamFootprintInput:
@@ -375,7 +377,12 @@ def load_footprint_molecules_from_bam(
             if read.is_supplementary:
                 counts["skipped_supplementary"] += 1
                 continue
-            if read.is_qcfail:
+            from fiberhmm.inference.chimeras import is_marked_chimera
+            chimera = is_marked_chimera(read)
+            if chimera and not include_chimeras:
+                counts["skipped_chimera"] += 1
+                continue
+            if read.is_qcfail and not (chimera and include_chimeras):
                 counts["skipped_qcfail"] += 1
                 continue
             if read.is_duplicate and not include_duplicates:

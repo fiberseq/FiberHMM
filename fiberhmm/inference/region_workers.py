@@ -104,12 +104,25 @@ def _init_region_worker(model_path: str, params: dict):
         raise
 
 
-def _passthrough_region(inbam, outbam, work_item, skip_reasons, strip) -> int:
+def _passthrough_region(inbam, outbam, work_item, skip_reasons, strip,
+                        precall_chimeric_names=None, chimera_mode='flag') -> int:
     """Copy one pass-through plan item (unselected contig or ``'*'``)."""
     chrom = work_item.region[0]
     written = 0
+    if precall_chimeric_names is not None:
+        from .chimeras import clear_chimera_mark, mark_chimera
     for read in inbam.fetch(chrom):
         strip(read)
+        if precall_chimeric_names is not None:
+            clear_chimera_mark(read)
+            if read.query_name in precall_chimeric_names:
+                skip_reasons['chimera'] += 1
+                if chimera_mode == 'remove':
+                    continue
+                mark_chimera(read)
+                outbam.write(read)
+                written += 1
+                continue
         outbam.write(read)
         written += 1
         reason = 'unmapped' if read.is_unmapped else 'contig_not_selected'
@@ -650,6 +663,11 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
         derived_tf_max_edge_ambiguity = params.get(
             'derived_tf_max_edge_ambiguity')
 
+        chimeric_names = params.get('precall_chimeric_names')
+        chimera_mode = params.get('chimera_mode', 'flag')
+        if chimeric_names is not None:
+            from .chimeras import clear_chimera_mark, mark_chimera
+
         def strip(read):
             strip_for_fused_call(read, also_write_legacy)
 
@@ -675,6 +693,7 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
             train_rids=train_rids,
             mode=mode,
             has_reference=ref_fasta is not None,
+            honor_chimera_marks=params.get('filter_chimeras', True),
         )
 
         def pass_through(read, reason=None):
@@ -700,7 +719,8 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                     threads=io_threads) as outbam:
                 if work_item.passthrough:
                     written = _passthrough_region(
-                        inbam, outbam, work_item, skip_reasons, strip)
+                        inbam, outbam, work_item, skip_reasons, strip,
+                        chimeric_names, chimera_mode)
                     return RegionBamResult(
                         temp_bam_path, 0, 0, written, None, skip_reasons,
                     )
@@ -711,6 +731,16 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                     if not _region_read_owned(read, start, end):
                         continue
                     strip(read)
+                    if chimeric_names is not None:
+                        clear_chimera_mark(read)
+                        if read.query_name in chimeric_names:
+                            if chimera_mode == 'remove':
+                                skipped += 1
+                                skip_reasons['chimera'] += 1
+                            else:
+                                mark_chimera(read)
+                                pass_through(read, 'chimera')
+                            continue
                     skip_reason = streaming_skip_reason(read, filter_config)
                     if skip_reason:
                         pass_through(read, skip_reason)
@@ -727,6 +757,8 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                     try:
                         fiber_read = extract_fiber_read_from_payload(payload, mode, prob_threshold)
                         if fiber_read is CHIMERA_SKIP:
+                            from .chimeras import mark_chimera
+                            mark_chimera(read)
                             pass_through(read, 'chimera')
                             continue
                         if fiber_read is None:

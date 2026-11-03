@@ -111,6 +111,7 @@ class PipelineConfig:
     snp_screen: str = "auto"  # auto | on | off
     snp_mask: Optional[str] = None  # user BED of SNP sites to mask
     chimera_filter: bool = True
+    chimeras: Optional[str] = None  # flag | remove | keep; None uses legacy bool
     daf_mask_unaligned: bool = True  # DAF: insertion/soft-clip bases are no evidence
     # Records kept by the aligner step and called: see read_filters.ALIGNMENT_SETS.
     alignments: str = "primary-supplementary"
@@ -150,6 +151,18 @@ class PipelineConfig:
         """
         return self.seq or None
 
+    def resolved_chimeras(self) -> str:
+        mode = self.chimeras or ('flag' if self.chimera_filter else 'keep')
+        if mode not in ('flag', 'remove', 'keep'):
+            raise ValueError(f'Invalid chimera mode: {mode}')
+        return mode
+
+    def effective_chimeras(self) -> str:
+        # Extra caller arguments come last; the deprecated alias wins there.
+        if '--keep-chimeras' in self.call_args:
+            return 'keep'
+        return _call_arg_value(self.call_args, '--chimeras') or self.resolved_chimeras()
+
     def resolved_hard_clip(self) -> str:
         """``on``, ``off``, or ``circular`` (DAF default: hard-clip records on
         circular contigs only)."""
@@ -186,7 +199,8 @@ class PipelineConfig:
             "dedup_mode": self.dedup_mode if daf else None,
             "snp_screen": self.snp_screen if daf else "off",
             "snp_mask": os.path.abspath(self.snp_mask) if self.snp_mask else None,
-            "chimera_filter": self.chimera_filter if daf else None,
+            "chimera_filter": self.effective_chimeras() != 'keep' if daf else None,
+            "chimeras": self.effective_chimeras() if daf else None,
             # As fiberhmm-call resolves them: --call-args come last on its
             # command line, so their last occurrence wins.
             "daf_unaligned_mask": unaligned_mask if daf else None,
@@ -1650,7 +1664,8 @@ class Pipeline:
             "dedup_mode": cfg.dedup_mode,
             "snp_screen": cfg.snp_screen,
             "snp_mask": file_fingerprint(cfg.snp_mask, self.memo) if cfg.snp_mask else None,
-            "chimera_filter": cfg.chimera_filter,
+            "chimera_filter": cfg.resolved_chimeras() != 'keep',
+            "chimeras": cfg.resolved_chimeras(),
             "daf_mask_unaligned": cfg.daf_mask_unaligned,
             "alignments": cfg.alignments,
             "prob_threshold": cfg.prob_threshold,
@@ -1708,8 +1723,7 @@ class Pipeline:
                     "off": ["--no-daf-call-snps"]}.get(cfg.snp_screen, [])
             if cfg.snp_mask:
                 cmd += ["--daf-snp-mask", os.path.abspath(cfg.snp_mask)]
-            if not cfg.chimera_filter:
-                cmd.append("--keep-chimeras")
+            cmd += ["--chimeras", cfg.resolved_chimeras()]
             if not cfg.daf_mask_unaligned:
                 cmd.append("--no-daf-mask-unaligned")
         if cfg.enzyme == "ddda":
@@ -2431,6 +2445,8 @@ def qc_verdicts(path: Optional[str]) -> dict:
     dedup = data.get("deduplication") or {}
     if dedup.get("duplicate_fraction") is not None:
         out["duplicate_fraction"] = dedup["duplicate_fraction"]
+    if data.get("chimeras"):
+        out["chimeras"] = data["chimeras"]
     if (data.get("overall") or {}).get("verdict_basis"):
         out["verdict_basis"] = data["overall"]["verdict_basis"]
     states = data.get("state_rates") or {}
