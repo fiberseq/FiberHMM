@@ -25,6 +25,7 @@ from fiberhmm.daf.aligned_arrays import (
     md_reference_length,
 )
 from fiberhmm.inference.bam_output import _sort_and_index_bam, atomic_output
+from fiberhmm.inference.chimeras import DEFAULT_MIN_SEG, DEFAULT_PURITY
 
 # CIGAR op codes (from the BAM spec) that consume reference:
 #   M=0, D=2, N=3, =7, X=8. Of these, MD describes M/=/X/D only
@@ -259,7 +260,8 @@ def _daf_positions_result(ct_positions, ga_positions, force_strand):
 
 
 def is_daf_chimera(ct_positions, ga_positions,
-                   min_seg_events: int = 5, purity: float = 0.8) -> bool:
+                   min_seg_events: int = DEFAULT_MIN_SEG,
+                   purity: float = DEFAULT_PURITY) -> bool:
     """Detect a DAF-seq strand-swap chimera.
 
     A clean DAF read is deaminated on ONE strand (C->T XOR G->A). A chimera
@@ -281,7 +283,8 @@ def is_daf_chimera(ct_positions, ga_positions,
 
 
 def daf_chimera_split(ct_positions, ga_positions,
-                      min_seg_events: int = 5, purity: float = 0.8):
+                      min_seg_events: int = DEFAULT_MIN_SEG,
+                      purity: float = DEFAULT_PURITY):
     """The best strand-swap split of a chimeric read, or None.
 
     Uses the same test as :func:`is_daf_chimera` (it returns None exactly

@@ -66,6 +66,9 @@ from fiberhmm.daf.snps import (
     DEFAULT_SNP_MIN_FRACTION,
     describe_snp_threshold_policy,
 )
+from fiberhmm.inference.chimeras import (
+    DEFAULT_MIN_SEG, DEFAULT_PURITY, LEGACY_MIN_SEG, LEGACY_PURITY,
+)
 from fiberhmm.inference.parallel import (
     _process_bam_region_parallel_fused,
     _process_bam_streaming_pipeline_fused,
@@ -234,16 +237,18 @@ def parse_args():
                         'split cuts each chimeric alignment at its breakpoint gap '
                         'into two single-strand pieces (<name>/c0, <name>/c1; the '
                         'gap is dropped, pieces shorter than --min-read-length are '
-                        'dropped, MM/ML are removed) that are called separately. '
+                        'dropped, MM/ML are re-indexed to each piece) that are '
+                        'called separately. '
                         'No strand-swap detection for m6A modes.')
     p.add_argument('--keep-chimeras', action='store_true',
                    help='Deprecated alias for --chimeras keep (DAF only).')
-    p.add_argument('--chimera-min-seg', type=int, default=5,
+    p.add_argument('--chimera-min-seg', type=int, default=DEFAULT_MIN_SEG,
                    help='DAF chimera: min same-strand deamination events per '
-                        'segment to call a swap (default 5).')
-    p.add_argument('--chimera-purity', type=float, default=0.8,
+                        f'segment to call a swap (default {DEFAULT_MIN_SEG}; '
+                        f'{LEGACY_MIN_SEG} before 3.0.4).')
+    p.add_argument('--chimera-purity', type=float, default=DEFAULT_PURITY,
                    help='DAF chimera: min same-strand purity per segment '
-                        '(default 0.8).')
+                        f'(default {DEFAULT_PURITY:g}; {LEGACY_PURITY:g} before 3.0.4).')
     p.add_argument('--daf-mask-runs', type=int, default=None, metavar='N',
                    help='DAF only: thin targets lying in same-strand runs of >= N original C (CT) or G (GA) bases (CC/GG and longer at N=2; see --daf-run-policy). Adjacent conversions are coupled and do not follow the per-site emission model. Default: 2 with keep-one for --enzyme ddda (duplex-validated), off otherwise; 0 disables.')
     p.add_argument('--daf-run-policy', choices=['keep-one', 'drop'], default='keep-one',
@@ -934,7 +939,8 @@ def _chimera_pass(args, mode, working_input, snp_mask_path, process_unmapped,
             working_input = spool
         print(f"  DAF strand-swap chimeras: {chimera_stats['n_chimeric']:,} / "
               f"{chimera_stats['n_reads_checked']:,} checked reads "
-              f"(mode={args.chimeras}; "
+              f"(mode={args.chimeras}; detector min_seg={args.chimera_min_seg}, "
+              f"purity={args.chimera_purity}; "
               f"{chimera_stats['n_records_affected']:,} records)", file=sys.stderr)
         for line in chimera_summary_lines(chimera_stats, indent='    ')[1:]:
             print(line, file=sys.stderr)

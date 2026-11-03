@@ -7,6 +7,10 @@ import os
 import numpy as np
 import pysam
 
+from fiberhmm.inference.chimeras import (
+    DEFAULT_MIN_SEG as _CHIMERA_MIN_SEG,
+    DEFAULT_PURITY as _CHIMERA_PURITY,
+)
 from fiberhmm.core.bam_reader import (
     ContextEncoder,
     daf_cpg_target_mask,
@@ -982,11 +986,13 @@ def extract_fiber_read_from_payload(payload: dict, mode: str, prob_threshold: in
 # distinct sentinel (vs None) so workers can tally chimeras as their own skip
 # reason rather than folding them into "no_modifications".
 CHIMERA_SKIP = object()
-_DAF_CHIMERA_CFG = {'filter': True, 'min_seg': 5, 'purity': 0.8}
+_DAF_CHIMERA_CFG = {'filter': True, 'min_seg': _CHIMERA_MIN_SEG,
+                    'purity': _CHIMERA_PURITY}
 
 
 def configure_daf_chimera_filter(filter_chimeras: bool = True,
-                                 min_seg: int = 5, purity: float = 0.8) -> None:
+                                 min_seg: int = _CHIMERA_MIN_SEG,
+                                 purity: float = _CHIMERA_PURITY) -> None:
     """Set the DAF chimera-filter policy for this process (worker init)."""
     _DAF_CHIMERA_CFG['filter'] = bool(filter_chimeras)
     _DAF_CHIMERA_CFG['min_seg'] = int(min_seg)

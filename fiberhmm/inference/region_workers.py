@@ -20,6 +20,7 @@ from fiberhmm.inference.engine import (
     make_apply_payload,
     read_cpg_ma_intervals,
 )
+from fiberhmm.inference.chimeras import DEFAULT_MIN_SEG, DEFAULT_PURITY
 from fiberhmm.inference.fused_stages import (
     apply_result_has_footprints,
     build_fused_recall_result,
@@ -86,8 +87,8 @@ def _init_region_worker(model_path: str, params: dict):
 
         configure_daf_chimera_filter(
             params.get('filter_chimeras', True),
-            params.get('chimera_min_seg', 5),
-            params.get('chimera_purity', 0.8),
+            params.get('chimera_min_seg', DEFAULT_MIN_SEG),
+            params.get('chimera_purity', DEFAULT_PURITY),
         )
         configure_daf_snp_mask(params.get('daf_snp_mask_path'))
 
@@ -581,8 +582,8 @@ def _init_fused_region_worker(
 
     configure_daf_chimera_filter(
         params.get('filter_chimeras', True),
-        params.get('chimera_min_seg', 5),
-        params.get('chimera_purity', 0.8),
+        params.get('chimera_min_seg', DEFAULT_MIN_SEG),
+        params.get('chimera_purity', DEFAULT_PURITY),
     )
     configure_daf_snp_mask(params.get('daf_snp_mask_path'))
     from fiberhmm.inference.engine import configure_daf_insert_evidence

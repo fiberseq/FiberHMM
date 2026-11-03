@@ -19,6 +19,7 @@ from fiberhmm.inference.engine import (
 # identity sentinel that does not survive worker IPC, so the worker emits this
 # string instead and the drain tallies it).
 CHIMERA_RESULT = "__fiberhmm_chimera_skip__"
+from fiberhmm.inference.chimeras import DEFAULT_MIN_SEG, DEFAULT_PURITY
 from fiberhmm.inference.fused_stages import (
     apply_result_has_footprints,
     build_fused_recall_result,
@@ -77,8 +78,8 @@ def _init_fused_worker(
     split_min_opps=3,
     nuc_recall_policy="conservative",
     filter_chimeras=True,
-    chimera_min_seg=5,
-    chimera_purity=0.8,
+    chimera_min_seg=DEFAULT_MIN_SEG,
+    chimera_purity=DEFAULT_PURITY,
     phase_nrl=0,
     nuc_profile_path=None,
     derived_tf_max_edge_ambiguity=None,

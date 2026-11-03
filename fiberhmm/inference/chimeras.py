@@ -14,14 +14,18 @@ CHIMERA_TAG = 'xc'
 CHIMERA_REASON = 'strand_swap'
 CHIMERA_QC_TAG = 'xq'  # original QC-fail state before our mark (0 or 1)
 
-# The strict detector: a conservative floor for the chimera rate, counted in
-# the same pass as the default (upper) estimate. Flag/remove/split act on the
-# default decision only.
-STRICT_MIN_SEG = 10
-STRICT_PURITY = 0.9
-# Grades of the strict fraction (QC row and the call's stderr warning).
-WARN_FRACTION = 0.05
-HIGH_FRACTION = 0.15
+# The DAF strand-swap detector defaults (3.0.4): one strict decision drives
+# flag/remove/split, the count and the grade. Every default reads these two
+# constants (CLI options, prepare_chimeras, the engine, QC, workers).
+DEFAULT_MIN_SEG = 10
+DEFAULT_PURITY = 0.9
+# FiberHMM 3.0.3 and earlier defaults; used only to label counts read from
+# older sidecars and BAM headers.
+LEGACY_MIN_SEG = 5
+LEGACY_PURITY = 0.8
+# Grades of the chimera fraction (QC row and the call's stderr warning).
+WARN_FRACTION = 0.10
+HIGH_FRACTION = 0.20
 GRADE_MIN_READS = 100
 CHIMERA_NOTE = ('Same-strand chimeras cannot be detected, so the true chimera '
                 'rate is higher than these counts. Read-count and occupancy '
@@ -105,48 +109,79 @@ def _is_chimeric(read, ref, *, min_seg=None, purity=None):
         events[0], events[1], min_seg_events=min_seg, purity=purity)
 
 
-def grade_chimeras(n_checked, n_strict):
-    """QC grade of the strict chimera fraction.
+def detector_basis(min_seg, purity):
+    """``(basis, note)`` of a count made with ``min_seg``/``purity``.
 
-    PASS below 5%, WARN from 5% (severity 'moderate') and from 15% (severity
-    'high'); INSUFFICIENT with fewer than 100 checked reads or no strict
-    count. Never FAIL: flagged chimeras are excluded from analysis and the
-    remaining reads are usable.
+    ``basis`` is ``default`` for the current detector, ``lenient`` for a
+    looser one (for example the 3.0.3 default, 5 and 0.8, recorded in older
+    sidecars and BAM headers), ``custom`` for any other setting and
+    ``unknown`` when the parameters were not recorded. ``note`` explains a
+    non-default basis (None for ``default``).
     """
-    if not n_checked or n_strict is None or n_checked < GRADE_MIN_READS:
-        return {'status': 'INSUFFICIENT', 'severity': None, 'basis': 'strict',
-                'fraction': (n_strict / n_checked
-                             if n_checked and n_strict is not None else None),
-                'warn_fraction': WARN_FRACTION, 'high_fraction': HIGH_FRACTION,
-                'min_reads': GRADE_MIN_READS}
-    fraction = n_strict / n_checked
+    if min_seg is None or purity is None:
+        return 'unknown', 'detector parameters not recorded'
+    min_seg, purity = int(min_seg), float(purity)
+    if (min_seg, purity) == (DEFAULT_MIN_SEG, DEFAULT_PURITY):
+        return 'default', None
+    setting = f'min_seg={min_seg}, purity={purity:g}'
+    if min_seg <= DEFAULT_MIN_SEG and purity <= DEFAULT_PURITY:
+        legacy = (' (the FiberHMM 3.0.3 default)'
+                  if (min_seg, purity) == (LEGACY_MIN_SEG, LEGACY_PURITY) else '')
+        return 'lenient', (f'counted with the older lenient detector {setting}{legacy}; '
+                           f'the default detector (min_seg={DEFAULT_MIN_SEG}, '
+                           f'purity={DEFAULT_PURITY:g}) marks fewer reads')
+    return 'custom', f'counted with a non-default detector ({setting})'
+
+
+def grade_chimeras(n_checked, n_chimeric, min_seg=DEFAULT_MIN_SEG,
+                   purity=DEFAULT_PURITY):
+    """QC grade of the chimera fraction.
+
+    PASS below :data:`WARN_FRACTION`, WARN from it (severity 'moderate') and
+    from :data:`HIGH_FRACTION` (severity 'high'); INSUFFICIENT with fewer
+    than :data:`GRADE_MIN_READS` checked reads or no count. Never FAIL:
+    flagged chimeras are excluded from analysis and the remaining reads are
+    usable. A count from a non-default detector is graded as recorded; its
+    ``basis`` and ``basis_note`` say so (:func:`detector_basis`).
+    """
+    basis, note = detector_basis(min_seg, purity)
+    grade = {'status': None, 'severity': None, 'basis': basis,
+             'min_seg': None if min_seg is None else int(min_seg),
+             'purity': None if purity is None else float(purity),
+             'fraction': (n_chimeric / n_checked
+                          if n_checked and n_chimeric is not None else None),
+             'warn_fraction': WARN_FRACTION, 'high_fraction': HIGH_FRACTION,
+             'min_reads': GRADE_MIN_READS}
+    if note:
+        grade['basis_note'] = note
+    if not n_checked or n_chimeric is None or n_checked < GRADE_MIN_READS:
+        grade['status'] = 'INSUFFICIENT'
+        return grade
+    fraction = grade['fraction']
     if fraction >= HIGH_FRACTION:
-        status, severity = 'WARN', 'high'
+        grade['status'], grade['severity'] = 'WARN', 'high'
     elif fraction >= WARN_FRACTION:
-        status, severity = 'WARN', 'moderate'
+        grade['status'], grade['severity'] = 'WARN', 'moderate'
     else:
-        status, severity = 'PASS', None
-    return {'status': status, 'severity': severity, 'basis': 'strict',
-            'fraction': fraction, 'warn_fraction': WARN_FRACTION,
-            'high_fraction': HIGH_FRACTION, 'min_reads': GRADE_MIN_READS}
+        grade['status'] = 'PASS'
+    return grade
 
 
 def chimera_warning(stats):
-    """A prominent stderr warning for a high strict chimera fraction, or None."""
+    """A prominent stderr warning for a high chimera fraction, or None."""
     grade = (stats or {}).get('grade') or {}
     if grade.get('status') != 'WARN':
         return None
-    strict = 100 * grade['fraction']
-    default = stats.get('fraction')
-    default_text = '' if default is None else f' (default detector: {100 * default:.1f}%)'
+    percent = 100 * grade['fraction']
+    basis = (f" ({grade['basis_note']})" if grade.get('basis_note') else '')
     if grade.get('severity') == 'high':
-        return (f"WARNING: very high DAF strand-swap chimera rate: at least "
-                f"{strict:.1f}% of reads{default_text}, and same-strand chimeras "
-                "are not detectable. Treat read counts and occupancy from this "
-                "library with strong caution.")
-    return (f"WARNING: high DAF strand-swap chimera rate: at least {strict:.1f}% "
-            f"of reads{default_text}; same-strand chimeras are not detectable. "
-            "Take read counts and occupancy from this library with caution.")
+        return (f"WARNING: very high DAF strand-swap chimera rate: {percent:.1f}% "
+                f"of reads{basis}, and same-strand chimeras are not detectable. "
+                "Treat read counts and occupancy from this library with strong "
+                "caution.")
+    return (f"WARNING: high DAF strand-swap chimera rate: {percent:.1f}% of "
+            f"reads{basis}; same-strand chimeras are not detectable. Take read "
+            "counts and occupancy from this library with caution.")
 
 
 def chimera_summary_lines(stats, indent='  '):
@@ -154,24 +189,19 @@ def chimera_summary_lines(stats, indent='  '):
     if not stats or not stats.get('detected') or stats.get('mode') in ('keep', 'n/a'):
         return []
     checked = stats.get('n_reads_checked') or 0
-    lines = []
-    fraction = stats.get('fraction')
-    strict = stats.get('fraction_strict')
     pct = (lambda v: 'NA' if v is None else f'{100 * v:.2f}%')
-    lines.append(f"{indent}DAF strand-swap chimeras ({stats.get('mode')}): "
-                 f"{stats.get('n_chimeric', 0):,} / {checked:,} checked reads "
-                 f"({pct(fraction)}, default detector min_seg={stats.get('min_seg')}, "
-                 f"purity={stats.get('purity')}; upper estimate)")
-    if stats.get('n_chimeric_strict') is not None:
-        lines.append(f"{indent}  strict detector (min_seg={stats.get('strict_min_seg')}, "
-                     f"purity={stats.get('strict_purity')}): "
-                     f"{stats['n_chimeric_strict']:,} ({pct(strict)}; conservative floor)")
+    lines = [f"{indent}DAF strand-swap chimeras ({stats.get('mode')}): "
+             f"{stats.get('n_chimeric', 0):,} / {checked:,} checked reads "
+             f"({pct(stats.get('fraction'))}; detector min_seg={stats.get('min_seg')}, "
+             f"purity={stats.get('purity')})"]
     grade = stats.get('grade') or {}
     if grade.get('status'):
         severity = f" ({grade['severity']})" if grade.get('severity') else ''
         lines.append(f"{indent}  grade: {grade['status']}{severity} "
-                     f"[strict fraction; WARN >= {100 * WARN_FRACTION:.0f}%, "
-                     f"high >= {100 * HIGH_FRACTION:.0f}%]")
+                     f"[WARN >= {100 * grade.get('warn_fraction', WARN_FRACTION):.0f}%, "
+                     f"high >= {100 * grade.get('high_fraction', HIGH_FRACTION):.0f}%]")
+        if grade.get('basis_note'):
+            lines.append(f"{indent}  basis: {grade['basis_note']}")
     split = stats.get('split')
     if split:
         lines.append(f"{indent}  split: {split['n_records_split']:,} records cut into "
@@ -208,28 +238,24 @@ def is_precalled_chimera(read, decisions):
         return _is_chimeric(read, ref, min_seg=min_seg, purity=purity)
 
 
-def _new_stats_fields(mode, n_checked=0, n_strict=None, regions=None, split=None):
+def _new_stats_fields(mode, n_checked=0, n_chimeric=None, min_seg=None,
+                      purity=None, regions=None, split=None):
     """3.0.4 fields, appended after the 3.0.3 ones (key order is kept)."""
     detected = mode not in ('keep', 'n/a')
     return dict(
-        n_chimeric_strict=n_strict if detected else None,
-        fraction_strict=(n_strict / n_checked
-                         if detected and n_checked and n_strict is not None else None),
-        strict_min_seg=STRICT_MIN_SEG if detected else None,
-        strict_purity=STRICT_PURITY if detected else None,
-        grade=grade_chimeras(n_checked, n_strict) if detected else None,
+        grade=grade_chimeras(n_checked, n_chimeric, min_seg, purity) if detected else None,
         regions=regions if detected else None,
         split=split,
         note=CHIMERA_NOTE,
     )
 
 
-def empty_chimera_stats(mode, min_seg=5, purity=0.8):
+def empty_chimera_stats(mode, min_seg=DEFAULT_MIN_SEG, purity=DEFAULT_PURITY):
     return dict(detected=False, mode=mode, n_reads_checked=0, n_chimeric=0,
                 fraction=None, min_seg=min_seg, purity=purity,
                 n_records_affected=0, n_stale_marks_cleared=0,
                 full_run=True, count_unit='unique read names before removal',
-                **_new_stats_fields(mode))
+                **_new_stats_fields(mode, min_seg=min_seg, purity=purity))
 
 
 def _quantiles(values):
@@ -242,19 +268,17 @@ def _quantiles(values):
                for q in (0.1, 0.25, 0.5, 0.75, 0.9)}}
 
 
-def _region_rows(bin_of, bin_spans, anonymous_bins, chimeric, strict):
+def _region_rows(bin_of, bin_spans, anonymous_bins, chimeric):
     """Per-region (adjacent occupied 10-kb start bins) chimera fractions."""
     counts = {}
     for name, key in bin_of.items():
-        row = counts.setdefault(key, [0, 0, 0])
+        row = counts.setdefault(key, [0, 0])
         row[0] += 1
         row[1] += name in chimeric
-        row[2] += name in strict
-    for key, (checked, default, strict_n) in anonymous_bins.items():
-        row = counts.setdefault(key, [0, 0, 0])
+    for key, (checked, hits) in anonymous_bins.items():
+        row = counts.setdefault(key, [0, 0])
         row[0] += checked
-        row[1] += default
-        row[2] += strict_n
+        row[1] += hits
     by_chrom = {}
     for (chrom, index) in counts:
         by_chrom.setdefault(chrom, []).append(index)
@@ -264,17 +288,14 @@ def _region_rows(bin_of, bin_spans, anonymous_bins, chimeric, strict):
         for index in sorted(indices) + [None]:
             if group and (index is None or index > group[-1] + 1):
                 checked = sum(counts[(chrom, i)][0] for i in group)
-                default = sum(counts[(chrom, i)][1] for i in group)
-                strict_n = sum(counts[(chrom, i)][2] for i in group)
+                hits = sum(counts[(chrom, i)][1] for i in group)
                 start = min(bin_spans[(chrom, i)][0] for i in group)
                 end = max(bin_spans[(chrom, i)][1] for i in group)
                 regions.append(dict(
                     chrom=chrom, start=int(start), end=int(end),
                     region='unmapped' if chrom == '*' else f'{chrom}:{start + 1}-{end}',
-                    n_reads_checked=checked, n_chimeric=default,
-                    fraction=default / checked if checked else None,
-                    n_chimeric_strict=strict_n,
-                    fraction_strict=strict_n / checked if checked else None))
+                    n_reads_checked=checked, n_chimeric=hits,
+                    fraction=hits / checked if checked else None))
                 group = []
             if index is not None:
                 group.append(index)
@@ -288,7 +309,8 @@ def _region_rows(bin_of, bin_spans, anonymous_bins, chimeric, strict):
 
 
 def prepare_chimeras(input_bam, output_bam=None, *, mode='flag', daf=True,
-                     min_seg=5, purity=0.8, prob_threshold=128,
+                     min_seg=DEFAULT_MIN_SEG, purity=DEFAULT_PURITY,
+                     prob_threshold=128,
                      reference=None, snp_mask=None, min_mapq=0,
                      min_read_length=0, process_unmapped=False,
                      io_threads=1, chimeric_names=None, spool_bam=None,
@@ -302,9 +324,9 @@ def prepare_chimeras(input_bam, output_bam=None, *, mode='flag', daf=True,
     ``spool_bam`` supplies the replay path. ``output_bam`` optionally writes
     a marked/filtered BAM for standalone use. Counts precede removal.
 
-    The default and the strict detector (:data:`STRICT_MIN_SEG`,
-    :data:`STRICT_PURITY`) are evaluated on the same events in this pass.
-    Mode ``split`` requires ``spool_bam``: each eligible named record that is
+    One detector (``min_seg``/``purity``, by default :data:`DEFAULT_MIN_SEG`
+    and :data:`DEFAULT_PURITY`) decides flag, remove and split and gives the
+    count and the grade. Mode ``split`` requires ``spool_bam``: each eligible named record that is
     itself chimeric is written there as two pieces
     (:mod:`fiberhmm.inference.chimera_split`); pieces shorter than
     ``min_read_length`` are dropped, and a record with no piece left is kept
@@ -328,29 +350,29 @@ def prepare_chimeras(input_bam, output_bam=None, *, mode='flag', daf=True,
                               primary_only=alignments,
                               process_unmapped=process_unmapped, mode='daf',
                               has_reference=reference is not None)
-    chimeric, strict = ChimeraDecisions(), set()
+    chimeric = ChimeraDecisions()
     if daf and mode != 'keep':
         chimeric.anonymous_policy = (config, reference, min_seg, purity)
-    anonymous_checked = anonymous_chimeric = anonymous_strict = 0
+    anonymous_checked = anonymous_chimeric = 0
     counts = Counter()
     stale = 0
     # Regions: one start bin per read name (its primary record if eligible).
     bin_of, bin_spans, anonymous_bins = {}, {}, {}
-    event_floor = min(min_seg, STRICT_MIN_SEG)
     split_info = dict(n_records_split=0, n_pieces_written=0, n_pieces_too_short=0,
                       n_records_kept_whole=0, n_pieces_still_chimeric=0,
+                      n_pieces_modifications_kept=0, n_pieces_modifications_dropped=0,
                       chimeric_bases=0, recovered_bases=0)
     gaps, piece_lengths, still_chimeric = [], [], set()
 
     def decide(read):
-        events = _chimera_events(read, ref, min_seg=event_floor)
+        """The detector's split (split mode) or True, else None."""
+        events = _chimera_events(read, ref, min_seg=min_seg)
         if events is None:
-            return None, False
+            return None
         ct, ga = events
         hit = (daf_chimera_split(ct, ga, min_seg, purity) if splitting
                else is_daf_chimera(ct, ga, min_seg_events=min_seg, purity=purity))
-        return hit or None, bool(is_daf_chimera(
-            ct, ga, min_seg_events=STRICT_MIN_SEG, purity=STRICT_PURITY))
+        return hit or None
 
     # The optional standalone writer owns its private spool. The CLI owns
     # its stream spool's lifetime, which extends through calling.
@@ -397,12 +419,10 @@ def prepare_chimeras(input_bam, output_bam=None, *, mode='flag', daf=True,
                         if (name not in bin_of
                                 or not (read.is_supplementary or read.is_secondary)):
                             bin_of[name] = key
-                        if splitting or name not in chimeric or name not in strict:
-                            hit, strict_hit = decide(read)
+                        if splitting or name not in chimeric:
+                            hit = decide(read)
                             if hit:
                                 chimeric.add(name)
-                            if strict_hit:
-                                strict.add(name)
                             if splitting and hit:
                                 pieces = _split_pieces(
                                     read, bam.header, hit, min_read_length, ref,
@@ -410,13 +430,11 @@ def prepare_chimeras(input_bam, output_bam=None, *, mode='flag', daf=True,
                                     still_chimeric)
                     else:
                         anonymous_checked += 1
-                        hit, strict_hit = decide(read)
+                        hit = decide(read)
                         anonymous_chimeric += int(bool(hit))
-                        anonymous_strict += int(strict_hit)
-                        row = anonymous_bins.setdefault(key, [0, 0, 0])
+                        row = anonymous_bins.setdefault(key, [0, 0])
                         row[0] += 1
                         row[1] += int(bool(hit))
-                        row[2] += int(strict_hit)
                 if out is not None:
                     if pieces:
                         for piece in pieces:
@@ -452,7 +470,6 @@ def prepare_chimeras(input_bam, output_bam=None, *, mode='flag', daf=True,
             Path(spool_bam).unlink(missing_ok=True)
     n_checked = len(bin_of) + anonymous_checked
     n_chimeric = len(chimeric) + anonymous_chimeric
-    n_strict = len(strict) + anonymous_strict
     split = None
     if splitting:
         split = dict(split_info)
@@ -466,8 +483,12 @@ def prepare_chimeras(input_bam, output_bam=None, *, mode='flag', daf=True,
         split['tags'] = {'xc': 'Z:split', 'xi': 'i piece index (0 = left on the reference)',
                          'xn': 'Z original read name',
                          'xb': 'B:i breakpoint gap [start, end), 0-based on the reference'}
-        split['dropped_tags'] = 'MM/ML and every tag not in RG, ds, di, qs, du, ch, rn, fn; ' \
-                                'MD/NM recomputed'
+        split['kept_tags'] = ('RG, ds, di, qs, du, ch, rn, fn; MM/ML (and Mm/Ml) '
+                              're-indexed to the piece, MN set to its length; '
+                              'MD/NM recomputed')
+        split['dropped_tags'] = ('every other tag; MM/ML of a piece whose record is '
+                                 'hard-clipped or whose MM/ML do not parse or match '
+                                 'SEQ (n_pieces_modifications_dropped)')
     stats = dict(detected=bool(daf and mode != 'keep'), mode=mode if daf else 'n/a',
                  n_reads_checked=n_checked, n_chimeric=n_chimeric,
                  fraction=n_chimeric / n_checked if n_checked else None,
@@ -476,8 +497,8 @@ def prepare_chimeras(input_bam, output_bam=None, *, mode='flag', daf=True,
                  n_stale_marks_cleared=stale, full_run=True,
                  count_unit='unique read names before removal; unnamed records counted individually')
     stats.update(_new_stats_fields(
-        stats['mode'], n_checked, n_strict,
-        _region_rows(bin_of, bin_spans, anonymous_bins, chimeric, strict)
+        stats['mode'], n_checked, n_chimeric, stats['min_seg'], stats['purity'],
+        _region_rows(bin_of, bin_spans, anonymous_bins, chimeric)
         if daf and mode != 'keep' else None, split))
     return stats
 
@@ -510,7 +531,11 @@ def _split_pieces(read, header, split, min_read_length, ref, decide, info,
         length = piece.query_alignment_length or 0
         info['recovered_bases'] += length
         piece_lengths.append(length)
-        if decide(piece)[0]:
+        if read.has_tag('MM') or read.has_tag('Mm'):
+            kept_mods = piece.has_tag('MM') or piece.has_tag('Mm')
+            info['n_pieces_modifications_kept' if kept_mods
+                 else 'n_pieces_modifications_dropped'] += 1
+        if decide(piece):
             info['n_pieces_still_chimeric'] += 1
             still_chimeric.add(piece.query_name)
     return kept

@@ -19,6 +19,7 @@ from fiberhmm.inference.bam_output import (
     atomic_output,
     ensure_parent_dir,
 )
+from fiberhmm.inference.chimeras import DEFAULT_MIN_SEG, DEFAULT_PURITY
 from fiberhmm.inference.mp_context import _MP_CONTEXT
 from fiberhmm.inference.region_planning import (
     _get_genome_regions,
@@ -450,8 +451,8 @@ def _process_bam_region_parallel_fused(
     split_min_opps: int = 3,
     nuc_recall_policy: str = "conservative",
     filter_chimeras: bool = True,
-    chimera_min_seg: int = 5,
-    chimera_purity: float = 0.8,
+    chimera_min_seg: int = DEFAULT_MIN_SEG,
+    chimera_purity: float = DEFAULT_PURITY,
     phase_nrl: int = 0,
     nuc_profile_path: str = None,
     nuc_model_path: str = None,

@@ -63,6 +63,7 @@ from fiberhmm.inference.engine import (
     configure_daf_chimera_filter,
     configure_daf_snp_mask,
 )
+from fiberhmm.inference.chimeras import DEFAULT_MIN_SEG, DEFAULT_PURITY
 from fiberhmm.inference.parallel import _get_genome_regions
 
 
@@ -222,8 +223,8 @@ def _configure_read_extraction(params: dict) -> None:
     """Per-process DAF extraction policy (chimera filter, SNP mask, run mask)."""
     configure_daf_chimera_filter(
         params.get('filter_chimeras', True),
-        params.get('chimera_min_seg', 5),
-        params.get('chimera_purity', 0.8),
+        params.get('chimera_min_seg', DEFAULT_MIN_SEG),
+        params.get('chimera_purity', DEFAULT_PURITY),
     )
     configure_daf_snp_mask(params.get('daf_snp_mask_path'))
     run_mask = params.get('daf_run_mask')
@@ -555,8 +556,8 @@ def _export_provenance(model_path, prob_threshold, extraction, provenance=None) 
         'model_sha256': file_sha256(model_path),
         'prob_threshold': int(prob_threshold),
         'filter_chimeras': bool(extraction.get('filter_chimeras', True)),
-        'chimera_min_seg': extraction.get('chimera_min_seg', 5),
-        'chimera_purity': extraction.get('chimera_purity', 0.8),
+        'chimera_min_seg': extraction.get('chimera_min_seg', DEFAULT_MIN_SEG),
+        'chimera_purity': extraction.get('chimera_purity', DEFAULT_PURITY),
         'daf_snp_mask': os.path.basename(snp_mask) if snp_mask else None,
         'daf_snp_mask_sha256': file_sha256(snp_mask) if snp_mask else None,
         'daf_mask_runs': int(run_mask[0]) if run_mask is not None else None,
@@ -1097,11 +1098,12 @@ def main():
     daf = parser.add_argument_group('DAF options (mode=daf only; same as fiberhmm-call)')
     daf.add_argument('--keep-chimeras', action='store_true',
                      help='Do not drop DAF strand-swap chimeric reads')
-    daf.add_argument('--chimera-min-seg', type=int, default=5,
+    daf.add_argument('--chimera-min-seg', type=int, default=DEFAULT_MIN_SEG,
                      help='DAF chimera: min same-strand deamination events per segment '
-                          '(default: 5)')
-    daf.add_argument('--chimera-purity', type=float, default=0.8,
-                     help='DAF chimera: min same-strand purity per segment (default: 0.8)')
+                          f'(default: {DEFAULT_MIN_SEG})')
+    daf.add_argument('--chimera-purity', type=float, default=DEFAULT_PURITY,
+                     help='DAF chimera: min same-strand purity per segment '
+                          f'(default: {DEFAULT_PURITY:g})')
     daf.add_argument('--daf-snp-mask', default=None, metavar='BED',
                      help='0-based BED of reference positions whose conversions are '
                           'ignored (e.g. the mask fiberhmm-call used)')

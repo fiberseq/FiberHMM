@@ -21,6 +21,7 @@ import pysam
 from fiberhmm.core.progress import progress
 from fiberhmm.inference.bam_output import _sort_and_index_bam, atomic_output
 from fiberhmm.inference.engine import configure_daf_snp_mask, make_apply_payload
+from fiberhmm.inference.chimeras import DEFAULT_MIN_SEG, DEFAULT_PURITY
 from fiberhmm.inference.mp_context import _MP_CONTEXT
 from fiberhmm.inference.read_filters import (
     MostlyUnmappedError,
@@ -113,8 +114,8 @@ def _process_bam_streaming_pipeline_fused(
     split_min_opps: int = 3,
     nuc_recall_policy: str = "conservative",
     filter_chimeras: bool = True,
-    chimera_min_seg: int = 5,
-    chimera_purity: float = 0.8,
+    chimera_min_seg: int = DEFAULT_MIN_SEG,
+    chimera_purity: float = DEFAULT_PURITY,
     phase_nrl: int = 0,
     nuc_profile_path: str = None,
     nuc_model_path: str = None,
