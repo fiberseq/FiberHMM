@@ -1,4 +1,4 @@
-"""DAF chimera QC (strict count, grade, regions, warnings) and split mode (3.0.4).
+"""DAF chimera QC (one strict detector, grade, regions, warnings) and split mode (3.0.4).
 
 All data are synthetic: a random reference and reads whose C->T / G->A
 conversions are placed by the test, with MD tags computed from the CIGAR.
@@ -14,11 +14,16 @@ import pytest
 from fiberhmm.daf.encoder import (
     daf_chimera_split, get_daf_positions, is_daf_chimera, md_matches_cigar,
 )
-from fiberhmm.inference.chimera_split import make_piece
+from fiberhmm.inference.chimera_split import cut_modifications, make_piece
 from fiberhmm.inference.chimeras import (
-    CHIMERA_NOTE, ChimeraDecisions, chimera_warning, grade_chimeras,
+    CHIMERA_NOTE, DEFAULT_MIN_SEG, DEFAULT_PURITY, HIGH_FRACTION, LEGACY_MIN_SEG,
+    LEGACY_PURITY, WARN_FRACTION, ChimeraDecisions, chimera_warning, grade_chimeras,
     is_marked_chimera, prepare_chimeras,
 )
+
+LEGACY = dict(min_seg=LEGACY_MIN_SEG, purity=LEGACY_PURITY)
+LEGACY_ARGS = ('--chimera-min-seg', str(LEGACY_MIN_SEG),
+               '--chimera-purity', str(LEGACY_PURITY))
 
 CONTIG = 'chrS'
 REF_LEN = 40_000
@@ -180,32 +185,47 @@ def test_split_picks_best_breakpoint_and_gap_edges():
     # A stray GA inside the CT segment must not move the split there.
     ct = [10, 20, 30, 40, 50, 60, 70, 90]
     ga = [55, 300, 310, 320, 330, 340]
-    split = daf_chimera_split(ct, ga)
+    split = daf_chimera_split(ct, ga, 5, 0.8)
     assert split == {'left_strand': 'CT', 'right_strand': 'GA',
                      'left_last': 90, 'right_first': 300}
-    split = daf_chimera_split([300, 310, 320, 330, 340], [10, 20, 30, 40, 50])
+    split = daf_chimera_split([300, 310, 320, 330, 340], [10, 20, 30, 40, 50], 5, 0.8)
     assert split['left_strand'] == 'GA' and split['left_last'] == 50
     assert split['right_first'] == 300
 
 
 def test_grade_thresholds():
+    warn, high = round(1000 * WARN_FRACTION), round(1000 * HIGH_FRACTION)
     assert grade_chimeras(99, 50)['status'] == 'INSUFFICIENT'
     assert grade_chimeras(1000, None)['status'] == 'INSUFFICIENT'
-    assert grade_chimeras(1000, 49)['status'] == 'PASS'
-    moderate = grade_chimeras(1000, 50)
+    assert grade_chimeras(1000, warn - 1)['status'] == 'PASS'
+    moderate = grade_chimeras(1000, warn)
     assert (moderate['status'], moderate['severity']) == ('WARN', 'moderate')
-    high = grade_chimeras(1000, 150)
-    assert (high['status'], high['severity']) == ('WARN', 'high')
+    assert grade_chimeras(1000, high - 1)['severity'] == 'moderate'
+    very = grade_chimeras(1000, high)
+    assert (very['status'], very['severity']) == ('WARN', 'high')
     assert 'FAIL' not in {grade_chimeras(100, n)['status'] for n in range(101)}
-    assert chimera_warning({'grade': grade_chimeras(1000, 49)}) is None
-    assert chimera_warning({'grade': moderate, 'fraction': 0.1}).startswith('WARNING:')
-    assert 'very high' in chimera_warning({'grade': high, 'fraction': 0.2})
+    assert moderate['basis'] == 'default' and 'basis_note' not in moderate
+    assert (moderate['min_seg'], moderate['purity']) == (DEFAULT_MIN_SEG, DEFAULT_PURITY)
+    assert chimera_warning({'grade': grade_chimeras(1000, warn - 1)}) is None
+    assert chimera_warning({'grade': moderate}).startswith('WARNING: high')
+    assert 'very high' in chimera_warning({'grade': very})
 
 
-# --- strict count, SNP mask, regions ---------------------------------------
+def test_grade_basis_of_older_counts():
+    """3.0.3 counts (lenient detector) are graded as recorded and labelled."""
+    lenient = grade_chimeras(1000, 150, LEGACY_MIN_SEG, LEGACY_PURITY)
+    assert (lenient['status'], lenient['severity']) == ('WARN', 'moderate')
+    assert lenient['basis'] == 'lenient' and '3.0.3' in lenient['basis_note']
+    assert lenient['basis_note'] in chimera_warning({'grade': lenient})
+    assert grade_chimeras(1000, 10, 7, 0.85)['basis'] == 'lenient'
+    assert grade_chimeras(1000, 10, 20, 0.95)['basis'] == 'custom'
+    assert grade_chimeras(1000, 10, None, None)['basis'] == 'unknown'
+
+
+# --- count, SNP mask, regions ----------------------------------------------
 
 def library(tmp_path, ref, n_clean=150, n_strong=20, n_weak=10, far=False):
-    """Clean reads, strong swaps (strict + default) and weak swaps (default only)."""
+    """Clean reads, strong swaps (called) and weak swaps (called only at 5 / 0.8)."""
     hdr = header()
     reads = []
     for i in range(n_clean):
@@ -217,7 +237,7 @@ def library(tmp_path, ref, n_clean=150, n_strong=20, n_weak=10, far=False):
         reads.append(make_read(hdr, ref, f'strong{i}', start, [(0, 3000)],
                                swap_at(start + 1500), seed=1000 + i))
     for i in range(n_weak):
-        # Seven GA events on the right: default (min_seg 5) only.
+        # Seven GA events on the right: called only by the 3.0.3 setting.
         start = 2000 + i * 10
         bp = start + 2900
         def strand(r, bp=bp):
@@ -261,27 +281,34 @@ def _with_seq(hdr, read, ref, seq):
     return out
 
 
-def test_strict_and_default_counts_in_one_pass(tmp_path):
+def test_one_detector_count_and_regions(tmp_path):
     ref = reference()
     bam = library(tmp_path, ref, far=True)
     stats = prepare_chimeras(bam, mode='flag')
     assert stats['n_reads_checked'] == 180
-    assert stats['n_chimeric'] == 30
-    assert stats['n_chimeric_strict'] == 20
-    assert stats['fraction_strict'] == pytest.approx(20 / 180)
-    assert (stats['strict_min_seg'], stats['strict_purity']) == (10, 0.9)
+    assert stats['n_chimeric'] == 20               # the weak swaps are not called
+    assert stats['fraction'] == pytest.approx(20 / 180)
+    assert (stats['min_seg'], stats['purity']) == (DEFAULT_MIN_SEG, DEFAULT_PURITY)
+    assert not [key for key in stats if 'strict' in key]
     assert stats['grade']['status'] == 'WARN' and stats['grade']['severity'] == 'moderate'
+    assert stats['grade']['basis'] == 'default'
     assert stats['note'] == CHIMERA_NOTE
     # 3.0.3 keys keep their order; new keys follow.
-    assert list(stats)[:11] == ['detected', 'mode', 'n_reads_checked', 'n_chimeric',
-                                'fraction', 'min_seg', 'purity', 'n_records_affected',
-                                'n_stale_marks_cleared', 'full_run', 'count_unit']
+    assert list(stats) == ['detected', 'mode', 'n_reads_checked', 'n_chimeric',
+                           'fraction', 'min_seg', 'purity', 'n_records_affected',
+                           'n_stale_marks_cleared', 'full_run', 'count_unit',
+                           'grade', 'regions', 'split', 'note']
     rows = stats['regions']['rows']
     assert len(rows) == 2
     near = next(r for r in rows if r['start'] < 10_000)
     distant = next(r for r in rows if r['start'] >= 20_000)
-    assert distant['n_reads_checked'] == 20 and distant['fraction_strict'] == 1.0
-    assert near['n_chimeric'] == 10 and near['n_chimeric_strict'] == 0
+    assert distant['n_reads_checked'] == 20 and distant['fraction'] == 1.0
+    assert near['n_chimeric'] == 0
+    assert set(near) == {'chrom', 'start', 'end', 'region', 'n_reads_checked',
+                         'n_chimeric', 'fraction'}
+    # The 3.0.3 setting is still available and also calls the weak swaps.
+    legacy = prepare_chimeras(bam, mode='flag', **LEGACY)
+    assert legacy['n_chimeric'] == 30 and legacy['grade']['basis'] == 'lenient'
 
 
 def test_detection_follows_the_snp_mask(tmp_path):
@@ -302,15 +329,10 @@ def test_detection_follows_the_snp_mask(tmp_path):
     bam = write_bam(tmp_path / 'snp.bam', reads)
     mask = tmp_path / 'mask.bed'
     mask.write_text(''.join(f'{CONTIG}\t{s}\t{s + 1}\n' for s in snp_sites))
+    assert len(snp_sites) >= DEFAULT_MIN_SEG
     assert prepare_chimeras(bam, mode='flag')['n_chimeric'] == 3
     masked = prepare_chimeras(bam, mode='flag', snp_mask=str(mask))
-    assert masked['n_chimeric'] == 0 and masked['n_chimeric_strict'] == 0
-    # QC's strict re-test of sampled flagged reads uses QC's mask too.
-    from fiberhmm.qc.core import _strict_chimeras
-    pairs = [(r.query_name, r) for r in records(bam)]
-    assert len(_strict_chimeras(pairs, None, None)) == 3
-    from fiberhmm.daf.snps import load_snp_mask
-    assert _strict_chimeras(pairs, None, load_snp_mask(str(mask))) == set()
+    assert masked['n_chimeric'] == 0
 
 
 # --- verdict --------------------------------------------------------------
@@ -333,7 +355,8 @@ def test_chimera_grade_only_demotes_pass(states):
         assert set(base) == {'score', 'status', 'components', 'verdict_basis'}
         for grade in (None, grade_chimeras(1000, 10), grade_chimeras(10, 5)):
             assert _overall_verdict(analysis, grade) == base
-        for warn in (grade_chimeras(1000, 60), grade_chimeras(1000, 600)):
+        for warn in (grade_chimeras(1000, round(1000 * WARN_FRACTION)),
+                     grade_chimeras(1000, 600)):
             verdict = _overall_verdict(analysis, warn)
             assert verdict['score'] == base['score']
             assert verdict['components'] == base['components']
@@ -357,57 +380,66 @@ def _call(source, target, *extra, reference_fasta=None):
     return run
 
 
-def test_call_reports_both_counts_warns_and_grades(tmp_path):
+def test_call_reports_one_count_warns_and_grades(tmp_path):
     ref = reference()
     bam = library(tmp_path, ref, far=True)
     run = _call(bam, tmp_path / 'calls.bam')
-    assert 'strict detector (min_seg=10, purity=0.9): 20' in run.stderr
-    assert 'WARNING: high DAF strand-swap chimera rate' in run.stderr
+    assert ('20 / 180 checked reads' in run.stderr
+            and f'min_seg={DEFAULT_MIN_SEG}, purity={DEFAULT_PURITY}' in run.stderr)
+    assert 'strict detector' not in run.stderr
+    assert 'WARNING: high DAF strand-swap chimera rate: 11.1% of reads;' in run.stderr
     assert CHIMERA_NOTE in run.stderr
     sidecar = json.loads((tmp_path / 'qc/calls.chimeras.json').read_text())['statistics']
-    assert sidecar['n_chimeric'] == 30 and sidecar['n_chimeric_strict'] == 20
+    assert sidecar['n_chimeric'] == 20 and not [k for k in sidecar if 'strict' in k]
     assert sidecar['note'] == CHIMERA_NOTE and sidecar['split'] is None
     qc = json.loads((tmp_path / 'qc/calls.qc.json').read_text())
     chim = qc['chimeras']
     assert chim['grade']['status'] == 'WARN' and chim['grade']['source'] == 'full run'
-    assert chim['fraction_strict'] == pytest.approx(20 / 180)
+    assert chim['grade']['basis'] == 'default'
+    assert chim['fraction'] == pytest.approx(20 / 180)
+    assert not [k for k in chim if 'strict' in k]
     assert len(chim['regions']['rows']) == 2
     if qc['overall'].get('warned_by'):
         assert qc['overall']['status'] == 'WARN'
     tsv = (tmp_path / 'qc/calls.qc.tsv').read_text().splitlines()
     row = dict(zip(tsv[0].split('\t'), tsv[1].split('\t')))
     assert row['chimeras_status'] == 'WARN' and row['chimeras_severity'] == 'moderate'
-    assert row['chimeras_n_chimeric_strict'] == '20'
+    assert row['chimeras_n_chimeric'] == '20' and row['chimeras_basis'] == 'default'
+    assert not [k for k in row if 'strict' in k]
     regions = (tmp_path / 'qc/calls.qc.chimera_regions.tsv').read_text().splitlines()
-    assert regions[0].startswith('region\tchrom\tstart\tend') and len(regions) == 3
+    assert regions[0] == 'region\tchrom\tstart\tend\tn_reads_checked\tn_chimeric\tfraction'
+    assert len(regions) == 3
     from fiberhmm.qc.core import format_terminal
     text = format_terminal(qc)
     assert 'DAF strand-swap chimeras  [WARN (moderate)]' in text
-    assert 'strict detector:  20' in text and CHIMERA_NOTE in text
+    assert 'chimeric: 20 of 180 reads' in text and CHIMERA_NOTE in text
 
 
 def test_standalone_qc_grades_flag_mode_from_the_sample(tmp_path):
     ref = reference()
     bam = library(tmp_path, ref, n_clean=100, n_strong=40, n_weak=0)
-    _call(bam, tmp_path / 'calls.bam', '--no-qc')
-    elsewhere = tmp_path / 'copy'
-    elsewhere.mkdir()
-    for suffix in ('', '.bai'):
-        (elsewhere / f'calls.bam{suffix}').write_bytes(
-            (tmp_path / f'calls.bam{suffix}').read_bytes())
     from fiberhmm.qc.core import run_qc
-    result = run_qc(str(elsewhere / 'calls.bam'), output_prefix=str(tmp_path / 'sa'),
-                    mode='daf', enzyme='dddb', sample_reads=500,
-                    state_source='none', stream=None)
-    chim = result['chimeras']
-    assert chim['full_run'] is False
-    assert chim['n_chimeric'] == 40 and chim['n_chimeric_strict'] == 40
-    assert chim['grade']['source'] == 'bounded sample'
-    assert (chim['grade']['status'], chim['grade']['severity']) == ('WARN', 'high')
+    for name, extra, basis in (('calls', (), 'default'), ('legacy', LEGACY_ARGS, 'lenient')):
+        _call(bam, tmp_path / f'{name}.bam', '--no-qc', *extra)
+        elsewhere = tmp_path / f'copy_{name}'
+        elsewhere.mkdir()
+        for suffix in ('', '.bai'):
+            (elsewhere / f'{name}.bam{suffix}').write_bytes(
+                (tmp_path / f'{name}.bam{suffix}').read_bytes())
+        result = run_qc(str(elsewhere / f'{name}.bam'), output_prefix=str(tmp_path / name),
+                        mode='daf', enzyme='dddb', sample_reads=500,
+                        state_source='none', stream=None)
+        chim = result['chimeras']
+        assert chim['full_run'] is False and chim['n_chimeric'] == 40
+        grade = chim['grade']
+        assert grade['source'] == 'bounded sample' and grade['basis'] == basis
+        assert (grade['status'], grade['severity']) == ('WARN', 'high')
+    assert (grade['min_seg'], grade['purity']) == (LEGACY_MIN_SEG, LEGACY_PURITY)
+    assert '3.0.3' in grade['basis_note']
 
 
-def test_qc_with_a_303_sidecar_grades_from_the_sample(tmp_path):
-    """A 3.0.3 sidecar has no strict count: grade on the sample, not a mix."""
+def test_qc_with_a_303_sidecar_grades_its_lenient_count(tmp_path):
+    """A 3.0.3 sidecar (5 / 0.8, no grade) is graded on its count, labelled lenient."""
     ref = reference()
     bam = library(tmp_path, ref, n_clean=100, n_strong=40, n_weak=0)
     _call(bam, tmp_path / 'calls.bam', '--no-qc')
@@ -417,17 +449,20 @@ def test_qc_with_a_303_sidecar_grades_from_the_sample(tmp_path):
                 'purity', 'n_records_affected', 'n_stale_marks_cleared', 'full_run',
                 'count_unit')
     payload['statistics'] = {k: payload['statistics'][k] for k in keys_303}
-    payload['statistics']['n_reads_checked'] = 10_000   # distinguishable from the sample
+    payload['statistics'].update(n_reads_checked=10_000, n_chimeric=1_500, fraction=0.15,
+                                 min_seg=LEGACY_MIN_SEG, purity=LEGACY_PURITY)
     sidecar.write_text(json.dumps(payload))
-    from fiberhmm.qc.core import run_qc
+    from fiberhmm.qc.core import format_terminal, run_qc
     result = run_qc(str(tmp_path / 'calls.bam'), output_prefix=str(tmp_path / 'sa'),
                     mode='daf', enzyme='dddb', sample_reads=500,
                     state_source='none', stream=None)
     chim = result['chimeras']
     assert chim['full_run'] is True and chim['n_reads_checked'] == 10_000
-    assert chim['grade']['source'] == 'bounded sample'
-    assert chim['grade']['fraction'] == pytest.approx(40 / 140)
-    assert chim['fraction_strict'] is None and chim['n_chimeric_strict'] is None
+    grade = chim['grade']
+    assert grade['source'] == 'full run' and grade['fraction'] == pytest.approx(0.15)
+    assert (grade['status'], grade['severity']) == ('WARN', 'moderate')
+    assert grade['basis'] == 'lenient' and '3.0.3' in grade['basis_note']
+    assert f"basis: {grade['basis_note']}" in format_terminal(result)
 
 
 def test_unmapped_records_share_one_region(tmp_path):
@@ -614,3 +649,130 @@ def test_pipeline_accepts_split_and_repeats_the_warning(tmp_path):
     pipeline.log = lambda message, level='info': logged.append((message, level))
     pipeline._chimera_warning()
     assert logged and logged[0][1] == 'warning' and 'WARNING: very high' in logged[0][0]
+
+
+# --- split pieces keep MM/ML ------------------------------------------------
+
+_MOD_ENTRIES = (('C+mh?', 'C', 2), ('G-m.', 'G', 1), ('A+a', 'A', 1),
+                ('N+n?', 'N', 1), ('C+76792.', 'C', 1))
+
+
+def _with_modifications(read, seed=5, names=('MM', 'ML'), mn=True):
+    """Random MM/ML over the read's original orientation (see the SAM spec)."""
+    rng = random.Random(seed)
+    seq = read.query_sequence
+    original = seq if not read.is_reverse else seq.translate(
+        str.maketrans('ACGT', 'TGCA'))[::-1]
+    mm, ml = [], []
+    for head, base, n_codes in _MOD_ENTRIES:
+        occurrences = [i for i, b in enumerate(original) if base in ('N', b)]
+        chosen = sorted(rng.sample(range(len(occurrences)), len(occurrences) // 4))
+        skips, previous = [], -1
+        for index in chosen:
+            skips.append(index - previous - 1)
+            previous = index
+        mm.append(head + ''.join(f',{k}' for k in skips) + ';')
+        ml += [rng.randrange(256) for _ in range(len(chosen) * n_codes)]
+    from array import array
+    read.set_tag(names[0], ''.join(mm))
+    read.set_tag(names[1], array('B', ml))
+    if mn:
+        read.set_tag('MN', len(seq))
+    return read
+
+
+def _expected_calls(read, qs, qe):
+    return {key: sorted((pos - qs, qual) for pos, qual in calls if qs <= pos < qe)
+            for key, calls in read.modified_bases.items()}
+
+
+def _calls(read):
+    return {key: sorted(calls) for key, calls in (read.modified_bases or {}).items()}
+
+
+@pytest.mark.parametrize('reverse', [False, True])
+def test_pieces_keep_modifications_reindexed(reverse):
+    ref = reference()
+    hdr = header()
+    read = make_read(hdr, ref, 'm', 1000, [(4, 25), (0, 800), (1, 3), (0, 900), (4, 15)],
+                     clean('CT'), seed=3, flag=16 if reverse else 0)
+    read = _with_modifications(read)
+    length = read.query_length
+    original = _calls(read)
+    assert {key[2] for key in original} >= {'m', 'h', 'a', 'n', 76792}
+    assert {key[1] for key in original} == {0, 1}           # '+' and '-' entries
+    for qs, qe in ((0, 400), (37, 1211), (900, length), (0, length)):
+        piece = make_piece(read, hdr, qs, qe, 0, None)
+        assert piece.get_tag('MN') == qe - qs
+        got = _calls(piece)
+        expected = _expected_calls(read, qs, qe)
+        assert {k: v for k, v in got.items() if v} == {k: v for k, v in expected.items() if v}
+        # Each entry, its codes and its '.'/'?' flag survive, also without calls.
+        heads = [entry.split(',')[0] for entry in piece.get_tag('MM').split(';') if entry]
+        assert heads == [head for head, _, _ in _MOD_ENTRIES]
+        assert len(piece.get_tag('ML')) == sum(len(v) for v in got.values())
+    whole = make_piece(read, hdr, 0, length, 0, None)
+    assert whole.get_tag('MM') == read.get_tag('MM')
+    assert list(whole.get_tag('ML')) == list(read.get_tag('ML'))
+
+
+def test_piece_modifications_legacy_names_and_drops():
+    ref = reference()
+    hdr = header()
+    read = make_read(hdr, ref, 'm', 1000, [(0, 1500)], clean('GA'), seed=4)
+    legacy = _with_modifications(read, names=('Mm', 'Ml'), mn=False)
+    piece = make_piece(legacy, hdr, 200, 900, 1, None)
+    assert piece.has_tag('Mm') and piece.has_tag('Ml') and not piece.has_tag('MM')
+    assert not piece.has_tag('MN')
+    assert cut_modifications(legacy, 200, 900, 'Mm', 'Ml')[0] == piece.get_tag('Mm')
+
+    def dropped(record):
+        return not make_piece(record, hdr, 200, 900, 1, None).has_tag('MM')
+
+    good = _with_modifications(make_read(hdr, ref, 'g', 1000, [(0, 1500)], clean('GA'), seed=4))
+    assert not dropped(good)
+    clipped = make_read(hdr, ref, 'h', 1000, [(5, 40), (0, 1500)], clean('GA'), seed=4)
+    assert dropped(_with_modifications(clipped))             # hard clip
+    from array import array
+    short_ml = _with_modifications(make_read(hdr, ref, 's', 1000, [(0, 1500)], clean('GA')))
+    short_ml.set_tag('ML', array('B', list(short_ml.get_tag('ML'))[:-1]))
+    assert dropped(short_ml)                                 # ML shorter than MM
+    past_end = make_read(hdr, ref, 'p', 1000, [(0, 1500)], clean('GA'))
+    past_end.set_tag('MM', 'C+m,100000;')
+    past_end.set_tag('ML', array('B', [200]))
+    assert dropped(past_end)                                 # skip runs past SEQ
+    garbled = make_read(hdr, ref, 'q', 1000, [(0, 1500)], clean('GA'))
+    garbled.set_tag('MM', 'C+m,x;')
+    garbled.set_tag('ML', array('B', [200]))
+    assert dropped(garbled)
+    wrong_mn = _with_modifications(make_read(hdr, ref, 'n', 1000, [(0, 1500)], clean('GA')))
+    wrong_mn.set_tag('MN', 99)
+    assert dropped(wrong_mn)                                 # MN disagrees with SEQ
+
+
+def test_split_mode_counts_kept_and_dropped_modifications(tmp_path):
+    ref = reference()
+    hdr = header()
+    reads = [make_read(hdr, ref, f'clean{i}', 3000, [(0, 3000)], clean('CT'), seed=i)
+             for i in range(4)]
+    kept = _with_modifications(make_read(hdr, ref, 'kept', 3000, [(0, 3000)],
+                                         swap_at(4500), seed=50, flag=16))
+    clipped = _with_modifications(make_read(hdr, ref, 'clip', 3200, [(5, 30), (0, 3000)],
+                                            swap_at(4700), seed=51))
+    bam = write_bam(tmp_path / 'mods.bam', reads + [kept, clipped])
+    stats = prepare_chimeras(bam, mode='split', spool_bam=str(tmp_path / 'spool.bam'),
+                             min_read_length=100)
+    split = stats['split']
+    assert split['n_pieces_written'] == 4
+    assert split['n_pieces_modifications_kept'] == 2
+    assert split['n_pieces_modifications_dropped'] == 2
+    out = {r.query_name: r for r in records(tmp_path / 'spool.bam')}
+    original = next(r for r in records(bam) if r.query_name == 'kept')
+    for name in ('kept/c0', 'kept/c1'):
+        piece = out[name]
+        offset = original.query_sequence.find(piece.query_sequence)
+        assert offset >= 0 and piece.is_reverse
+        expected = _expected_calls(original, offset, offset + piece.query_length)
+        assert ({k: v for k, v in _calls(piece).items() if v}
+                == {k: v for k, v in expected.items() if v})
+    assert not out['clip/c0'].has_tag('MM') and not out['clip/c1'].has_tag('ML')

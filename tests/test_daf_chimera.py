@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from fiberhmm.daf.encoder import is_daf_chimera
+from fiberhmm.inference.chimeras import DEFAULT_MIN_SEG, DEFAULT_PURITY
 
 
 def test_clean_ct_read_not_chimera():
@@ -19,15 +20,33 @@ def test_clean_read_with_scattered_errors_not_chimera():
 
 
 def test_ct_then_ga_swap_is_chimera():
-    ct = [10, 20, 30, 40, 50]          # pure CT segment (early)
-    ga = [200, 210, 220, 230, 240]     # pure GA segment (late)
+    ct = list(range(10, 10 + 10 * DEFAULT_MIN_SEG, 10))      # pure CT segment (early)
+    ga = list(range(2000, 2000 + 10 * DEFAULT_MIN_SEG, 10))  # pure GA segment (late)
     assert is_daf_chimera(ct, ga)
+    assert not is_daf_chimera(ct[1:], ga)     # one event short on the left
 
 
 def test_ga_then_ct_swap_is_chimera():
-    ga = [10, 20, 30, 40, 50]
-    ct = [200, 210, 220, 230, 240]
+    ga = list(range(10, 10 + 10 * DEFAULT_MIN_SEG, 10))
+    ct = list(range(2000, 2000 + 10 * DEFAULT_MIN_SEG, 10))
     assert is_daf_chimera(ct, ga)
+
+
+def test_default_purity():
+    """One stray event per segment is tolerated only down to the purity."""
+    n = DEFAULT_MIN_SEG
+    ct = list(range(10, 10 + 10 * n, 10))
+    ga = list(range(2000, 2000 + 10 * n, 10))
+    stray = int(n * (1 - DEFAULT_PURITY) / DEFAULT_PURITY)   # largest allowed impurity
+    assert is_daf_chimera(ct + [2001 + 10 * i for i in range(stray)], ga)
+    assert not is_daf_chimera(ct + [2001 + 10 * i for i in range(stray + 1)], ga)
+
+
+def test_legacy_setting_still_available():
+    ct = [10, 20, 30, 40, 50]
+    ga = [200, 210, 220, 230, 240]
+    assert not is_daf_chimera(ct, ga)
+    assert is_daf_chimera(ct, ga, min_seg_events=5, purity=0.8)
 
 
 def test_too_few_events_not_chimera():

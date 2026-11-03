@@ -7,6 +7,7 @@ import pysam
 import pytest
 
 from fiberhmm.inference.chimeras import (
+    DEFAULT_MIN_SEG, DEFAULT_PURITY,
     clear_chimera_mark, is_marked_chimera, mark_chimera, prepare_chimeras,
 )
 
@@ -118,7 +119,7 @@ def test_call_cli_and_qc(tmp_path, mode, region_parallel):
     assert chim['mode'] == mode
     assert chim['n_chimeric'] == (0 if mode == 'keep' else 1)
     assert chim['n_reads_checked'] == (0 if mode == 'keep' else 2)
-    assert chim['min_seg'] == 5 and chim['purity'] == 0.8
+    assert (chim['min_seg'], chim['purity']) == (DEFAULT_MIN_SEG, DEFAULT_PURITY)
     assert 'chimeras_n_chimeric' in (tmp_path / 'qc/calls.qc.tsv').read_text()
     with pysam.AlignmentFile(target, 'rb') as bam:
         ds = bam.header.to_dict()['PG'][-1]['DS']
