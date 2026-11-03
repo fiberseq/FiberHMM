@@ -1017,7 +1017,7 @@ def _daf_raw_mismatch_lists(read, ref_fasta=None):
 
 
 def _is_iupac_daf_chimera(read, query_sequence: str, excluded_query_positions,
-                          ref_fasta=None) -> bool:
+                          ref_fasta=None, *, min_seg=None, purity=None) -> bool:
     """Strand-swap chimera test for an R/Y-encoded DAF read.
 
     CT events are Y bases plus any raw C->T mismatches; GA events are R bases
@@ -1025,7 +1025,8 @@ def _is_iupac_daf_chimera(read, query_sequence: str, excluded_query_positions,
     positions are removed from both, matching the MD path.
     """
     from fiberhmm.daf.encoder import is_daf_chimera
-    min_seg = _DAF_CHIMERA_CFG['min_seg']
+    min_seg = _DAF_CHIMERA_CFG['min_seg'] if min_seg is None else min_seg
+    purity = _DAF_CHIMERA_CFG['purity'] if purity is None else purity
     seq_arr = np.frombuffer(query_sequence.upper().encode('ascii'), dtype=np.uint8)
     ct = set(np.flatnonzero(seq_arr == ord('Y')).tolist())
     ga = set(np.flatnonzero(seq_arr == ord('R')).tolist())
@@ -1042,7 +1043,7 @@ def _is_iupac_daf_chimera(read, query_sequence: str, excluded_query_positions,
         ga.difference_update(excluded_query_positions)
     return is_daf_chimera(sorted(ct), sorted(ga),
                           min_seg_events=min_seg,
-                          purity=_DAF_CHIMERA_CFG['purity'])
+                          purity=purity)
 
 
 def _with_unknown(fiber_read: dict, unknown_positions, read=None) -> dict:

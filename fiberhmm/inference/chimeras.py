@@ -51,17 +51,20 @@ def seekable_input(path):
     return path != '-' and Path(path).is_file()
 
 
-def _is_chimeric(read, ref):
+def _is_chimeric(read, ref, *, min_seg=None, purity=None):
     """Only the caller's chimera decision, without extracting call evidence."""
     from . import engine
     from fiberhmm.daf.encoder import get_daf_positions, is_daf_chimera
 
+    min_seg = engine._DAF_CHIMERA_CFG['min_seg'] if min_seg is None else min_seg
+    purity = engine._DAF_CHIMERA_CFG['purity'] if purity is None else purity
     seq = read.query_sequence
     if not seq:
         return False
     if engine.has_iupac_encoding(seq):
         return engine._is_iupac_daf_chimera(
-            read, seq, engine._stub_or_live_excluded(read), ref)
+            read, seq, engine._stub_or_live_excluded(read), ref,
+            min_seg=min_seg, purity=purity)
     result = get_daf_positions(
         # Both arrays are populated regardless of the chosen strand. Force
         # collection past the dominant-strand tie check; the spatial test
@@ -69,8 +72,32 @@ def _is_chimeric(read, ref):
         read, force_strand='CT', ref_fasta=ref,
         excluded_reference_positions=engine._daf_reference_mask(read))
     return result is not None and is_daf_chimera(
-        result[0], result[1], min_seg_events=engine._DAF_CHIMERA_CFG['min_seg'],
-        purity=engine._DAF_CHIMERA_CFG['purity'])
+        result[0], result[1], min_seg_events=min_seg, purity=purity)
+
+
+class ChimeraDecisions(set):
+    """Named molecule decisions plus the policy for independent unnamed records.
+
+    Unavailable QNAMEs are never stored in the set. Re-evaluate those records
+    with the prepass policy during replay (also after region partitioning).
+    The policy is pickleable so region workers and NRL sampling use it too.
+    """
+    anonymous_policy = None
+
+
+def is_precalled_chimera(read, decisions):
+    if read.query_name not in (None, '*', ''):
+        return read.query_name in decisions
+    policy = getattr(decisions, 'anonymous_policy', None)
+    if policy is None:  # e.g. an authoritative empty keep-mode decision
+        return False
+    from .read_filters import streaming_skip_reason
+    config, reference, min_seg, purity = policy
+    if streaming_skip_reason(read, config) is not None:
+        return False
+    with ExitStack() as stack:
+        ref = stack.enter_context(pysam.FastaFile(reference)) if reference else None
+        return _is_chimeric(read, ref, min_seg=min_seg, purity=purity)
 
 
 def empty_chimera_stats(mode, min_seg=5, purity=0.8):
@@ -88,8 +115,10 @@ def prepare_chimeras(input_bam, output_bam=None, *, mode='flag', daf=True,
                      alignments='primary-supplementary'):
     """Decide QNAMEs in a read-only pass; spool only non-seekable inputs.
 
-    The CLI passes a mutable ``chimeric_names`` set and applies marks/removal
-    in the caller, so file input needs no intermediate BAM. For streams,
+    The CLI passes a mutable ``ChimeraDecisions`` set and applies marks/removal
+    in the caller, so file input needs no intermediate BAM. A plain set gets
+    only named decisions; ChimeraDecisions also carries the unnamed replay
+    policy. For streams,
     ``spool_bam`` supplies the replay path. ``output_bam`` optionally writes
     a marked/filtered BAM for standalone use. Counts precede removal.
     """
@@ -106,7 +135,10 @@ def prepare_chimeras(input_bam, output_bam=None, *, mode='flag', daf=True,
                               primary_only=alignments,
                               process_unmapped=process_unmapped, mode='daf',
                               has_reference=reference is not None)
-    checked, chimeric = set(), set()
+    checked, chimeric = set(), ChimeraDecisions()
+    if daf and mode != 'keep':
+        chimeric.anonymous_policy = (config, reference, min_seg, purity)
+    anonymous_checked = anonymous_chimeric = 0
     counts = Counter()
     stale = 0
     # The optional standalone writer owns its private spool. The CLI owns
@@ -127,24 +159,32 @@ def prepare_chimeras(input_bam, output_bam=None, *, mode='flag', daf=True,
                 spool_bam, 'wb', header=bam.header, threads=io_threads))
                    if spool_bam else None)
             for read in bam.fetch(until_eof=True):
-                counts[read.query_name] += 1
+                named = read.query_name not in (None, '*', '')
+                if named:
+                    counts[read.query_name] += 1
                 stale += int(_has_chimera_tag(read))
                 clear_chimera_mark(read)
                 if daf and mode != 'keep' and streaming_skip_reason(read, config) is None:
-                    checked.add(read.query_name)
-                    if read.query_name not in chimeric and _is_chimeric(read, ref):
-                        chimeric.add(read.query_name)
+                    if named:
+                        checked.add(read.query_name)
+                        if read.query_name not in chimeric and _is_chimeric(read, ref):
+                            chimeric.add(read.query_name)
+                    else:
+                        anonymous_checked += 1
+                        anonymous_chimeric += int(_is_chimeric(read, ref))
                 if out is not None:
                     out.write(read)
         if chimeric_names is not None:
             chimeric_names.update(chimeric)
+            if isinstance(chimeric_names, ChimeraDecisions):
+                chimeric_names.anonymous_policy = chimeric.anonymous_policy
         if output_bam is not None:
             with pysam.AlignmentFile(replay, 'rb', check_sq=False) as bam, \
                     pysam.AlignmentFile(output_bam, 'wb', header=bam.header,
                                         threads=io_threads) as out:
                 for read in bam.fetch(until_eof=True):
                     clear_chimera_mark(read)
-                    if read.query_name in chimeric:
+                    if is_precalled_chimera(read, chimeric):
                         if mode == 'remove':
                             continue
                         mark_chimera(read)
@@ -152,10 +192,12 @@ def prepare_chimeras(input_bam, output_bam=None, *, mode='flag', daf=True,
     finally:
         if private_spool:
             Path(spool_bam).unlink(missing_ok=True)
+    n_checked = len(checked) + anonymous_checked
+    n_chimeric = len(chimeric) + anonymous_chimeric
     return dict(detected=bool(daf and mode != 'keep'), mode=mode if daf else 'n/a',
-                n_reads_checked=len(checked), n_chimeric=len(chimeric),
-                fraction=len(chimeric) / len(checked) if checked else None,
+                n_reads_checked=n_checked, n_chimeric=n_chimeric,
+                fraction=n_chimeric / n_checked if n_checked else None,
                 min_seg=min_seg if daf else None, purity=purity if daf else None,
-                n_records_affected=sum(counts[name] for name in chimeric),
+                n_records_affected=sum(counts[name] for name in chimeric) + anonymous_chimeric,
                 n_stale_marks_cleared=stale, full_run=True,
-                count_unit='unique read names before removal')
+                count_unit='unique read names before removal; unnamed records counted individually')

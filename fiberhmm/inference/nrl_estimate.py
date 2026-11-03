@@ -15,7 +15,7 @@ import numpy as np
 import pysam
 
 from fiberhmm.core.model_io import freeze_model_for_inference, load_model, load_model_with_metadata
-from fiberhmm.inference.chimeras import clear_chimera_mark, is_marked_chimera
+from fiberhmm.inference.chimeras import clear_chimera_mark, is_marked_chimera, is_precalled_chimera
 from fiberhmm.inference.engine import CHIMERA_SKIP, _extract_fiber_read_from_pysam
 from fiberhmm.inference.fused_stages import run_hmm_apply_stage
 from fiberhmm.inference.nuc_recaller import recall_nucs_in_read
@@ -77,7 +77,7 @@ def estimate_phase_nrl(
         for read in bam.fetch(until_eof=True):
             if precall_chimeric_names is not None:
                 clear_chimera_mark(read)
-                if read.query_name in precall_chimeric_names:
+                if is_precalled_chimera(read, precall_chimeric_names):
                     continue
             if (
                 (read.is_unmapped and not include_unmapped)

@@ -984,14 +984,18 @@ def analyze_sample(
     read_examples: list[dict] = []
     duplicate_flagged = 0
     chimera_names = set()
-    sampled_names = {getattr(read, "query_name", None) or id(read) for read in reads}
+    def sample_key(read, record_index):
+        name = getattr(read, 'query_name', None)
+        return name if name not in (None, '*', '') else record_index
+
+    sampled_names = {sample_key(read, i) for i, read in enumerate(reads)}
     dedup_tagged = 0
     dedup_cluster_sizes: dict[int, int] = {}
     unaligned = {"n_reads": 0, "query_bases": 0, "unaligned_bases": 0,
                  "n_reads_with_unaligned": 0, "n_reads_with_no_call_blocks": 0}
     reference_handle = pysam.FastaFile(reference_fasta) if reference_fasta else None
     try:
-        for read in reads:
+        for record_index, read in enumerate(reads):
             is_duplicate = bool(getattr(read, "is_duplicate", False))
             duplicate_flagged += int(is_duplicate)
             if read.has_tag("ds"):
@@ -1008,7 +1012,7 @@ def analyze_sample(
                     pass
             from fiberhmm.inference.chimeras import is_marked_chimera
             if mode == 'daf' and is_marked_chimera(read):
-                chimera_names.add(getattr(read, "query_name", None) or id(read))
+                chimera_names.add(sample_key(read, record_index))
                 continue
             # Nondestructive mark/retain dedup keeps every read in the BAM,
             # but aggregate rate, phase, footprint, and example panels should
@@ -1167,7 +1171,8 @@ def analyze_sample(
             "fraction": len(chimera_names) / len(sampled_names) if reads and mode == "daf" else None,
             "min_seg": 5 if mode == "daf" else None,
             "purity": 0.8 if mode == "daf" else None,
-            "full_run": False, "count_unit": "unique read names in bounded sample",
+            "full_run": False,
+            "count_unit": "unique read names in bounded sample; unnamed records counted individually",
         },
         "deduplication": _summarize_deduplication(
             len(reads),
@@ -2872,17 +2877,32 @@ def run_qc(
         chimeras['n_reads_checked'] = 0
         chimeras['fraction'] = None
     candidate = sidecar_dir / f"{input_stem}.chimeras.json"
-    if chimera_run_summary is None and candidate.is_file():
+    chimera_report_path = None
+    if resolved_mode != 'daf':
+        chimera_run_summary = None
+    elif candidate.is_file():
         try:
-            chimera_run_summary = json.loads(candidate.read_text()).get('statistics')
+            from fiberhmm.io.run_state import sha256_file
+            payload = json.loads(candidate.read_text())
+            assay = payload.get('assay') if isinstance(payload, dict) else None
+            # A filename is not run provenance. Older identity-free reports
+            # cannot establish that their pre-removal totals describe this BAM.
+            if (isinstance(assay, dict) and assay.get('mode') == resolved_mode
+                    and assay.get('enzyme') == (resolved_enzyme or 'custom')
+                    and payload.get('output_sha256')
+                    and payload['output_sha256'] == sha256_file(input_path)
+                    and isinstance(payload.get('statistics'), dict)):
+                if chimera_run_summary is None:
+                    chimera_run_summary = payload['statistics']
+                chimera_report_path = str(candidate)
         except (OSError, ValueError, TypeError):
             pass
     if chimera_run_summary is not None:
         chimeras['sample'] = {k: v for k, v in chimeras.items() if k != 'sample'}
         chimeras.update(chimera_run_summary)
         chimeras['full_run_statistics'] = dict(chimera_run_summary)
-        if candidate.is_file():
-            chimeras['run_report_path'] = str(candidate)
+        if chimera_report_path:
+            chimeras['run_report_path'] = chimera_report_path
     result["deduplication"] = _merge_full_dedup_summary(
         result["deduplication"], dedup_run_summary
     )

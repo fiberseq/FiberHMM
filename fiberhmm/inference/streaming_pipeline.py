@@ -136,7 +136,7 @@ def _process_bam_streaming_pipeline_fused(
                           nuc_model_path if recall_nucs else None)
     configure_daf_snp_mask(daf_snp_mask_path)
     if precall_chimeric_names is not None:
-        from .chimeras import clear_chimera_mark, mark_chimera
+        from .chimeras import clear_chimera_mark, is_precalled_chimera, mark_chimera
     ref_fasta = None
     pysam.set_verbosity(0)
     max_inflight = n_cores + 2
@@ -275,7 +275,7 @@ def _process_bam_streaming_pipeline_fused(
                     for read in inbam.fetch(until_eof=True):
                         if precall_chimeric_names is not None:
                             clear_chimera_mark(read)
-                            if read.query_name in precall_chimeric_names:
+                            if is_precalled_chimera(read, precall_chimeric_names):
                                 if chimera_mode == 'remove':
                                     skipped += 1
                                     skip_reasons['chimera'] += 1

@@ -1417,7 +1417,7 @@ def _main(args):
         # Keep still supplies an authoritative empty decision to consumers,
         # which clear old marks as they read each record.
         if mode == 'daf' and args.chimeras != 'keep':
-            from fiberhmm.inference.chimeras import prepare_chimeras, seekable_input
+            from fiberhmm.inference.chimeras import ChimeraDecisions, prepare_chimeras, seekable_input
             spool = None
             if not seekable_input(working_input):
                 import tempfile
@@ -1426,7 +1426,7 @@ def _main(args):
                     prefix='.fiberhmm_chimeras_',
                     dir=None if stdout_mode else str(Path(args.output).parent))
                 spool = str(Path(chimera_tmpdir.name) / 'source.bam')
-            chimeric_names = set()
+            chimeric_names = ChimeraDecisions()
             chimera_stats = prepare_chimeras(
                 working_input, mode=args.chimeras,
                 min_seg=args.chimera_min_seg, purity=args.chimera_purity,
@@ -1755,19 +1755,31 @@ def _main(args):
             temporary.replace(dedup_report_path)
             print(f"  PCR deduplication report: {dedup_report_path}", file=sys.stderr)
 
-        if chimera_stats is not None and not stdout_mode and mode == 'daf':
+        if not stdout_mode:
             import json
             from pathlib import Path
             report = Path(args.output).parent / 'qc' / (Path(args.output).stem + '.chimeras.json')
-            report.parent.mkdir(parents=True, exist_ok=True)
-            temporary = report.with_suffix('.json.tmp')
-            temporary.write_text(json.dumps({'schema_version': 1, 'statistics': chimera_stats},
-                                            indent=2, sort_keys=True) + '\n')
-            temporary.replace(report)
+            if mode != 'daf':
+                # Only remove after the new BAM has been published successfully.
+                report.unlink(missing_ok=True)
+            elif chimera_stats is not None and Path(args.output).is_file():
+                from fiberhmm.io.run_state import sha256_file
+                report.parent.mkdir(parents=True, exist_ok=True)
+                temporary = report.with_suffix('.json.tmp')
+                payload = {
+                    'schema_version': 1,
+                    'assay': {'mode': mode, 'enzyme': args.enzyme or 'custom'},
+                    # Bind the report to the published BAM, including its @PG
+                    # history, without changing resumable-call provenance.
+                    'output_sha256': sha256_file(args.output),
+                    'statistics': chimera_stats,
+                }
+                temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n')
+                temporary.replace(report)
 
         # Bounded post-call QC. Indexed BAMs are sampled via random genomic
-        # windows; unindexed outputs use a capped prefix reservoir. This never
-        # rescans the whole BAM and is deliberately independent of deduplication.
+        # windows; unindexed outputs use a capped prefix reservoir. Sampling
+        # is bounded; chimera report validation separately hashes the BAM.
         if args.qc:
             if stdout_mode:
                 print("  NOTE: automatic QC skipped for stdout BAM output; run "

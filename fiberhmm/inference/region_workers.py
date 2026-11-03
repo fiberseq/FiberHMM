@@ -110,12 +110,12 @@ def _passthrough_region(inbam, outbam, work_item, skip_reasons, strip,
     chrom = work_item.region[0]
     written = 0
     if precall_chimeric_names is not None:
-        from .chimeras import clear_chimera_mark, mark_chimera
+        from .chimeras import clear_chimera_mark, is_precalled_chimera, mark_chimera
     for read in inbam.fetch(chrom):
         strip(read)
         if precall_chimeric_names is not None:
             clear_chimera_mark(read)
-            if read.query_name in precall_chimeric_names:
+            if is_precalled_chimera(read, precall_chimeric_names):
                 skip_reasons['chimera'] += 1
                 if chimera_mode == 'remove':
                     continue
@@ -666,7 +666,7 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
         chimeric_names = params.get('precall_chimeric_names')
         chimera_mode = params.get('chimera_mode', 'flag')
         if chimeric_names is not None:
-            from .chimeras import clear_chimera_mark, mark_chimera
+            from .chimeras import clear_chimera_mark, is_precalled_chimera, mark_chimera
 
         def strip(read):
             strip_for_fused_call(read, also_write_legacy)
@@ -733,7 +733,7 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                     strip(read)
                     if chimeric_names is not None:
                         clear_chimera_mark(read)
-                        if read.query_name in chimeric_names:
+                        if is_precalled_chimera(read, chimeric_names):
                             if chimera_mode == 'remove':
                                 skipped += 1
                                 skip_reasons['chimera'] += 1
