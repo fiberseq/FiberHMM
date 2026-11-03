@@ -39,7 +39,7 @@ import numpy as np
 
 from fiberhmm.nuc.params import DEFAULT_PARAMS, NucParams
 from fiberhmm.nuc.phasing import anchor_offsets
-from fiberhmm.nuc.sizes import MONO
+from fiberhmm.nuc.spacing import footprint_dyad_mask
 
 
 @dataclass
@@ -63,11 +63,11 @@ class AnchorPhase:
         return {k: (float(v) if isinstance(v, (float, np.floating)) else v) for k, v in asdict(self).items()}
 
 
-def _mono_dyads(res) -> Optional[np.ndarray]:
+def _mono_dyads(res, nrl_pooled=None, params: NucParams = DEFAULT_PARAMS) -> Optional[np.ndarray]:
     fp = res.footprints if res is not None else None
     if fp is None:
         return None
-    sel = (fp['coarse'] == MONO) & ~fp['is_tf'] & ~fp['truncated']
+    sel = footprint_dyad_mask(fp, nrl_pooled, params)
     return np.sort((fp['start'][sel] + fp['end'][sel]) / 2.0)
 
 
@@ -91,7 +91,7 @@ def anchor_phase(molecules, anchor: Tuple[str, int, int], cal, params: NucParams
                 results[id(m)] = res
         if res.flags.get('low_information'):
             continue
-        d = _mono_dyads(res)
+        d = _mono_dyads(res, cal.nrl_pooled if cal is not None else P, params)
         if d is None or not len(d):
             continue
         # signed offsets (read strand applied), then folded unless oriented

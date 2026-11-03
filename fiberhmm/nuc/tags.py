@@ -190,7 +190,7 @@ def ma_group_declarations() -> List[dict]:
 
 
 def contract_lines(calibration_digest: str = '', params_digest: str = '',
-                   calls_program: str = '', module_version: str = '2.0',
+                   calls_program: str = '', module_version: str = '2.4',
                    scan_id: str = '') -> List[str]:
     """``@CO FIBERHMM-SCAN-MA:v1:`` lines for the three groups."""
     from fiberhmm.io.scan_ma import scan_contract_line

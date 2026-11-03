@@ -73,19 +73,12 @@ class Event:
 # regular rule
 # ---------------------------------------------------------------------------
 
-def _nuc_codes(mol, fp) -> np.ndarray:
-    codes = np.full(len(mol.nucs), CANT_TELL)
-    sel = ~fp['is_tf']
-    codes[fp['src_index'][sel]] = fp['coarse'][sel]
-    return codes
-
-
 def rule_runs(mol, fp, nrl_pooled: float, params: NucParams = DEFAULT_PARAMS):
     """Model-free regular runs: ``(dyad centres, [(start, end, q_hat, n_dyads), ...])``."""
     from fiberhmm.nuc.spacing import eligible_dyads
     if fp is None:
         return np.zeros(0), []
-    d = eligible_dyads(mol, nrl_pooled, params, coarse_codes=_nuc_codes(mol, fp))
+    d = eligible_dyads(mol, nrl_pooled, params)
     cen = d.centres
     if len(cen) < params.seg_rule_min_spacings + 1:
         return cen, []
@@ -415,6 +408,8 @@ def missing_nucleosomes(mol, fp, segs: List[Segment], dyads: np.ndarray, nrl_mol
                         params: NucParams = DEFAULT_PARAMS) -> List[Event]:
     if fp is None:
         return []
+    from fiberhmm.nuc.spacing import footprint_dyad_mask
+    observed = footprint_dyad_mask(fp, cal.nrl_pooled, params)
     nuc = np.flatnonzero(~fp['is_tf'])
     if len(nuc) < 2:
         return []
@@ -425,7 +420,8 @@ def missing_nucleosomes(mol, fp, segs: List[Segment], dyads: np.ndarray, nrl_mol
     out: List[Event] = []
     for a, b in zip(nuc[:-1], nuc[1:]):
         ca, cb = int(fp['coarse'][a]), int(fp['coarse'][b])
-        if ca in (CANT_TELL, EDGE_TRUNCATED) or cb in (CANT_TELL, EDGE_TRUNCATED):
+        if ((not observed[a] and ca in (CANT_TELL, EDGE_TRUNCATED))
+                or (not observed[b] and cb in (CANT_TELL, EDGE_TRUNCATED))):
             continue
         if fp['truncated'][a] or fp['truncated'][b]:
             continue
@@ -434,8 +430,8 @@ def missing_nucleosomes(mol, fp, segs: List[Segment], dyads: np.ndarray, nrl_mol
             continue
         lam = float(np.nanmean([fp['lambda'][a], fp['lambda'][b]]))
         mu = float(cal.curve.mu_at(lam)) if cal.curve is not None else 147.0
-        ha = (fp['end'][a] - fp['start'][a]) / 2.0 if ca == MONO else mu / 2.0
-        hb = (fp['end'][b] - fp['start'][b]) / 2.0 if cb == MONO else mu / 2.0
+        ha = (fp['end'][a] - fp['start'][a]) / 2.0 if observed[a] else mu / 2.0
+        hb = (fp['end'][b] - fp['start'][b]) / 2.0 if observed[b] else mu / 2.0
         left, right = s0 - ha, s1 + hb
         enclosing = next((s for s in regs if s.start <= s0 and s.end >= s1), None)
         if enclosing is None:

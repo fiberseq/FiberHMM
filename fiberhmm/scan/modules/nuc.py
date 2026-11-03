@@ -74,7 +74,7 @@ def _p(default, typ, help_):
 
 class NucModule(ScanModuleBase):
     name = 'nuc'
-    version = '2.3'
+    version = '2.4'
     experimental = True
     reconcile = 'stitch'
     max_support_bp = 12_500
@@ -380,13 +380,13 @@ class NucModule(ScanModuleBase):
                         for k in ENRICH_KINDS:
                             t.set_kind(k, kind_ref[k])
                         enr_tracks.append(t)
-                        # dyads for phased windows: molecular positions of observed mono
+                        # dyads for phased windows: molecular positions of observed eligible
                         # dyads (distances are measured along the molecule; the
                         # reference position only decides window membership)
                         fp = res.footprints
                         if fp is not None:
-                            from fiberhmm.nuc.sizes import MONO
-                            sel = (fp['coarse'] == MONO) & ~fp['is_tf'] & ~fp['truncated']
+                            from fiberhmm.nuc.spacing import footprint_dyad_mask
+                            sel = footprint_dyad_mask(fp, cal.nrl_pooled, params)
                             c = ((fp['start'][sel] + fp['end'][sel]) / 2.0)
                             ref = mol.mol_to_ref(np.round(c).astype(np.int64)) if len(c) else np.zeros(0, np.int64)
                             ok = ref >= 0

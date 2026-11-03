@@ -351,7 +351,7 @@ def test_decode_context_needs_a_known_mode():
     assert DecodeContext(pysam.AlignmentHeader.from_dict(header())).mode == 'pacbio-fiber'
 
 
-def test_window_phasing_uses_calibrated_mono_dyads_only():
+def test_window_phasing_uses_length_eligible_dyads_independent_of_class():
     from fiberhmm.nuc.records import make_molecule
     mols = []
     for i in range(10):
@@ -361,7 +361,7 @@ def test_window_phasing_uses_calibrated_mono_dyads_only():
         mols.append(m)
     w = window_metrics(mols, ('chrS', 3000, 4000), anchor=3500, orientation=1, cal=flat_calibration())
     ph = w.groups['all']['phasing']['anchor']
-    assert ph['bins'][-1]['n_dyads'] == 0             # every call is short: no mono dyads
+    assert ph['bins'][-1]['n_dyads'] > 0             # short annotation, but inside dyad length window
 
 
 def test_phasing_counts_distinct_molecules():

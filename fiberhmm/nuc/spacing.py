@@ -1,7 +1,6 @@
 """Per-molecule spacing and regularity (NUC 3.4).
 
-**Eligible dyads**, one rule for every statistic: centres of coarse-mono
-footprints when coarse calls exist; otherwise centres of footprints of
+**Eligible dyads**, one rule for every statistic: nucleosome-call centres of
 ``mono_frac`` x NRL_pooled (0.45-1.25 x); edge-truncated footprints are never
 eligible. Before NRL_pooled is known (a fresh dataset) the bootstrap range
 ``bootstrap_mono_bp`` (90-230 bp) gives a first P_dataset, the range is
@@ -38,6 +37,21 @@ def mono_range(nrl_pooled: Optional[float], params: NucParams = DEFAULT_PARAMS) 
     return params.mono_frac[0] * nrl_pooled, params.mono_frac[1] * nrl_pooled
 
 
+def dyad_mask(lengths, is_tf, truncated, nrl_pooled: Optional[float] = None,
+              params: NucParams = DEFAULT_PARAMS) -> np.ndarray:
+    """Observed dyads depend on call source, length and truncation, not size class."""
+    lo, hi = mono_range(nrl_pooled, params)
+    lengths = np.asarray(lengths)
+    return ((lengths >= lo) & (lengths <= hi) & ~np.asarray(is_tf, dtype=bool)
+            & ~np.asarray(truncated, dtype=bool))
+
+
+def footprint_dyad_mask(fp, nrl_pooled: Optional[float] = None,
+                        params: NucParams = DEFAULT_PARAMS) -> np.ndarray:
+    """The same eligibility rule on the combined nucleosome/TF footprint table."""
+    return dyad_mask(fp['end'] - fp['start'], fp['is_tf'], fp['truncated'], nrl_pooled, params)
+
+
 @dataclass
 class DyadSet:
     """Eligible dyads of one molecule (molecular bp) and their gaps."""
@@ -55,8 +69,8 @@ def eligible_dyads(mol: NucMolecule, nrl_pooled: Optional[float] = None,
     """Eligible dyads, optionally restricted to footprints centred in
     molecular ``window``.
 
-    ``coarse_codes`` (per nucleosome call; 2 = mono) replaces the size rule
-    when coarse calls are available.
+    ``coarse_codes`` is accepted for compatibility but does not affect
+    eligibility; coarse size classes are independent annotations.
     """
     nucs = mol.nucs
     n = len(nucs)
@@ -66,12 +80,7 @@ def eligible_dyads(mol: NucMolecule, nrl_pooled: Optional[float] = None,
     lengths = nucs[:, 1] - nucs[:, 0]
     centres = (nucs[:, 0] + nucs[:, 1]) / 2.0
     trunc = edge_truncated(mol, nucs)
-    if coarse_codes is not None:
-        mono = np.asarray(coarse_codes) == 2
-    else:
-        lo, hi = mono_range(nrl_pooled, params)
-        mono = (lengths >= lo) & (lengths <= hi)
-    elig = mono & ~trunc
+    elig = dyad_mask(lengths, np.zeros(n, dtype=bool), trunc, nrl_pooled, params)
     if window is not None:
         elig &= (centres >= window[0]) & (centres < window[1])
     idx = np.flatnonzero(elig)

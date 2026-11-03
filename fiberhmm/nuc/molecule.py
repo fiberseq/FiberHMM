@@ -180,10 +180,7 @@ def molecule_outputs(mol: NucMolecule, params: NucParams = DEFAULT_PARAMS,
     segs: List[Segment] = []
     events: List[Event] = []
     if fp is not None:
-        nuc_codes = np.full(len(mol.nucs), CANT_TELL)
-        sel = ~fp['is_tf']
-        nuc_codes[fp['src_index'][sel]] = fp['coarse'][sel]
-        sp, dy = molecule_spacing(mol, cal.nrl_pooled, params, coarse_codes=nuc_codes)
+        sp, dy = molecule_spacing(mol, cal.nrl_pooled, params)
         scal.update({'nrl': sp.nrl, 'regularity': sp.regularity, 'spectral_snr': sp.spectral_snr,
                      'gap_cv': sp.gap_cv, 'n_dyads': float(sp.n_dyads)})
         flags.update({'too_short_nrl': sp.too_short_nrl, 'too_short_regularity': sp.too_short_regularity,
@@ -212,7 +209,7 @@ def molecule_outputs(mol: NucMolecule, params: NucParams = DEFAULT_PARAMS,
                 segs = overlay_rule(segs, runs, dyads, track, params.seg_disorder_llr)
             for s in segs:
                 if s.state == REGULAR:
-                    ssp, _ = molecule_spacing(mol, cal.nrl_pooled, params, coarse_codes=nuc_codes,
+                    ssp, _ = molecule_spacing(mol, cal.nrl_pooled, params,
                                               window=(s.start - 1, s.end + 1))
                     s.regularity = ssp.regularity
             if segs and not too_short:

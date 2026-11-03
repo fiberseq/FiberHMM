@@ -2,7 +2,7 @@
 
 **Streams** (molecular coordinates):
 
-- spacing: eligible dyads (observed coarse-mono centres) plus virtual dyads
+- spacing: eligible dyads (observed nucleosome-length centres) plus virtual dyads
   from multi(m) calls (m equally spaced dyads, weighted by the call's
   posterior). Steps are the gaps between consecutive dyads.
 - composition: every footprint (nucleosome and TF calls) is attached to the
@@ -25,7 +25,7 @@ must end on a chain's last sub-state.
 **Emissions per step** (each normalised, so LLRs compare):
 
 1. gap, on the dyad grid: R_q sum_k w_k N(g; k q, k sigma_R^2 + 2 sigma_loc^2)
-   for k = 1, 2, 3 (a can't-tell, short or long call between two mono calls
+   for k = 1, 2, 3 (an ineligible call between two observed dyads
    hides a dyad but the grid still fits); I the same grid over the broad
    irregular density of the calibration's gap model (``seg_irregular =
    'empirical'`` restores the dataset's empirical gap density); X uniform on
@@ -63,7 +63,8 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from fiberhmm.nuc.params import DEFAULT_PARAMS, NucParams
-from fiberhmm.nuc.sizes import (CANT_TELL, EDGE_TRUNCATED, LONG, MONO, MULTI2, MULTI3,
+from fiberhmm.nuc.spacing import dyad_mask
+from fiberhmm.nuc.sizes import (CANT_TELL, LONG, MONO, MULTI2, MULTI3,
                                 SHORT)
 
 try:
@@ -319,10 +320,11 @@ def build_steps(fp_start, fp_end, fp_code, fp_post, fp_is_tf, fp_lambda, fp_trun
     centres = (fp_start + fp_end) / 2.0
     inside = (centres >= a) & (centres < b)
     dy_pos, dy_w, dy_obs = [], [], []
+    observed = dyad_mask(fp_end - fp_start, fp_is_tf, fp_trunc, nrl, params)
     for i in np.flatnonzero(inside):
         if fp_is_tf[i] or fp_trunc[i]:
             continue
-        if fp_code[i] == MONO:
+        if observed[i]:
             dy_pos.append(centres[i])
             dy_w.append(1.0)
             dy_obs.append(True)
@@ -552,8 +554,8 @@ def fit_gap_model(molecules, nrl_pooled: float, params: NucParams = DEFAULT_PARA
     gap are fitted by two zero-mean Gaussians: the narrow one is the jitter
     of regular arrays, the broad one (widened by the spread of molecule
     NRLs) the irregular gap density. Grid weights are the shares of
-    consecutive mono-dyad spacings near 1, 2 and 3 repeats (a can't-tell,
-    short or long call between two mono calls hides a dyad).
+    consecutive eligible-dyad spacings near 1, 2 and 3 repeats (an
+    ineligible call between two observed dyads hides a dyad).
     """
     from fiberhmm.nuc.spacing import eligible_dyads
     dev, meds, kcount = [], [], np.zeros(3)
