@@ -39,7 +39,7 @@ from fiberhmm.nuc.params import DEFAULT_PARAMS, NucParams
 from fiberhmm.nuc.phasing import anchor_offsets, phasing
 from fiberhmm.nuc.records import NucMolecule
 from fiberhmm.nuc.segment import REGULAR, STATE_NAMES
-from fiberhmm.nuc.sizes import CANT_TELL, COARSE_NAMES, EDGE_TRUNCATED, MONO, NAMED_CODES
+from fiberhmm.nuc.sizes import COARSE_NAMES, NAMED_CODES
 from fiberhmm.nuc.spacing import molecule_spacing
 
 
@@ -120,7 +120,6 @@ def molecule_window_row(mol: NucMolecule, result, ms: int, me: int, params: NucP
     """Per-molecule window metrics in molecular ``[ms, me)``."""
     row: Dict = {'name': mol.name, 'record': mol.record_key(), 'mol_start': int(ms), 'mol_end': int(me)}
     fp = result.footprints if result is not None else None
-    coarse = None
     if fp is not None:
         c = (fp['start'] + fp['end']) / 2.0
         inside = (c >= ms) & (c < me)
@@ -132,11 +131,8 @@ def molecule_window_row(mol: NucMolecule, result, ms: int, me: int, params: NucP
             for nm, code in NAMED_CODES.items():
                 counts[f'named_{nm}'] = int((named == code).sum())
         row['class_counts'] = counts
-        coarse = np.full(len(mol.nucs), CANT_TELL)
-        sel = ~fp['is_tf']
-        coarse[fp['src_index'][sel]] = fp['coarse'][sel]
     nrl = cal.nrl_pooled if cal is not None else None
-    sp, dy = molecule_spacing(mol, nrl, params, coarse_codes=coarse, window=(ms, me))
+    sp, dy = molecule_spacing(mol, nrl, params, window=(ms, me))
     row.update({'nrl': sp.nrl, 'regularity': sp.regularity, 'gap_cv': sp.gap_cv,
                 'n_dyads': sp.n_dyads, 'too_short_nrl': sp.too_short_nrl,
                 'too_short_regularity': sp.too_short_regularity})
@@ -237,7 +233,7 @@ def window_metrics(molecules: Sequence[NucMolecule], window: Tuple[str, int, int
                                 'excess': matched_percentile(a_ph, bg, 'excess'),
                                 'n_background': len(bg)}
         if anchor is not None and members:
-            # whole-molecule eligible dyads from the calibrated coarse calls
+            # whole-molecule dyads, independent of coarse size resolvability
             dyads = {}
             for m in members:
                 res = results.get(id(m)) if results is not None else None
@@ -245,7 +241,8 @@ def window_metrics(molecules: Sequence[NucMolecule], window: Tuple[str, int, int
                     res = molecule_outputs(m, params, cal)
                 if res is not None and res.footprints is not None:
                     fp = res.footprints
-                    sel = (fp['coarse'] == MONO) & ~fp['is_tf'] & ~fp['truncated']
+                    from fiberhmm.nuc.spacing import footprint_dyad_mask
+                    sel = footprint_dyad_mask(fp, cal.nrl_pooled if cal is not None else None, params)
                     dyads[id(m)] = np.sort((fp['start'][sel] + fp['end'][sel]) / 2.0)
             states = [r.get('state_at_anchor', '.') for r in rows]
             agg['state_counts'] = {s: states.count(s) for s in ('1', '0', '.')}

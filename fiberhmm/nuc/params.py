@@ -39,7 +39,8 @@ class NucParams:
     # --- dyads and spacing (NUC 3.4) -----------------------------------------
     #: bootstrap mono range (bp) used before NRL_pooled is known.
     bootstrap_mono_bp: Tuple[int, int] = (90, 230)
-    #: mono range as fractions of NRL_pooled once it is known.
+    #: observed-dyad length window as fractions of NRL_pooled; also used
+    #: for calibration's mono-length sample, independently of coarse class.
     mono_frac: Tuple[float, float] = (0.45, 1.25)
     #: MSPs longer than this break gaps and segments (NFR module territory).
     long_msp_bp: int = 300

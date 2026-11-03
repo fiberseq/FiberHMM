@@ -313,7 +313,7 @@ def test_records_without_calls_read_back_current_and_contracts_declare_v2():
     from fiberhmm.nuc.molecule import molecule_outputs
     from fiberhmm.nuc.records import make_molecule
     from fiberhmm.nuc.tags import annotate_header, annotate_record, contract_lines, read_nuc_groups
-    assert all('"module_version":"2.0"' in line for line in contract_lines())
+    assert all('"module_version":"2.4"' in line for line in contract_lines())
     h = annotate_header(pysam.AlignmentHeader.from_dict(header('c', 5000)), 'a' * 64, 'b' * 64)
     path = os.path.join(tempfile.mkdtemp(), 'none.bam')
     with pysam.AlignmentFile(path, 'wb', header=h) as out:

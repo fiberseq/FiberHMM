@@ -249,15 +249,7 @@ def anchor_appearances(molecules, loci: LocusTable, *, frame: str = 'anchor', P:
                     if local_cal is None:
                         d = molecule_dyads(m, nrl, params)
                     else:
-                        from fiberhmm.nuc.molecule import footprint_calls
-                        from fiberhmm.nuc.spacing import eligible_dyads
-                        calls = footprint_calls(m, params, local_cal) if local_cal.curve is not None else None
-                        codes = None
-                        if calls is not None:
-                            codes = np.zeros(len(m.nucs), dtype=int)
-                            sel = ~calls['is_tf']
-                            codes[calls['src_index'][sel]] = calls['coarse'][sel]
-                        d = eligible_dyads(m, local_P, params, coarse_codes=codes).centres
+                        d = molecule_dyads(m, local_P, params)
                     dy_cache[id(m)] = d
                 x, why = anchor_offsets(m, d, p, 1, frame, params)
                 if x is None:

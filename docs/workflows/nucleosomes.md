@@ -28,7 +28,14 @@ are used only to place marks and to pool molecules.
   spike-ins). Without one the size mixture is not identifiable, and no names
   are given.
 
-**Per molecule**: repeat length (NRL, median gap between adjacent mono
+**Dyad eligibility**: a nucleosome call contributes its midpoint when it is
+not edge-truncated and its length is within `NucParams.mono_frac`
+(0.45–1.25 × pooled NRL; bootstrap 90–230 bp). TF calls do not contribute
+dyads. Coarse size class remains a separate annotation, so a can’t-tell
+footprint can still supply a dyad. Multimers retain virtual dyads for
+continuity, without spacing evidence.
+
+**Per molecule**: repeat length (NRL, median gap between adjacent eligible
 dyads), regularity S (dyad autocorrelation at the repeat minus at half of
 it), spectral SNR, gap CV, ρ_read (marks / informative sites), λ_acc (marks /
 informative sites inside MSPs), class counts and segment fractions. Metrics
@@ -39,7 +46,7 @@ four states:
 
 - **regular** (with the repeat q̂): the HMM's posterior P(regular) is at least
   0.7, **or** the model-free rule holds: at least 6 consecutive spacings of
-  mono dyads, each within 25 bp of one or two repeats of the molecule's NRL;
+  eligible dyads, each within 25 bp of one or two repeats of the molecule's NRL;
 - **disordered**: the spacing evidence beats every regular repeat by at least
   3 nats (under the same edge noise);
 - **undetermined**: neither, for example where dyads are too sparse or hidden;
@@ -47,8 +54,9 @@ four states:
 
 A factorial HMM over dyad gaps decodes the states; regular runs from the HMM
 also need 5 dyads, 800 bp and a log-likelihood ratio of 3 nats against the
-other orders. Rule runs stop at MSPs longer than 300 bp. Gaps are read on the dyad grid: a can't-tell, short or
-long call between two mono calls hides a dyad, and the run stays regular when
+other orders. Rule runs stop at MSPs longer than 300 bp. Gaps are read on
+the dyad grid: a call outside the dyad length window can hide a dyad, and
+the run stays regular when
 the gap fits two or three repeats. The regular jitter, the irregular spread
 and the share of hidden dyads come from the dataset's calibration. Long MSPs
 (> 300 bp) split molecules: they belong to the NFR module. `seg_decode`

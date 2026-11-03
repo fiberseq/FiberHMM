@@ -35,7 +35,7 @@ from fiberhmm.nuc.records import NucMolecule
 from fiberhmm.nuc.sizes import AbsoluteClasses, ReferenceCurve, fit_reference_curve
 from fiberhmm.nuc.spacing import dataset_period, eligible_dyads, mono_range
 
-SCHEMA = 'fiberhmm.nuc.calibration.v2'
+SCHEMA = 'fiberhmm.nuc.calibration.v3'
 
 
 def molecule_hash(name: str) -> str:
@@ -145,7 +145,7 @@ class NucCalibration:
 
     @classmethod
     def from_dict(cls, d: dict) -> "NucCalibration":
-        if d.get('schema') not in (SCHEMA, 'fiberhmm.nuc.calibration.v1'):
+        if d.get('schema') not in (SCHEMA, 'fiberhmm.nuc.calibration.v2', 'fiberhmm.nuc.calibration.v1'):
             raise ValueError(f"not a nuc calibration record: schema {d.get('schema')!r}")
         return cls(
             source=d['source'], label=d.get('label', ''), chemistry=d.get('chemistry', {}),
