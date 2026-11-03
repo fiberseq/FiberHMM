@@ -963,6 +963,58 @@ def _status(score: Optional[float]) -> str:
     return "FAIL"
 
 
+def _chimera_sample_bin(read, key, bins: dict, spans: dict) -> None:
+    """Remember a sampled DAF read's region bin (as the call's region table)."""
+    from fiberhmm.inference.chimeras import REGION_BIN_BP
+    if getattr(read, "is_unmapped", False) or getattr(read, "reference_name", None) is None:
+        return
+    start = int(read.reference_start)
+    end = int(read.reference_end or start)
+    bin_key = (read.reference_name, start // REGION_BIN_BP)
+    if key not in bins or not (read.is_supplementary or read.is_secondary):
+        bins[key] = bin_key
+    span = spans.get(bin_key)
+    spans[bin_key] = (start, end) if span is None else (min(span[0], start), max(span[1], end))
+
+
+def _strict_chimeras(chimera_reads, reference_handle, snp_mask) -> set:
+    """Sampled flagged chimeras that the strict detector also calls.
+
+    Strict is a subset of the default decision, so only flagged reads are
+    re-tested, after the same SNP mask QC applies (QC may run beside calling
+    in one process, so the mask is scoped).
+    """
+    from fiberhmm.daf.encoder import is_daf_chimera
+    from fiberhmm.inference import engine
+    from fiberhmm.inference.chimeras import STRICT_MIN_SEG, STRICT_PURITY, _chimera_events
+    strict = set()
+    with engine.daf_snp_mask_scope(snp_mask or {}):
+        for key, read in chimera_reads:
+            try:
+                events = _chimera_events(read, reference_handle, min_seg=STRICT_MIN_SEG)
+            except Exception:
+                events = None
+            if events is not None and is_daf_chimera(
+                    events[0], events[1], min_seg_events=STRICT_MIN_SEG,
+                    purity=STRICT_PURITY):
+                strict.add(key)
+    return strict
+
+
+def _sample_chimera_fields(bins, spans, chimeric, strict, n_checked) -> dict:
+    from fiberhmm.inference.chimeras import (
+        CHIMERA_NOTE, STRICT_MIN_SEG, STRICT_PURITY, _region_rows,
+    )
+    return {
+        "n_chimeric_strict": len(strict),
+        "fraction_strict": len(strict) / n_checked if n_checked else None,
+        "strict_min_seg": STRICT_MIN_SEG,
+        "strict_purity": STRICT_PURITY,
+        "regions": _region_rows(bins, spans, {}, chimeric, strict),
+        "note": CHIMERA_NOTE,
+    }
+
+
 def analyze_sample(
     reads: Sequence,
     mode: str,
@@ -984,6 +1036,9 @@ def analyze_sample(
     read_examples: list[dict] = []
     duplicate_flagged = 0
     chimera_names = set()
+    chimera_reads: list = []
+    chimera_bins: dict = {}
+    chimera_spans: dict = {}
     def sample_key(read, record_index):
         name = getattr(read, 'query_name', None)
         return name if name not in (None, '*', '') else record_index
@@ -1011,8 +1066,12 @@ def analyze_sample(
                 except (ValueError, TypeError):
                     pass
             from fiberhmm.inference.chimeras import is_marked_chimera
+            if mode == 'daf':
+                _chimera_sample_bin(read, sample_key(read, record_index),
+                                    chimera_bins, chimera_spans)
             if mode == 'daf' and is_marked_chimera(read):
                 chimera_names.add(sample_key(read, record_index))
+                chimera_reads.append((sample_key(read, record_index), read))
                 continue
             # Nondestructive mark/retain dedup keeps every read in the BAM,
             # but aggregate rate, phase, footprint, and example panels should
@@ -1049,6 +1108,10 @@ def analyze_sample(
             nuc_lengths.extend(nuc)
             tf_lengths.extend(tf)
             tagged_reads += int(tagged)
+        chimera_strict = (
+            _strict_chimeras(chimera_reads, reference_handle, snp_mask)
+            if mode == "daf" else set()
+        )
     finally:
         if reference_handle is not None:
             reference_handle.close()
@@ -1173,6 +1236,9 @@ def analyze_sample(
             "purity": 0.8 if mode == "daf" else None,
             "full_run": False,
             "count_unit": "unique read names in bounded sample; unnamed records counted individually",
+            **(_sample_chimera_fields(chimera_bins, chimera_spans, chimera_names,
+                                      chimera_strict, len(sampled_names))
+               if mode == "daf" else {}),
         },
         "deduplication": _summarize_deduplication(
             len(reads),
@@ -1436,6 +1502,66 @@ def _state_terminal_lines(result: dict) -> list[str]:
     return lines
 
 
+def _chimera_status_text(grade: Optional[dict]) -> str:
+    if not grade:
+        return "not graded"
+    severity = f" ({grade['severity']})" if grade.get("severity") else ""
+    return f"{grade['status']}{severity}"
+
+
+def _chimera_terminal_lines(result: dict) -> list[str]:
+    """The DAF chimera block of the text summary."""
+    chimeras = result["chimeras"]
+    grade = chimeras.get("grade")
+    basis = "full run" if chimeras.get("full_run") else "bounded sample"
+    lines = ["  ----------------------------------------------------------------",
+             f"  DAF strand-swap chimeras  [{_chimera_status_text(grade)}]  "
+             f"mode={chimeras.get('mode')}"]
+    if chimeras.get("mode") in ("keep", "n/a"):
+        lines.append("    detection off (--chimeras keep)")
+    else:
+        checked = chimeras.get("n_reads_checked") or 0
+        lines.append(
+            f"    default detector: {chimeras.get('n_chimeric', 0):,} of {checked:,} "
+            f"reads ({_pct(chimeras.get('fraction'), 1)}; upper estimate, {basis})")
+        if chimeras.get("n_chimeric_strict") is not None:
+            lines.append(
+                f"    strict detector:  {chimeras['n_chimeric_strict']:,} "
+                f"({_pct(chimeras.get('fraction_strict'), 1)}; conservative floor; "
+                f"min_seg={chimeras.get('strict_min_seg')}, "
+                f"purity={chimeras.get('strict_purity')})")
+        if grade and grade.get("source") == "bounded sample" and chimeras.get("full_run"):
+            lines.append(f"    graded on the bounded sample: strict "
+                         f"{_pct(grade.get('fraction'), 1)}")
+        if grade and grade.get("reason"):
+            lines.append(f"    not graded: {grade['reason']}")
+        elif grade:
+            lines.append("    grade: strict fraction; WARN >= "
+                         f"{100 * grade['warn_fraction']:.0f}%, high >= "
+                         f"{100 * grade['high_fraction']:.0f}%; never FAIL "
+                         "(flagged chimeras are excluded from calls)")
+        split = chimeras.get("split")
+        if split:
+            lines.append(
+                f"    split: {split['n_records_split']:,} records -> "
+                f"{split['n_pieces_written']:,} pieces; "
+                f"{split['n_pieces_too_short']:,} too short (dropped); "
+                f"{_pct(split.get('fraction_bases_recovered'), 1)} of chimeric bases kept")
+        regions = (chimeras.get("regions") or {}).get("rows") or []
+        if len(regions) > 1:
+            lines.append("    highest regions (strict / default, reads):")
+            ranked = sorted(regions, key=lambda r: -(r.get("fraction_strict") or 0))
+            for row in ranked[:5]:
+                lines.append(f"      {row['region']}: {_pct(row.get('fraction_strict'), 1)} / "
+                             f"{_pct(row.get('fraction'), 1)}, {row['n_reads_checked']:,}")
+    if chimeras.get("note"):
+        lines.append(f"    note: {chimeras['note']}")
+    if "chimeras" in (result.get("overall") or {}).get("warned_by", []):
+        lines.append("    the chimera grade turned the overall verdict from PASS to WARN")
+    lines.append("  ----------------------------------------------------------------")
+    return lines
+
+
 def format_terminal(result: dict) -> str:
     overall = result["overall"]
     signal = result["signal"]
@@ -1500,7 +1626,9 @@ def format_terminal(result: dict) -> str:
     else:
         lines.append("  PCR deduplication: not run")
     chimeras = result.get('chimeras', {})
-    if chimeras:
+    if chimeras and result["assay"]["mode"] == "daf" and "note" in chimeras:
+        lines.extend(_chimera_terminal_lines(result))
+    elif chimeras:
         fraction = chimeras.get('fraction')
         text = 'NA' if fraction is None else f'{100 * fraction:.2f}%'
         basis = 'full run' if chimeras.get('full_run') else 'bounded sample'
@@ -2006,6 +2134,61 @@ def _plot_amplicon_table(axis, result: dict) -> None:
     )
 
 
+CHIMERA_HIGH_COLOR = "#e0601b"
+
+
+def _plot_chimera_panel(axis, result: dict, status_colors: dict) -> None:
+    """Graded DAF chimera row: a coloured status box, both counts, top regions."""
+    import textwrap
+
+    axis.set_axis_off()
+    chimeras = result["chimeras"]
+    grade = chimeras.get("grade") or {}
+    status = grade.get("status") or "INSUFFICIENT"
+    color = (CHIMERA_HIGH_COLOR if grade.get("severity") == "high"
+             else status_colors.get(status, "#777777"))
+    label = _chimera_status_text(grade) if grade else "not graded"
+    axis.text(0.0, 1.0, f" {label} ", transform=axis.transAxes, ha="left", va="top",
+              fontsize=10, fontweight="bold", color="white",
+              bbox={"boxstyle": "round,pad=0.35", "facecolor": color,
+                    "edgecolor": color})
+    axis.text(0.30, 1.0, f"Strand-swap chimeras ({chimeras.get('mode')})",
+              transform=axis.transAxes, ha="left", va="top", fontsize=10,
+              fontweight="bold")
+    lines = []
+    if chimeras.get("mode") in ("keep", "n/a"):
+        lines.append("detection off (--chimeras keep)")
+    else:
+        basis = "full run" if chimeras.get("full_run") else "sample"
+        if chimeras.get("fraction_strict") is not None:
+            lines.append(f"strict {_pct(chimeras['fraction_strict'], 1)} (floor)  ·  "
+                         f"default {_pct(chimeras.get('fraction'), 1)} (upper)")
+        else:
+            lines.append(f"default {_pct(chimeras.get('fraction'), 1)} (upper)")
+        lines.append(f"{chimeras.get('n_chimeric', 0):,} of "
+                     f"{chimeras.get('n_reads_checked') or 0:,} reads ({basis}); "
+                     f"PASS <{100 * grade.get('warn_fraction', 0.05):.0f}%, "
+                     f"high ≥{100 * grade.get('high_fraction', 0.15):.0f}% strict")
+        if grade.get("reason"):
+            lines.append(f"not graded: {grade['reason']}")
+        split = chimeras.get("split")
+        if split:
+            lines.append(f"split: {split['n_pieces_written']:,} pieces, "
+                         f"{_pct(split.get('fraction_bases_recovered'), 1)} of bases kept")
+        rows = (chimeras.get("regions") or {}).get("rows") or []
+        if len(rows) > 1:
+            ranked = sorted(rows, key=lambda r: -(r.get("fraction_strict") or 0))[:3]
+            lines.append("top regions (strict/default): " + "; ".join(
+                f"{r['region']} {_pct(r.get('fraction_strict'), 0)}/"
+                f"{_pct(r.get('fraction'), 0)}" for r in ranked))
+    body = "\n".join(textwrap.fill(line, 70) for line in lines)
+    axis.text(0.0, 0.70, body, transform=axis.transAxes, ha="left", va="top",
+              fontsize=8.5, color="#222222", linespacing=1.35)
+    axis.text(0.0, -0.02, textwrap.fill(chimeras.get("note") or "", 88),
+              transform=axis.transAxes, ha="left", va="top", fontsize=7.5,
+              color="#555555", style="italic")
+
+
 def _state_plot_text(result: dict) -> str:
     block = result.get("state_rates") or {}
     if not block.get("available"):
@@ -2059,7 +2242,15 @@ def _plot_qc(
             [figure.add_subplot(grid[1, :2]), figure.add_subplot(grid[1, 2:4])],
         ]
     )
-    dedup_axis = figure.add_subplot(grid[1, 4:])
+    chimera_panel = (result["assay"]["mode"] == "daf"
+                     and "note" in (result.get("chimeras") or {}))
+    if chimera_panel:
+        dedup_grid = grid[1, 4:].subgridspec(2, 1, height_ratios=(1.45, 1.0),
+                                             hspace=0.55)
+        dedup_axis = figure.add_subplot(dedup_grid[0])
+        chimera_axis = figure.add_subplot(dedup_grid[1])
+    else:
+        dedup_axis = figure.add_subplot(grid[1, 4:])
     snp_axis = figure.add_subplot(grid[2:4, :3])
     snp_right_grid = grid[2:4, 3:].subgridspec(
         2, 1, height_ratios=(1.05, 0.85), hspace=0.25
@@ -2208,13 +2399,16 @@ def _plot_qc(
     )
     _plot_deduplication(dedup_axis, result["deduplication"])
     chim = result.get('chimeras', {})
-    fraction = chim.get('fraction')
-    text = 'NA' if fraction is None else f'{100 * fraction:.2f}%'
-    basis = 'full run' if chim.get('full_run') else 'sample'
-    dedup_axis.text(0.5, -0.24,
-                   f"DAF strand-swap chimeras: {chim.get('n_chimeric', 0):,} ({text}); "
-                   f"mode={chim.get('mode')} ({basis})",
-                   ha='center', va='top', transform=dedup_axis.transAxes, fontsize=8)
+    if chimera_panel:
+        _plot_chimera_panel(chimera_axis, result, status_colors)
+    else:
+        fraction = chim.get('fraction')
+        text = 'NA' if fraction is None else f'{100 * fraction:.2f}%'
+        basis = 'full run' if chim.get('full_run') else 'sample'
+        dedup_axis.text(0.5, -0.24,
+                       f"DAF strand-swap chimeras: {chim.get('n_chimeric', 0):,} ({text}); "
+                       f"mode={chim.get('mode')} ({basis})",
+                       ha='center', va='top', transform=dedup_axis.transAxes, fontsize=8)
     _plot_snp_landscape(figure, snp_axis, result, arrays)
     _plot_snp_map(snp_map_axis, result, arrays)
     _plot_amplicon_table(amplicon_table_axis, result)
@@ -2440,6 +2634,41 @@ def _state_tsv_fields(result: dict) -> dict:
     }
 
 
+CHIMERA_TSV_FIELDS = (
+    "chimeras_n_chimeric_strict",
+    "chimeras_fraction_strict",
+    "chimeras_status",
+    "chimeras_severity",
+)
+
+
+def _chimera_tsv_fields(result: dict) -> dict:
+    chimeras = result.get("chimeras") or {}
+    grade = chimeras.get("grade") or {}
+    return {
+        "chimeras_n_chimeric_strict": chimeras.get("n_chimeric_strict"),
+        "chimeras_fraction_strict": chimeras.get("fraction_strict"),
+        "chimeras_status": grade.get("status"),
+        "chimeras_severity": grade.get("severity"),
+    }
+
+
+def _write_chimera_regions_tsv(result: dict, path: Path) -> bool:
+    rows = ((result.get("chimeras") or {}).get("regions") or {}).get("rows") or []
+    if not rows:
+        return False
+    columns = ("region", "chrom", "start", "end", "n_reads_checked", "n_chimeric",
+               "fraction", "n_chimeric_strict", "fraction_strict")
+    temporary = path.with_name(path.name + ".tmp")
+    with temporary.open("w") as handle:
+        handle.write("\t".join(columns) + "\n")
+        for row in rows:
+            handle.write("\t".join("" if row.get(c) is None else str(row.get(c))
+                                   for c in columns) + "\n")
+    os.replace(temporary, path)
+    return True
+
+
 def _write_tsv(result: dict, path: Path) -> None:
     fields = {
         "input": result["input"],
@@ -2489,6 +2718,7 @@ def _write_tsv(result: dict, path: Path) -> None:
             "n_discovered_amplicons", 0
         ),
         **_state_tsv_fields(result),
+        **_chimera_tsv_fields(result),
     }
     with path.open("w") as handle:
         handle.write("\t".join(fields) + "\n")
@@ -2625,6 +2855,49 @@ def qc_curves(result: dict, arrays: dict, profile: Optional[dict],
 QC_SCHEMA_MINOR_VERSION = 1
 
 
+def _grade_chimera_block(chimeras: dict, full_run: bool) -> None:
+    """Grade the strict chimera fraction of a DAF QC report in place.
+
+    The strict count comes from the call's full-run statistics when present
+    (sidecar or in-process), else from the sample's flagged reads when the
+    BAM is in flag mode (sampled flags are the default decision). Remove and
+    split modes without their full-run statistics cannot be counted from a
+    sample, and keep mode does not detect: the grade is then INSUFFICIENT
+    (or absent for keep) and never enters the verdict.
+    """
+    from fiberhmm.inference.chimeras import (
+        CHIMERA_NOTE, STRICT_MIN_SEG, STRICT_PURITY, grade_chimeras,
+    )
+    mode = chimeras.get('mode')
+    chimeras['note'] = CHIMERA_NOTE
+    if mode in ('keep', 'n/a'):
+        chimeras['grade'] = None
+        return
+    sample = chimeras.get('sample') if full_run else chimeras
+    checked, strict, source = None, None, None
+    if full_run and chimeras.get('n_chimeric_strict') is not None:
+        checked, strict, source = (chimeras.get('n_reads_checked'),
+                                   chimeras['n_chimeric_strict'], 'full run')
+    elif mode == 'flag' and sample and sample.get('n_chimeric_strict') is not None:
+        checked, strict, source = (sample.get('n_reads_checked'),
+                                   sample['n_chimeric_strict'], 'bounded sample')
+    grade = grade_chimeras(checked, strict)
+    grade['source'] = source
+    if source is None:
+        grade['reason'] = ('no full-run chimera statistics for this BAM'
+                           if mode in ('remove', 'split') else
+                           'chimera policy of this BAM is unknown')
+        # A sample cannot count what remove/split took out of the BAM.
+        chimeras['n_chimeric_strict'] = None
+        chimeras['fraction_strict'] = None
+    chimeras['grade'] = grade
+    if source == 'bounded sample' and full_run:
+        chimeras['n_chimeric_strict'] = None
+        chimeras['fraction_strict'] = None
+    chimeras.setdefault('strict_min_seg', STRICT_MIN_SEG)
+    chimeras.setdefault('strict_purity', STRICT_PURITY)
+
+
 def _state_rates(input_path, reads, mode, enzyme, **options) -> tuple[dict, dict]:
     """State-aware rates; a failure is reported in the block, never raised."""
     if options.get("state_source") in ("none", "", None):
@@ -2642,8 +2915,13 @@ def _state_rates(input_path, reads, mode, enzyme, **options) -> tuple[dict, dict
                 "note": f"state-aware rates failed: {type(exc).__name__}: {exc}"}, {}
 
 
-def _overall_verdict(analysis: dict) -> dict:
+def _overall_verdict(analysis: dict, chimera_grade: Optional[dict] = None) -> dict:
     """Overall status from the graded components.
+
+    A DAF chimera grade of WARN turns a PASS into WARN (``warned_by``). It
+    never makes a FAIL and is not part of the score: flagged chimeras are
+    excluded from analysis, and the remaining reads are usable. Without a
+    WARN chimera grade the result is exactly the component verdict.
 
     When the in-MSP efficiency and/or outside-MSP background are graded they
     replace the overall-rate grade (which stays in ``signal`` as a reported
@@ -2668,12 +2946,16 @@ def _overall_verdict(analysis: dict) -> dict:
         status = "WARN"
     else:
         status = "PASS"
-    return {
+    verdict = {
         "score": float(np.mean(scored)) if scored else None,
         "status": status,
         "components": list(names),
         "verdict_basis": "state-aware" if state_graded else "overall-rate",
     }
+    if (chimera_grade or {}).get("status") == "WARN" and status == "PASS":
+        verdict["status"] = "WARN"
+        verdict["warned_by"] = ["chimeras"]
+    return verdict
 
 
 def run_qc(
@@ -2871,7 +3153,8 @@ def run_qc(
                                      ('purity', 'chimera_purity', float)]:
                 if key in settings:
                     chimeras[field] = cast(settings[key])
-            chimeras['detected'] = chimeras['detected'] or chimeras['mode'] in ('flag', 'remove')
+            chimeras['detected'] = (chimeras['detected']
+                                    or chimeras['mode'] in ('flag', 'remove', 'split'))
             break
     if chimeras['mode'] in ('keep', 'n/a'):
         chimeras['n_reads_checked'] = 0
@@ -2903,6 +3186,10 @@ def run_qc(
         chimeras['full_run_statistics'] = dict(chimera_run_summary)
         if chimera_report_path:
             chimeras['run_report_path'] = chimera_report_path
+    if resolved_mode == 'daf':
+        _grade_chimera_block(chimeras, chimera_run_summary is not None)
+        if (chimeras.get('grade') or {}).get('status') == 'WARN':
+            result["overall"] = _overall_verdict(result, chimeras['grade'])
     result["deduplication"] = _merge_full_dedup_summary(
         result["deduplication"], dedup_run_summary
     )
@@ -2949,6 +3236,12 @@ def run_qc(
     curves_path = Path(str(prefix) + ".qc.curves.json")
     _atomic_json(qc_curves(result, arrays, profile, control_curve), curves_path)
     result["outputs"]["curves"] = str(curves_path.resolve())
+    if resolved_mode == "daf":
+        regions_path = Path(str(prefix) + ".qc.chimera_regions.tsv")
+        if _write_chimera_regions_tsv(result, regions_path):
+            result["outputs"]["chimera_regions_tsv"] = str(regions_path.resolve())
+        else:
+            regions_path.unlink(missing_ok=True)
     _atomic_json(result, json_path)
     _write_tsv(result, tsv_path)
     if stream is not None:
@@ -3397,6 +3690,7 @@ def _write_combined_tsv(results: Sequence[dict], path: Path) -> None:
         "n_masked_snp_sites",
         "n_discovered_amplicons",
         *STATE_TSV_FIELDS,
+        *CHIMERA_TSV_FIELDS,
     )
     with path.open("w") as handle:
         handle.write("\t".join(fields) + "\n")
@@ -3443,6 +3737,7 @@ def _write_combined_tsv(results: Sequence[dict], path: Path) -> None:
                     "n_discovered_amplicons", 0
                 ),
                 **_state_tsv_fields(result),
+                **_chimera_tsv_fields(result),
             }
             handle.write("\t".join("" if values[field] is None else str(values[field]) for field in fields) + "\n")
 
