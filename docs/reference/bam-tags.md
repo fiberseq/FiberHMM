@@ -99,6 +99,7 @@ but no longer written.
 | `st` | `Z` | `fiberhmm-daf-encode` | conversion flavour: `CT` or `GA`; `SEQ` then carries Y/R codes. `fiberhmm-call`'s one-pass DAF path derives the flavour internally and does not write it |
 | `di` | `i` | `fiberhmm-dedup`, integrated dedup | duplicate-cluster id, on every member of a cluster of two or more |
 | `ds` | `i` | same | cluster size (copies of the molecule in the input) |
+| `xc` | `Z` | `fiberhmm-call` | local lowercase tag: `strand_swap` identifies DAF strand-swap evidence meeting the run's `chimera_min_seg` / `chimera_purity` thresholds in @PG DS; paired with SAM QC-fail 0x200, including supplementary/secondary records |
 
 Duplicates are also flagged `0x400` (standalone `--flag-only`, and the
 integrated default); a collapse keeps only the representative, which keeps

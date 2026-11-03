@@ -226,10 +226,13 @@ def parse_args():
                    help=argparse.SUPPRESS)  # retired experimental mode (3.0); kept only to reproduce earlier calls
 
     # --- DAF chimera filter (mode=daf only) ---
+    p.add_argument('--chimeras', choices=['flag', 'remove', 'keep'], default='flag',
+                   help='DAF strand-swap chimeras: flag (default) retains reads '
+                        'uncalled with SAM 0x200 and xc:Z:strand_swap; remove drops '
+                        'all records of the read; keep disables detection and '
+                        'attempts calls. No strand-swap detection for m6A modes.')
     p.add_argument('--keep-chimeras', action='store_true',
-                   help='DAF only: keep strand-swap chimeric reads (C->T in one '
-                        'segment + G->A in another). Default: filter them out and '
-                        'report the count.')
+                   help='Deprecated alias for --chimeras keep (DAF only).')
     p.add_argument('--chimera-min-seg', type=int, default=5,
                    help='DAF chimera: min same-strand deamination events per '
                         'segment to call a swap (default 5).')
@@ -412,7 +415,14 @@ def parse_args():
 
     from fiberhmm.cli.common import add_version_args
     add_version_args(p)
-    return p.parse_args()
+    args = p.parse_args()
+    if args.keep_chimeras:
+        if args.chimeras != 'flag' and args.chimeras != 'keep':
+            p.error('--keep-chimeras conflicts with --chimeras remove')
+        args.chimeras = 'keep'
+    if args.chimera_min_seg < 1 or not 0.5 < args.chimera_purity <= 1:
+        p.error('--chimera-min-seg must be >= 1 and --chimera-purity in (0.5, 1]')
+    return args
 
 
 def _resolve_apply_model(args):
@@ -1218,6 +1228,13 @@ def _main(args):
     insert_tmpdir = None
     insert_summary = None
     dedup_stats = None
+    chimera_tmpdir = None
+    chimera_stats = None
+    chimeric_names = None
+    chimera_filter_config = None
+    if mode == 'daf':
+        from fiberhmm.inference import engine as _engine
+        chimera_filter_config = dict(_engine._DAF_CHIMERA_CFG)
     try:
         # PCR dedup runs FIRST (DAF only). The default mark/retain mode preserves
         # every molecule record while flagging non-representatives; explicit
@@ -1392,6 +1409,44 @@ def _main(args):
         from fiberhmm.inference.engine import configure_daf_insert_evidence
         configure_daf_insert_evidence(insert_evidence_path)
 
+        # Only DAF flag/remove need a QNAME decision pass. In particular m6A
+        # and keep retain the original working path without copying/scanning.
+        if mode == 'daf' and args.chimeras != 'keep':
+            from fiberhmm.inference.chimeras import prepare_chimeras, seekable_input
+            spool = None
+            if not seekable_input(working_input):
+                import tempfile
+                from pathlib import Path
+                chimera_tmpdir = tempfile.TemporaryDirectory(
+                    prefix='.fiberhmm_chimeras_',
+                    dir=None if stdout_mode else str(Path(args.output).parent))
+                spool = str(Path(chimera_tmpdir.name) / 'source.bam')
+            chimeric_names = set()
+            chimera_stats = prepare_chimeras(
+                working_input, mode=args.chimeras,
+                min_seg=args.chimera_min_seg, purity=args.chimera_purity,
+                prob_threshold=args.prob_threshold, reference=args.reference,
+                snp_mask=snp_mask_path, min_mapq=args.min_mapq,
+                min_read_length=args.min_read_length, process_unmapped=process_unmapped,
+                io_threads=args.io_threads, chimeric_names=chimeric_names,
+                spool_bam=spool)
+            if spool is not None:
+                working_input = spool
+            print(f"  DAF strand-swap chimeras: {chimera_stats['n_chimeric']:,} / "
+                  f"{chimera_stats['n_reads_checked']:,} checked reads "
+                  f"(mode={args.chimeras}; "
+                  f"{chimera_stats['n_records_affected']:,} records)", file=sys.stderr)
+        elif mode == 'daf':
+            from fiberhmm.inference.chimeras import empty_chimera_stats
+            chimera_stats = empty_chimera_stats('keep', args.chimera_min_seg,
+                                               args.chimera_purity)
+
+        # Pass 1 owns detection. Payload construction and worker extraction
+        # must not repeat its mismatch walk on the surviving reads.
+        if mode == 'daf':
+            from fiberhmm.inference.engine import configure_daf_chimera_filter
+            configure_daf_chimera_filter(False)
+
         # Freeze DddA nucleosome-refinement likelihoods independently of the TF
         # recaller. NRL estimation is part of nuc refinement and uses the same
         # frozen model.
@@ -1414,8 +1469,8 @@ def _main(args):
         # @PG provenance for the output BAM header. The molecular-frame note is the
         # important bit: it tells downstream tools how to read ns/nl/as/al/MA.
         import fiberhmm as _fh
-        chimera_state = ('n/a' if mode != 'daf'
-                         else ('off' if args.keep_chimeras else 'on'))
+        chimera_state = args.chimeras
+        chimera_filter_state = 'off' if args.chimeras == 'keep' else 'on'
         dedup_state = ('off' if not args.dedup or dedup_tmp is None
                        else f"j{args.dedup_min_jaccard}"
                             f"{'/collapse' if args.dedup_collapse else '/mark'}"
@@ -1470,7 +1525,9 @@ def _main(args):
                    f"phase_nrl={phase_nrl} "
                    f"ddda_derived_tf_edge_gap="
                    f"{derived_tf_max_edge_ambiguity if derived_tf_max_edge_ambiguity is not None else 'off'} "
-                   f"chimera_filter={chimera_state} dedup={dedup_state} "
+                   f"chimera_filter={chimera_filter_state} chimeras={chimera_state} "
+                   f"chimera_min_seg={args.chimera_min_seg} chimera_purity={args.chimera_purity} "
+                   f"dedup={dedup_state} "
                    f"daf_snp_mask={snp_state} "
                    f"daf_unaligned_mask={unaligned_state} "
                    f"daf_insert_consensus={insert_state} "
@@ -1535,6 +1592,7 @@ def _main(args):
                         'ignore_strand': bool(args.dedup_ignore_strand),
                         'max_end_diff': args.dedup_max_end_diff,
                     },
+                    'chimeras': chimera_stats,
                     'daf_run_mask': [args.daf_mask_runs, args.daf_run_policy],
                     'daf_unaligned_mask': unaligned_state,
                     'daf_insert_consensus': [args.daf_insert_consensus,
@@ -1576,7 +1634,9 @@ def _main(args):
                 split_min_llr=args.split_min_llr,
                 split_min_opps=args.split_min_opps,
                 nuc_recall_policy=nuc_recall_policy,
-                filter_chimeras=not args.keep_chimeras,
+                precall_chimeric_names=chimeric_names,
+                chimera_mode=args.chimeras,
+                filter_chimeras=False,
                 chimera_min_seg=args.chimera_min_seg,
                 chimera_purity=args.chimera_purity,
                 phase_nrl=phase_nrl,
@@ -1631,7 +1691,9 @@ def _main(args):
                 split_min_llr=args.split_min_llr,
                 split_min_opps=args.split_min_opps,
                 nuc_recall_policy=nuc_recall_policy,
-                filter_chimeras=not args.keep_chimeras,
+                precall_chimeric_names=chimeric_names,
+                chimera_mode=args.chimeras,
+                filter_chimeras=False,
                 chimera_min_seg=args.chimera_min_seg,
                 chimera_purity=args.chimera_purity,
                 phase_nrl=phase_nrl,
@@ -1686,6 +1748,16 @@ def _main(args):
             temporary.replace(dedup_report_path)
             print(f"  PCR deduplication report: {dedup_report_path}", file=sys.stderr)
 
+        if chimera_stats is not None and not stdout_mode and mode == 'daf':
+            import json
+            from pathlib import Path
+            report = Path(args.output).parent / 'qc' / (Path(args.output).stem + '.chimeras.json')
+            report.parent.mkdir(parents=True, exist_ok=True)
+            temporary = report.with_suffix('.json.tmp')
+            temporary.write_text(json.dumps({'schema_version': 1, 'statistics': chimera_stats},
+                                            indent=2, sort_keys=True) + '\n')
+            temporary.replace(report)
+
         # Bounded post-call QC. Indexed BAMs are sampled via random genomic
         # windows; unindexed outputs use a capped prefix reservoir. This never
         # rescans the whole BAM and is deliberately independent of deduplication.
@@ -1728,6 +1800,7 @@ def _main(args):
                         snp_mask_path=snp_mask_path,
                         snp_preflight_summary=snp_preflight,
                         dedup_run_summary=dedup_stats,
+                        chimera_run_summary=chimera_stats,
                         # QC's light call (sampled reads without calls)
                         # resolves the CpG mask from this run's options.
                         use_m5c=args.use_m5c,
@@ -1739,6 +1812,14 @@ def _main(args):
                           file=sys.stderr)
 
     finally:
+        # Calling can run in-process beside QC or another caller. Its
+        # decision-only pass must not leave detection disabled for them.
+        if chimera_filter_config is not None:
+            _engine.configure_daf_chimera_filter(
+                chimera_filter_config['filter'], chimera_filter_config['min_seg'],
+                chimera_filter_config['purity'])
+        if chimera_tmpdir is not None:
+            chimera_tmpdir.cleanup()
         _remove_dedup_temp(dedup_tmp)
         if insert_tmpdir is not None:
             import shutil as _shutil

@@ -144,9 +144,14 @@ def build_parser() -> argparse.ArgumentParser:
                       help="DAF: treat insertion and soft-clip bases as no evidence "
                            "and leave unaligned stretches >= 50 bp uncalled "
                            "(default on).")
+    call.add_argument("--chimeras", choices=["flag", "remove", "keep"], default=None,
+                      help="DAF strand-swap chimeras: flag (default) retains reads "
+                           "marked and uncalled; remove drops them; keep disables detection.")
     call.add_argument("--chimera-filter", action=argparse.BooleanOptionalAction,
                       default=True,
-                      help="DAF: skip strand-swap chimeric reads (default on).")
+                      help="Legacy alias: --chimera-filter means --chimeras flag; "
+                           "--no-chimera-filter means --chimeras keep. "
+                           "An explicit --chimeras takes precedence.")
     call.add_argument("--alignments", choices=["primary", "primary-supplementary", "all"],
                       default="primary-supplementary",
                       help="Alignment records to keep and call (default "
@@ -273,6 +278,7 @@ def config_from_args(args):
         snp_screen=args.snp_screen,
         snp_mask=args.snp_mask,
         chimera_filter=args.chimera_filter,
+        chimeras=args.chimeras,
         daf_mask_unaligned=args.daf_mask_unaligned,
         alignments=args.alignments,
         prob_threshold=args.prob_threshold,

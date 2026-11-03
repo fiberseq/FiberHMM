@@ -985,6 +985,8 @@ def analyze_sample(
     signal_reads = 0
     read_examples: list[dict] = []
     duplicate_flagged = 0
+    chimera_names = set()
+    sampled_names = {getattr(read, "query_name", None) or id(read) for read in reads}
     dedup_tagged = 0
     dedup_cluster_sizes: dict[int, int] = {}
     unaligned = {"n_reads": 0, "query_bases": 0, "unaligned_bases": 0,
@@ -1006,6 +1008,10 @@ def analyze_sample(
                     dedup_tagged += 1
                 except (ValueError, TypeError):
                     pass
+            from fiberhmm.inference.chimeras import is_marked_chimera
+            if mode == 'daf' and is_marked_chimera(read):
+                chimera_names.add(getattr(read, "query_name", None) or id(read))
+                continue
             # Nondestructive mark/retain dedup keeps every read in the BAM,
             # but aggregate rate, phase, footprint, and example panels should
             # represent original molecules rather than PCR copy number.
@@ -1155,6 +1161,15 @@ def analyze_sample(
             "median_tf_footprint_bp": float(np.median(tf_lengths)) if tf_lengths else None,
             "q25_tf_footprint_bp": float(np.quantile(tf_lengths, 0.25)) if tf_lengths else None,
             "q75_tf_footprint_bp": float(np.quantile(tf_lengths, 0.75)) if tf_lengths else None,
+        },
+        "chimeras": {
+            "detected": bool(chimera_names), "mode": "flag" if chimera_names else None,
+            "n_reads_checked": len(sampled_names) if mode == "daf" else 0,
+            "n_chimeric": len(chimera_names),
+            "fraction": len(chimera_names) / len(sampled_names) if reads and mode == "daf" else None,
+            "min_seg": 5 if mode == "daf" else None,
+            "purity": 0.8 if mode == "daf" else None,
+            "full_run": False, "count_unit": "unique read names in bounded sample",
         },
         "deduplication": _summarize_deduplication(
             len(reads),
@@ -1481,6 +1496,13 @@ def format_terminal(result: dict) -> str:
         )
     else:
         lines.append("  PCR deduplication: not run")
+    chimeras = result.get('chimeras', {})
+    if chimeras:
+        fraction = chimeras.get('fraction')
+        text = 'NA' if fraction is None else f'{100 * fraction:.2f}%'
+        basis = 'full run' if chimeras.get('full_run') else 'bounded sample'
+        lines.append(f"  DAF strand-swap chimeras: {chimeras.get('n_chimeric', 0):,} "
+                     f"({text}), mode={chimeras.get('mode')} ({basis})")
     unaligned_masking = result.get("unaligned_masking")
     if unaligned_masking and unaligned_masking.get("unaligned_bases"):
         lines.append(
@@ -2182,6 +2204,14 @@ def _plot_qc(
         "TF footprint size (bp)",
     )
     _plot_deduplication(dedup_axis, result["deduplication"])
+    chim = result.get('chimeras', {})
+    fraction = chim.get('fraction')
+    text = 'NA' if fraction is None else f'{100 * fraction:.2f}%'
+    basis = 'full run' if chim.get('full_run') else 'sample'
+    dedup_axis.text(0.5, -0.24,
+                   f"DAF strand-swap chimeras: {chim.get('n_chimeric', 0):,} ({text}); "
+                   f"mode={chim.get('mode')} ({basis})",
+                   ha='center', va='top', transform=dedup_axis.transAxes, fontsize=8)
     _plot_snp_landscape(figure, snp_axis, result, arrays)
     _plot_snp_map(snp_map_axis, result, arrays)
     _plot_amplicon_table(amplicon_table_axis, result)
@@ -2444,6 +2474,11 @@ def _write_tsv(result: dict, path: Path) -> None:
         "median_tf_footprint_bp": result["footprints"]["median_tf_footprint_bp"],
         "deduplication_detected": result["deduplication"]["detected"],
         "deduplication_mode": result["deduplication"]["mode"],
+        "chimeras_detected": result.get("chimeras", {}).get("detected"),
+        "chimeras_mode": result.get("chimeras", {}).get("mode"),
+        "chimeras_n_reads_checked": result.get("chimeras", {}).get("n_reads_checked"),
+        "chimeras_n_chimeric": result.get("chimeras", {}).get("n_chimeric"),
+        "chimeras_fraction": result.get("chimeras", {}).get("fraction"),
         "duplicate_fraction": result["deduplication"]["duplicate_fraction"],
         "snp_mask_applied": result["variant_masking"]["applied"],
         "n_masked_snp_sites": result["variant_masking"]["n_masked_sites"],
@@ -2654,6 +2689,7 @@ def run_qc(
     snp_mask_path: Optional[str] = None,
     snp_preflight_summary: Optional[dict] = None,
     dedup_run_summary: Optional[dict] = None,
+    chimera_run_summary: Optional[dict] = None,
     stream: Optional[TextIO] = sys.stderr,
     return_arrays: bool = False,
     state_source: str = "auto",
@@ -2813,6 +2849,42 @@ def run_qc(
             "pdf": None,
         },
     }
+    # Preserve sampled evidence while preferring the exact pre-removal run.
+    chimeras = result["chimeras"]
+    state_count = (state_block.get("reads") or {}).get("reads_chimera_skipped", 0)
+    chimeras["sampled_chimeric"] = max(chimeras["n_chimeric"], state_count)
+    chimeras["n_chimeric"] = chimeras["sampled_chimeric"]
+    checked = chimeras["n_reads_checked"]
+    chimeras["fraction"] = chimeras["n_chimeric"] / checked if checked else None
+    chimeras["detected"] = bool(chimeras["n_chimeric"])
+    with pysam.AlignmentFile(input_path, 'rb', check_sq=False) as bam:
+        for pg in reversed(bam.header.to_dict().get('PG', [])):
+            if pg.get('PN') != 'fiberhmm-call':
+                continue
+            settings = dict(item.split('=', 1) for item in pg.get('DS', '').split() if '=' in item)
+            chimeras['mode'] = (settings.get('chimeras', chimeras['mode'])
+                                if mode == 'daf' else 'n/a')
+            for field, key, cast in [('min_seg', 'chimera_min_seg', int),
+                                     ('purity', 'chimera_purity', float)]:
+                if key in settings:
+                    chimeras[field] = cast(settings[key])
+            chimeras['detected'] = chimeras['detected'] or chimeras['mode'] in ('flag', 'remove')
+            break
+    if chimeras['mode'] in ('keep', 'n/a'):
+        chimeras['n_reads_checked'] = 0
+        chimeras['fraction'] = None
+    candidate = sidecar_dir / f"{input_stem}.chimeras.json"
+    if chimera_run_summary is None and candidate.is_file():
+        try:
+            chimera_run_summary = json.loads(candidate.read_text()).get('statistics')
+        except (OSError, ValueError, TypeError):
+            pass
+    if chimera_run_summary is not None:
+        chimeras['sample'] = {k: v for k, v in chimeras.items() if k != 'sample'}
+        chimeras.update(chimera_run_summary)
+        chimeras['full_run_statistics'] = dict(chimera_run_summary)
+        if candidate.is_file():
+            chimeras['run_report_path'] = str(candidate)
     result["deduplication"] = _merge_full_dedup_summary(
         result["deduplication"], dedup_run_summary
     )

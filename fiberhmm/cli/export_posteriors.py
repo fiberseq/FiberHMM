@@ -141,6 +141,9 @@ def extract_posteriors_from_read(read, model: FiberHMM, mode: str,
             stats[reason] = stats.get(reason, 0) + 1
         return None
 
+    from fiberhmm.inference.chimeras import is_marked_chimera
+    if is_marked_chimera(read):
+        return _skip('chimera')
     if read.is_unmapped or read.is_secondary or read.is_supplementary:
         return _skip('filtered')
     if min_mapq and int(read.mapping_quality) < int(min_mapq):

@@ -13,14 +13,14 @@ from .identity import molecule_id, record_sha256
 from .types import Dataset, RecordRef, ScanUnit
 
 DEFAULT_READ_POLICY = {
-    'filters': {'min_mapq': 0, 'secondary': 'exclude', 'supplementary': 'include', 'duplicates': 'exclude',
+    'filters': {'min_mapq': 0, 'secondary': 'exclude', 'supplementary': 'include', 'duplicates': 'exclude', 'chimeras': 'exclude',
                 'unmapped': 'exclude', 'strand': 'both'},
     'caps': {'max_discovery_molecules': 0, 'max_quantification_molecules': 0, 'sample_seed': 1},
     'callable_min_molecules': 5,
 }
 
 _FILTER_CHOICES = {'secondary': ('exclude', 'include'), 'supplementary': ('include', 'exclude'),
-                   'duplicates': ('exclude', 'include'), 'unmapped': ('exclude',), 'strand': ('both',)}
+                   'duplicates': ('exclude', 'include'), 'chimeras': ('exclude', 'include'), 'unmapped': ('exclude',), 'strand': ('both',)}
 
 
 def resolve_read_policy(user: Optional[Mapping] = None) -> dict:
@@ -50,6 +50,9 @@ def resolve_read_policy(user: Optional[Mapping] = None) -> dict:
 
 
 def passes(read, filters: Mapping) -> bool:
+    from fiberhmm.inference.chimeras import is_marked_chimera
+    if is_marked_chimera(read) and filters.get('chimeras', 'exclude') == 'exclude':
+        return False
     if read.is_unmapped:
         return False
     if read.is_secondary and filters.get('secondary', 'exclude') == 'exclude':
@@ -100,6 +103,7 @@ def unit_survey(datasets: Sequence[Dataset], unit: ScanUnit, read_policy: Mappin
     min_mol = int(read_policy['callable_min_molecules'])
     zlen = unit.zone_end - unit.zone_start
     records = 0
+    chimeras_skipped = 0
     callable_runs = {}
     for ds in datasets:
         delta = np.zeros(zlen + 1, dtype=np.int64)
@@ -113,6 +117,9 @@ def unit_survey(datasets: Sequence[Dataset], unit: ScanUnit, read_policy: Mappin
                     # Emptiness counts every mapped record, whatever the filters: a module may admit records
                     # the read policy leaves out (peaks with include_duplicates, say).
                     records += 1
+                    from fiberhmm.inference.chimeras import is_marked_chimera
+                    if is_marked_chimera(read) and filters.get('chimeras', 'exclude') == 'exclude':
+                        chimeras_skipped += 1
                     if not passes(read, filters) or not has_annotations(read):
                         continue
                     for a, b in read.get_blocks():
@@ -130,7 +137,7 @@ def unit_survey(datasets: Sequence[Dataset], unit: ScanUnit, read_policy: Mappin
             for a, b in zip(np.where(d == 1)[0], np.where(d == -1)[0]):
                 runs.append([int(a) + unit.zone_start, int(b) + unit.zone_start])
         callable_runs[ds.dataset_id] = runs
-    return dict(records=records, callable=callable_runs)
+    return dict(records=records, callable=callable_runs, chimeras_skipped=chimeras_skipped)
 
 
 def overlapping_records(datasets: Sequence[Dataset], unit: ScanUnit, read_policy: Mapping):

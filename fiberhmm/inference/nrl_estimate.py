@@ -15,6 +15,7 @@ import numpy as np
 import pysam
 
 from fiberhmm.core.model_io import freeze_model_for_inference, load_model, load_model_with_metadata
+from fiberhmm.inference.chimeras import is_marked_chimera
 from fiberhmm.inference.engine import CHIMERA_SKIP, _extract_fiber_read_from_pysam
 from fiberhmm.inference.fused_stages import run_hmm_apply_stage
 from fiberhmm.inference.nuc_recaller import recall_nucs_in_read
@@ -72,6 +73,7 @@ def estimate_phase_nrl(
                 (read.is_unmapped and not include_unmapped)
                 or read.is_secondary
                 or read.is_supplementary
+                or is_marked_chimera(read)
                 or read.is_duplicate
                 or hard_clipped_mm_unreliable(read, mode)
             ):

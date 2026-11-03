@@ -520,7 +520,10 @@ def compute_state_rates(
 
     frames = tag_frames(header) if header is not None else {
         "MA": "seq", "legacy": None, "legacy_reason": "no header"}
-    eligible = [read for read in reads if not getattr(read, "is_duplicate", False)]
+    from fiberhmm.inference.chimeras import is_marked_chimera
+    marked_chimeras = sum(is_marked_chimera(read) for read in reads) if mode == 'daf' else 0
+    eligible = [read for read in reads if not getattr(read, "is_duplicate", False)
+                and (mode != 'daf' or not is_marked_chimera(read))]
     tagged = [msp_intervals_from_tags(read, frames) for read in eligible]
     n_tagged = sum(1 for item in tagged if item is not None)
     # fibertools' own calls (Ma without FiberHMM MA) are a different state
@@ -568,7 +571,7 @@ def compute_state_rates(
     per_read_ratio_inputs: list[tuple] = []
     msp_fraction_per_read: list[float] = []
     counts = dict(reads_considered=0, reads_without_signal=0, reads_without_calls=0,
-                  reads_chimera_skipped=0, reads_mm_unreliable=0,
+                  reads_chimera_skipped=marked_chimeras, reads_mm_unreliable=0,
                   reads_single_segment=0, reads_used=0)
     light = {"reads_called": 0, "budget_reads": int(light_call_reads),
              "budget_seconds": float(light_call_seconds), "stopped_by": None,

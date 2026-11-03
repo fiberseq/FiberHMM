@@ -4,6 +4,19 @@
 
 ### Added
 
+- DAF strand-swap chimera modes in `fiberhmm-call`: `--chimeras flag`
+  (default; SAM QC-fail 0x200 + local `xc:Z:strand_swap`), `remove`, or
+  `keep` (deprecated alias `--keep-chimeras`). Decisions cover every record
+  of a read; re-runs clear owned marks and preserve other tools' QC failures.
+  QC JSON/TSV/PDF/PNG report sampled evidence and authoritative pre-removal
+  counts, saved in `.chimeras.json`. Downstream extraction, scan, nuc decoding,
+  consensus/recall and posterior readers skip marked chimeras by default.
+  Strand-swap detection remains specific to DAF; m6A modes do not detect it.
+  m6A and `keep` bypass preprocessing; DAF reads seekable inputs without
+  temporary copies and applies QNAME decisions during calling. Pipeline
+  `--chimeras` uses the same modes, and legacy `chimera_filter=on|off`
+  provenance remains available alongside `chimeras=flag|remove|keep`.
+
 - Scan contracts v1.12: association M1–M3 reads annotated BAMs, including
   decoded scalar codecs, molecular mark projection and annotated haplotypes.
 - Association CLI M2 random transferable backgrounds (`nfr.region`), and

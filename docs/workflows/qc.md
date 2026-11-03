@@ -110,7 +110,15 @@ with `plot: not written (install matplotlib)`.
 - **Footprint sizes** (from `MA`, or legacy `nl` for nucleosomes), PCR
   duplication (exact from the call's `.dedup.json` sidecar when integrated
   dedup ran, otherwise estimated from `0x400`/`di`/`ds` in the sample), and
-  the DAF SNP summary when available.
+  DAF strand-swap chimeras and the DAF SNP summary when available.
+  The JSON `chimeras` section reports `detected`, `mode`, `n_reads_checked`,
+  `n_chimeric`, `fraction`, `min_seg` and `purity`. Integrated call's exact
+  counts before removal are authoritative (`full_run: true`,
+  `full_run_statistics`); standalone QC reloads `qc/<stem>.chimeras.json`.
+  Sampled marks and the state sampler's chimera skips are retained as sample
+  context. Marked chimeras are excluded from rate and footprint panels. TSV columns
+  and a line beside the PDF/PNG duplication panel report the same counts.
+  Detection is DAF-specific; m6A runs report mode `n/a`.
 
 If the run's ML threshold differs by more than 5 from the reference's
 calibration threshold, the rate score is capped at WARN and the mismatch is
