@@ -61,15 +61,45 @@ def test_edge_sigma_is_rms_of_central_shifts():
     assert edge_sigma(np.zeros(50)) == 0.0
 
 
-def test_low_information_floor_and_support_reach_molecule_outputs():
+def test_size_floor_does_not_veto_spacing_and_support_is_unchanged():
     rng = np.random.default_rng(2)
     from nuc_synth import array_molecule
     m = array_molecule([('reg', 20, 190)], rng, mark_rate=0.5)
     cal = flat_calibration(lambda_floor=0.9)
-    assert molecule_outputs(m, cal=cal).flags['low_information']
+    r = molecule_outputs(m, cal=cal)
+    assert cal.below_floor(r.scalars['lambda_acc'])
+    assert not r.flags['low_information']
+    assert r.segments
     cal = flat_calibration(supported=[0.95, 1.0])
     r = molecule_outputs(m, cal=cal)
     assert (r.footprints['coarse'][~r.footprints['truncated']] == 0).all()   # all can't tell
+    assert not r.flags['low_information']
+    # Eligibility changes only with mark density, not size resolvability.
+    m.hits[:] = False
+    m._cum_hit = m._cum_inf = None
+    assert molecule_outputs(m, cal=cal).flags['low_information']
+
+
+@pytest.mark.parametrize('rates,status,finite', [
+    ([0.9, 0.7, 0.51], 'censored_above', False),
+    ([0.4, 0.3, 0.2], 'censored_below', False),
+    ([0.9, 0.6, 0.3], 'observed', True),
+    ([0.9, 0.3, 0.7], 'censored_above', False),
+    ([], 'unknown', False),
+])
+def test_information_floor_censoring_and_serialization(rates, status, finite):
+    from fiberhmm.nuc.thinning import information_floor
+    grid = [0.1, 0.2, 0.4][:len(rates)]
+    floor, got = information_floor({'log_lambda': np.log(grid), 'cant_tell': rates})
+    assert got == status
+    assert (floor is not None) == finite
+    if finite:
+        assert 0.2 < floor < 0.4
+    cal = flat_calibration(lambda_floor=floor, lambda_floor_status=status)
+    rt = NucCalibration.from_dict(cal.to_dict())
+    assert rt.lambda_floor_status == status and rt.lambda_floor == floor
+    if not finite:
+        assert not rt.below_floor(0.01)
 
 
 @pytest.fixture(scope='module')
@@ -102,6 +132,25 @@ def test_calibrate_thin_end_to_end(called_bam):
     again = calibrate_thin(called_bam, label='synthetic', n_population=36, seeds=1, n_targets=4, cores=1)
     strip = lambda c: {k: v for k, v in c.to_dict().items() if k not in ('notes', 'validation')}  # noqa: E731
     assert strip(again) == strip(cal)
+
+
+def test_censored_floor_extends_to_dense_references_without_fabricating_a_floor(called_bam, monkeypatch):
+    from fiberhmm.nuc import molecule
+    original = molecule.footprint_calls
+
+    def unresolved(*args, **kwargs):
+        fp = original(*args, **kwargs)
+        if fp is not None:
+            fp['coarse'][:] = 0
+        return fp
+
+    monkeypatch.setattr(molecule, 'footprint_calls', unresolved)
+    cal = calibrate_thin(called_bam, n_population=36, seeds=2, n_targets=4, holdout=1.0, cores=1)
+    assert cal.lambda_floor_status == 'censored_above'
+    assert cal.lambda_floor is None
+    assert cal.validation['floor_dense_extension']['keep'] == 1.0
+    assert cal.validation['floor_dense_extension']['n_bins'] > 0
+    assert all(rate == 1.0 for rate in cal.validation['cant_tell_by_lambda_acc']['cant_tell'])
 
 
 def test_supported_range_ends_at_the_dense_references():

@@ -545,6 +545,20 @@ def _daf_reference_mask(read):
 # spawned workers inherit an opt-out.
 _DAF_UNALIGNED_MASK_ENV = 'FIBERHMM_DAF_MASK_UNALIGNED'
 _DAF_UNALIGNED_MASK = None
+_DAF_UNALIGNED_MASK_SCOPE = _ContextVar('fiberhmm_daf_unaligned_mask_scope', default=None)
+
+
+def daf_unaligned_mask_scope(enabled):
+    from contextlib import contextmanager
+
+    @contextmanager
+    def scope():
+        token = _DAF_UNALIGNED_MASK_SCOPE.set(bool(enabled))
+        try:
+            yield
+        finally:
+            _DAF_UNALIGNED_MASK_SCOPE.reset(token)
+    return scope()
 
 
 def configure_daf_unaligned_mask(enabled: bool = True) -> None:
@@ -556,6 +570,9 @@ def configure_daf_unaligned_mask(enabled: bool = True) -> None:
 
 def daf_unaligned_mask_enabled() -> bool:
     global _DAF_UNALIGNED_MASK
+    scoped = _DAF_UNALIGNED_MASK_SCOPE.get()
+    if scoped is not None:
+        return scoped
     if _DAF_UNALIGNED_MASK is None:
         _DAF_UNALIGNED_MASK = os.environ.get(_DAF_UNALIGNED_MASK_ENV, '1') != '0'
     return _DAF_UNALIGNED_MASK
@@ -598,6 +615,20 @@ def _daf_snp_masked_query_positions(read):
 # carriers, keyed by insert_consensus.record_key. Empty unless a consensus
 # pre-pass configured it.
 _DAF_INSERT_EVIDENCE: dict = {}
+_DAF_INSERT_EVIDENCE_SCOPE = _ContextVar('fiberhmm_daf_insert_evidence_scope', default=None)
+
+
+def daf_insert_evidence_scope(evidence):
+    from contextlib import contextmanager
+
+    @contextmanager
+    def scope():
+        token = _DAF_INSERT_EVIDENCE_SCOPE.set(dict(evidence or {}))
+        try:
+            yield
+        finally:
+            _DAF_INSERT_EVIDENCE_SCOPE.reset(token)
+    return scope()
 
 
 def configure_daf_insert_evidence(evidence=None) -> None:
@@ -615,14 +646,16 @@ def configure_daf_insert_evidence(evidence=None) -> None:
 
 def daf_insert_evidence(read):
     """The record's insert evidence, or None."""
-    if not _DAF_INSERT_EVIDENCE or not daf_unaligned_mask_enabled():
+    scoped = _DAF_INSERT_EVIDENCE_SCOPE.get()
+    active = _DAF_INSERT_EVIDENCE if scoped is None else scoped
+    if not active or not daf_unaligned_mask_enabled():
         return None
     try:
         key = (read.query_name, int(read.flag) & ~0x400, int(read.reference_id),
                int(read.reference_start))
     except (AttributeError, TypeError, ValueError):
         return None
-    return _DAF_INSERT_EVIDENCE.get(key)
+    return active.get(key)
 
 
 def _daf_excluded_query_positions(read):

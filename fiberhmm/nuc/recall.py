@@ -290,10 +290,14 @@ class Caller:
         return {'nucs': nucs, 'msps': msps, 'tfs': tfs}
 
 
-def fiber_read_from_record(read, settings: CallerSettings) -> Optional[dict]:
+def fiber_read_from_record(read, settings: CallerSettings, evidence=None) -> Optional[dict]:
     """The caller's input for one pysam record (None if no usable evidence)."""
     from fiberhmm.inference.engine import CHIMERA_SKIP, _extract_fiber_read_from_pysam
-    fr = _extract_fiber_read_from_pysam(read, settings.mode, settings.prob_threshold)
+    if evidence is None:
+        from fiberhmm.daf.replay import EvidenceReplay
+        evidence = EvidenceReplay(read.header, settings.mode)
+    with evidence.scope(read):
+        fr = _extract_fiber_read_from_pysam(read, settings.mode, settings.prob_threshold)
     if fr is None or fr is CHIMERA_SKIP:
         return None
     if settings.mode == 'daf' and fr.get('_daf_strand') not in ('+', '-'):

@@ -16,6 +16,13 @@ from scipy.fft import irfft, next_fast_len, rfft
 
 from fiberhmm.nuc.records import NucMolecule
 
+MIN_MARKS_PER_BP = 0.015
+
+
+def spacing_low_information(mol: NucMolecule) -> bool:
+    """Too few marks per molecular bp for the existing mark-spacing check."""
+    return mol.n_hits < MIN_MARKS_PER_BP * mol.length
+
 
 @dataclass
 class MarkACF:
@@ -29,7 +36,7 @@ class MarkACF:
 
 
 def mark_acf(molecules: Iterable[NucMolecule], max_lag: int = 600,
-             min_marks_per_bp: float = 0.015, max_molecules: int = 1500,
+             min_marks_per_bp: float = MIN_MARKS_PER_BP, max_molecules: int = 1500,
              lag_range: Tuple[int, int] = (150, 260),
              detrend_bp: int = 121) -> MarkACF:
     """Pooled mark autocorrelation over the first ``max_molecules`` molecules

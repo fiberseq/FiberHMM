@@ -44,7 +44,9 @@ def strip_for_fused_call(read, also_write_legacy: bool = True) -> None:
     (kept tags expressed in its declared molecular frame first, as in
     :func:`strip_for_apply`)."""
     from fiberhmm.io.frame_carry import carry_to_molecular
+    from fiberhmm.daf.replay import write_insert_evidence
 
+    write_insert_evidence(read)
     carry_to_molecular(read)
     strip_stale_call_tags(
         read,

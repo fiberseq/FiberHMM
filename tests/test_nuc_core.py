@@ -430,6 +430,10 @@ def test_window_rows_keep_their_own_phasing_with_shared_names():
     mols = _phased_mols(rng, 6, True)
     for m in mols:
         m.name = 'same'
+        # This tests phasing identity; give its molecules enough linker
+        # marks to enter window aggregates under the spacing criterion.
+        for start, end in m.msps:
+            m.hits[start:end:5] = True
     w = window_metrics(mols, ('chrS', 49_500, 50_500), anchor=50_000, cal=flat_calibration(nrl=190.0))
     rows = w.molecules['all']
     assert len(rows) == 6 and all('r_anchor' in r for r in rows)

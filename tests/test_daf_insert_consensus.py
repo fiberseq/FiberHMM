@@ -182,7 +182,8 @@ def test_mismatching_carrier_gets_no_evidence():
     assert ev is None or not ev.known
 
 
-def test_fiberhmm_call_calls_inside_the_insert(tmp_path):
+@pytest.mark.parametrize('region_parallel', [False, True])
+def test_fiberhmm_call_calls_inside_the_insert(tmp_path, region_parallel):
     reads = _carriers(30)
     bam = tmp_path / "in.bam"
     unsorted = tmp_path / "u.bam"
@@ -197,7 +198,8 @@ def test_fiberhmm_call_calls_inside_the_insert(tmp_path):
         subprocess.run([sys.executable, "-m", "fiberhmm.cli.call", "-i", str(bam),
                         "-o", str(out), "--enzyme", "dddb", "--seq", "nanopore",
                         "--no-dedup", "--no-daf-call-snps", "--no-qc",
-                        "--min-read-length", "0", "-c", "1", *extra],
+                        "--min-read-length", "0", "-c", "1",
+                        *(['--region-parallel'] if region_parallel else []), *extra],
                        check=True, capture_output=True)
         return out
 
@@ -228,6 +230,23 @@ def test_fiberhmm_call_calls_inside_the_insert(tmp_path):
     header = pysam.AlignmentFile(str(consensus_out)).header.to_dict()
     ds = [pg["DS"] for pg in header["PG"] if pg.get("PN") == "fiberhmm-call"][0]
     assert "daf_insert_consensus=on/1of1/min20" in ds
+    assert 'daf_evidence=v1:' in ds
+    # The private prepass pickle has been deleted by the CLI. Both nuc
+    # loaders must still replay the evidence on every called record.
+    from fiberhmm.nuc.records import DecodeContext, decode_record
+    from fiberhmm.nuc.recall import CallerSettings, fiber_read_from_record
+    with pysam.AlignmentFile(str(consensus_out)) as bam_out:
+        ctx = DecodeContext(bam_out.header)
+        settings = CallerSettings.from_header(bam_out.header)
+        for r in bam_out:
+            assert r.has_tag('ei')
+            m, why = decode_record(r, ctx)
+            assert why == 'ok'
+            fr = fiber_read_from_record(r, settings, ctx.evidence)
+            hits = m.hits[::-1] if r.is_reverse else m.hits
+            assert hits[1000:1200].sum() > 0
+            assert any(1000 <= p < 1200 for p in fr['m6a_query_positions'])
+        assert not ctx.evidence.warnings
     report = json.loads((tmp_path / "qc" / "cons.insert_consensus.json").read_text())
     assert report["insertions"][0]["consensus"] == INSERT
 
