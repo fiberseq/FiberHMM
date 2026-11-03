@@ -139,16 +139,12 @@ class NucMolecule:
             return out
         q0, r0, n = self.blocks[:, 0], self.blocks[:, 1], self.blocks[:, 2]
         idx = np.searchsorted(r0, ref, side='right') - 1
-        for k, (i, r) in enumerate(zip(idx, ref)):
-            if i < 0:
-                continue
-            if r < r0[i] + n[i]:
-                seq = q0[i] + (r - r0[i])
-            elif i + 1 < len(r0):
-                seq = q0[i + 1]
-            else:
-                continue
-            out[k] = (self.length - 1 - seq) if self.is_reverse else seq
+        clipped = np.clip(idx,0,len(r0)-1)
+        inside = (idx>=0) & (ref<r0[clipped]+n[clipped])
+        gap = (idx>=0) & ~inside & (idx+1<len(r0))
+        seq = np.where(inside,q0[clipped]+ref-r0[clipped],q0[np.minimum(clipped+1,len(q0)-1)])
+        valid = inside | gap
+        out[valid] = (self.length-1-seq[valid]) if self.is_reverse else seq[valid]
         return out
 
     def mol_interval_to_ref(self, start: int, end: int) -> Optional[Tuple[int, int]]:

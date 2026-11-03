@@ -225,11 +225,22 @@ def resultant_with_null_sides(xr_list: Sequence[np.ndarray], xl_list: Sequence[n
 
 
 def _osc_fit(x_all: np.ndarray, lo: float, hi: float, P: float) -> Dict[str, float]:
-    from scipy.optimize import curve_fit
     if len(x_all) < 50:
         return {}
     edges = np.arange(lo, hi + 10, 10.0)
     h, _ = np.histogram(x_all, bins=edges)
+    fit = _osc_fit_histogram(h, edges, P)
+    # Keep the established scalar-only phasing output contract; Sites reads
+    # the histogram helper directly to report the decay-fit interval.
+    return {k:v for k,v in fit.items() if not k.startswith('ell_ci')}
+
+
+def _osc_fit_histogram(h, edges, P):
+    """The same decay fit on pre-aggregated dyad counts (avoids retaining offsets)."""
+    from scipy.optimize import curve_fit
+    if np.sum(h) < 50:
+        return {}
+    lo = float(edges[0])
     xc = (edges[:-1] + edges[1:]) / 2
 
     def f(x, D0, A, ell, x1):
@@ -238,18 +249,21 @@ def _osc_fit(x_all: np.ndarray, lo: float, hi: float, P: float) -> Dict[str, flo
     best = None
     for x1g in np.linspace(lo, lo + P, 6, endpoint=False):
         try:
-            popt, _ = curve_fit(f, xc, h, p0=[D0, D0 * 0.3, 500.0, x1g],
+            popt, pcov = curve_fit(f, xc, h, p0=[D0, D0 * 0.3, 500.0, x1g],
                                 bounds=([0, 0, 20, lo - P], [np.inf, np.inf, 1e5, lo + 2 * P]),
                                 maxfev=4000)
             res = float(np.sum((f(xc, *popt) - h) ** 2))
             if best is None or res < best[0]:
-                best = (res, popt)
+                best = (res, popt, pcov)
         except Exception:
             continue
     if best is None:
         return {}
     D0, A, ell, x1 = best[1]
+    ell_se = float(np.sqrt(max(0, best[2][2,2])))
     return {'A_over_D0': float(A / D0) if D0 > 0 else float('nan'), 'ell': float(ell),
+            'ell_ci': [float(max(20,ell-1.96*ell_se)),float(min(1e5,ell+1.96*ell_se))],
+            'ell_ci_method': 'nonlinear fit covariance, conditional on period and dyad histogram',
             'x1': float((x1 - lo) % P + lo), 'D0': float(D0)}
 
 
