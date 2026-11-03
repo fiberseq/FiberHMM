@@ -1576,6 +1576,7 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
             work_items.append((region, input_bam, per_type_beds))
 
         total_reads = 0
+        chimeras_skipped = 0
         total_features = {t: 0 for t in extract_types}
         # {extract_type: [(region_idx, temp_bed_path)]}
         temp_beds_by_type = {t: [] for t in extract_types}
@@ -1595,8 +1596,7 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
                 try:
                     temp_bed_paths, n_reads, n_feats = future.result()
                     total_reads += n_reads
-                    total_features['chimeras_skipped'] = (total_features.get('chimeras_skipped', 0)
-                                                          + n_feats.get('chimeras_skipped', 0))
+                    chimeras_skipped += n_feats.get('chimeras_skipped', 0)
                     for t in extract_types:
                         total_features[t] += n_feats.get(t, 0)
                         tb = temp_bed_paths.get(t)
@@ -1650,7 +1650,8 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
         feat_summary = ', '.join(f"{t}: {total_features[t]:,}" for t in extract_types)
         print(f"Completed in {elapsed:.1f}s: {total_reads:,} reads -> {feat_summary}")
 
-        print(f"  QC-fail strand-swap chimeras skipped: {total_features.get('chimeras_skipped', 0):,}", file=sys.stderr)
+        if chimeras_skipped:
+            print(f"  QC-fail strand-swap chimeras skipped: {chimeras_skipped:,}", file=sys.stderr)
         return total_reads, total_features
 
     finally:
