@@ -107,8 +107,8 @@ class EvidenceReplay:
                 self.warn('invalid portable DAF insertion evidence; no insertion consensus used')
         # Explicit empty scopes are essential: browser datasets can coexist in
         # the same process as a caller or another dataset.
-        key = (read.query_name, int(read.flag) & ~0x400, int(read.reference_id),
-               int(read.reference_start))
+        from fiberhmm.daf.insert_consensus import record_key
+        key = record_key(read)
         with daf_snp_mask_scope(self.snps), \
                 daf_insert_evidence_scope({key: ev} if ev is not None else {}), \
                 daf_unaligned_mask_scope(self.mask_unaligned):

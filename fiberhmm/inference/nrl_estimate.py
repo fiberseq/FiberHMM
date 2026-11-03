@@ -15,7 +15,7 @@ import numpy as np
 import pysam
 
 from fiberhmm.core.model_io import freeze_model_for_inference, load_model, load_model_with_metadata
-from fiberhmm.inference.chimeras import is_marked_chimera
+from fiberhmm.inference.chimeras import clear_chimera_mark, is_marked_chimera, is_precalled_chimera
 from fiberhmm.inference.engine import CHIMERA_SKIP, _extract_fiber_read_from_pysam
 from fiberhmm.inference.fused_stages import run_hmm_apply_stage
 from fiberhmm.inference.nuc_recaller import recall_nucs_in_read
@@ -46,6 +46,7 @@ def estimate_phase_nrl(
     prob_threshold: int = 128,
     edge_trim: int = 10,
     include_unmapped: bool = False,
+    precall_chimeric_names=None,
 ) -> dict:
     """Return ``{'nrl', 'ci', 'n_pairs', 'n_reads', 'source'}``.
 
@@ -57,6 +58,11 @@ def estimate_phase_nrl(
     the run itself calls unmapped reads (uBAM / streamed input), so the
     estimate is drawn from the molecules being called. Hard-clipped records
     whose MM/ML cannot match SEQ are never sampled.
+
+    ``precall_chimeric_names`` is authoritative when supplied, including an
+    empty set for keep mode. Clear old marks before extraction so relaxed
+    thresholds and keep mode sample the same reads as calling. Without a
+    recomputed decision, existing marks still exclude reads.
     """
     from fiberhmm.inference.read_filters import hard_clipped_mm_unreliable
 
@@ -69,6 +75,10 @@ def estimate_phase_nrl(
     bam = pysam.AlignmentFile(input_bam, 'rb', check_sq=False)
     try:
         for read in bam.fetch(until_eof=True):
+            if precall_chimeric_names is not None:
+                clear_chimera_mark(read)
+                if is_precalled_chimera(read, precall_chimeric_names):
+                    continue
             if (
                 (read.is_unmapped and not include_unmapped)
                 or read.is_secondary

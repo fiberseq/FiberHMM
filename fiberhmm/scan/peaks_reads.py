@@ -457,14 +457,18 @@ def _anchors(bam, chrom, start, end, include_duplicates=False, row_rule='view', 
     counts then depends on the view's extent.
     ``records``: every primary and supplementary record that passes the record filters on its own, which
     depends on no extent; grid scans use it so stitched zones do not depend on where units fall."""
-    groups: Dict[str, dict] = {}
-    for read in bam.fetch(chrom, start, end):
+    groups: Dict[object, dict] = {}
+    for record_index, read in enumerate(bam.fetch(chrom, start, end)):
         if read.is_unmapped or read.is_secondary or (hidden is not None and hidden(read)):
             continue
         from fiberhmm.inference.chimeras import is_marked_chimera
         status = ((include_duplicates or not read.is_duplicate)
                   and (include_chimeras or not is_marked_chimera(read)))
-        g = groups.setdefault(read.query_name, dict(primary=False, recs=[]))
+        # Unavailable QNAMEs do not link records, even when a marked primary
+        # and an unrelated clean supplementary share the same placeholder.
+        name = read.query_name
+        key = name if name not in (None, '*', '') else (None, record_index)
+        g = groups.setdefault(key, dict(primary=False, recs=[]))
         g['primary'] |= not read.is_supplementary
         if not status:
             continue

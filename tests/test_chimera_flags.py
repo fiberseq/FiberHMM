@@ -169,7 +169,10 @@ def test_call_bypasses_preparation_and_uses_original_input(tmp_path, monkeypatch
         '--chimeras', 'keep' if enzyme == 'dddb' else 'flag'])
     call._main(call.parse_args())
     assert len(seen) == 1 and seen[0]['input_bam'] == source
-    assert seen[0]['precall_chimeric_names'] is None
+    if enzyme == 'dddb':
+        assert seen[0]['precall_chimeric_names'] == set()  # keep clears old marks
+    else:
+        assert seen[0]['precall_chimeric_names'] is None
 
 
 @pytest.mark.parametrize('old,explicit,expected', [
@@ -189,7 +192,7 @@ def test_pipeline_modes_and_legacy_mapping(tmp_path, old, explicit, expected):
     assert PipelineConfig(reads=['a'], reference='r', enzyme='dddb',
                           outdir=str(tmp_path), chimera_filter=old,
                           chimeras=explicit).resolved_chimeras() == expected
-    assert cfg.calling_settings()['chimeras'] == expected
+    assert 'chimeras' not in cfg.calling_settings()  # FiberBrowser 3.0.1 contract
     assert cfg.calling_settings()['chimera_filter'] == (expected != 'keep')
     p = Pipeline(cfg, ProgressReporter())
     p.aligned_bam = str(tmp_path / 'aligned.bam')
@@ -222,7 +225,9 @@ def test_pipeline_qc_contains_chimeras(tmp_path, monkeypatch):
     monkeypatch.setattr(p, '_save_memo', lambda: None)
     outputs = p.write_outputs()
     assert outputs['qc']['verdicts']['chimeras'] == chim
-    assert json.loads((tmp_path / 'outputs.json').read_text())['settings']['chimeras'] == 'remove'
+    saved = json.loads((tmp_path / 'outputs.json').read_text())
+    assert 'chimeras' not in saved['settings']
+    assert saved['qc']['verdicts']['chimeras']['mode'] == 'remove'
 
 
 def test_downstream_boundaries(tmp_path):
@@ -431,3 +436,49 @@ def test_owned_marks_do_not_change_insert_evidence_identity(tmp_path):
     assert engine.daf_insert_evidence(read) == {'evidence': 'retained'}
     clear_chimera_mark(read)
     assert engine.daf_insert_evidence(read) == {'evidence': 'retained'}
+
+
+def test_scan_unnamed_records_do_not_share_chimera_decisions(tmp_path):
+    from fiberhmm.scan.peaks_reads import _anchors
+    from fiberhmm.scan.reads import iter_records
+    source = fixture_bam(tmp_path / 'source.bam')
+    reads = records(source)[-2:]
+    for read in reads:
+        read.query_name = '*'
+    mark_chimera(reads[0])
+    reads[1].is_supplementary = True
+    with pysam.AlignmentFile(source, 'wb', header=reads[0].header) as out:
+        # Identical unnamed records must also remain independent.
+        for read in reads * 2:
+            out.write(read)
+    pysam.index(str(source))
+    with pysam.AlignmentFile(source, 'rb') as bam:
+        anchors = list(_anchors(bam, 'chr1', 0, 1000))
+        assert len(anchors) == 2
+        assert all(r.is_supplementary and not is_marked_chimera(r) for r in anchors)
+        selected = list(iter_records(bam, 'chr1', 0, 1000, {}))
+        assert len(selected) == 2
+        assert [occ for _read, _sha, occ in selected] == [0, 1]
+
+
+@pytest.mark.parametrize('xc,qcfail,excluded', [
+    ('strand_swap', True, True), ('strand_swap', False, False),
+    ('foreign', True, False), (None, True, False),
+])
+def test_scan_consumers_use_exact_owned_mark(tmp_path, xc, qcfail, excluded):
+    from fiberhmm.scan.peaks_reads import _anchors
+    from fiberhmm.scan.reads import passes
+    source = fixture_bam(tmp_path / 'source.bam')
+    read = records(source)[-1]
+    read.is_qcfail = qcfail
+    if xc is not None:
+        read.set_tag('xc', xc)
+    with pysam.AlignmentFile(source, 'wb', header=read.header) as out:
+        out.write(read)
+    pysam.index(str(source))
+    assert passes(read, {}) == (not excluded)
+    with pysam.AlignmentFile(source, 'rb') as bam:
+        assert len(list(_anchors(bam, 'chr1', 0, 1000))) == int(not excluded)
+    clear_chimera_mark(read)
+    assert read.is_qcfail == qcfail  # without xq:0, the QC failure is preserved
+    assert passes(read, {})

@@ -651,9 +651,8 @@ def daf_insert_evidence(read):
     if not active or not daf_unaligned_mask_enabled():
         return None
     try:
-        ignored_flags = 0x400 | (0x200 if read.has_tag('xc') else 0)
-        key = (read.query_name, int(read.flag) & ~ignored_flags, int(read.reference_id),
-               int(read.reference_start))
+        from fiberhmm.daf.insert_consensus import record_key
+        key = record_key(read)
     except (AttributeError, TypeError, ValueError):
         return None
     return active.get(key)
@@ -1051,7 +1050,7 @@ def _daf_raw_mismatch_lists(read, ref_fasta=None):
 
 
 def _is_iupac_daf_chimera(read, query_sequence: str, excluded_query_positions,
-                          ref_fasta=None) -> bool:
+                          ref_fasta=None, *, min_seg=None, purity=None) -> bool:
     """Strand-swap chimera test for an R/Y-encoded DAF read.
 
     CT events are Y bases plus any raw C->T mismatches; GA events are R bases
@@ -1059,7 +1058,8 @@ def _is_iupac_daf_chimera(read, query_sequence: str, excluded_query_positions,
     positions are removed from both, matching the MD path.
     """
     from fiberhmm.daf.encoder import is_daf_chimera
-    min_seg = _DAF_CHIMERA_CFG['min_seg']
+    min_seg = _DAF_CHIMERA_CFG['min_seg'] if min_seg is None else min_seg
+    purity = _DAF_CHIMERA_CFG['purity'] if purity is None else purity
     seq_arr = np.frombuffer(query_sequence.upper().encode('ascii'), dtype=np.uint8)
     ct = set(np.flatnonzero(seq_arr == ord('Y')).tolist())
     ga = set(np.flatnonzero(seq_arr == ord('R')).tolist())
@@ -1076,7 +1076,7 @@ def _is_iupac_daf_chimera(read, query_sequence: str, excluded_query_positions,
         ga.difference_update(excluded_query_positions)
     return is_daf_chimera(sorted(ct), sorted(ga),
                           min_seg_events=min_seg,
-                          purity=_DAF_CHIMERA_CFG['purity'])
+                          purity=purity)
 
 
 def _with_unknown(fiber_read: dict, unknown_positions, read=None) -> dict:
@@ -1092,16 +1092,20 @@ def _with_unknown(fiber_read: dict, unknown_positions, read=None) -> dict:
 
 
 def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
-                                    ref_fasta=None) -> Optional[dict]:
+                                    ref_fasta=None, *, filter_chimeras=None) -> Optional[dict]:
     """Extract minimal data needed for HMM processing from a pysam read.
 
     Returns a fiber_read dict, None (no usable evidence), or
     :data:`CHIMERA_SKIP` (DAF strand-swap chimera, when the filter is on).
+    Replay readers may disable fresh detection with ``filter_chimeras=False``;
+    exact existing FiberHMM marks are always respected.
     """
     if mode == 'daf':
         from .chimeras import is_marked_chimera
         if is_marked_chimera(read):
             return CHIMERA_SKIP
+    if filter_chimeras is None:
+        filter_chimeras = _DAF_CHIMERA_CFG['filter']
     query_sequence = read.query_sequence
     if not query_sequence:
         return None
@@ -1114,7 +1118,7 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
         strand = daf_iupac_strand(read, query_sequence, st_tag, strand,
                                   excluded_query_positions)
         # Strand-swap chimera filter, same policy as the MD path below.
-        if _DAF_CHIMERA_CFG['filter'] and _is_iupac_daf_chimera(
+        if filter_chimeras and _is_iupac_daf_chimera(
                 read, query_sequence, excluded_query_positions, ref_fasta):
             return CHIMERA_SKIP
         mod_positions.difference_update(excluded_query_positions)
@@ -1156,7 +1160,7 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
             # Strand-swap chimera filter (DAF only): a read deaminated CT in one
             # segment and GA in another corrupts the single-strand assignment.
             # Drop it (returns a distinct sentinel so callers can report counts).
-            if _DAF_CHIMERA_CFG['filter']:
+            if filter_chimeras:
                 from fiberhmm.daf.encoder import is_daf_chimera
                 if is_daf_chimera(ct_pos, ga_pos,
                                   min_seg_events=_DAF_CHIMERA_CFG['min_seg'],

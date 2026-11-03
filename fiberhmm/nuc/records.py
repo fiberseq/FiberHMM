@@ -439,7 +439,7 @@ def decode_record(read, ctx: DecodeContext) -> Tuple[Optional[NucMolecule], str]
     of ``unmapped``, ``secondary``, ``no_sequence``, ``no_calls``,
     ``length_mismatch`` (footprint tags describe a longer molecule than the
     stored SEQ: a hard-clipped record), ``frame_undecided`` or
-    ``no_evidence``.
+    ``no_evidence`` or ``chimera`` (an exact FiberHMM mark).
     """
     from fiberhmm.core.bam_reader import encode_from_query_sequence
     from fiberhmm.inference.engine import CHIMERA_SKIP, _extract_fiber_read_from_pysam
@@ -462,7 +462,9 @@ def decode_record(read, ctx: DecodeContext) -> Tuple[Optional[NucMolecule], str]
         return None, fp
 
     with ctx.evidence.scope(read):
-        fr = _extract_fiber_read_from_pysam(read, ctx.mode, ctx.mark_threshold)
+        # The BAM's caller already decided chimeras (including keep mode).
+        fr = _extract_fiber_read_from_pysam(
+            read, ctx.mode, ctx.mark_threshold, filter_chimeras=False)
     if fr is None or fr is CHIMERA_SKIP:
         return None, 'no_evidence'
     mode = ctx.mode

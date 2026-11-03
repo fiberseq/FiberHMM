@@ -136,7 +136,7 @@ def _process_bam_streaming_pipeline_fused(
                           nuc_model_path if recall_nucs else None)
     configure_daf_snp_mask(daf_snp_mask_path)
     if precall_chimeric_names is not None:
-        from .chimeras import clear_chimera_mark, mark_chimera
+        from .chimeras import clear_chimera_mark, is_precalled_chimera, mark_chimera
     ref_fasta = None
     pysam.set_verbosity(0)
     max_inflight = n_cores + 2
@@ -223,6 +223,7 @@ def _process_bam_streaming_pipeline_fused(
                     chunk_skip_flags.append(True)
                     skipped += 1
                     skip_reasons[reason] += 1
+                    _flush_chunk_if_full()
 
                 def _drain():
                     _drain_oldest_fused_chunk(
@@ -240,11 +241,41 @@ def _process_bam_streaming_pipeline_fused(
                         min_llr, min_opps, unify_threshold,
                     )
 
+                def _flush_chunk_if_full():
+                    nonlocal chunk_payloads, chunk_read_objs, chunk_skip_flags
+                    nonlocal last_progress_reads, last_progress_time
+                    if len(chunk_read_objs) < chunk_size:
+                        return
+                    if len(inflight) >= max_inflight:
+                        _drain()
+                    if chunk_payloads:
+                        future = _submit()
+                    else:
+                        future = Future()
+                        future.set_result([])
+                    inflight.append((future, chunk_read_objs,
+                                     chunk_payloads, chunk_skip_flags))
+                    chunk_payloads = []
+                    chunk_read_objs = []
+                    chunk_skip_flags = []
+
+                    now = time.time()
+                    elapsed = now - start_time
+                    avg = total_reads / elapsed if elapsed > 0 else 0
+                    dt = now - last_progress_time
+                    inst = ((total_reads - last_progress_reads) / dt
+                            if dt > 0 else 0)
+                    last_progress_reads = total_reads
+                    last_progress_time = now
+                    progress(f"  Fused: {total_reads:,} | Skipped: {skipped:,} | "
+                             f"Inflight: {len(inflight)} | {inst:.0f} r/s "
+                             f"(avg {avg:.0f})", file=_log)
+
                 try:
                     for read in inbam.fetch(until_eof=True):
                         if precall_chimeric_names is not None:
                             clear_chimera_mark(read)
-                            if read.query_name in precall_chimeric_names:
+                            if is_precalled_chimera(read, precall_chimeric_names):
                                 if chimera_mode == 'remove':
                                     skipped += 1
                                     skip_reasons['chimera'] += 1
@@ -273,26 +304,7 @@ def _process_bam_streaming_pipeline_fused(
                         if max_reads and total_reads >= max_reads:
                             break
 
-                        if len(chunk_read_objs) >= chunk_size:
-                            if len(inflight) >= max_inflight:
-                                _drain()
-                            inflight.append((_submit(), chunk_read_objs,
-                                             chunk_payloads, chunk_skip_flags))
-                            chunk_payloads = []
-                            chunk_read_objs = []
-                            chunk_skip_flags = []
-
-                            now = time.time()
-                            elapsed = now - start_time
-                            avg = total_reads / elapsed if elapsed > 0 else 0
-                            dt = now - last_progress_time
-                            inst = ((total_reads - last_progress_reads) / dt
-                                    if dt > 0 else 0)
-                            last_progress_reads = total_reads
-                            last_progress_time = now
-                            progress(f"  Fused: {total_reads:,} | Skipped: {skipped:,} | "
-                                     f"Inflight: {len(inflight)} | {inst:.0f} r/s "
-                                     f"(avg {avg:.0f})", file=_log)
+                        _flush_chunk_if_full()
 
                     if chunk_read_objs:
                         if len(inflight) >= max_inflight:
