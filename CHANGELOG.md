@@ -18,6 +18,8 @@
   deduplication, with the full-run count and fraction.
 - `fiberhmm-extract`, consensus/recall and posterior export skip flagged
   chimeras by default, as they skip duplicates.
+- `fiberhmm-check` reports DAF calls made before 3.0.3 with the new `info` advisory
+  `daf-chimeras-unmarked`.
 - Detection is DAF-only. m6A calls (Hia5, PacBio or nanopore) skip the
   chimera pass entirely and their output records are unchanged.
 
