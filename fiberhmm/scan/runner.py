@@ -470,7 +470,8 @@ def run_unit_task(spec: dict) -> dict:
             _publish_marker(folder, key, dict(status=result.status, unit=unit.unit_id, module=name))
             module_status[name] = result.status
             module_seconds[name] = time.monotonic() - module_started
-        return dict(unit=unit.unit_id, index=unit.index, records=survey['records'], status='empty' if empty else 'done',
+        return dict(unit=unit.unit_id, index=unit.index, records=survey['records'],
+                    chimeras_skipped=survey.get('chimeras_skipped', 0), status='empty' if empty else 'done',
                     modules=module_status, module_seconds=module_seconds)
 
 

@@ -193,11 +193,42 @@ Overriding a threshold is recorded as a `custom` policy in the JSON.
 
 ## Strand-swap chimeras
 
-A read deaminated C→T in one segment and G→A in another is a chimera of two
-molecules. For DAF input, `fiberhmm-call` drops such reads from calling
-(they are written through uncalled) and counts them. A segment needs at least
-`--chimera-min-seg` (5) same-flavour deaminations at a purity of at least
-`--chimera-purity` (0.8). `--keep-chimeras` turns the filter off.
+A read deaminated C→T in one segment and G→A in another is a strand-swap
+chimera. This detection is specific to DAF (DddA/DddB); m6A modes do not
+perform strand-swap detection. A segment needs at least `--chimera-min-seg`
+(5) same-flavour deaminations at `--chimera-purity` (0.8) or greater purity,
+using the same reference, SNP and unaligned-base masks as calling.
+
+`fiberhmm-call --chimeras flag` is the default: retain the read uncalled,
+set SAM QC-fail `0x200`, and write the local tag `xc:Z:strand_swap` naming
+the reason. All supplementary and secondary records of that read receive
+the same mark. `--chimeras remove` drops all records of detected reads;
+`--chimeras keep` disables detection and attempts calls. `--keep-chimeras`
+is a deprecated alias for `--chimeras keep`.
+
+Re-running flag/remove clears earlier `xc` marks and recomputes decisions.
+A QC-fail flag without `xc` belongs to another tool and is preserved.
+The QNAME-aware pre-call pass reads regular files without copying them;
+only stdin/non-seekable input is spooled. The caller applies the decisions
+to every record, including a supplementary record preceding its primary.
+m6A and keep mode bypass this pass entirely and leave existing marks alone.
+`fiberhmm-pipeline` also accepts `--chimeras`; its legacy `--chimera-filter`
+and `--no-chimera-filter` map to flag and keep, respectively.
+
+The run summary lists `chimera` with other skip reasons. QC JSON has a
+`chimeras` section (mode, checked read names, chimeric read names, fraction,
+thresholds and sampled evidence). The authoritative full-run counts,
+measured before removal and including PCR copies, are saved in
+`qc/<stem>.chimeras.json`, even with `--no-qc`. Keep this sidecar beside the
+BAM for standalone QC to reproduce remove-mode counts. QC TSV and PDF/PNG
+report chimeras alongside PCR duplication.
+
+Extract, scan, nucleosome decoding, consensus/recall inputs and posterior
+export exclude `0x200` + `xc:Z:strand_swap` records by default. Where a
+consumer already supports including duplicates, the corresponding chimera
+control is available (`--include-chimeras` for footprint-model;
+`read_policy.filters.chimeras=include` or peaks `include_chimeras` for scan).
+Other QC-fail records retain each consumer's existing policy.
 
 ## Adjacent-target thinning
 

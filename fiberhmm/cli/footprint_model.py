@@ -99,6 +99,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include records carrying the BAM duplicate flag (excluded by default)",
     )
 
+    filtering.add_argument('--include-chimeras', action='store_true',
+                           help='Include FiberHMM QC-fail strand-swap chimeras (excluded by default)')
     model = parser.add_argument_group("model parameters")
     model.add_argument(
         "--smoothing-sigma",
@@ -227,6 +229,7 @@ def main(argv=None) -> int:
             regions=args.region,
             min_mapq=args.min_mapq,
             include_duplicates=args.include_duplicates,
+            include_chimeras=args.include_chimeras,
             minimum_projection_fraction=config.minimum_mapped_fraction,
         )
         if loaded.diagnostics.emitted_molecules == 0 and not args.region:
@@ -265,6 +268,7 @@ def main(argv=None) -> int:
                     "primary_only": True,
                     "exclude_qcfail": True,
                     "exclude_duplicates": not args.include_duplicates,
+                    "exclude_chimeras": not args.include_chimeras,
                     "min_mapq": args.min_mapq,
                     "missing_ma": "exclude_as_not_analyzed",
                     "minimum_projection_fraction": config.minimum_mapped_fraction,

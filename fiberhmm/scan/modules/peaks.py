@@ -33,7 +33,7 @@ from ..types import FeatureTypeDecl, Hit, ScoreDecl, StitchResult, UnitResult, V
 
 TIER_LABELS = ('Strong', 'Medium', 'Weak', 'Rare')
 READ_OPTIONS = dict(hide_terminal_gaps=True, terminal_gap_threshold=500, short_terminal_footprint_bp=90,
-                    include_duplicates=False)
+                    include_duplicates=False, include_chimeras=False)
 
 
 class PeaksModule(ScanModuleBase):
@@ -151,6 +151,7 @@ class PeaksModule(ScanModuleBase):
                                         terminal_gap_threshold=settings['terminal_gap_threshold'],
                                         short_terminal_footprint_bp=settings['short_terminal_footprint_bp'],
                                         include_duplicates=settings['include_duplicates'],
+                                        include_chimeras=settings['include_chimeras'],
                                         row_rule=(calibration or {}).get('row_rule', 'view'))
                     n_reads += len(rows)
                     a, b = compute_scan_counts(rows, settings['signal_source'], hi - lo)

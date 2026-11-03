@@ -113,7 +113,7 @@ def run_pair(in_bam, out_bam, params: PairParams, prob_threshold=0,
     # disambiguates the rare case of a name shared across strands.
     resolved = {}
     status_of = {}  # (name, flavor) -> status char
-    n_reads = n_feat = n_paired = n_dup = 0
+    n_reads = n_feat = n_paired = n_dup = n_chimera = 0
     per_chrom_paired = Counter()
     per_method = Counter()
     seen_feature_names = {}
@@ -139,6 +139,10 @@ def run_pair(in_bam, out_bam, params: PairParams, prob_threshold=0,
                   "fallback", file=sys.stderr)
         for read in chain((first,), it):
             n_reads += 1
+            from fiberhmm.inference.chimeras import is_marked_chimera
+            if is_marked_chimera(read):
+                n_chimera += 1
+                continue
             if read.is_duplicate and not (
                 read.is_unmapped or read.is_secondary or read.is_supplementary
             ):
@@ -190,6 +194,8 @@ def run_pair(in_bam, out_bam, params: PairParams, prob_threshold=0,
         fasta.close()
 
     n_pairs = n_paired // 2
+    if n_chimera:
+        print(f"  QC-fail strand-swap chimeras excluded from pairing: {n_chimera:,}", file=sys.stderr)
     if n_dup:
         print(f"  {n_dup:,} marked PCR duplicates (0x400) excluded from pairing "
               "and passed through", file=sys.stderr)

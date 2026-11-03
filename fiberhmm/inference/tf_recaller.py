@@ -902,6 +902,9 @@ def extract_modification_calls(read, mode: str, context_size: int = 3,
     Uses the manual MM/ML parser instead of pysam.modified_bases (the
     latter segfaults on some long Hia5 reads; SIGSEGV is uncatchable).
     """
+    from fiberhmm.inference.chimeras import is_marked_chimera
+    if is_marked_chimera(read):
+        return None
     seq = read.query_sequence
     if seq is None or len(seq) < 2 * context_size + 1:
         return None

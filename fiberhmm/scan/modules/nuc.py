@@ -708,6 +708,9 @@ class _RecordProbe:
             if chrom not in bam.references:
                 continue
             for r in bam.fetch(chrom, start, end):
+                from fiberhmm.inference.chimeras import is_marked_chimera
+                if is_marked_chimera(r):
+                    continue
                 if r.is_unmapped or r.is_secondary or r.is_supplementary:
                     continue
                 if (self.read_filter is None or self.read_filter(r)) and has_annotations(r):

@@ -120,6 +120,7 @@ class ReadFilterConfig:
     # calls would come from MM/ML (and therefore need the hard-clip guard).
     mode: Optional[str] = None
     has_reference: bool = False
+    honor_chimera_marks: bool = True
 
 
 def _local_mm_applicable(read) -> bool:
@@ -181,6 +182,11 @@ def hard_clipped_mm_unreliable(read, mode: Optional[str] = None,
 
 def streaming_skip_reason(read, config: ReadFilterConfig) -> Optional[str]:
     """Return the skip reason for a streaming read, or None if processable."""
+    if config.honor_chimera_marks:
+        from .chimeras import is_marked_chimera
+        if is_marked_chimera(read):
+            return "chimera"
+
     if read.is_unmapped:
         if not config.process_unmapped or read.query_sequence is None:
             return "unmapped"

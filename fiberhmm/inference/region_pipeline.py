@@ -462,6 +462,8 @@ def _process_bam_region_parallel_fused(
     keep_work_dir: bool = False,
     run_identity: Optional[dict] = None,
     progress=None,
+    precall_chimeric_names=None,
+    chimera_mode: str = 'flag',
 ):
     """Region-parallel fused apply+recall.
 
@@ -515,6 +517,8 @@ def _process_bam_region_parallel_fused(
         'split_min_opps': split_min_opps,
         'nuc_recall_policy': nuc_recall_policy,
         'filter_chimeras': filter_chimeras,
+        'precall_chimeric_names': precall_chimeric_names,
+        'chimera_mode': chimera_mode,
         'chimera_min_seg': chimera_min_seg,
         'chimera_purity': chimera_purity,
         'phase_nrl': phase_nrl,

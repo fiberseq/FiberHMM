@@ -54,6 +54,7 @@ import sys
 from collections import deque, namedtuple
 
 import pysam
+from fiberhmm.inference.chimeras import is_marked_chimera
 
 from fiberhmm.cli.common import (
     add_force_seq_arg,
@@ -417,6 +418,7 @@ def _make_payload(read, mode=None, input_molecular_frame=True) -> dict:
     tags.update(_annotation_footprints_as_legacy_tags(read, read_frame))
 
     payload = {
+        '_chimera': is_marked_chimera(read),
         'name': getattr(read, 'query_name', None),
         'seq': read.query_sequence,
         'is_reverse': read.is_reverse,
@@ -469,6 +471,8 @@ def _process_payload_record(payload) -> tuple:
         payload.get('_daf_unaligned_query_positions'),
         payload.get('_daf_insert_mods'),
     )
+    if payload.get('_chimera'):
+        return None, {key: 0 for key in _STATS_KEYS}
     nuc_cfg = _WORKER.get('nuc_cfg')
     if nuc_cfg is not None and nuc_cfg.recall_nucs:
         return _process_nuc_payload_record(read, payload, nuc_cfg)
@@ -760,9 +764,15 @@ def _single_thread_loop(bam_in, bam_out, _header_text,
                  nuc_m5c_llr_hit, nuc_m5c_llr_miss,
                  prob_threshold)
     n_reads = n_v2 = n_tf = n_demoted = n_failed = 0
+    n_chimeras = 0
     for read in bam_in:
         if max_reads and n_reads >= max_reads:
             break
+        from fiberhmm.inference.chimeras import is_marked_chimera
+        if is_marked_chimera(read):
+            from fiberhmm.inference.read_filters import strip_stale_call_tags
+            n_chimeras += 1
+            strip_stale_call_tags(read)
         _refuse_harmonized_read(read)
         try:
             result, stats = _process_payload_record(_make_payload(read, mode, input_molecular_frame))
@@ -782,6 +792,7 @@ def _single_thread_loop(bam_in, bam_out, _header_text,
         n_tf += stats['tf']
         n_demoted += stats['demoted']
         n_failed += stats['failed']
+    print(f"[recall] QC-fail strand-swap chimeras skipped: {n_chimeras:,}", file=sys.stderr)
     return n_reads, n_v2, n_tf, n_demoted, n_failed
 
 
@@ -813,6 +824,7 @@ def _parallel_loop(bam_in, bam_out, _header_text,
 
     n_reads = n_v2 = n_tf = n_demoted = 0
     n_failed = 0
+    n_chimeras = 0
 
     def _drain_one():
         nonlocal n_reads, n_v2, n_tf, n_demoted, n_failed
@@ -851,6 +863,11 @@ def _parallel_loop(bam_in, bam_out, _header_text,
         for read in bam_in:
             if max_reads and n >= max_reads:
                 break
+            from fiberhmm.inference.chimeras import is_marked_chimera
+            if is_marked_chimera(read):
+                from fiberhmm.inference.read_filters import strip_stale_call_tags
+                n_chimeras += 1
+                strip_stale_call_tags(read)
             _refuse_harmonized_read(read)
             buf_reads.append(read)
             buf_payloads.append(_make_payload(read, mode, input_molecular_frame))
@@ -874,6 +891,7 @@ def _parallel_loop(bam_in, bam_out, _header_text,
         while pending:
             _drain_one()
 
+    print(f"[recall] QC-fail strand-swap chimeras skipped: {n_chimeras:,}", file=sys.stderr)
     return n_reads, n_v2, n_tf, n_demoted, n_failed
 
 

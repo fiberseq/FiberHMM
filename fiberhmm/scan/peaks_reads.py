@@ -23,7 +23,7 @@ SHORT_TERMINAL_FOOTPRINT_MAX_END_GAP_BP = 30
 TERMINAL_GAP_THRESHOLD = 500
 
 BROWSER_DEFAULTS = dict(hide_terminal_gaps=True, terminal_gap_threshold=TERMINAL_GAP_THRESHOLD,
-                        short_terminal_footprint_bp=SHORT_TERMINAL_FOOTPRINT_BP, include_duplicates=False,
+                        short_terminal_footprint_bp=SHORT_TERMINAL_FOOTPRINT_BP, include_duplicates=False, include_chimeras=False,
                         min_fp_quality=0, spanning_only=False)
 
 
@@ -449,7 +449,7 @@ def split_at_deletions(intervals, cuts):
 
 
 # ------------------------------------------------------------------ the loader path
-def _anchors(bam, chrom, start, end, include_duplicates=False, row_rule='view', hidden=None):
+def _anchors(bam, chrom, start, end, include_duplicates=False, row_rule='view', hidden=None, include_chimeras=False):
     """Rows of the region.
 
     ``view`` (FiberBrowser ``sv_molecules.molecule_alignments``): one row per primary record of each molecule
@@ -461,7 +461,9 @@ def _anchors(bam, chrom, start, end, include_duplicates=False, row_rule='view', 
     for read in bam.fetch(chrom, start, end):
         if read.is_unmapped or read.is_secondary or (hidden is not None and hidden(read)):
             continue
-        status = include_duplicates or not read.is_duplicate
+        from fiberhmm.inference.chimeras import is_marked_chimera
+        status = ((include_duplicates or not read.is_duplicate)
+                  and (include_chimeras or not is_marked_chimera(read)))
         g = groups.setdefault(read.query_name, dict(primary=False, recs=[]))
         g['primary'] |= not read.is_supplementary
         if not status:
@@ -770,7 +772,7 @@ def _cut_abs(intervals, read):
 
 def compact_rows(bam, chrom, region_start, region_end, *, legacy_frame_value=None, group_frame=None,
                  hide_terminal_gaps=True, terminal_gap_threshold=TERMINAL_GAP_THRESHOLD,
-                 short_terminal_footprint_bp=SHORT_TERMINAL_FOOTPRINT_BP, include_duplicates=False,
+                 short_terminal_footprint_bp=SHORT_TERMINAL_FOOTPRINT_BP, include_duplicates=False, include_chimeras=False,
                  min_fp_quality=0, molecular_layers=frozenset(), row_rule='view'):
     """Rows ``{'id', 'intervals': [[s, e, size], ...]}`` (region-relative) for the records overlapping the
     region, as FiberBrowser's loader builds them for its accessibility and TF-density peak scans (no layers).
@@ -787,7 +789,7 @@ def compact_rows(bam, chrom, region_start, region_end, *, legacy_frame_value=Non
                 terminal_gap_threshold=terminal_gap_threshold, short_terminal_footprint_bp=short_terminal_footprint_bp,
                 min_fp_quality=min_fp_quality, molecular_layers=molecular_layers)
     rows = []
-    for read in _anchors(bam, chrom, region_start, region_end, include_duplicates, row_rule, hidden):
+    for read in _anchors(bam, chrom, region_start, region_end, include_duplicates, row_rule, hidden, include_chimeras):
         if row_rule == 'records':
             tiles = _record_tiles(read, read.reference_start, read.reference_end, **opts)
             if tiles:

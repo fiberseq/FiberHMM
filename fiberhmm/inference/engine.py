@@ -618,7 +618,8 @@ def daf_insert_evidence(read):
     if not _DAF_INSERT_EVIDENCE or not daf_unaligned_mask_enabled():
         return None
     try:
-        key = (read.query_name, int(read.flag) & ~0x400, int(read.reference_id),
+        ignored_flags = 0x400 | (0x200 if read.has_tag('xc') else 0)
+        key = (read.query_name, int(read.flag) & ~ignored_flags, int(read.reference_id),
                int(read.reference_start))
     except (AttributeError, TypeError, ValueError):
         return None
@@ -1064,6 +1065,10 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
     Returns a fiber_read dict, None (no usable evidence), or
     :data:`CHIMERA_SKIP` (DAF strand-swap chimera, when the filter is on).
     """
+    if mode == 'daf':
+        from .chimeras import is_marked_chimera
+        if is_marked_chimera(read):
+            return CHIMERA_SKIP
     query_sequence = read.query_sequence
     if not query_sequence:
         return None

@@ -33,12 +33,15 @@ A `fiberhmm-call` output adds its three `@CO` lines in this order:
 `fiberhmm-call`'s `DS` field states the frame and every resolved setting:
 
 ```text
-FiberHMM fused apply+recall; coord=molecular (ns/nl/as/al/MA in molecular original-fiber coordinates); mode=daf enzyme=ddda prob_threshold=128 primary_only=off alignments=primary-supplementary tf_decoder=multi_interval_v1 tf_interval_penalty=5.0 recall_nucs=True nuc_recall_policy=conservative nuc_profile=ddda_phase_posterior_v1 nuc_sha256=c86b05dc... phase_nrl=0 ddda_derived_tf_edge_gap=12 chimera_filter=on dedup=j0.95/mark/ends50 daf_snp_mask=on/3sites daf_unaligned_mask=on daf_insert_consensus=on/0of0/min20 daf_run_mask=>=2/keep-one cpg_mask=unmethylated-only hmm_cpg_mask=on
+FiberHMM fused apply+recall; coord=molecular (ns/nl/as/al/MA in molecular original-fiber coordinates); mode=daf enzyme=ddda prob_threshold=128 primary_only=off alignments=primary-supplementary tf_decoder=multi_interval_v1 tf_interval_penalty=5.0 recall_nucs=True nuc_recall_policy=conservative nuc_profile=ddda_phase_posterior_v1 nuc_sha256=c86b05dc... phase_nrl=0 ddda_derived_tf_edge_gap=12 chimera_filter=on chimeras=flag chimera_min_seg=5 chimera_purity=0.8 dedup=j0.95/mark/ends50 daf_snp_mask=on/3sites daf_unaligned_mask=on daf_insert_consensus=on/0of0/min20 daf_run_mask=>=2/keep-one cpg_mask=unmethylated-only hmm_cpg_mask=on
 ```
 
 `primary_only=on` only with `--alignments primary`. DAF runs record
 `daf_unaligned_mask=on|off` and
 `daf_insert_consensus=off|on/<used>of<clusters>/min<N>` (`n/a` outside DAF).
+`chimeras=flag|remove|keep` records the selected mode once. The legacy
+`chimera_filter` key stays `on` for flag/remove and `off` for keep. These
+settings only enable detection in DAF mode.
 
 The recallers record the recall subset. Recall reads the input's `@PG` to
 warn when a SNP mask or reference used at calling time cannot be re-applied.

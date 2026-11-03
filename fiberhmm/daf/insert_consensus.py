@@ -533,7 +533,9 @@ def _read_strand(read, ref_fasta=None, snp_mask=None,
 
 
 def record_key(read) -> tuple:
-    return (read.query_name, int(read.flag) & ~0x400, int(read.reference_id),
+    # Recomputing our QC flag must not change an insertion's identity.
+    ignored_flags = 0x400 | (0x200 if read.has_tag('xc') else 0)
+    return (read.query_name, int(read.flag) & ~ignored_flags, int(read.reference_id),
             int(read.reference_start))
 
 

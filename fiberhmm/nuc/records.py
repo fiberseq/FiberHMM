@@ -442,6 +442,9 @@ def decode_record(read, ctx: DecodeContext) -> Tuple[Optional[NucMolecule], str]
     from fiberhmm.core.bam_reader import encode_from_query_sequence
     from fiberhmm.inference.engine import CHIMERA_SKIP, _extract_fiber_read_from_pysam
 
+    from fiberhmm.inference.chimeras import is_marked_chimera
+    if is_marked_chimera(read):
+        return None, 'chimera'
     if read.is_secondary:
         return None, 'secondary'
     seq = read.query_sequence
