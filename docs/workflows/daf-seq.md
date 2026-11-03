@@ -196,8 +196,12 @@ Overriding a threshold is recorded as a `custom` policy in the JSON.
 A read deaminated C→T in one segment and G→A in another is a strand-swap
 chimera. This detection is specific to DAF (DddA/DddB); m6A modes do not
 perform strand-swap detection. A segment needs at least `--chimera-min-seg`
-(5) same-flavour deaminations at `--chimera-purity` (0.8) or greater purity,
-using the same reference, SNP and unaligned-base masks as calling.
+(default 10) same-flavour deaminations at `--chimera-purity` (default 0.9)
+or greater purity, using the same reference, SNP and unaligned-base masks as
+calling. These defaults are strict, so that a flagged read is unambiguous;
+FiberHMM 3.0.3 used 5 and 0.8, and `--chimera-min-seg 5 --chimera-purity 0.8`
+restores that behaviour. One decision drives flag, remove and split, the
+count and the grade.
 
 `fiberhmm-call --chimeras flag` is the default: retain the read uncalled,
 set SAM QC-fail `0x200`, and write the local tag `xc:Z:strand_swap` naming
@@ -238,19 +242,19 @@ the DAF policy from the BAM header and the fraction of marked sampled reads.
 
 ### How many reads are chimeric
 
-Each run counts chimeras twice in the same pass: with the default detector
-above (the upper estimate) and with a strict one (`min_seg` 10, purity 0.9;
-the conservative floor). Flag, remove and split act on the default decision
-only. The strict fraction is graded: PASS below 5%, WARN from 5%, and WARN
-with severity `high` from 15%. At 5% or more `fiberhmm-call` and
+Each run counts the reads the detector calls (`n_chimeric`, `fraction`).
+The fraction is graded: PASS below 10%, WARN from 10%, and WARN with
+severity `high` from 20%. At 10% or more `fiberhmm-call` and
 `fiberhmm-pipeline` print a `WARNING:` line on stderr (in the pipeline log
-too). The counts, grade and a per-region table (reads grouped by the 10-kb
+too). The count, grade and a per-region table (reads grouped by the 10-kb
 start bin of their primary record; adjacent occupied bins form a region)
-are in `qc/<stem>.chimeras.json` and the QC report.
+are in `qc/<stem>.chimeras.json` and the QC report. A count made with other
+detector settings, such as a FiberHMM 3.0.3 sidecar or BAM (5 and 0.8), is
+graded as recorded, and the grade names its basis (`lenient`, with a note).
 
 Two-strand chimeras are the only kind this test can see. A chimera of two
 molecules deaminated on the same strand looks like an ordinary read, so the
-true chimera rate is higher than either count. Read counts and occupancy
+true chimera rate is higher than the count. Read counts and occupancy
 from a library with many chimeras should be taken with caution. Every
 chimera report carries this note.
 
@@ -258,7 +262,7 @@ chimera report carries this note.
 
 `--chimeras split` is an option for recovering data from chimeric reads; it
 is not the default. For each alignment record that is itself chimeric, the
-best split of the default detector gives a breakpoint gap: from the last
+detector's best split gives a breakpoint gap: from the last
 event of the first segment's strand to the first event of the second
 segment's strand. Where the switch happened inside the gap is unknown, so
 the gap is dropped and the record is written as two single-strand records:
@@ -272,10 +276,16 @@ the gap is dropped and the record is written as two single-strand records:
   piece.
 - Tags: `xc:Z:split`, `xi:i` (piece index), `xn:Z` (original read name) and
   `xb:B:i` (the gap as `[start, end)`, 0-based on the record's reference).
-  Only `RG`, `ds`, `di`, `qs`, `du`, `ch`, `rn` and `fn` are copied.
-  `MM`/`ML` and every other position-dependent tag (`SA`, the DAF strand tag
-  `st`, earlier FiberHMM calls) are dropped; for DddA this includes MM-based
-  CpG evidence.
+  `RG`, `ds`, `di`, `qs`, `du`, `ch`, `rn` and `fn` are copied.
+  `MM`/`ML` (and the older `Mm`/`Ml`) are kept, re-indexed to the piece: the
+  calls inside the piece stay, skip counts are recomputed over the piece in
+  the read's original orientation (reverse-complemented for reverse-strand
+  records, for `+` and `-` entries alike), ML values follow their calls, and
+  each entry keeps its codes and `.`/`?` flag. `MN` is set to the piece's
+  length. A piece of a hard-clipped record, or of one whose `MM`/`ML` do not
+  parse or do not match SEQ, gets no `MM`/`ML` (counted as
+  `n_pieces_modifications_dropped`). Every other position-dependent tag
+  (`SA`, the DAF strand tag `st`, earlier FiberHMM calls) is dropped.
 - Pieces keep the record's flags and are not QC-fail. Pieces shorter than
   `--min-read-length` (aligned bases) are dropped and counted; a record with
   no piece left is kept whole and flagged.

@@ -237,8 +237,8 @@ automatically; each has its own section in [DAF-seq](daf-seq.md):
 3. calling, with the [strand-swap chimera filter](daf-seq.md#strand-swap-chimeras)
    (`--chimeras flag` marks `0x200` + `xc:Z:strand_swap` and retains uncalled;
    `remove` drops all records of the read; `keep` disables detection;
-   deprecated `--keep-chimeras` means `keep`; `--chimera-min-seg` 5 and
-   `--chimera-purity` 0.8 tune it) and
+   deprecated `--keep-chimeras` means `keep`; `--chimera-min-seg` 10 and
+   `--chimera-purity` 0.9 tune it; 5 and 0.8 before 3.0.4) and
    [adjacent-target thinning](daf-seq.md#adjacent-target-thinning)
    (`--daf-mask-runs`, default 2 with `--daf-run-policy keep-one` for DddA,
    off for DddB).

@@ -122,23 +122,24 @@ with `plot: not written (install matplotlib)`.
   context. Marked chimeras are excluded from rate and footprint panels. TSV columns
   and the PDF/PNG chimera row report the same counts.
   Detection is DAF-specific; m6A runs report mode `n/a`.
-- **DAF chimera row** (3.0.4). The `chimeras` section also has the strict
-  count (`n_chimeric_strict`, `fraction_strict`; `min_seg` 10, purity 0.9),
-  a `grade` of the strict fraction (`status` PASS below 5%, WARN from 5%,
-  with `severity` `moderate` or, from 15%, `high`; INSUFFICIENT below 100
-  checked reads), a `regions` table (per-region default and strict
-  fractions; also written to `<prefix>.qc.chimera_regions.tsv`), `split`
-  statistics for split mode and a fixed `note`: same-strand chimeras cannot
-  be detected, so the true rate is higher, and read counts and occupancy
-  from a library with many chimeras should be taken with caution. The text
-  summary prints a chimera block and the PDF/PNG a coloured status box under
-  the duplication panel; TSV columns `chimeras_n_chimeric_strict`,
-  `chimeras_fraction_strict`, `chimeras_status` and `chimeras_severity`
-  follow the existing columns. The grade comes from the call's full-run
-  counts when available; standalone QC of a flag-mode BAM without the
-  sidecar re-tests the sampled flagged reads with the strict detector
-  (after QC's SNP mask). Remove and split BAMs without their sidecar are not
-  graded.
+- **DAF chimera row** (3.0.4). The `chimeras` section also has a `grade` of
+  the chimera fraction (`status` PASS below 10%, WARN from 10%, with
+  `severity` `moderate` or, from 20%, `high`; INSUFFICIENT below 100
+  checked reads), a `regions` table (per-region counts and fractions; also
+  written to `<prefix>.qc.chimera_regions.tsv`), `split` statistics for
+  split mode and a fixed `note`: same-strand chimeras cannot be detected, so
+  the true rate is higher, and read counts and occupancy from a library with
+  many chimeras should be taken with caution. The text summary prints a
+  chimera block and the PDF/PNG a coloured status box under the duplication
+  panel; TSV columns `chimeras_status`, `chimeras_severity` and
+  `chimeras_basis` follow the existing columns. The grade comes from the
+  call's full-run count when available; standalone QC of a flag-mode BAM
+  without the sidecar grades the flagged fraction of its sample. Remove and
+  split BAMs without their sidecar are not graded. The grade records the
+  detector that made the count (`min_seg`, `purity`) and its `basis`:
+  `default` for the 3.0.4 detector, `lenient` for a looser one such as a
+  FiberHMM 3.0.3 sidecar or BAM (5 and 0.8), which is graded on its recorded
+  count with a `basis_note` saying the default detector marks fewer reads.
   A chimera WARN turns an overall PASS into WARN (`overall.warned_by:
   ["chimeras"]`); it never fails a sample and is not part of the score,
   since flagged chimeras are excluded from calls and the remaining reads

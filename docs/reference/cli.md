@@ -129,10 +129,10 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--split-min-llr` | `4.0` | Min accessible-run LLR to split a nucleosome; for DddA, the molecule-local linker-residue configuration LLR (default 4.0). |
 | `--split-min-opps` | `3` | Min informative positions in a nucleosome-splitting cut or DddA linker residue (default 3). |
 | `--ddda-derived-tf-max-edge-gap` | `12` | DddA phase-aware radial recall only: TF calls exposed solely by nucleosome refinement must have a deamination hit within BP on both sides (default 12). Original HMM-accessible TF scan space is unchanged. Use -1 to disable the safeguard. |
-| `--chimeras` | `flag` | DAF strand-swap chimeras: flag (default) retains reads uncalled with SAM 0x200 and xc:Z:strand_swap; remove drops all records of the read; keep disables detection and clears earlier FiberHMM chimera marks and attempts calls; split cuts each chimeric alignment at its breakpoint gap into two single-strand pieces (&lt;name&gt;/c0, &lt;name&gt;/c1; the gap is dropped, pieces shorter than --min-read-length are dropped, MM/ML are removed) that are called separately. No strand-swap detection for m6A modes. Choices: `flag`, `remove`, `keep`, `split`. |
+| `--chimeras` | `flag` | DAF strand-swap chimeras: flag (default) retains reads uncalled with SAM 0x200 and xc:Z:strand_swap; remove drops all records of the read; keep disables detection and clears earlier FiberHMM chimera marks and attempts calls; split cuts each chimeric alignment at its breakpoint gap into two single-strand pieces (&lt;name&gt;/c0, &lt;name&gt;/c1; the gap is dropped, pieces shorter than --min-read-length are dropped, MM/ML are re-indexed to each piece) that are called separately. No strand-swap detection for m6A modes. Choices: `flag`, `remove`, `keep`, `split`. |
 | `--keep-chimeras` | off | Deprecated alias for --chimeras keep (DAF only). |
-| `--chimera-min-seg` | `5` | DAF chimera: min same-strand deamination events per segment to call a swap (default 5). |
-| `--chimera-purity` | `0.8` | DAF chimera: min same-strand purity per segment (default 0.8). |
+| `--chimera-min-seg` | `10` | DAF chimera: min same-strand deamination events per segment to call a swap (default 10; 5 before 3.0.4). |
+| `--chimera-purity` | `0.9` | DAF chimera: min same-strand purity per segment (default 0.9; 0.8 before 3.0.4). |
 | `--daf-mask-runs` | — | DAF only: thin targets lying in same-strand runs of &gt;= N original C (CT) or G (GA) bases (CC/GG and longer at N=2; see --daf-run-policy). Adjacent conversions are coupled and do not follow the per-site emission model. Default: 2 with keep-one for --enzyme ddda (duplex-validated), off otherwise; 0 disables. |
 | `--daf-run-policy` | `keep-one` | With --daf-mask-runs: keep the 5'-most target of each run (keep-one, default) or remove the whole run (drop). Choices: `keep-one`, `drop`. |
 | `--daf-mask-unaligned` / `--no-daf-mask-unaligned` | on | DAF only: treat query bases with no reference counterpart (CIGAR insertions and soft clips) as no evidence, like SNP-masked sites, and leave unaligned stretches of &gt;= 50 bp uncalled (default on). Deaminations are read-versus-reference mismatches, so these bases can never carry one; --no-daf-mask-unaligned restores the pre-3.0 encoding, which counts them as protected. |
@@ -762,8 +762,8 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--edge-trim` / `-e` | `10` | Bases to trim from read edges (default: 10) |
 | `--prob-threshold` | — | Min ML probability (0-255) for an MM/ML modification call. Default: chemistry preset, as in fiberhmm-call -- 248 for Hia5 Nanopore (--seq nanopore, given or detected), 128 otherwise. |
 | `--keep-chimeras` | off | Do not drop DAF strand-swap chimeric reads |
-| `--chimera-min-seg` | `5` | DAF chimera: min same-strand deamination events per segment (default: 5) |
-| `--chimera-purity` | `0.8` | DAF chimera: min same-strand purity per segment (default: 0.8) |
+| `--chimera-min-seg` | `10` | DAF chimera: min same-strand deamination events per segment (default: 10) |
+| `--chimera-purity` | `0.9` | DAF chimera: min same-strand purity per segment (default: 0.9) |
 | `--daf-snp-mask` | — | 0-based BED of reference positions whose conversions are ignored (e.g. the mask fiberhmm-call used) |
 | `--daf-mask-runs` | — | Thin DAF targets in same-strand runs of &gt;= N original C (CT) or G (GA) bases (N=2: CC/GG and longer). Default: 2 with keep-one for DddA (duplex-validated), off otherwise; 0 disables. |
 | `--daf-run-policy` | `keep-one` | With --daf-mask-runs: keep each run's 5'-most target (default) or drop the run. Choices: `keep-one`, `drop`. |
