@@ -17,7 +17,7 @@ window projected into its molecular coordinates:
 - the nucleosome state at the anchor (``1`` covered by a nucleosome call,
   ``0`` not, ``.`` anchor not on the molecule).
 
-Molecules below the calibration's low-information floor are counted
+Molecules with insufficient mark density for spacing evidence are counted
 (``excluded_low_information``) and left out. Aggregates per observation: class mix (``insufficient`` when more than
 ``window_insufficient_frac`` of the footprints are can't-tell or
 edge-truncated), NRL quantiles, regular fraction, and phasing (both frames,
@@ -202,7 +202,7 @@ def window_metrics(molecules: Sequence[NucMolecule], window: Tuple[str, int, int
             if res is None and cal is not None:
                 res = molecule_outputs(m, params, cal)
             if res is not None and res.flags.get('low_information'):
-                excluded += 1                      # below the D8 floor: counted, not used
+                excluded += 1                      # insufficient marks: counted, not used
                 continue
             rows.append(molecule_window_row(m, res, env[0], env[1], params, cal, anchor, orientation))
             members.append(m)

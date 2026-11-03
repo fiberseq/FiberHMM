@@ -228,7 +228,7 @@ def test_thinning_calibrated_scans_are_byte_identical_across_runs_and_cores(scan
     assert cal['datasets']['synth']['source'] == 'thin'
 
 
-def test_molecules_below_the_floor_are_not_measured(tmp_path):
+def test_size_resolution_floor_does_not_veto_scan_measurement(tmp_path):
     from nuc_synth import array_molecule, flat_calibration as _flat, planted_record_molecule
     from fiberhmm.scan.modules.nuc import NucModule
     from fiberhmm.scan.reads import resolve_read_policy
@@ -245,7 +245,7 @@ def test_molecules_below_the_floor_are_not_measured(tmp_path):
                         plan=(unit,))
     mod = NucModule()
     settings = mod.resolve({})
-    for floor, expect_measured in ((0.9, False), (None, True)):
+    for floor, expect_measured in ((0.9, True), (None, True)):
         cal = {'datasets': {'d': _flat(lambda_floor=floor).to_dict()}}
         res = NucModule().run_unit(unit, inputs, settings, cal, {}, tmp_path, None)
         assert (res.tracks['measured:all'].sum() > 0) == expect_measured

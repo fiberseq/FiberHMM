@@ -28,7 +28,7 @@ Wraps :mod:`fiberhmm.nuc` (NUC design; feature-hub CONTRACTS 11):
   molecules' phases) and recurrence windows (``enrich_window_bp`` every
   ``enrich_step_bp``; the exact shift-within-read null of
   :mod:`fiberhmm.nuc.enrichment` per kind, pooled over every measured
-  molecule). Molecules below the calibration's low-information floor, too
+  molecule). Molecules with too few marks for spacing evidence, too
   short to segment, or with nothing to segment are not measured. Nothing
   depends on the tiling.
 - ``stitch``: recurrence patches per kind (regular, disordered, undersized,
@@ -74,7 +74,7 @@ def _p(default, typ, help_):
 
 class NucModule(ScanModuleBase):
     name = 'nuc'
-    version = '2.2'
+    version = '2.3'
     experimental = True
     reconcile = 'stitch'
     max_support_bp = 12_500

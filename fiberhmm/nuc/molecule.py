@@ -12,9 +12,10 @@ Segments partition the measurable stretches into regular (decoder OR the
 model-free rule), disordered, undetermined and low-information; disruption
 events (undersized runs, missing nucleosomes; :mod:`fiberhmm.nuc.disrupted`)
 overlay them.
-A molecule whose lambda_acc is below the calibration's low-information floor
-(D8) is flagged, gets one low-information segment and is left out of window
-and patch aggregates (counted there as excluded).
+A molecule with fewer than the mark-ACF criterion's 0.015 marks per bp is
+flagged, gets one low-information segment and is left out of window and
+patch aggregates (counted there as excluded). The size-resolution floor
+(D8) does not determine this molecule-wide spacing eligibility.
 """
 from __future__ import annotations
 
@@ -120,6 +121,7 @@ class MoleculeResult:
     calibration_digest: str = ''
     record: tuple = field(default_factory=tuple)
     events: List[Event] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
 
     def scalar_vector(self) -> List[float]:
         return [self.scalars.get(k, float('nan')) for k in SCALARS]
@@ -173,7 +175,8 @@ def molecule_outputs(mol: NucMolecule, params: NucParams = DEFAULT_PARAMS,
     k, n = accessible_counts(mol, params)
     lam_acc = float(cal.prior.shrink(k, n))
     scal['lambda_acc'] = lam_acc
-    flags['low_information'] = bool(cal.below_floor(lam_acc))
+    from fiberhmm.nuc.markacf import spacing_low_information
+    flags['low_information'] = spacing_low_information(mol)
     segs: List[Segment] = []
     events: List[Event] = []
     if fp is not None:
@@ -194,8 +197,8 @@ def molecule_outputs(mol: NucMolecule, params: NucParams = DEFAULT_PARAMS,
         scal['n_multi'] = float(((c == MULTI2) | (c == MULTI3)).sum())
         scal['n_cant_tell'] = float((c == CANT_TELL).sum())
         if segments and flags['low_information'] and not flags['too_short_segments']:
-            # below the calibration's floor (D8): excluded from segmentation;
-            # one low-information segment over its calls
+            # Sparse marks cannot supply spacing evidence. Size-class
+            # resolvability (the calibration's floor) does not veto a molecule.
             nuc_sel = ~fp['is_tf']
             if nuc_sel.any():
                 segs = [lowinfo_segment(int(fp['start'][nuc_sel].min()), int(fp['end'][nuc_sel].max()))]
@@ -227,7 +230,8 @@ def molecule_outputs(mol: NucMolecule, params: NucParams = DEFAULT_PARAMS,
                         max(0, min(b, s.end) - max(a, s.start)) for a, b in und for s in segs) / cov)
                 scal['n_missing'] = float(sum(1 for e in events if e.kind == 17))
     return MoleculeResult(mol.name, mol.length, fp, segs, scal, flags, calls_digest(mol),
-                          cal.digest(), mol.record_key(), sorted(events, key=lambda e: (e.start, e.end, e.kind)))
+                          cal.digest(), mol.record_key(), sorted(events, key=lambda e: (e.start, e.end, e.kind)),
+                          list(mol.meta.get('evidence_warnings', [])))
 
 
 def _union_iv(iv):

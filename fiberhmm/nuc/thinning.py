@@ -2,7 +2,7 @@
 
 **Thinning is a degradation model** (D2). It gives the edge noise
 sigma_loc(lambda), the structural outcome rates and the overshoot shift as
-mark density falls, the supported lambda range and the low-information floor.
+mark density falls, the supported lambda range and the size-resolution floor.
 It never gives true lengths or class offsets: the dense reference is itself
 biased. Named classes need an absolute control (:func:`calibrate_absolute`).
 
@@ -32,8 +32,10 @@ biased. Named classes need an absolute control (:func:`calibrate_absolute`).
 5. **Restrict**: only lambda covered by both natural and thinning data
    (2.5-97.5 percentiles; the thinning series ends at the dense references)
    is supported; outside it footprints are can't-tell.
-6. **Floor (D8)**: the lambda_acc below which held-out thinned molecules have
-   a coarse can't-tell rate above 50%.
+6. **Size-resolution floor (D8)**: the lambda_acc below which held-out
+   thinned molecules have a coarse can't-tell rate above 50%. Extend a
+   censored-above curve to the unthinned held-out references when available;
+   report censoring explicitly. This is not a spacing eligibility gate.
 """
 from __future__ import annotations
 
@@ -215,6 +217,39 @@ def _curve_mismatch(a, b, lam_grid) -> List[float]:
     return [float(x) for x in (a.mu_at(lam_grid) - b.mu_at(lam_grid))]
 
 
+def information_floor(curve):
+    """(floor, status) of the size-resolution crossing; censored bounds are
+    not estimates. A high-density endpoint above 50% leaves it unknown."""
+    xs = np.asarray(curve['log_lambda'], float)
+    ys = np.asarray(curve['cant_tell'], float)
+    if not len(xs):
+        return None, 'unknown'
+    above = ys > 0.5
+    if not above.any():
+        return None, 'censored_below'
+    if above[-1]:
+        return None, 'censored_above'
+    k = int(np.max(np.flatnonzero(above)))
+    x0, x1, y0, y1 = xs[k], xs[k + 1], ys[k], ys[k + 1]
+    return float(np.exp(x0 + (0.5 - y0) * (x1 - x0) / (y1 - y0))), 'observed'
+
+
+def _floor_curve(rows, min_rows=30):
+    curve = {'log_lambda': [], 'cant_tell': [], 'n': []}
+    if len(rows) < min_rows:
+        return curve
+    la = np.array([r[0] for r in rows])
+    ct = np.array([r[1] for r in rows])
+    edges = _bin_edges(la, 8)
+    for a, b in zip(edges[:-1], edges[1:]):
+        s = (np.log(la) >= a) & (np.log(la) < b)
+        if s.sum() >= 5:
+            curve['log_lambda'].append(float(np.median(np.log(la[s]))))
+            curve['cant_tell'].append(float(np.mean(ct[s])))
+            curve['n'].append(int(s.sum()))
+    return curve
+
+
 # ---------------------------------------------------------------------------
 # calibrate_thin
 # ---------------------------------------------------------------------------
@@ -272,7 +307,8 @@ def load_population(bam_paths, params: NucParams = DEFAULT_PARAMS, n_population:
                     stats[why] = stats.get(why, 0) + 1
                 if m is None:
                     continue
-                fr = fiber_read_from_record(r, settings) if fiber_reads else {}
+                fr = fiber_read_from_record(r, settings, ctx.evidence) if fiber_reads else {}
+                m.meta['evidence_warnings'] = list(ctx.evidence.warnings)
                 if fr is None:
                     continue
                 mols.append(m)
@@ -427,7 +463,7 @@ def calibrate_thin(bam_path, params: NucParams = DEFAULT_PARAMS, *, label: str =
             out_val['holdout_minus_natural_bp'] = _curve_mismatch(curves['hold'], curve_nat, grid)
         out_val['stored_minus_recalled_natural_bp'] = _curve_mismatch(cal.curve, curve_nat, grid)
     cal.validation = out_val
-    # --- low-information floor (D8) on held-out thinned molecules ---------------
+    # --- size-resolution floor (D8) on held-out thinned molecules ---------------
     from fiberhmm.nuc.molecule import footprint_calls
     ct_rows = []
     for key, tm in recalled.items():
@@ -441,29 +477,33 @@ def calibrate_thin(bam_path, params: NucParams = DEFAULT_PARAMS, *, label: str =
         if len(c) == 0:
             continue
         ct_rows.append((fp['lambda_acc'], float((c == CANT_TELL).mean()), len(c)))
-    floor = None
-    floor_curve = {'log_lambda': [], 'cant_tell': [], 'n': []}
-    if len(ct_rows) >= 30:
-        la = np.array([r[0] for r in ct_rows])
-        ct = np.array([r[1] for r in ct_rows])
-        e2 = _bin_edges(la, 8)
-        for a, b in zip(e2[:-1], e2[1:]):
-            s = (np.log(la) >= a) & (np.log(la) < b)
-            if s.sum() >= 5:
-                floor_curve['log_lambda'].append(float(np.median(np.log(la[s]))))
-                floor_curve['cant_tell'].append(float(np.mean(ct[s])))
-                floor_curve['n'].append(int(s.sum()))
-        xs, ys = np.array(floor_curve['log_lambda']), np.array(floor_curve['cant_tell'])
-        above = ys > 0.5
-        if above.any() and not above.all():
-            # highest-lambda crossing from >0.5 (sparse) to <=0.5 (dense)
-            k = int(np.max(np.flatnonzero(above)))
-            if k + 1 < len(xs):
-                x0, x1, y0, y1 = xs[k], xs[k + 1], ys[k], ys[k + 1]
-                floor = float(np.exp(x0 + (0.5 - y0) * (x1 - x0) / (y1 - y0)))
-        elif above.all():
-            floor = float(np.exp(xs.max()))
-    cal.lambda_floor = floor
+    floor_curve = _floor_curve(ct_rows)
+    floor, status = information_floor(floor_curve)
+    if status == 'censored_above':
+        # Extend the held-out retention grid to its dense endpoint, keep=1.
+        # These references were already recalled above (no new caller or
+        # training leakage). Keep the original knots intact; add denser bins.
+        dense_rows = []
+        top = np.exp(floor_curve['log_lambda'][-1])
+        for i in sorted(hold):
+            tm = recalled.get(('nat', i, 0, 0))
+            if tm is None:
+                continue
+            fp = footprint_calls(tm, params, cal)
+            if fp is None or fp['lambda_acc'] <= top:
+                continue
+            c = fp['coarse'][~fp['is_tf'] & ~fp['truncated']]
+            if len(c):
+                dense_rows.append((fp['lambda_acc'], float((c == CANT_TELL).mean()), len(c)))
+        extension = _floor_curve(dense_rows, min_rows=5)
+        for key in floor_curve:
+            floor_curve[key].extend(extension[key])
+        cal.validation['floor_dense_extension'] = {
+            'keep': 1.0, 'n_molecules': len(dense_rows), 'n_bins': len(extension['n'])}
+        floor, status = information_floor(floor_curve)
+    cal.lambda_floor, cal.lambda_floor_status = floor, status
+    cal.notes.append(f'size-resolution floor: {status}' +
+                     (f' (lambda_acc={floor:.6g})' if floor is not None else ' (unknown finite threshold)'))
     cal.validation['cant_tell_by_lambda_acc'] = floor_curve
     # --- composition with the final calibration ------------------------------------
     from fiberhmm.nuc.segment import fit_composition, fit_gap_model

@@ -277,6 +277,8 @@ class DecodeContext(FrameContext):
                              'declaration or FiberHMM call record); pass NucParams(mode=...)')
         self.mark_threshold = resolve_prob_threshold(
             params.mark_threshold, chem['enzyme'], chem['platform'])
+        from fiberhmm.daf.replay import EvidenceReplay
+        self.evidence = EvidenceReplay(header, self.mode)
         # DAF: the call's same-strand run mask and DddA CpG policy, so marks and
         # informative sites are the ones the caller saw
         self.daf_runs, self.daf_policy, self.cpg_policy = 0, 'keep-one', None
@@ -459,7 +461,8 @@ def decode_record(read, ctx: DecodeContext) -> Tuple[Optional[NucMolecule], str]
     if isinstance(fp, str):
         return None, fp
 
-    fr = _extract_fiber_read_from_pysam(read, ctx.mode, ctx.mark_threshold)
+    with ctx.evidence.scope(read):
+        fr = _extract_fiber_read_from_pysam(read, ctx.mode, ctx.mark_threshold)
     if fr is None or fr is CHIMERA_SKIP:
         return None, 'no_evidence'
     mode = ctx.mode
@@ -510,6 +513,7 @@ def decode_record(read, ctx: DecodeContext) -> Tuple[Optional[NucMolecule], str]
         ref_end=-1 if read.is_unmapped else int(read.reference_end or -1),
         flag=int(read.flag), hp=hp, blocks=_aligned_blocks(read),
         source=fp['source'],
+        meta={'evidence_warnings': list(ctx.evidence.warnings)},
     )
     return mol, 'ok'
 

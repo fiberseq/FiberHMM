@@ -11,7 +11,7 @@ depends on nothing else:
   dyad-gap model (regular jitter, irregular spread, missing-dyad weights);
 - segmentation composition frequencies;
 - thinning: sigma_loc knots, outcome rates, overshoot, supported lambda range,
-  held-out validation and the low-information floor (D8);
+  held-out validation and the size-resolution floor and censoring status (D8);
 - absolute controls: class locations T_k and b(lambda); naked-DNA nulls;
 - disruption backgrounds: the undersized-footprint rate and the in-core mark
   rate per lambda_i bin (NUC 13.1).
@@ -35,7 +35,7 @@ from fiberhmm.nuc.records import NucMolecule
 from fiberhmm.nuc.sizes import AbsoluteClasses, ReferenceCurve, fit_reference_curve
 from fiberhmm.nuc.spacing import dataset_period, eligible_dyads, mono_range
 
-SCHEMA = 'fiberhmm.nuc.calibration.v1'
+SCHEMA = 'fiberhmm.nuc.calibration.v2'
 
 
 def molecule_hash(name: str) -> str:
@@ -71,6 +71,8 @@ class NucCalibration:
     outcomes: Dict[str, List] = field(default_factory=dict)
     supported: Optional[List[float]] = None                           # [lambda_lo, lambda_hi]
     lambda_floor: Optional[float] = None
+    #: Size-resolution threshold, independent of spacing eligibility.
+    lambda_floor_status: str = 'unknown'
     validation: Dict = field(default_factory=dict)
     absolute: Optional[AbsoluteClasses] = None
     naked: Dict = field(default_factory=dict)
@@ -134,6 +136,7 @@ class NucCalibration:
             'overshoot': _clean(self.overshoot), 'outcomes': _clean(self.outcomes),
             'supported': None if self.supported is None else [float(x) for x in self.supported],
             'lambda_floor': None if self.lambda_floor is None else float(self.lambda_floor),
+            'lambda_floor_status': self.lambda_floor_status,
             'validation': _clean(self.validation),
             'absolute': self.absolute.to_dict() if self.absolute else None,
             'naked': _clean(self.naked), 'disruption': _clean(self.disruption),
@@ -142,7 +145,7 @@ class NucCalibration:
 
     @classmethod
     def from_dict(cls, d: dict) -> "NucCalibration":
-        if d.get('schema') != SCHEMA:
+        if d.get('schema') not in (SCHEMA, 'fiberhmm.nuc.calibration.v1'):
             raise ValueError(f"not a nuc calibration record: schema {d.get('schema')!r}")
         return cls(
             source=d['source'], label=d.get('label', ''), chemistry=d.get('chemistry', {}),
@@ -156,6 +159,7 @@ class NucCalibration:
             composition=d.get('composition', {}), sigma_loc=d.get('sigma_loc', {}),
             overshoot=d.get('overshoot', {}), outcomes=d.get('outcomes', {}),
             supported=d.get('supported'), lambda_floor=d.get('lambda_floor'),
+            lambda_floor_status=d.get('lambda_floor_status', 'unknown'),
             validation=d.get('validation', {}),
             absolute=AbsoluteClasses.from_dict(d['absolute']) if d.get('absolute') else None,
             naked=d.get('naked', {}), disruption=d.get('disruption', {}) or {},
@@ -250,6 +254,7 @@ def calibrate_self(molecules: Sequence[NucMolecule], params: NucParams = DEFAULT
     cal = NucCalibration(source='self', label=label, chemistry=dict(chemistry or {}),
                          fiberhmm_version=_version(), params_digest=params.digest(),
                          population=sorted(molecule_hash(m.name) for m in pop))
+    cal.notes.extend(sorted({note for m in pop for note in m.meta.get('evidence_warnings', [])}))
     ks, ns = zip(*[accessible_counts(m, params) for m in pop]) if pop else ((), ())
     cal.prior = fit_beta_prior(ks, ns)
     p0 = dataset_period([_nrl(m, None, params) for m in pop])

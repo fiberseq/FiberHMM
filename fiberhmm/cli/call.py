@@ -1538,6 +1538,13 @@ def _main(args):
                    + " " + basecaller_ds_tokens(basecaller)),
         }
 
+        if mode == 'daf':
+            from fiberhmm.daf.replay import evidence_token
+            from fiberhmm.daf.snps import load_snp_mask
+            pg_record['DS'] += ' ' + evidence_token(
+                load_snp_mask(snp_mask_path) if snp_mask_path else {},
+                mask_unaligned=args.daf_mask_unaligned)
+
         mode_label = 'region-parallel' if args.region_parallel else 'streaming'
         print(
             "\n=========================================================================\n"
