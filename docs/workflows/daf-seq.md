@@ -207,16 +207,23 @@ the same mark. `--chimeras remove` drops all records of detected reads;
 is a deprecated alias for `--chimeras keep`.
 
 Re-running flag/remove clears earlier `xc:Z:strand_swap` marks and recomputes
-decisions using the run's alignment selection. The companion `xq:i` tag
+decisions using the run's alignment selection. Only the current run's decision
+controls NRL estimation, insertion evidence and calling. Keep mode (including
+`--keep-chimeras`) clears earlier FiberHMM marks and calls those reads as ordinary
+reads, so downstream extract, consensus and posterior export can use them.
+The companion `xq:i` tag
 records whether QC-fail was already set (1) or FiberHMM set it (0). Cleanup
 clears 0x200 only with `xq:i:0`; pre-existing QC failures, older marks without
 ownership metadata, and foreign `xc` values preserve the QC-fail flag.
 The QNAME-aware pre-call pass reads regular files without copying them;
 only stdin/non-seekable input is spooled. The caller applies the decisions
 to every record, including a supplementary record preceding its primary.
-m6A and keep mode bypass this pass entirely and leave existing marks alone.
+m6A and keep mode bypass this pass entirely. Keep mode clears marks while
+reading records for NRL estimation and calling; m6A leaves them alone.
 `fiberhmm-pipeline` also accepts `--chimeras`; its legacy `--chimera-filter`
-and `--no-chimera-filter` map to flag and keep, respectively.
+and `--no-chimera-filter` map to flag and keep, respectively. Pipeline settings
+carry the exact effective mode in `call_args` so FiberBrowser re-calls preserve
+remove mode as well as flag and keep.
 
 The run summary lists `chimera` with other skip reasons. QC JSON has a
 `chimeras` section (mode, checked read names, chimeric read names, fraction,
@@ -225,6 +232,8 @@ measured before removal and including PCR copies, are saved in
 `qc/<stem>.chimeras.json`, even with `--no-qc`. Keep this sidecar beside the
 BAM for standalone QC to reproduce remove-mode counts. QC TSV and PDF/PNG
 report chimeras alongside PCR duplication.
+Without the sidecar, standalone QC with the default auto assay mode reports
+the DAF policy from the BAM header and the fraction of marked sampled reads.
 
 Extract, consensus/recall inputs and posterior export exclude `0x200` +
 `xc:Z:strand_swap` records by default. `fiberhmm-footprint-model` takes

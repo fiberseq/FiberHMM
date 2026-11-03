@@ -230,7 +230,8 @@ def parse_args():
                    help='DAF strand-swap chimeras: flag (default) retains reads '
                         'uncalled with SAM 0x200 and xc:Z:strand_swap; remove drops '
                         'all records of the read; keep disables detection and '
-                        'attempts calls. No strand-swap detection for m6A modes.')
+                        'clears earlier FiberHMM chimera marks and attempts calls. '
+                        'No strand-swap detection for m6A modes.')
     p.add_argument('--keep-chimeras', action='store_true',
                    help='Deprecated alias for --chimeras keep (DAF only).')
     p.add_argument('--chimera-min-seg', type=int, default=5,
@@ -1413,6 +1414,8 @@ def _main(args):
 
         # Only DAF flag/remove need a QNAME decision pass. In particular m6A
         # and keep retain the original working path without copying/scanning.
+        # Keep still supplies an authoritative empty decision to consumers,
+        # which clear old marks as they read each record.
         if mode == 'daf' and args.chimeras != 'keep':
             from fiberhmm.inference.chimeras import prepare_chimeras, seekable_input
             spool = None
@@ -1440,6 +1443,7 @@ def _main(args):
                   f"{chimera_stats['n_records_affected']:,} records)", file=sys.stderr)
         elif mode == 'daf':
             from fiberhmm.inference.chimeras import empty_chimera_stats
+            chimeric_names = set()
             chimera_stats = empty_chimera_stats('keep', args.chimera_min_seg,
                                                args.chimera_purity)
 

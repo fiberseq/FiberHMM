@@ -2861,7 +2861,7 @@ def run_qc(
                 continue
             settings = dict(item.split('=', 1) for item in pg.get('DS', '').split() if '=' in item)
             chimeras['mode'] = (settings.get('chimeras', chimeras['mode'])
-                                if mode == 'daf' else 'n/a')
+                                if resolved_mode == 'daf' else 'n/a')
             for field, key, cast in [('min_seg', 'chimera_min_seg', int),
                                      ('purity', 'chimera_purity', float)]:
                 if key in settings:

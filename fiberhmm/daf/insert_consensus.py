@@ -533,8 +533,9 @@ def _read_strand(read, ref_fasta=None, snp_mask=None,
 
 
 def record_key(read) -> tuple:
-    # Recomputing our QC flag must not change an insertion's identity.
-    ignored_flags = 0x400 | (0x200 if read.has_tag('xc') else 0)
+    # QC/duplicate status is not alignment identity. In particular, cleanup
+    # removes xc while preserving another tool's QC failure (xq:i:1).
+    ignored_flags = 0x400 | 0x200
     return (read.query_name, int(read.flag) & ~ignored_flags, int(read.reference_id),
             int(read.reference_start))
 

@@ -169,7 +169,10 @@ def test_call_bypasses_preparation_and_uses_original_input(tmp_path, monkeypatch
         '--chimeras', 'keep' if enzyme == 'dddb' else 'flag'])
     call._main(call.parse_args())
     assert len(seen) == 1 and seen[0]['input_bam'] == source
-    assert seen[0]['precall_chimeric_names'] is None
+    if enzyme == 'dddb':
+        assert seen[0]['precall_chimeric_names'] == set()  # keep clears old marks
+    else:
+        assert seen[0]['precall_chimeric_names'] is None
 
 
 @pytest.mark.parametrize('old,explicit,expected', [

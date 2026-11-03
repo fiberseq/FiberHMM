@@ -618,9 +618,8 @@ def daf_insert_evidence(read):
     if not _DAF_INSERT_EVIDENCE or not daf_unaligned_mask_enabled():
         return None
     try:
-        ignored_flags = 0x400 | (0x200 if read.has_tag('xc') else 0)
-        key = (read.query_name, int(read.flag) & ~ignored_flags, int(read.reference_id),
-               int(read.reference_start))
+        from fiberhmm.daf.insert_consensus import record_key
+        key = record_key(read)
     except (AttributeError, TypeError, ValueError):
         return None
     return _DAF_INSERT_EVIDENCE.get(key)

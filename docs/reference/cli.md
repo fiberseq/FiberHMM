@@ -129,7 +129,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--split-min-llr` | `4.0` | Min accessible-run LLR to split a nucleosome; for DddA, the molecule-local linker-residue configuration LLR (default 4.0). |
 | `--split-min-opps` | `3` | Min informative positions in a nucleosome-splitting cut or DddA linker residue (default 3). |
 | `--ddda-derived-tf-max-edge-gap` | `12` | DddA phase-aware radial recall only: TF calls exposed solely by nucleosome refinement must have a deamination hit within BP on both sides (default 12). Original HMM-accessible TF scan space is unchanged. Use -1 to disable the safeguard. |
-| `--chimeras` | `flag` | DAF strand-swap chimeras: flag (default) retains reads uncalled with SAM 0x200 and xc:Z:strand_swap; remove drops all records of the read; keep disables detection and attempts calls. No strand-swap detection for m6A modes. Choices: `flag`, `remove`, `keep`. |
+| `--chimeras` | `flag` | DAF strand-swap chimeras: flag (default) retains reads uncalled with SAM 0x200 and xc:Z:strand_swap; remove drops all records of the read; keep disables detection and clears earlier FiberHMM chimera marks and attempts calls. No strand-swap detection for m6A modes. Choices: `flag`, `remove`, `keep`. |
 | `--keep-chimeras` | off | Deprecated alias for --chimeras keep (DAF only). |
 | `--chimera-min-seg` | `5` | DAF chimera: min same-strand deamination events per segment to call a swap (default 5). |
 | `--chimera-purity` | `0.8` | DAF chimera: min same-strand purity per segment (default 0.8). |

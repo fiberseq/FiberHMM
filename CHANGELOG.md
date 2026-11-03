@@ -14,9 +14,12 @@
   `--chimeras keep` turns detection off (`--keep-chimeras` is kept as an
   alias). Re-running a call clears and recomputes FiberHMM's own marks and
   leaves QC failures set by other tools alone. `fiberhmm-pipeline` takes the
-  same `--chimeras` option.
+  same `--chimeras` option. Keep mode also clears earlier FiberHMM marks;
+  NRL estimation, insertion evidence and calling all use the current decision.
+  Pipeline settings preserve the exact mode for FiberBrowser re-calls.
 - The QC report (JSON, TSV, PDF/PNG) has a chimera section next to
-  deduplication, with the full-run count and fraction.
+  deduplication, with the full-run count and fraction. Standalone auto-mode QC
+  without a sidecar reports the header policy and sampled chimera fraction.
 - `fiberhmm-extract`, consensus/recall and posterior export skip flagged
   chimeras by default, as they skip duplicates.
 - `fiberhmm-check` reports DAF calls made before 3.0.3 with the new `info` advisory
