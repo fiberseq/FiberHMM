@@ -2687,7 +2687,6 @@ def run_qc(
     snp_mask_path: Optional[str] = None,
     snp_preflight_summary: Optional[dict] = None,
     dedup_run_summary: Optional[dict] = None,
-    chimera_run_summary: Optional[dict] = None,
     stream: Optional[TextIO] = sys.stderr,
     return_arrays: bool = False,
     state_source: str = "auto",
@@ -2696,6 +2695,7 @@ def run_qc(
     light_call_seconds: float = DEFAULT_LIGHT_CALL_SECONDS,
     use_m5c: Optional[bool] = None,
     cpg_mask_policy: Optional[str] = None,
+    chimera_run_summary: Optional[dict] = None,
 ) -> dict:
     """Run bounded QC, write machine-readable output/plot, and print a scorecard.
 

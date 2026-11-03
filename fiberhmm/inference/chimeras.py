@@ -12,22 +12,36 @@ import pysam
 
 CHIMERA_TAG = 'xc'
 CHIMERA_REASON = 'strand_swap'
+CHIMERA_QC_TAG = 'xq'  # original QC-fail state before our mark (0 or 1)
+
+
+def _has_chimera_tag(read):
+    return read.has_tag(CHIMERA_TAG) and read.get_tag(CHIMERA_TAG) == CHIMERA_REASON
 
 
 def is_marked_chimera(read):
     return (bool(getattr(read, 'is_qcfail', False))
-            and read.has_tag(CHIMERA_TAG)
-            and read.get_tag(CHIMERA_TAG) == CHIMERA_REASON)
+            and _has_chimera_tag(read))
 
 
 def clear_chimera_mark(read):
-    """Only our tag grants ownership of the QC-fail flag."""
-    if read.has_tag(CHIMERA_TAG):
+    """Restore QC-fail only when our exact mark records flag ownership.
+
+    Older marks without ownership metadata cannot prove who set 0x200;
+    conservatively preserve the flag in that case.
+    """
+    if _has_chimera_tag(read):
+        if read.has_tag(CHIMERA_QC_TAG):
+            if read.get_tag(CHIMERA_QC_TAG) == 0:
+                read.is_qcfail = False
+            read.set_tag(CHIMERA_QC_TAG, None)
         read.set_tag(CHIMERA_TAG, None)
-        read.is_qcfail = False
 
 
 def mark_chimera(read):
+    # Repeated marking must not turn our own QC failure into a prior one.
+    if not _has_chimera_tag(read):
+        read.set_tag(CHIMERA_QC_TAG, int(read.is_qcfail), value_type='i')
     read.is_qcfail = True
     read.set_tag(CHIMERA_TAG, CHIMERA_REASON, value_type='Z')
 
@@ -49,7 +63,10 @@ def _is_chimeric(read, ref):
         return engine._is_iupac_daf_chimera(
             read, seq, engine._stub_or_live_excluded(read), ref)
     result = get_daf_positions(
-        read, ref_fasta=ref,
+        # Both arrays are populated regardless of the chosen strand. Force
+        # collection past the dominant-strand tie check; the spatial test
+        # below evaluates both CT->GA and GA->CT swaps.
+        read, force_strand='CT', ref_fasta=ref,
         excluded_reference_positions=engine._daf_reference_mask(read))
     return result is not None and is_daf_chimera(
         result[0], result[1], min_seg_events=engine._DAF_CHIMERA_CFG['min_seg'],
@@ -67,7 +84,8 @@ def prepare_chimeras(input_bam, output_bam=None, *, mode='flag', daf=True,
                      min_seg=5, purity=0.8, prob_threshold=128,
                      reference=None, snp_mask=None, min_mapq=0,
                      min_read_length=0, process_unmapped=False,
-                     io_threads=1, chimeric_names=None, spool_bam=None):
+                     io_threads=1, chimeric_names=None, spool_bam=None,
+                     alignments='primary-supplementary'):
     """Decide QNAMEs in a read-only pass; spool only non-seekable inputs.
 
     The CLI passes a mutable ``chimeric_names`` set and applies marks/removal
@@ -85,7 +103,7 @@ def prepare_chimeras(input_bam, output_bam=None, *, mode='flag', daf=True,
     engine.configure_daf_chimera_filter(daf and mode != 'keep', min_seg, purity)
     engine.configure_daf_snp_mask(snp_mask)
     config = ReadFilterConfig(min_mapq=min_mapq, min_read_length=min_read_length,
-                              primary_only='primary-supplementary',
+                              primary_only=alignments,
                               process_unmapped=process_unmapped, mode='daf',
                               has_reference=reference is not None)
     checked, chimeric = set(), set()
@@ -110,7 +128,7 @@ def prepare_chimeras(input_bam, output_bam=None, *, mode='flag', daf=True,
                    if spool_bam else None)
             for read in bam.fetch(until_eof=True):
                 counts[read.query_name] += 1
-                stale += int(read.has_tag(CHIMERA_TAG))
+                stale += int(_has_chimera_tag(read))
                 clear_chimera_mark(read)
                 if daf and mode != 'keep' and streaming_skip_reason(read, config) is None:
                     checked.add(read.query_name)

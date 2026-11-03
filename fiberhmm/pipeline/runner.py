@@ -111,7 +111,6 @@ class PipelineConfig:
     snp_screen: str = "auto"  # auto | on | off
     snp_mask: Optional[str] = None  # user BED of SNP sites to mask
     chimera_filter: bool = True
-    chimeras: Optional[str] = None  # flag | remove | keep; None uses legacy bool
     daf_mask_unaligned: bool = True  # DAF: insertion/soft-clip bases are no evidence
     # Records kept by the aligner step and called: see read_filters.ALIGNMENT_SETS.
     alignments: str = "primary-supplementary"
@@ -140,6 +139,7 @@ class PipelineConfig:
     dorado_args: list[str] = field(default_factory=list)
     verbose: bool = False
     quiet: bool = False
+    chimeras: Optional[str] = None  # flag | remove | keep; None uses legacy bool
 
     def resolved_seq(self) -> Optional[str]:
         """The platform the run states: ``--seq``, or what the reads record.
@@ -200,7 +200,8 @@ class PipelineConfig:
             "snp_screen": self.snp_screen if daf else "off",
             "snp_mask": os.path.abspath(self.snp_mask) if self.snp_mask else None,
             "chimera_filter": self.effective_chimeras() != 'keep' if daf else None,
-            "chimeras": self.effective_chimeras() if daf else None,
+            # FiberBrowser 3.0.1 rejects unknown settings keys. The exact
+            # mode remains in call memo parameters, @PG and QC/run JSON.
             # As fiberhmm-call resolves them: --call-args come last on its
             # command line, so their last occurrence wins.
             "daf_unaligned_mask": unaligned_mask if daf else None,

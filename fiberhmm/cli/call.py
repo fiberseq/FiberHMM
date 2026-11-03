@@ -498,7 +498,8 @@ def _resolve_derived_tf_edge_gap(args, recall_nucs: bool):
 
 
 def _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
-                       recall_nucs, input_bam, include_unmapped=False) -> int:
+                       recall_nucs, input_bam, include_unmapped=False,
+                       precall_chimeric_names=None) -> int:
     """Resolve --phase-nrl (off / auto / fixed bp) to an int (0 = off).
 
     ``input_bam`` is the BAM to sample for auto-estimation -- the deduped
@@ -531,6 +532,7 @@ def _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
         nuc_min_size=args.nuc_min_size, msp_min_size=args.msp_min_size,
         prob_threshold=args.prob_threshold, edge_trim=args.edge_trim,
         include_unmapped=include_unmapped,
+        precall_chimeric_names=precall_chimeric_names,
     )
     ci = res['ci']
     ci_str = f" CI[{ci[0]:.0f}-{ci[1]:.0f}]" if ci else ""
@@ -1429,7 +1431,7 @@ def _main(args):
                 snp_mask=snp_mask_path, min_mapq=args.min_mapq,
                 min_read_length=args.min_read_length, process_unmapped=process_unmapped,
                 io_threads=args.io_threads, chimeric_names=chimeric_names,
-                spool_bam=spool)
+                spool_bam=spool, alignments=args.alignments)
             if spool is not None:
                 working_input = spool
             print(f"  DAF strand-swap chimeras: {chimera_stats['n_chimeric']:,} / "
@@ -1456,7 +1458,8 @@ def _main(args):
         # Resolve the Pass-2 phase prior: off / auto-estimate / fixed bp.
         phase_nrl = _resolve_phase_nrl(
             args, apply_model_path, nuc_model_path or recall_model_path, mode, k,
-            recall_nucs, working_input, include_unmapped=process_unmapped)
+            recall_nucs, working_input, include_unmapped=process_unmapped,
+            precall_chimeric_names=chimeric_names)
 
         # DddA uses phase-aware radial nucleosome inference; other enzymes use the
         # accessible-cut Kadane split (no profile).

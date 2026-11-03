@@ -46,6 +46,7 @@ def estimate_phase_nrl(
     prob_threshold: int = 128,
     edge_trim: int = 10,
     include_unmapped: bool = False,
+    precall_chimeric_names=None,
 ) -> dict:
     """Return ``{'nrl', 'ci', 'n_pairs', 'n_reads', 'source'}``.
 
@@ -57,6 +58,9 @@ def estimate_phase_nrl(
     the run itself calls unmapped reads (uBAM / streamed input), so the
     estimate is drawn from the molecules being called. Hard-clipped records
     whose MM/ML cannot match SEQ are never sampled.
+
+    ``precall_chimeric_names`` excludes molecule-wide decisions when the
+    input is still unmarked and the caller has disabled repeated detection.
     """
     from fiberhmm.inference.read_filters import hard_clipped_mm_unreliable
 
@@ -74,6 +78,8 @@ def estimate_phase_nrl(
                 or read.is_secondary
                 or read.is_supplementary
                 or is_marked_chimera(read)
+                or (precall_chimeric_names is not None
+                    and read.query_name in precall_chimeric_names)
                 or read.is_duplicate
                 or hard_clipped_mm_unreliable(read, mode)
             ):

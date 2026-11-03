@@ -50,7 +50,6 @@ class BamFootprintDiagnostics:
     skipped_secondary: int
     skipped_supplementary: int
     skipped_qcfail: int
-    skipped_chimera: int
     skipped_duplicate: int
     skipped_low_mapq: int
     skipped_missing_ma: int
@@ -67,6 +66,7 @@ class BamFootprintDiagnostics:
     projected_msp_annotations: int
     incomplete_msp_annotations: int
     unprojectable_msp_annotations: int
+    skipped_chimera: int = 0
 
     def as_dict(self) -> Mapping[str, int]:
         return asdict(self)

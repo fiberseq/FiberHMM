@@ -189,7 +189,7 @@ def test_pipeline_modes_and_legacy_mapping(tmp_path, old, explicit, expected):
     assert PipelineConfig(reads=['a'], reference='r', enzyme='dddb',
                           outdir=str(tmp_path), chimera_filter=old,
                           chimeras=explicit).resolved_chimeras() == expected
-    assert cfg.calling_settings()['chimeras'] == expected
+    assert 'chimeras' not in cfg.calling_settings()  # FiberBrowser 3.0.1 contract
     assert cfg.calling_settings()['chimera_filter'] == (expected != 'keep')
     p = Pipeline(cfg, ProgressReporter())
     p.aligned_bam = str(tmp_path / 'aligned.bam')
@@ -222,7 +222,9 @@ def test_pipeline_qc_contains_chimeras(tmp_path, monkeypatch):
     monkeypatch.setattr(p, '_save_memo', lambda: None)
     outputs = p.write_outputs()
     assert outputs['qc']['verdicts']['chimeras'] == chim
-    assert json.loads((tmp_path / 'outputs.json').read_text())['settings']['chimeras'] == 'remove'
+    saved = json.loads((tmp_path / 'outputs.json').read_text())
+    assert 'chimeras' not in saved['settings']
+    assert saved['qc']['verdicts']['chimeras']['mode'] == 'remove'
 
 
 def test_downstream_boundaries(tmp_path):

@@ -79,6 +79,7 @@ but no longer written.
 | `di` | `i` | `fiberhmm-dedup`, integrated dedup | duplicate-cluster id, on every member of a cluster of two or more |
 | `ds` | `i` | same | cluster size (copies of the molecule in the input) |
 | `xc` | `Z` | `fiberhmm-call` | local lowercase tag: `strand_swap` identifies DAF strand-swap evidence meeting the run's `chimera_min_seg` / `chimera_purity` thresholds in @PG DS; paired with SAM QC-fail 0x200, including supplementary/secondary records |
+| `xq` | `i` | `fiberhmm-call` | original QC-fail state before setting `xc:Z:strand_swap`: 0 means FiberHMM set 0x200; 1 means it was already set. Cleanup preserves pre-existing QC failures. |
 
 Duplicates are also flagged `0x400` (standalone `--flag-only`, and the
 integrated default); a collapse keeps only the representative, which keeps

@@ -206,8 +206,11 @@ the same mark. `--chimeras remove` drops all records of detected reads;
 `--chimeras keep` disables detection and attempts calls. `--keep-chimeras`
 is a deprecated alias for `--chimeras keep`.
 
-Re-running flag/remove clears earlier `xc` marks and recomputes decisions.
-A QC-fail flag without `xc` belongs to another tool and is preserved.
+Re-running flag/remove clears earlier `xc:Z:strand_swap` marks and recomputes
+decisions using the run's alignment selection. The companion `xq:i` tag
+records whether QC-fail was already set (1) or FiberHMM set it (0). Cleanup
+clears 0x200 only with `xq:i:0`; pre-existing QC failures, older marks without
+ownership metadata, and foreign `xc` values preserve the QC-fail flag.
 The QNAME-aware pre-call pass reads regular files without copying them;
 only stdin/non-seekable input is spooled. The caller applies the decisions
 to every record, including a supplementary record preceding its primary.
