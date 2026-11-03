@@ -9,7 +9,8 @@
   G-to-A in another were already left uncalled, but they were written with no
   mark, so they looked like ordinary reads without footprints. They now carry
   the SAM QC-fail flag (0x200) and `xc:Z:strand_swap`, on every record of the
-  read. `--chimeras flag` is the default; `--chimeras remove` drops them, and
+  read, plus `xq:i` recording whether the read was already QC-fail, so a re-run
+  restores it. `--chimeras flag` is the default; `--chimeras remove` drops them, and
   `--chimeras keep` turns detection off (`--keep-chimeras` is kept as an
   alias). Re-running a call clears and recomputes FiberHMM's own marks and
   leaves QC failures set by other tools alone. `fiberhmm-pipeline` takes the
