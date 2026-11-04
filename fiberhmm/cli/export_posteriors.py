@@ -1211,7 +1211,8 @@ def main():
     from fiberhmm.cli.common import refuse_path_aliases
     refuse_path_aliases('fiberhmm-posteriors',
                         inputs={'--input': args.input, '--model': model_path,
-                                '--daf-snp-mask': args.daf_snp_mask},
+                                '--daf-snp-mask': args.daf_snp_mask,
+                                '--chimera-error-mask': args.chimera_error_mask},
                         outputs={'--output': args.output})
 
     _, _, model_mode = load_model_with_metadata(model_path, normalize=False)
