@@ -16,14 +16,18 @@ from fiberhmm.daf.encoder import (
 )
 from fiberhmm.inference.chimera_split import cut_modifications, make_piece
 from fiberhmm.inference.chimeras import (
-    CHIMERA_NOTE, DEFAULT_MIN_SEG, DEFAULT_PURITY, HIGH_FRACTION, LEGACY_MIN_SEG,
+    CHIMERA_NOTE, DEFAULT_MIN_SEG, DEFAULT_MIN_SPAN, DEFAULT_PURITY, HIGH_FRACTION, LEGACY_MIN_SEG,
     LEGACY_PURITY, WARN_FRACTION, ChimeraDecisions, chimera_warning, grade_chimeras,
     is_marked_chimera, prepare_chimeras,
 )
 
-LEGACY = dict(min_seg=LEGACY_MIN_SEG, purity=LEGACY_PURITY)
+# The full 3.0.3 detector: no base-quality or span limit, one switch, no mask.
+LEGACY = dict(min_seg=LEGACY_MIN_SEG, purity=LEGACY_PURITY, min_baseq=0,
+              min_span=0, multi_switch=False)
 LEGACY_ARGS = ('--chimera-min-seg', str(LEGACY_MIN_SEG),
-               '--chimera-purity', str(LEGACY_PURITY))
+               '--chimera-purity', str(LEGACY_PURITY), '--chimera-min-baseq', '0',
+               '--chimera-min-span', '0', '--no-chimera-multi-switch',
+               '--no-chimera-error-mask')
 
 CONTIG = 'chrS'
 REF_LEN = 40_000
@@ -297,7 +301,11 @@ def test_one_detector_count_and_regions(tmp_path):
     assert list(stats) == ['detected', 'mode', 'n_reads_checked', 'n_chimeric',
                            'fraction', 'min_seg', 'purity', 'n_records_affected',
                            'n_stale_marks_cleared', 'full_run', 'count_unit',
-                           'grade', 'regions', 'split', 'note']
+                           'grade', 'regions', 'split', 'note', 'min_baseq',
+                           'min_span', 'span_unit', 'multi_switch', 'error_mask',
+                           'n_duplicates_excluded', 'duplicates']
+    assert (stats['min_baseq'], stats['min_span'], stats['multi_switch']) == (15, 200, True)
+    assert stats['error_mask']['applied'] is False and stats['n_duplicates_excluded'] == 0
     rows = stats['regions']['rows']
     assert len(rows) == 2
     near = next(r for r in rows if r['start'] < 10_000)
@@ -317,7 +325,8 @@ def test_detection_follows_the_snp_mask(tmp_path):
     # Clean CT reads plus one site-specific G->A "variant" run on the right:
     # the GA events are only at SNP positions.
     start = 5000
-    snp_sites = [start + q for q in range(2500, 2990) if ref[start + q] == 'G'][:12]
+    # Spread over > DEFAULT_MIN_SPAN bp, so only the mask stops the call.
+    snp_sites = [start + q for q in range(2500, 2990) if ref[start + q] == 'G'][::8][:12]
     reads = []
     for i in range(3):
         read = make_read(hdr, ref, f'r{i}', start, [(0, 3000)],
@@ -330,6 +339,7 @@ def test_detection_follows_the_snp_mask(tmp_path):
     mask = tmp_path / 'mask.bed'
     mask.write_text(''.join(f'{CONTIG}\t{s}\t{s + 1}\n' for s in snp_sites))
     assert len(snp_sites) >= DEFAULT_MIN_SEG
+    assert snp_sites[-1] - snp_sites[0] >= DEFAULT_MIN_SPAN
     assert prepare_chimeras(bam, mode='flag')['n_chimeric'] == 3
     masked = prepare_chimeras(bam, mode='flag', snp_mask=str(mask))
     assert masked['n_chimeric'] == 0

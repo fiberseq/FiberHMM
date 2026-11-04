@@ -602,7 +602,8 @@ def test_snp_masked_opposite_strand_events_do_not_make_a_read_chimeric():
     for p in cs[: len(cs) // 2:3]:
         molecule[p] = "Y"
     n_swap = DEFAULT_MIN_SEG + 2              # enough for the default detector
-    for p in gs[:n_swap]:
+    gs = gs[::8][:n_swap]                     # spread past the minimum span
+    for p in gs:
         molecule[p] = "R"
     read = pysam.AlignedSegment(header)
     read.query_name, read.flag, read.reference_id = "chim", 0, 0
@@ -613,7 +614,7 @@ def test_snp_masked_opposite_strand_events_do_not_make_a_read_chimeric():
     read.set_tag("MA", f"{L};msp.:301-400")
     unmasked, _ = compute_state_rates([read], "daf", "dddb", header=header)
     masked, _ = compute_state_rates([read], "daf", "dddb", header=header,
-                                    snp_mask={"chr1": set(gs[:n_swap])})
+                                    snp_mask={"chr1": set(gs)})
     assert unmasked["reads"]["reads_chimera_skipped"] == 1
     assert masked["reads"]["reads_chimera_skipped"] == 0
     assert masked["reads"]["reads_used"] == 1
