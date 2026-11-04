@@ -146,8 +146,9 @@ def build_parser() -> argparse.ArgumentParser:
     call.add_argument("--chimeras", choices=["flag", "remove", "keep", "split"], default=None,
                       help="DAF strand-swap chimeras: flag (default) retains reads "
                            "marked and uncalled; remove drops them; keep disables detection; "
-                           "split cuts each chimeric alignment into two single-strand "
-                           "pieces that are called separately (see fiberhmm-call).")
+                           "split cuts each chimeric alignment into single-strand "
+                           "pieces, one per segment (<name>/c0, <name>/c1, ...), that "
+                           "are called separately (see fiberhmm-call).")
     call.add_argument("--chimera-filter", action=argparse.BooleanOptionalAction,
                       default=True,
                       help="Legacy alias: --chimera-filter means --chimeras flag; "

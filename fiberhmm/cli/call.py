@@ -235,11 +235,13 @@ def parse_args():
                         'uncalled with SAM 0x200 and xc:Z:strand_swap; remove drops '
                         'all records of the read; keep disables detection and '
                         'clears earlier FiberHMM chimera marks and attempts calls; '
-                        'split cuts each chimeric alignment at its breakpoint gap '
-                        'into two single-strand pieces (<name>/c0, <name>/c1; the '
-                        'gap is dropped, pieces shorter than --min-read-length are '
-                        'dropped, MM/ML are re-indexed to each piece) that are '
-                        'called separately. '
+                        'split cuts each chimeric alignment at its breakpoint gaps '
+                        'into single-strand pieces, one per segment (<name>/c0, '
+                        '<name>/c1, ... from left to right; a read with several '
+                        'switches gives more than two; the gaps are dropped, pieces '
+                        'shorter than --min-read-length are dropped, MM/ML are '
+                        're-indexed to each piece; unmapped records stay whole and '
+                        'flagged) that are called separately. '
                         'No strand-swap detection for m6A modes.')
     p.add_argument('--keep-chimeras', action='store_true',
                    help='Deprecated alias for --chimeras keep (DAF only).')

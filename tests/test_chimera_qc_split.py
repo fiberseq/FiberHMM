@@ -847,3 +847,17 @@ def test_split_keeps_unmapped_chimeras_whole_and_flagged(tmp_path):
     prepare_chimeras(str(path), str(out), mode='flag', process_unmapped=True, min_baseq=0)
     marked = {r.query_name for r in records(out) if r.has_tag('xc')}
     assert 'u_chim' in marked
+
+
+def test_split_help_describes_one_piece_per_segment(monkeypatch, capsys):
+    from fiberhmm.cli import call, pipeline
+    monkeypatch.setattr(sys, 'argv', ['fiberhmm-call', '--help'])
+    monkeypatch.setenv('COLUMNS', '400')
+    with pytest.raises(SystemExit):
+        call.parse_args()
+    text = ' '.join(capsys.readouterr().out.split())
+    assert '<name>/c0, <name>/c1, ...' in text and 'one per segment' in text
+    assert 'two single-strand pieces' not in text
+    help_text = next(a.help for a in pipeline.build_parser()._actions
+                     if '--chimeras' in a.option_strings)
+    assert 'one per segment' in help_text and 'two single-strand' not in help_text
