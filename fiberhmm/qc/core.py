@@ -1012,6 +1012,7 @@ def analyze_sample(
     read_examples: list[dict] = []
     duplicate_flagged = 0
     chimera_names = set()
+    chimera_duplicates = set()   # duplicate-flagged: not counted (3.0.4)
     chimera_bins: dict = {}
     chimera_spans: dict = {}
     def sample_key(read, record_index):
@@ -1041,11 +1042,14 @@ def analyze_sample(
                 except (ValueError, TypeError):
                     pass
             from fiberhmm.inference.chimeras import is_marked_chimera
-            if mode == 'daf':
+            if mode == 'daf' and is_duplicate:
+                chimera_duplicates.add(sample_key(read, record_index))
+            elif mode == 'daf':
                 _chimera_sample_bin(read, sample_key(read, record_index),
                                     chimera_bins, chimera_spans)
             if mode == 'daf' and is_marked_chimera(read):
-                chimera_names.add(sample_key(read, record_index))
+                if not is_duplicate:
+                    chimera_names.add(sample_key(read, record_index))
                 continue
             # Nondestructive mark/retain dedup keeps every read in the BAM,
             # but aggregate rate, phase, footprint, and example panels should
@@ -1199,14 +1203,19 @@ def analyze_sample(
         },
         "chimeras": {
             "detected": bool(chimera_names), "mode": "flag" if chimera_names else None,
-            "n_reads_checked": len(sampled_names) if mode == "daf" else 0,
-            "n_chimeric": len(chimera_names),
-            "fraction": len(chimera_names) / len(sampled_names) if reads and mode == "daf" else None,
+            "n_reads_checked": len(sampled_names - chimera_duplicates) if mode == "daf" else 0,
+            "n_chimeric": len(chimera_names - chimera_duplicates),
+            "fraction": (len(chimera_names - chimera_duplicates)
+                         / len(sampled_names - chimera_duplicates)
+                         if mode == "daf" and sampled_names - chimera_duplicates
+                         else None),
             "min_seg": DEFAULT_CHIMERA_MIN_SEG if mode == "daf" else None,
             "purity": DEFAULT_CHIMERA_PURITY if mode == "daf" else None,
             "full_run": False,
             "count_unit": "unique read names in bounded sample; unnamed records counted individually",
             **(_sample_chimera_fields(chimera_bins, chimera_spans, chimera_names)
+               if mode == "daf" else {}),
+            **({"n_duplicates_excluded": len(chimera_duplicates)}
                if mode == "daf" else {}),
         },
         "deduplication": _summarize_deduplication(
@@ -1500,7 +1509,13 @@ def _chimera_terminal_lines(result: dict) -> list[str]:
             lines.append("    grade: WARN >= "
                          f"{100 * grade['warn_fraction']:.0f}%, high >= "
                          f"{100 * grade['high_fraction']:.0f}%; never FAIL "
-                         "(flagged chimeras are excluded from calls)")
+                         "(flagged chimeras are excluded from calls; the "
+                         "unflagged reads still hold about as many same-strand "
+                         "chimeras)")
+        from fiberhmm.inference.chimeras import detector_details
+        details = detector_details(chimeras)
+        if details:
+            lines.append(f"    {details}")
         if grade and grade.get("basis_note"):
             lines.append(f"    basis: {grade['basis_note']}")
         split = chimeras.get("split")
@@ -2841,7 +2856,9 @@ def _grade_chimera_block(chimeras: dict, full_run: bool) -> None:
         source, counted = 'bounded sample', sample
     grade = grade_chimeras(counted.get('n_reads_checked'), counted.get('n_chimeric'),
                            counted.get('min_seg') if source else None,
-                           counted.get('purity') if source else None)
+                           counted.get('purity') if source else None,
+                           counted.get('min_baseq') if source else None,
+                           counted.get('min_span') if source else None)
     grade['source'] = source
     if source is None:
         grade['status'] = 'INSUFFICIENT'
@@ -3104,7 +3121,9 @@ def run_qc(
             chimeras['mode'] = (settings.get('chimeras', chimeras['mode'])
                                 if resolved_mode == 'daf' else 'n/a')
             for field, key, cast in [('min_seg', 'chimera_min_seg', int),
-                                     ('purity', 'chimera_purity', float)]:
+                                     ('purity', 'chimera_purity', float),
+                                     ('min_baseq', 'chimera_min_baseq', int),
+                                     ('min_span', 'chimera_min_span', int)]:
                 if key in settings:
                     chimeras[field] = cast(settings[key])
             chimeras['detected'] = (chimeras['detected']

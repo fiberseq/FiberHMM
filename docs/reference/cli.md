@@ -133,6 +133,10 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--keep-chimeras` | off | Deprecated alias for --chimeras keep (DAF only). |
 | `--chimera-min-seg` | `10` | DAF chimera: min same-strand deamination events per segment to call a swap (default 10; 5 before 3.0.4). |
 | `--chimera-purity` | `0.9` | DAF chimera: min same-strand purity per segment (default 0.9; 0.8 before 3.0.4). |
+| `--chimera-min-baseq` | `15` | DAF chimera: deamination events count for the chimera test only with base quality &gt;= this (default 15; no effect on records without QUAL; 0 disables). Also anchors split-mode breakpoints. Calling is unaffected. |
+| `--chimera-min-span` | `200` | DAF chimera: min span in query bp from the first to the last same-strand event of each segment (default 200; 0 disables). |
+| `--chimera-multi-switch` / `--no-chimera-multi-switch` | on | DAF chimera: also detect reads with several switches (for example CT -&gt; GA -&gt; CT, an opposite-strand island), each segment passing the same rule; split mode cuts them into all their pieces (default on). |
+| `--chimera-error-mask` / `--no-chimera-error-mask` | on | DAF chimera: build a chimera-only mask of recurrent opposite-strand error sites during the DAF SNP screen and drop events there from the chimera test (default on; written to qc/&lt;stem&gt;.daf_snps.chimera_error_mask.bed/.json, never applied to calling). Needs the SNP screen: without it there is no error mask. |
 | `--daf-mask-runs` | — | DAF only: thin targets lying in same-strand runs of &gt;= N original C (CT) or G (GA) bases (CC/GG and longer at N=2; see --daf-run-policy). Adjacent conversions are coupled and do not follow the per-site emission model. Default: 2 with keep-one for --enzyme ddda (duplex-validated), off otherwise; 0 disables. |
 | `--daf-run-policy` | `keep-one` | With --daf-mask-runs: keep the 5'-most target of each run (keep-one, default) or remove the whole run (drop). Choices: `keep-one`, `drop`. |
 | `--daf-mask-unaligned` / `--no-daf-mask-unaligned` | on | DAF only: treat query bases with no reference counterpart (CIGAR insertions and soft clips) as no evidence, like SNP-masked sites, and leave unaligned stretches of &gt;= 50 bp uncalled (default on). Deaminations are read-versus-reference mismatches, so these bases can never carry one; --no-daf-mask-unaligned restores the pre-3.0 encoding, which counts them as protected. |
@@ -764,6 +768,10 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--keep-chimeras` | off | Do not drop DAF strand-swap chimeric reads |
 | `--chimera-min-seg` | `10` | DAF chimera: min same-strand deamination events per segment (default: 10) |
 | `--chimera-purity` | `0.9` | DAF chimera: min same-strand purity per segment (default: 0.9) |
+| `--chimera-min-baseq` | `15` | DAF chimera: min base quality of a chimera-test event when QUAL is present (default: 15; 0 disables) |
+| `--chimera-min-span` | `200` | DAF chimera: min query bp from the first to the last same-strand event of a segment (default: 200; 0 disables) |
+| `--chimera-multi-switch` / `--no-chimera-multi-switch` | on | DAF chimera: also drop reads with several switches (default: on) |
+| `--chimera-error-mask` | — | Chimera-only error mask written by fiberhmm-call (qc/&lt;stem&gt;.daf_snps.chimera_error_mask.bed); events at these sites are left out of the chimera test only |
 | `--daf-snp-mask` | — | 0-based BED of reference positions whose conversions are ignored (e.g. the mask fiberhmm-call used) |
 | `--daf-mask-runs` | — | Thin DAF targets in same-strand runs of &gt;= N original C (CT) or G (GA) bases (N=2: CC/GG and longer). Default: 2 with keep-one for DddA (duplex-validated), off otherwise; 0 disables. |
 | `--daf-run-policy` | `keep-one` | With --daf-mask-runs: keep each run's 5'-most target (default) or drop the run. Choices: `keep-one`, `drop`. |

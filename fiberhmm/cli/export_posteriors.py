@@ -63,7 +63,10 @@ from fiberhmm.inference.engine import (
     configure_daf_chimera_filter,
     configure_daf_snp_mask,
 )
-from fiberhmm.inference.chimeras import DEFAULT_MIN_SEG, DEFAULT_PURITY
+from fiberhmm.inference.chimeras import (
+    DEFAULT_MIN_BASEQ, DEFAULT_MIN_SEG, DEFAULT_MIN_SPAN, DEFAULT_MULTI_SWITCH,
+    DEFAULT_PURITY,
+)
 from fiberhmm.inference.parallel import _get_genome_regions
 
 
@@ -225,6 +228,10 @@ def _configure_read_extraction(params: dict) -> None:
         params.get('filter_chimeras', True),
         params.get('chimera_min_seg', DEFAULT_MIN_SEG),
         params.get('chimera_purity', DEFAULT_PURITY),
+        min_baseq=params.get('chimera_min_baseq', DEFAULT_MIN_BASEQ),
+        min_span=params.get('chimera_min_span', DEFAULT_MIN_SPAN),
+        multi_switch=params.get('chimera_multi_switch', DEFAULT_MULTI_SWITCH),
+        error_mask=params.get('chimera_error_mask_path'),
     )
     configure_daf_snp_mask(params.get('daf_snp_mask_path'))
     run_mask = params.get('daf_run_mask')
@@ -558,6 +565,12 @@ def _export_provenance(model_path, prob_threshold, extraction, provenance=None) 
         'filter_chimeras': bool(extraction.get('filter_chimeras', True)),
         'chimera_min_seg': extraction.get('chimera_min_seg', DEFAULT_MIN_SEG),
         'chimera_purity': extraction.get('chimera_purity', DEFAULT_PURITY),
+        'chimera_min_baseq': extraction.get('chimera_min_baseq', DEFAULT_MIN_BASEQ),
+        'chimera_min_span': extraction.get('chimera_min_span', DEFAULT_MIN_SPAN),
+        'chimera_multi_switch': bool(extraction.get('chimera_multi_switch',
+                                                    DEFAULT_MULTI_SWITCH)),
+        'chimera_error_mask': (os.path.basename(extraction['chimera_error_mask_path'])
+                               if extraction.get('chimera_error_mask_path') else None),
         'daf_snp_mask': os.path.basename(snp_mask) if snp_mask else None,
         'daf_snp_mask_sha256': file_sha256(snp_mask) if snp_mask else None,
         'daf_mask_runs': int(run_mask[0]) if run_mask is not None else None,
@@ -1104,6 +1117,21 @@ def main():
     daf.add_argument('--chimera-purity', type=float, default=DEFAULT_PURITY,
                      help='DAF chimera: min same-strand purity per segment '
                           f'(default: {DEFAULT_PURITY:g})')
+    daf.add_argument('--chimera-min-baseq', type=int, default=DEFAULT_MIN_BASEQ,
+                     help='DAF chimera: min base quality of a chimera-test event '
+                          f'when QUAL is present (default: {DEFAULT_MIN_BASEQ}; 0 disables)')
+    daf.add_argument('--chimera-min-span', type=int, default=DEFAULT_MIN_SPAN,
+                     help='DAF chimera: min query bp from the first to the last '
+                          f'same-strand event of a segment (default: {DEFAULT_MIN_SPAN}; '
+                          '0 disables)')
+    daf.add_argument('--chimera-multi-switch', action=argparse.BooleanOptionalAction,
+                     default=DEFAULT_MULTI_SWITCH,
+                     help='DAF chimera: also drop reads with several switches '
+                          '(default: on)')
+    daf.add_argument('--chimera-error-mask', default=None, metavar='BED',
+                     help='Chimera-only error mask written by fiberhmm-call '
+                          '(qc/<stem>.daf_snps.chimera_error_mask.bed); events at '
+                          'these sites are left out of the chimera test only')
     daf.add_argument('--daf-snp-mask', default=None, metavar='BED',
                      help='0-based BED of reference positions whose conversions are '
                           'ignored (e.g. the mask fiberhmm-call used)')
@@ -1220,6 +1248,10 @@ def main():
         'filter_chimeras': not args.keep_chimeras,
         'chimera_min_seg': args.chimera_min_seg,
         'chimera_purity': args.chimera_purity,
+        'chimera_min_baseq': args.chimera_min_baseq,
+        'chimera_min_span': args.chimera_min_span,
+        'chimera_multi_switch': args.chimera_multi_switch,
+        'chimera_error_mask_path': args.chimera_error_mask,
         'daf_snp_mask_path': args.daf_snp_mask,
     }
     from fiberhmm.inference.tf_recaller import resolve_cpg_mask_policy
