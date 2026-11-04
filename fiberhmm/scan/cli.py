@@ -48,6 +48,17 @@ def _parser():
                    help=f'Comma-separated modules (default {DEFAULT_MODULES}; nfr is an EXPERIMENTAL preview)')
     p.add_argument('--parameters', help='JSON {"fp": {...}, "nfr": {...}, "peaks": {...}, "read_policy": {...}}; '
                                         'see --schema')
+    reg = p.add_argument_group('nuc regularity (MA nucreg; --modules nuc writes it by default)')
+    reg.add_argument('--nucreg-window', type=int, metavar='BP', help='Regularity window (default 2000)')
+    reg.add_argument('--nucreg-step', type=int, metavar='BP', help='Window step = tile width (default 250)')
+    reg.add_argument('--nucreg-signal', choices=['m6a', 'occupancy'],
+                     help='Signal: raw m6A calls (default) or nucleosome-call occupancy')
+    reg.add_argument('--nucreg-band', metavar='LO-HI', help='Period band of the peak in bp (default 140-260)')
+    reg.add_argument('--nucreg-mask-open', type=int, metavar='BP',
+                     help='Mask open stretches (gaps between nucleosome calls) of at least BP (default off; 0 = off)')
+    reg.add_argument('--nucreg-thin', type=float, metavar='PER_KB',
+                     help='Thin m6A calls to PER_KB per kb before scoring (default off; 0 = off)')
+    reg.add_argument('--no-nucreg', action='store_true', help='Do not compute or write nucreg')
     p.add_argument('--input-type', choices=['called-bam', 'signal-bam'], default='called-bam',
                    help='--bam input type; signal-bam filters producer-scored schema 5 records before all modules')
     p.add_argument('--signal-filters', help='JSON file of boolean hideBackground, excludeUnscored, '
@@ -141,6 +152,43 @@ def _recorded_command(argv, bam_rank=None):
     return ['fiberhmm-scan'] + [x for v in bams for x in ('--bam', v)] + out
 
 
+NUCREG_FLAGS = (('nucreg_window', 'window_bp'), ('nucreg_step', 'step_bp'), ('nucreg_signal', 'signal'),
+                ('nucreg_band', 'band_bp'), ('nucreg_mask_open', 'mask_open_bp'), ('nucreg_thin', 'thin_per_kb'))
+
+
+def _nucreg_params(parser, args, modules, params):
+    """Fold the --nucreg-* flags into ``params['nuc']['nucreg']`` (flags win over --parameters)."""
+    given = {key: getattr(args, flag) for flag, key in NUCREG_FLAGS if getattr(args, flag) is not None}
+    if not given and not args.no_nucreg:
+        return
+    if 'nuc' not in modules:
+        parser.error('--nucreg-* and --no-nucreg apply to --modules nuc')
+    nuc = params.setdefault('nuc', {})
+    if not isinstance(nuc, dict):
+        parser.error('--parameters: "nuc" must be a JSON object')
+    if args.no_nucreg:
+        if given:
+            parser.error('--no-nucreg cannot be combined with other --nucreg-* flags')
+        nuc['nucreg'] = None
+        return
+    if 'band_bp' in given:
+        lo, sep, hi = str(given['band_bp']).replace(',', '-').partition('-')
+        try:
+            given['band_bp'] = [int(lo), int(hi)]
+        except ValueError:
+            parser.error(f'--nucreg-band {given["band_bp"]!r}: expected LO-HI in bp')
+    for key in ('mask_open_bp', 'thin_per_kb'):
+        if key in given and not given[key] > 0:
+            given[key] = None
+    reg = dict(nuc.get('nucreg') or {})
+    reg.update(given)
+    from fiberhmm.nuc.regularity import RegularityParams
+    try:
+        nuc['nucreg'] = RegularityParams.from_dict(reg).to_dict()
+    except (TypeError, ValueError) as error:
+        parser.error(str(error))
+
+
 def _schema(modules):
     from fiberhmm.scan.modules import load_module
     from fiberhmm.scan.reads import DEFAULT_READ_POLICY
@@ -197,6 +245,7 @@ def _main(argv=None):
         datasets = [dict(paths=[str(Path(b).expanduser().resolve())], chemistry=args.chemistry, input_type=args.input_type,
                               signal_filters=json.loads(Path(args.signal_filters).read_text())
                               if args.signal_filters else {}) for b in args.bam]
+    _nucreg_params(p, args, modules, params)
     read_policy = dict(params.pop('read_policy', {}) or {})
     from fiberhmm.inference.depth_cap import NAMES
     caps = dict(read_policy.get('caps', {}))
