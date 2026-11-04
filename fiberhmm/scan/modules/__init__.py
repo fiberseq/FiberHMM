@@ -61,6 +61,11 @@ class ScanModuleBase:
     def ma_groups(self) -> List[MAGroupDecl]:
         return []
 
+    def ma_group_provenance(self, settings: Mapping[str, Any]) -> Mapping[str, dict]:
+        """Extra fields for the header contract line of each group (group -> dict), e.g. settings a reader
+        needs to interpret the group's bytes."""
+        return {}
+
     def needs(self, settings: Mapping[str, Any]) -> set:
         return set()
 

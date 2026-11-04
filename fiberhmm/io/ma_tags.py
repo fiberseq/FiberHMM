@@ -81,7 +81,7 @@ DDDA_MCG_HEMI_FEATURE = 'ddda_mcg_hemi'
 # segments, per-molecule scalars, hit states). They describe the calls they were
 # computed from, so every writer that regenerates nuc/msp/tf drops them. The
 # registry is fiberhmm.io.scan_ma.SCAN_MA_GROUPS; these are its v1 names.
-_SCAN_MA_GROUPS_V1 = frozenset({'fpcls', 'nfrvar', 'nfrmol', 'nucsz', 'nucseg', 'nucmol'})
+_SCAN_MA_GROUPS_V1 = frozenset({'fpcls', 'nfrvar', 'nfrmol', 'nucsz', 'nucseg', 'nucmol', 'nucreg'})
 
 
 def derived_ma_groups() -> frozenset:

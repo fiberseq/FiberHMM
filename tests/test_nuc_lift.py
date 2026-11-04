@@ -26,6 +26,7 @@ from nuc_synth import complement_msps, flat_calibration, mm_for_marks, revcomp
 
 from fiberhmm.io.bam_header import SCAN_MA_CONTRACT_PREFIX, declared_ma_types
 from fiberhmm.nuc.molecule import molecule_outputs
+from fiberhmm.nuc.regularity import RegularityParams
 from fiberhmm.nuc.records import DecodeContext, decode_record
 from fiberhmm.nuc.tags import NUC_GROUPS, NUCMOL, NUCSEG, NUCSZ, annotate_header, annotate_record, read_nuc_groups
 
@@ -121,7 +122,7 @@ def lifted(tmp_path_factory):
             r.set_tag(tag, value)
         mol, why = decode_record(r, DecodeContext(out.header))
         assert mol is not None, why
-        annotate_record(r, molecule_outputs(mol, cal=cal))
+        annotate_record(r, molecule_outputs(mol, cal=cal, regularity=RegularityParams()))
         return r
 
     with pysam.AlignmentFile(str(src), "wb", header=header) as out:
@@ -185,11 +186,12 @@ def test_nuc_groups_survive_lift(lifted, target, flipped):
         # re-running the module on the lifted record reproduces the bytes
         mol, why = decode_record(lifted_read, DecodeContext(header))
         assert mol is not None, why
-        res = molecule_outputs(mol, cal=cal)
-        from fiberhmm.nuc.tags import group_rows
+        res = molecule_outputs(mol, cal=cal, regularity=RegularityParams())
+        from fiberhmm.nuc.tags import NUCREG, group_rows
         rows = group_rows(res)
-        assert [(s, n, list(q)) for s, n, q, _a in rows[NUCSZ][1]] == \
-            [(s, n, list(q)) for (s, n), q in zip(*g_l[NUCSZ][:2])]
+        for grp in (NUCSZ, NUCREG):
+            assert [(s, n, list(q)) for s, n, q, _a in rows[grp][1]] == \
+                [(s, n, list(q)) for (s, n), q in zip(*g_l[grp][:2])]
     # the filled supplementary: its partial groups moved with nuc/msp by the clip offset
     supp_l, supp_s = by[("chim", True)], source[("chim", True)]
     g_l, g_s = _groups(supp_l), _groups(supp_s)

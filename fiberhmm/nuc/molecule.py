@@ -16,6 +16,9 @@ A molecule with fewer than the mark-ACF criterion's 0.015 marks per bp is
 flagged, gets one low-information segment and is left out of window and
 patch aggregates (counted there as excluded). The size-resolution floor
 (D8) does not determine this molecule-wide spacing eligibility.
+With ``regularity`` (RegularityParams), the result also carries the
+molecule's sliding-window regularity track (MA ``nucreg``;
+:mod:`fiberhmm.nuc.regularity`).
 """
 from __future__ import annotations
 
@@ -30,6 +33,8 @@ from fiberhmm.nuc.density import (accessible_counts, edge_informativeness, edge_
                                   footprint_lambdas, rho_read)
 from fiberhmm.nuc.params import DEFAULT_PARAMS, NucParams
 from fiberhmm.nuc.records import NucMolecule
+from fiberhmm.nuc.regularity import (RegularityParams, RegularityTrack, encode_period, encode_score,
+                                     sliding_regularity)
 from fiberhmm.nuc.disrupted import (EVENT_NAMES, Event, missing_nucleosomes, overlay_rule, rule_runs,
                                     undersized_runs)
 from fiberhmm.nuc.segment import (DISORDERED, REGULAR, UNDETERMINED, Segment, lowinfo_segment,
@@ -122,13 +127,15 @@ class MoleculeResult:
     record: tuple = field(default_factory=tuple)
     events: List[Event] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
+    #: sliding-window regularity (``nucreg``); None when not requested
+    regularity: Optional[RegularityTrack] = None
 
     def scalar_vector(self) -> List[float]:
         return [self.scalars.get(k, float('nan')) for k in SCALARS]
 
     def marks_rows(self) -> List[dict]:
-        """Marks-table rows (molecular coordinates): one per footprint and
-        one per segment."""
+        """Marks-table rows (molecular coordinates): one per footprint, one
+        per segment or event and one per scored regularity tile."""
         rows = []
         fp = self.footprints
         if fp is not None:
@@ -150,6 +157,13 @@ class MoleculeResult:
         for e in self.events:
             rows.append({'type': f'nuc.event.{EVENT_NAMES[e.kind]}', 'start': e.start, 'end': e.end,
                          'q1': e.kind, 'q2': _llr_byte(e.score), 'score': e.score, 'count': e.count})
+        tr = self.regularity
+        if tr is not None:
+            for i in np.flatnonzero(np.isfinite(tr.score)):
+                score, period = float(tr.score[i]), int(tr.period[i])
+                rows.append({'type': 'nuc.reg', 'start': int(tr.tile_starts[i]), 'end': int(tr.tile_ends[i]),
+                             'q1': encode_score(score), 'q2': encode_period(period), 'score': score,
+                             'period': period, 'n_calls': int(tr.n_calls[i])})
         return rows
 
 
@@ -162,8 +176,10 @@ def _llr_byte(llr: float) -> int:
 
 
 def molecule_outputs(mol: NucMolecule, params: NucParams = DEFAULT_PARAMS,
-                     cal: Optional[NucCalibration] = None, *, segments: bool = True) -> MoleculeResult:
-    """Coarse (and named) calls, segments and scalars for one molecule."""
+                     cal: Optional[NucCalibration] = None, *, segments: bool = True,
+                     regularity: Optional[RegularityParams] = None) -> MoleculeResult:
+    """Coarse (and named) calls, segments and scalars for one molecule; with
+    ``regularity``, also its sliding-window regularity track (``nucreg``)."""
     if cal is None:
         raise ValueError('molecule_outputs needs a calibration record (calibrate first)')
     fp = footprint_calls(mol, params, cal)
@@ -228,7 +244,8 @@ def molecule_outputs(mol: NucMolecule, params: NucParams = DEFAULT_PARAMS,
                 scal['n_missing'] = float(sum(1 for e in events if e.kind == 17))
     return MoleculeResult(mol.name, mol.length, fp, segs, scal, flags, calls_digest(mol),
                           cal.digest(), mol.record_key(), sorted(events, key=lambda e: (e.start, e.end, e.kind)),
-                          list(mol.meta.get('evidence_warnings', [])))
+                          list(mol.meta.get('evidence_warnings', [])),
+                          sliding_regularity(mol, regularity) if regularity is not None else None)
 
 
 def _union_iv(iv):

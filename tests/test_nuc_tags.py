@@ -1,4 +1,4 @@
-"""MA groups nucsz/nucseg/nucmol and their lifecycle (NUC P-C).
+"""MA groups nucsz/nucseg/nucmol/nucreg and their lifecycle (NUC P-C).
 
 - writing, reading back and staleness of the groups;
 - writers that regenerate calls drop them (write_ma_tags, strip_stale_call_tags,
@@ -24,6 +24,7 @@ from fiberhmm.io.bam_header import (MA_TYPES_PREFIX, SCAN_MA_CONTRACT_PREFIX, de
                                     drop_derived_ma_contracts)
 from fiberhmm.nuc.molecule import molecule_outputs
 from fiberhmm.nuc.records import DecodeContext, decode_record
+from fiberhmm.nuc.regularity import RegularityParams
 from fiberhmm.nuc.tags import (NUC_GROUPS, NUCMOL, NUCMOL_CODECS, NUCSEG, NUCSZ, annotate_header,
                                annotate_record, decode_nucmol, encode_nucmol, encode_scalar,
                                decode_scalar, read_nuc_groups)
@@ -59,7 +60,7 @@ def _annotated_read(tmp_path, reverse=False, extra_groups=()):
     bam = pysam.AlignmentFile(path)
     read = next(bam.fetch(until_eof=True))
     mol, _ = decode_record(read, DecodeContext(bam.header))
-    res = molecule_outputs(mol, cal=flat_calibration())
+    res = molecule_outputs(mol, cal=flat_calibration(), regularity=RegularityParams())
     annotate_record(read, res)
     return bam, read, mol, res
 
@@ -73,7 +74,8 @@ def test_annotate_and_read_back(tmp_path, reverse):
     assert heads[:5] == ['nuc.QQQ', 'msp.', 'tf.QQQ', 'ddda_ucg.', 'fire.Q']
     assert {h.split('.')[0] for h in heads[5:]} == set(NUC_GROUPS)
     names = read.get_tag('AN').split(',')
-    nuc_names = [n for n in names if n.startswith(('nucsz@', 'nucseg@'))]
+    nuc_names = [n for n in names if n.startswith(('nucsz@', 'nucseg@', 'nucreg@'))]
+    assert any(n.startswith('nucreg@') for n in nuc_names)
     assert len(nuc_names) == len(set(nuc_names))                 # unique per interval
     assert all(f'@{res.digest}' in n for n in nuc_names)
     assert names.count('nucmol') == 1
@@ -153,7 +155,7 @@ def test_header_declarations_are_written_and_dropped():
     assert set(NUC_GROUPS) <= set(declared_ma_types(h2))
     # annotating twice keeps one line per group
     h3 = annotate_header(h2)
-    assert sum(c.startswith(SCAN_MA_CONTRACT_PREFIX) for c in h3.to_dict()['CO']) == 3
+    assert sum(c.startswith(SCAN_MA_CONTRACT_PREFIX) for c in h3.to_dict()['CO']) == len(NUC_GROUPS)
     d = drop_derived_ma_contracts(h3).to_dict()['CO']
     assert not any(c.startswith(SCAN_MA_CONTRACT_PREFIX) for c in d)
     assert 'keep me' in d and MA_TYPES_PREFIX + 'nuc,msp,tf' in d
@@ -190,7 +192,7 @@ def annotated_bam(tmp_path_factory):
             r.set_tag('ns', array.array('I', [s for s, _ in nucs]))
             r.set_tag('nl', array.array('I', [e - s for s, e in nucs]))
             mol, _ = decode_record(r, ctx)
-            annotate_record(r, molecule_outputs(mol, cal=cal))
+            annotate_record(r, molecule_outputs(mol, cal=cal, regularity=RegularityParams()))
             out.write(r)
     pysam.index(path)
     with pysam.AlignmentFile(path) as bam:

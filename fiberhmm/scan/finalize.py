@@ -438,10 +438,11 @@ def _open_annotated(out: Path, manifest, datasets, mods, decls, command):
     groups = []
     lines = []
     for name, mod, settings in mods:
+        extra = mod.ma_group_provenance(settings) or {}
         for g in mod.ma_groups():
             groups.append(g.group)
-            lines.append(dict(g.to_json(), module=name, module_version=mod.version, scan_id=manifest['scan_id'],
-                              settings_hash=I.settings_hash(settings)))
+            lines.append(dict(g.to_json(), **extra.get(g.group, {}), module=name, module_version=mod.version,
+                              scan_id=manifest['scan_id'], settings_hash=I.settings_hash(settings)))
     handles = {}
     for ds in datasets:
         for i, path in enumerate(ds.paths):

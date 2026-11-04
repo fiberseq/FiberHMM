@@ -17,7 +17,10 @@ API (NUC 5.1):
   anchors against matched backgrounds
 - :mod:`fiberhmm.nuc.disrupted`: the regular rule, undersized runs and missing
   nucleosomes; :mod:`fiberhmm.nuc.enrichment`: the recurrence test
-- :mod:`fiberhmm.nuc.tags`: MA groups ``nucsz``/``nucseg``/``nucmol``
+- :mod:`fiberhmm.nuc.tags`: MA groups ``nucsz``/``nucseg``/``nucmol``/``nucreg``
+- :func:`sliding_regularity` -> :class:`RegularityTrack` (single-fibre FFT
+  regularity along a molecule, MA ``nucreg``), :func:`reference_scores`
+  (random-packing reference), :func:`masked_mark_acf`
 
 - :func:`condition_stats` (state conditioning at anchors, NUC 3.8) and
   :func:`association_stats` (segments against point features, NUC 3.9) live in
@@ -34,6 +37,8 @@ __all__ = [
     'calibrate_absolute', 'NucCalibration', 'molecule_outputs', 'MoleculeResult',
     'window_metrics', 'WindowResult', 'Observation', 'phasing', 'PhasingResult', 'mark_acf',
     'anchor_phase', 'dephasing_test', 'AnchorPhase', 'condition_stats', 'association_stats',
+    'RegularityParams', 'RegularityTrack', 'sliding_regularity', 'reference_scores', 'masked_mark_acf',
+    'track_summary',
 ]
 
 
@@ -62,6 +67,10 @@ def __getattr__(name):
         return getattr(m, name)
     if name in ('condition_stats', 'association_stats'):
         from fiberhmm.assoc import nucleosome as m
+        return getattr(m, name)
+    if name in ('RegularityParams', 'RegularityTrack', 'sliding_regularity', 'reference_scores',
+                'masked_mark_acf', 'track_summary'):
+        from fiberhmm.nuc import regularity as m
         return getattr(m, name)
     if name == 'mark_acf':
         from fiberhmm.nuc.markacf import mark_acf

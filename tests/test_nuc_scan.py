@@ -21,7 +21,8 @@ from nuc_synth import header, make_record, molecule_sequence, revcomp
 from fiberhmm.nuc.calibration import NucCalibration
 from fiberhmm.nuc.molecule import molecule_outputs
 from fiberhmm.nuc.records import DecodeContext, decode_record
-from fiberhmm.nuc.tags import NUCMOL, NUCSEG, NUCSZ, group_rows, read_nuc_groups
+from fiberhmm.nuc.regularity import RegularityParams
+from fiberhmm.nuc.tags import NUCMOL, NUCREG, NUCSEG, NUCSZ, group_rows, read_nuc_groups
 from fiberhmm.scan import run_units
 from fiberhmm.scan.tables import read_all
 from fiberhmm.scan.units import plan
@@ -116,7 +117,7 @@ def _direct(bam, cal):
         for r in b.fetch(until_eof=True):
             mol, _ = decode_record(r, ctx)
             if mol is not None:
-                out[r.query_name] = (mol, molecule_outputs(mol, cal=cal))
+                out[r.query_name] = (mol, molecule_outputs(mol, cal=cal, regularity=RegularityParams()))
     return out
 
 
@@ -140,7 +141,7 @@ def test_scan_molecules_and_marks_equal_direct_api(tsv_scan, scan_bam):
                                                             [int(x) for x in m['q'].split(',')], m['name']))
     for qname, (_mol, res) in direct.items():
         rows = group_rows(res)
-        for g in (NUCSZ, NUCSEG):
+        for g in (NUCSZ, NUCSEG, NUCREG):
             want = sorted((s, n, list(q), a) for s, n, q, a in rows[g][1])
             assert sorted(by.get((qname, g), [])) == want, (qname, g)
 
@@ -158,7 +159,7 @@ def test_annotated_scan_equals_direct_api(scan_bam, tmp_path):
             g = read_nuc_groups(r)
             _mol, res = direct[r.query_name]
             rows = group_rows(res)
-            for grp in (NUCSZ, NUCSEG, NUCMOL):
+            for grp in (NUCSZ, NUCSEG, NUCMOL, NUCREG):
                 want = sorted((s, n, list(q)) for s, n, q, _a in rows[grp][1])
                 got = sorted((s, n, list(q)) for (s, n), q in zip(g[grp]['intervals'], g[grp]['q']))
                 assert got == want, (r.query_name, grp)

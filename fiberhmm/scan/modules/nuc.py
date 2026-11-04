@@ -14,7 +14,9 @@ Wraps :mod:`fiberhmm.nuc` (NUC design; feature-hub CONTRACTS 11):
   {dataset_id: NucCalibration dict}}``.
 - ``molecule_outputs``: per owned source record, from the complete record:
   ``nucsz``/``nucseg`` marks (molecular intervals with their reference
-  envelopes) and the ``nucmol`` scalars.
+  envelopes), the ``nucmol`` scalars and, unless ``nucreg`` is null, the
+  ``nucreg`` regularity tiles (:mod:`fiberhmm.nuc.regularity`; the header
+  contract records their parameters).
 - ``run_unit``: per-base core tracks over the unit's zone, per observation
   group (``all``, each dataset, each dataset haplotype): molecules with a
   regular / disordered / undetermined / low-information segment and with an
@@ -119,6 +121,8 @@ class NucModule(ScanModuleBase):
             'phase_step_bp': _p(200, 'int', 'phased-window step'),
             'phase_min_excess': _p(0.15, 'float', 'R minus null for a phased window'),
             'phase_max_p': _p(0.01, 'float', 'null p for a phased window'),
+            'nucreg': _p({}, 'dict', 'sliding-window regularity (MA nucreg): fiberhmm.nuc.regularity.'
+                         'RegularityParams overrides; null = off'),
         }
 
     def resolve(self, params: Mapping[str, Any]) -> dict:
@@ -126,6 +130,9 @@ class NucModule(ScanModuleBase):
         out = super().resolve(params)
         out['params'] = NucParams.from_dict(out.get('params') or {}).to_dict()
         out['params'].pop('extra', None)
+        if out.get('nucreg') is not None:
+            from fiberhmm.nuc.regularity import RegularityParams
+            out['nucreg'] = RegularityParams.from_dict(out['nucreg']).to_dict()
         if out['calibration'] not in ('thin', 'self'):
             raise ValueError("nuc: calibration must be 'thin' or 'self'")
         if out['groups'] not in ('dataset', 'dataset+haplotype'):
@@ -202,6 +209,20 @@ class NucModule(ScanModuleBase):
     def _params(settings):
         from fiberhmm.nuc.params import NucParams
         return NucParams.from_dict(settings.get('params') or {})
+
+    @staticmethod
+    def _regularity(settings):
+        from fiberhmm.nuc.regularity import RegularityParams
+        value = settings.get('nucreg', {})
+        return None if value is None else RegularityParams.from_dict(value)
+
+    def ma_group_provenance(self, settings) -> Dict[str, dict]:
+        """Extra header-contract fields per group: the nucreg parameters."""
+        from fiberhmm.nuc.tags import NUCREG, nucreg_declaration
+        reg = self._regularity(settings)
+        d = nucreg_declaration(reg)
+        extra = {k: d[k] for k in ('score_byte', 'period_offset', 'params', 'params_digest') if k in d}
+        return {NUCREG: extra if reg is not None else {'params': None}}
 
     def _cal(self, calibration, dataset_id):
         from fiberhmm.nuc.calibration import NucCalibration
@@ -281,7 +302,7 @@ class NucModule(ScanModuleBase):
             params = self._params(settings)
             ctx = self._context(record.dataset_id, record.input_index, read.header, params)
             value = record_outputs(read, record, self._cal(calibration, record.dataset_id),
-                                   params=params, context=ctx)
+                                   params=params, context=ctx, regularity=self._regularity(settings))
             if len(self._record_cache) >= 512:
                 self._record_cache.pop(next(iter(self._record_cache)))
             self._record_cache[key] = value

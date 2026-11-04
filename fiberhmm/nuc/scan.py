@@ -4,13 +4,16 @@ from __future__ import annotations
 import numpy as np
 
 from .params import DEFAULT_PARAMS
+from .regularity import DEFAULT_REGULARITY
 
 
-def record_outputs(read, record, cal, *, params=DEFAULT_PARAMS, context=None):
+def record_outputs(read, record, cal, *, params=DEFAULT_PARAMS, context=None, regularity=DEFAULT_REGULARITY):
     """Return (decoded molecule, nuc result, scan result) for a complete record.
 
     ``record`` is its scan RecordRef; ``cal`` is a NucCalibration. A cached
-    DecodeContext may be supplied. Unusable records return (None, None, None).
+    DecodeContext may be supplied. ``regularity`` (RegularityParams; None =
+    off) adds the ``nucreg`` marks, on by default as in the scan. Unusable
+    records return (None, None, None).
     Annotation frames are resolved from the record header as in decode_record.
     """
     from .records import DecodeContext, decode_record
@@ -23,7 +26,7 @@ def record_outputs(read, record, cal, *, params=DEFAULT_PARAMS, context=None):
     mol, _why = decode_record(read, context)
     if mol is None:
         return None, None, None
-    result = molecule_outputs(mol, params, cal)
+    result = molecule_outputs(mol, params, cal, regularity=regularity)
     marks = []
     for group, (_spec, rows) in group_rows(result).items():
         if group == NUCMOL:
