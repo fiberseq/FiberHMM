@@ -125,7 +125,8 @@ coordinates. Each written group is declared twice in the header: in
 ```
 
 - **Names.** A group's name starts with its module's name (`fpcls`,
-  `nfrvar`, `nfrmol`; the nucleosome module's `nucsz`, `nucseg`, `nucmol`).
+  `nfrvar`, `nfrmol`; the nucleosome module's `nucsz`, `nucseg`, `nucmol`,
+  `nucreg`).
   The name never changes; a change of byte layout or meaning bumps
   `group_version`.
 - **State groups** (`fpcls`, `nfrvar`): one interval per (hit, molecule);

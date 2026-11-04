@@ -127,14 +127,42 @@ draws the windows from the scanned territory instead.
 
 ## Tags
 
-With annotation the scan writes three MA groups in molecular coordinates:
+With annotation the scan writes four MA groups in molecular coordinates:
 `nucsz` (one interval per footprint: coarse code, named code, posterior,
 z), `nucseg` (one per segment: state, posterior, q̂; plus one row per
-undersized run or missing nucleosome) and `nucmol` (one per record: the
-molecule scalars). See [BAM tags](../reference/bam-tags.md#nucleosome-groups).
+undersized run or missing nucleosome), `nucmol` (one per record: the
+molecule scalars) and `nucreg` (one per regularity tile: score and local
+repeat length). See [BAM tags](../reference/bam-tags.md#nucleosome-groups).
 They survive `fiberhmm-lift`. Any tool that re-calls footprints
 (`fiberhmm-call`, `-apply`, `-recall-tfs`, `-recall-nucs`) drops them,
 because they describe the old calls.
+
+## Regularity along each molecule (`nucreg`)
+
+Single-fibre regularity, not aligned phasing: per molecule, 2 kb windows
+every 250 bp of the raw m6A calls (or, with `--nucreg-signal occupancy`, of
+nucleosome-call occupancy), mean-removed, Hann tapered and Fourier
+transformed. The score is log2 of the strongest power at 140–260 bp periods
+over the median power at 50–1000 bp periods; the period of that peak is the
+local repeat length. m6A windows need 15 calls. Each window centre owns one
+250 bp tile, and each scored tile is one `nucreg` mark.
+
+```bash
+# change the window, mask open stretches of 300 bp or more, thin to 25 m6A/kb
+fiberhmm-scan --bam calls.bam --genome --modules nuc --nucreg-window 1500 \
+    --nucreg-mask-open 300 --nucreg-thin 25 -o nuc_scan
+# no regularity layer
+fiberhmm-scan --bam calls.bam --genome --modules nuc --no-nucreg -o nuc_scan
+```
+
+Masking sets open stretches (gaps between nucleosome calls of at least the
+given length, and read ends beyond the outer calls) to the window mean, so
+NFRs and enhancers do not drive the score; a window more than half open has
+no score. Thinning keeps each call with probability target / density, seeded
+from the read name, so a molecule always thins the same way. In Python,
+`fiberhmm.nuc.regularity` has `sliding_regularity`, `reference_scores` (the
+random-packing comparison: each window's own footprints placed at random,
+m6A simulated at the window's marking rates) and `masked_mark_acf`.
 
 ## Running the scan
 
