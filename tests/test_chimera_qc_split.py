@@ -861,3 +861,28 @@ def test_split_help_describes_one_piece_per_segment(monkeypatch, capsys):
     help_text = next(a.help for a in pipeline.build_parser()._actions
                      if '--chimeras' in a.option_strings)
     assert 'one per segment' in help_text and 'two single-strand' not in help_text
+
+
+@pytest.mark.parametrize('names', [('MM', 'ML'), ('Mm', 'Ml')])
+@pytest.mark.parametrize('reverse', [False, True])
+def test_pieces_keep_mm_without_ml(names, reverse):
+    ref = reference()
+    hdr = header()
+    with_ml = _with_modifications(
+        make_read(hdr, ref, 'm', 1000, [(0, 1500)], clean('GA'), seed=4,
+                  flag=16 if reverse else 0), names=names, mn=False)
+    without_ml = pysam.AlignedSegment.fromstring(with_ml.to_string(), hdr)
+    without_ml.set_tag(names[1], None)
+    assert not without_ml.has_tag(names[1])
+    for qs, qe in ((0, 600), (200, 900), (0, 1500)):
+        reference_piece = make_piece(with_ml, hdr, qs, qe, 1, None)
+        piece = make_piece(without_ml, hdr, qs, qe, 1, None)
+        assert piece.get_tag(names[0]) == reference_piece.get_tag(names[0])
+        assert not piece.has_tag(names[1])
+    # The audit's minimal case: one call, no ML.
+    single = make_read(hdr, ref, 's', 1000, [(0, 1500)], clean('GA'), seed=4)
+    single.set_tag('MM', 'C+m,0;')
+    first_c = single.query_sequence.index('C')
+    piece = make_piece(single, hdr, first_c, 1500, 0, None)
+    assert piece.get_tag('MM') == 'C+m,0;' and not piece.has_tag('ML')
+    assert make_piece(single, hdr, first_c + 1, 1500, 0, None).get_tag('MM') == 'C+m;'

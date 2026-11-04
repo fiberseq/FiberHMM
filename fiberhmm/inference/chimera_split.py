@@ -21,7 +21,7 @@ recomputed. Read-level tags that a cut cannot invalidate are copied
 legacy ``Mm``/``Ml``) are re-indexed to the piece (:func:`cut_modifications`)
 and ``MN``, if present, is set to the piece's SEQ length. They are dropped for
 a piece whose record is hard-clipped or whose MM/ML do not parse or do not
-match SEQ. Every other position-dependent tag (SA, the DAF strand tag ``st``,
+match SEQ; an MM without ML is re-indexed on its own. Every other position-dependent tag (SA, the DAF strand tag ``st``,
 earlier FiberHMM calls) is dropped.
 
 Unmapped records (``--process-unmapped``) are never cut: they have no CIGAR
@@ -191,6 +191,9 @@ def _parse_mm(mm):
 def cut_modifications(read, qs, qe, mm_tag='MM', ml_tag='ML'):
     """``(mm, ml)`` of SEQ ``[qs, qe)`` of ``read``, or None (drop them).
 
+    ``ml`` is None when the record has no ML (it is optional in the SAM
+    spec): MM is then re-indexed on its own.
+
     MM skip counts run over the entry's base (``N``: any base) in the read's
     original orientation, SEQ reverse-complemented for a reverse-strand
     record, for ``+`` and ``-`` entries alike. In that orientation the piece
@@ -199,11 +202,12 @@ def cut_modifications(read, qs, qe, mm_tag='MM', ml_tag='ML'):
     ML values (interleaved per position for multi-code entries) carried. Each
     entry and its ``.``/``?`` flag stay, also with no call left. None when the
     record is hard-clipped, MM/ML do not parse, a skip runs past SEQ, the ML
-    length disagrees with MM or MN disagrees with SEQ.
+    length disagrees with MM (when ML is present) or MN disagrees with SEQ.
     """
     seq = read.query_sequence
     mm = read.get_tag(mm_tag)
-    ml = read.get_tag(ml_tag) if read.has_tag(ml_tag) else []
+    has_ml = read.has_tag(ml_tag)
+    ml = read.get_tag(ml_tag) if has_ml else []
     entries = _parse_mm(mm)
     if (not seq or entries is None
             or any(op == 5 for op, _ in (read.cigartuples or ()))
@@ -235,12 +239,12 @@ def cut_modifications(read, qs, qe, mm_tag='MM', ml_tag='ML'):
                 previous = index
                 values.extend(ml[offset:offset + n_codes])
             offset += n_codes
-        if offset > len(ml):
+        if has_ml and offset > len(ml):
             return None
         texts.append(''.join(text) + ';')
-    if offset != len(ml):
+    if has_ml and offset != len(ml):
         return None
-    return ''.join(texts), array('B', values)
+    return ''.join(texts), (array('B', values) if has_ml else None)
 
 
 def make_piece(read, header, qs, qe, index, gap):
@@ -277,7 +281,7 @@ def make_piece(read, header, qs, qe, index, gap):
             cut = cut_modifications(read, qs, qe, mm_tag, ml_tag)
             if cut is not None:
                 piece.set_tag(mm_tag, cut[0], value_type='Z')
-                if len(cut[1]) or read.has_tag(ml_tag):
+                if cut[1] is not None:
                     piece.set_tag(ml_tag, cut[1])
                 kept_modifications = True
     if kept_modifications and read.has_tag('MN'):

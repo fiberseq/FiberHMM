@@ -351,7 +351,8 @@ written:
   calls inside the piece stay, skip counts are recomputed over the piece in
   the read's original orientation (reverse-complemented for reverse-strand
   records, for `+` and `-` entries alike), ML values follow their calls, and
-  each entry keeps its codes and `.`/`?` flag. `MN` is set to the piece's
+  each entry keeps its codes and `.`/`?` flag. `MM` without `ML` (ML is
+  optional) is re-indexed on its own. `MN` is set to the piece's
   length. A piece of a hard-clipped record, or of one whose `MM`/`ML` do not
   parse or do not match SEQ, gets no `MM`/`ML` (counted as
   `n_pieces_modifications_dropped`). Every other position-dependent tag
