@@ -786,3 +786,64 @@ def test_split_mode_counts_kept_and_dropped_modifications(tmp_path):
         assert ({k: v for k, v in _calls(piece).items() if v}
                 == {k: v for k, v in expected.items() if v})
     assert not out['clip/c0'].has_tag('MM') and not out['clip/c1'].has_tag('ML')
+
+
+def _unmapped_ry_chimera(hdr, ref, name='u_chim', seed=3):
+    """An unmapped R/Y read: Y (C->T) in its first half, R (G->A) after."""
+    rng = random.Random(seed)
+    bases = ref[5000:9000]
+    seq = []
+    for i, base in enumerate(bases):
+        if i < 2000 and base == 'C' and rng.random() < 0.35:
+            seq.append('Y')
+        elif i >= 2000 and base == 'G' and rng.random() < 0.35:
+            seq.append('R')
+        else:
+            seq.append(base)
+    read = pysam.AlignedSegment(hdr)
+    read.query_name = name
+    read.flag = 4
+    read.reference_id = -1
+    read.reference_start = -1
+    read.query_sequence = ''.join(seq)
+    read.query_qualities = pysam.qualitystring_to_array('I' * len(seq))
+    return read
+
+
+def test_split_keeps_unmapped_chimeras_whole_and_flagged(tmp_path):
+    from fiberhmm.inference.chimera_split import split_record
+    from fiberhmm.inference.chimeras import ChimeraDecisions
+    ref = reference()
+    hdr = header()
+    unmapped = _unmapped_ry_chimera(hdr, ref)
+    reads = [make_read(hdr, ref, 'mapped_chim', 2000, [(0, 4000)], swap_at(4000), seed=1),
+             make_read(hdr, ref, 'clean', 2000, [(0, 3000)], clean('CT'), seed=2)]
+    path = tmp_path / 'in.bam'
+    with pysam.AlignmentFile(str(path), 'wb', header=hdr) as out:
+        for read in reads + [unmapped]:
+            out.write(read)
+    # The public cutter refuses an unmapped record instead of crashing.
+    pieces, gaps = split_record(unmapped, hdr, {'left_last': 100, 'right_first': 3000})
+    assert pieces == [None, None] and gaps == [None]
+
+    spool = tmp_path / 'spool.bam'
+    names = ChimeraDecisions()
+    stats = prepare_chimeras(str(path), mode='split', spool_bam=str(spool),
+                             process_unmapped=True, chimeric_names=names,
+                             min_baseq=0)
+    assert stats['n_chimeric'] == 2                    # mapped + unmapped
+    split = stats['split']
+    assert split['n_records_unmapped_kept_whole'] == 1
+    assert split['n_records_split'] == 1
+    assert 'u_chim' in names and 'mapped_chim' in names
+    spooled = records(spool)
+    whole = [r for r in spooled if r.query_name == 'u_chim']
+    assert len(whole) == 1 and whole[0].is_unmapped
+    assert whole[0].query_sequence == unmapped.query_sequence
+    assert {r.query_name for r in spooled if r.query_name.startswith('mapped_chim/')} \
+        == {'mapped_chim/c0', 'mapped_chim/c1'}
+    # The flag-mode writer marks the whole unmapped chimera.
+    out = tmp_path / 'out.bam'
+    prepare_chimeras(str(path), str(out), mode='flag', process_unmapped=True, min_baseq=0)
+    marked = {r.query_name for r in records(out) if r.has_tag('xc')}
+    assert 'u_chim' in marked

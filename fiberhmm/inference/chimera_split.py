@@ -23,6 +23,11 @@ and ``MN``, if present, is set to the piece's SEQ length. They are dropped for
 a piece whose record is hard-clipped or whose MM/ML do not parse or do not
 match SEQ. Every other position-dependent tag (SA, the DAF strand tag ``st``,
 earlier FiberHMM calls) is dropped.
+
+Unmapped records (``--process-unmapped``) are never cut: they have no CIGAR
+or reference, so a piece could carry neither a position nor ``xb`` gaps,
+and the piece length filter counts aligned bases. A chimeric unmapped
+record stays whole and is flagged as in flag mode.
 """
 from __future__ import annotations
 
@@ -308,6 +313,12 @@ def piece_intervals(read, split):
     return intervals, gaps
 
 
+def is_splittable(read):
+    """Whether ``read`` can be cut: mapped, with a CIGAR (unmapped: kept whole)."""
+    return (not read.is_unmapped and read.reference_id >= 0
+            and bool(read.cigartuples))
+
+
 def split_record(read, header, split):
     """``(pieces, gaps)`` for a record and its split.
 
@@ -318,6 +329,8 @@ def split_record(read, header, split):
     ``[start, end)`` pairs when all of them could be placed.
     """
     intervals, query_gaps = piece_intervals(read, split)
+    if not is_splittable(read):
+        return [None] * len(intervals), [None] * len(query_gaps)
     name = read.query_name
     suffix = len(f'/c{len(intervals) - 1}')
     if not name or name == '*' or len(name) + suffix > _MAX_QNAME:

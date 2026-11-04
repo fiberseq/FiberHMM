@@ -361,8 +361,11 @@ written:
   no piece left is kept whole and flagged.
 - Other records of a chimeric read (supplementary or secondary records that
   are not chimeric themselves, or are not selected by `--alignments`) are
-  flagged as in flag mode. Unnamed records are not split. A piece that
-  still shows a swap after cutting is flagged.
+  flagged as in flag mode. Unnamed records are not split. Unmapped records
+  (`--process-unmapped`, or streamed input) are not split either: they have
+  no CIGAR or reference position to cut, so a chimeric unmapped record is
+  kept whole and flagged (counted as `n_records_unmapped_kept_whole`). A
+  piece that still shows a swap after cutting is flagged.
 - Each piece is called with its own strand. Split mode runs before the
   insert-consensus pre-pass, so pieces carry their own insertion evidence.
 
