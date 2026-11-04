@@ -2883,13 +2883,40 @@ def _call_settings(input_path) -> Optional[dict]:
     return None
 
 
-def _call_chimera_detector(settings, snp_report_path, sidecar_dir, input_stem):
+def _validated_chimera_sidecar(candidate, mode, enzyme, input_path) -> Optional[dict]:
+    """The ``<stem>.chimeras.json`` payload when it describes this BAM, else None.
+
+    A filename is not run provenance: the report must name this assay and
+    carry this BAM's SHA-256. Older identity-free reports cannot establish
+    that their pre-removal totals describe this BAM.
+    """
+    if mode != 'daf' or not Path(candidate).is_file():
+        return None
+    try:
+        from fiberhmm.io.run_state import sha256_file
+        payload = json.loads(Path(candidate).read_text())
+        assay = payload.get('assay') if isinstance(payload, dict) else None
+        if (isinstance(assay, dict) and assay.get('mode') == mode
+                and assay.get('enzyme') == (enzyme or 'custom')
+                and payload.get('output_sha256')
+                and payload['output_sha256'] == sha256_file(input_path)
+                and isinstance(payload.get('statistics'), dict)):
+            return payload
+    except (OSError, ValueError, TypeError):
+        pass
+    return None
+
+
+def _call_chimera_detector(settings, snp_report_path, sidecar_dir, input_stem,
+                           recorded_mask=None):
     """``(detector, error_mask_state)``: the call's strand-swap detector.
 
     ``detector`` holds the keys of ``engine._DAF_CHIMERA_CFG`` restored from
     the call's @PG DS (None without one). A call recorded without the 3.0.4
     settings used the 3.0.3 detector (no base-quality or span limit, one
     switch, no error mask). The error mask of a call that applied one is
+    ``recorded_mask`` (the BED named by the call's validated chimeras
+    report, which also covers a custom ``--daf-snp-output-prefix``), else
     found through the SNP report's outputs, else next to the SNP outputs
     (``qc/<stem>.daf_snps.chimera_error_mask.bed``); when neither exists the
     state is ``unavailable`` and extraction runs without it.
@@ -2922,7 +2949,7 @@ def _call_chimera_detector(settings, snp_report_path, sidecar_dir, input_stem):
     recorded = settings.get("chimera_error_mask", "off")
     if not recorded.startswith("on"):
         return detector, recorded
-    candidates = []
+    candidates = [Path(recorded_mask)] if recorded_mask else []
     if snp_report_path and Path(snp_report_path).exists():
         try:
             outputs = json.loads(Path(snp_report_path).read_text()).get("outputs", {})
@@ -3127,8 +3154,15 @@ def run_qc(
     # Restore the call's chimera detector (and its error mask) before state
     # extraction, so reads the call kept are not re-detected differently.
     call_settings = _call_settings(input_path)
+    chimera_report = _validated_chimera_sidecar(
+        sidecar_dir / f"{input_stem}.chimeras.json", resolved_mode, resolved_enzyme,
+        input_path)
+    recorded_statistics = (chimera_run_summary if chimera_run_summary is not None
+                           else (chimera_report or {}).get('statistics'))
+    recorded_mask = ((recorded_statistics or {}).get('error_mask') or {}).get('bed')
     chimera_detector, error_mask_state = (
-        _call_chimera_detector(call_settings, snp_report_path, sidecar_dir, input_stem)
+        _call_chimera_detector(call_settings, snp_report_path, sidecar_dir, input_stem,
+                               recorded_mask=recorded_mask)
         if resolved_mode == "daf" else (None, None))
     state_block, state_arrays = _state_rates(
         input_path, sampled.reads, resolved_mode, resolved_enzyme,
@@ -3219,23 +3253,10 @@ def run_qc(
     chimera_report_path = None
     if resolved_mode != 'daf':
         chimera_run_summary = None
-    elif candidate.is_file():
-        try:
-            from fiberhmm.io.run_state import sha256_file
-            payload = json.loads(candidate.read_text())
-            assay = payload.get('assay') if isinstance(payload, dict) else None
-            # A filename is not run provenance. Older identity-free reports
-            # cannot establish that their pre-removal totals describe this BAM.
-            if (isinstance(assay, dict) and assay.get('mode') == resolved_mode
-                    and assay.get('enzyme') == (resolved_enzyme or 'custom')
-                    and payload.get('output_sha256')
-                    and payload['output_sha256'] == sha256_file(input_path)
-                    and isinstance(payload.get('statistics'), dict)):
-                if chimera_run_summary is None:
-                    chimera_run_summary = payload['statistics']
-                chimera_report_path = str(candidate)
-        except (OSError, ValueError, TypeError):
-            pass
+    elif chimera_report is not None:
+        if chimera_run_summary is None:
+            chimera_run_summary = chimera_report['statistics']
+        chimera_report_path = str(candidate)
     if chimera_run_summary is not None:
         chimeras['sample'] = {k: v for k, v in chimeras.items() if k != 'sample'}
         chimeras.update(chimera_run_summary)

@@ -582,3 +582,32 @@ def test_standalone_state_qc_restores_the_calls_detector_settings(tmp_path):
     detector = _qc(bam, tmp_path, 'old')['state_rates']['definition']['chimera_detector']
     assert detector == {'filter': True, 'min_seg': 5, 'purity': 0.8, 'min_baseq': 0,
                         'min_span': 0, 'multi_switch': False, 'error_mask': None}
+
+
+@pytest.mark.parametrize('valid', [True, False])
+def test_standalone_state_qc_finds_a_custom_prefix_mask_via_the_sidecar(tmp_path, valid):
+    """--daf-snp-output-prefix elsewhere, no --snp-report: the BAM-validated
+    chimeras sidecar names the mask; an unvalidated one is not trusted."""
+    from fiberhmm.io.run_state import sha256_file
+    make = ct_with_ga_tail(TAIL)
+    reads = [make('rescued', seed=3), build('clean', lambda r: 'CT', seed=4)]
+    hdr = _call_header(_DS_DEFAULT.format(mask=f'on/{len(TAIL)}sites'))
+    bam = _write_with_header(tmp_path / 'calls.bam', reads, hdr)
+    bed = tmp_path / 'custom' / 'screen.chimera_error_mask.bed'
+    bed.parent.mkdir()
+    bed.write_text(''.join(f'{CONTIG}\t{s}\t{s + 1}\tG>A\n' for s in TAIL))
+    stats = prepare_chimeras(bam, mode='flag', error_mask=str(bed))
+    assert stats['error_mask']['bed'] == str(bed) and stats['n_chimeric'] == 0
+    (tmp_path / 'qc').mkdir()
+    (tmp_path / 'qc' / 'calls.chimeras.json').write_text(json.dumps({
+        'assay': {'mode': 'daf', 'enzyme': 'dddb'},
+        'output_sha256': sha256_file(bam) if valid else '0' * 64,
+        'statistics': stats}))
+    states = _qc(bam, tmp_path, 'calls')['state_rates']
+    if valid:
+        assert states['definition']['chimera_error_mask'] == 'restored'
+        assert states['definition']['chimera_detector']['error_mask'] == str(bed)
+        assert states['reads']['reads_chimera_skipped'] == 0
+    else:
+        assert states['definition']['chimera_error_mask'] == 'unavailable'
+        assert states['reads']['reads_chimera_skipped'] == 1

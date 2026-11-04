@@ -298,8 +298,9 @@ Without the sidecar, standalone QC with the default auto assay mode reports
 the DAF policy from the BAM header and the fraction of marked sampled reads.
 Before measuring state-aware rates, QC restores the call's detector from the
 `@PG` DS (a 3.0.3 call gets the 3.0.3 detector) and the call's chimera error
-mask, found through the SNP report or at
-`qc/<stem>.daf_snps.chimera_error_mask.bed`. When the call applied a mask
+mask: the BED named in the chimeras sidecar when that sidecar matches the
+BAM (this covers a custom `--daf-snp-output-prefix`), else through the SNP
+report or at `qc/<stem>.daf_snps.chimera_error_mask.bed`. When the call applied a mask
 that QC cannot find, the state block's `definition.chimera_error_mask` and
 the chimera block's `error_mask_restored` say `unavailable`. Chimeras
 skipped during state extraction are counted as unique read names, without
