@@ -19,7 +19,13 @@ from fiberhmm.inference.engine import (
 # identity sentinel that does not survive worker IPC, so the worker emits this
 # string instead and the drain tallies it).
 CHIMERA_RESULT = "__fiberhmm_chimera_skip__"
-from fiberhmm.inference.chimeras import DEFAULT_MIN_SEG, DEFAULT_PURITY
+from fiberhmm.inference.chimeras import (
+    DEFAULT_MIN_BASEQ,
+    DEFAULT_MIN_SEG,
+    DEFAULT_MIN_SPAN,
+    DEFAULT_MULTI_SWITCH,
+    DEFAULT_PURITY,
+)
 from fiberhmm.inference.fused_stages import (
     apply_result_has_footprints,
     build_fused_recall_result,
@@ -86,6 +92,10 @@ def _init_fused_worker(
     ddda_mcg=False,
     nuc_model_path=None,
     cpg_mask_policy=None,
+    chimera_min_baseq=DEFAULT_MIN_BASEQ,
+    chimera_min_span=DEFAULT_MIN_SPAN,
+    chimera_multi_switch=DEFAULT_MULTI_SWITCH,
+    chimera_error_mask_path=None,
 ):
     """Initialize worker process for the fused apply+recall pipeline.
 
@@ -177,7 +187,10 @@ def _init_fused_worker(
     _worker_recall_state['derived_tf_max_edge_ambiguity'] = (
         derived_tf_max_edge_ambiguity
     )
-    configure_daf_chimera_filter(filter_chimeras, chimera_min_seg, chimera_purity)
+    configure_daf_chimera_filter(filter_chimeras, chimera_min_seg, chimera_purity,
+                                 min_baseq=chimera_min_baseq, min_span=chimera_min_span,
+                                 multi_switch=chimera_multi_switch,
+                                 error_mask=chimera_error_mask_path)
 
     # Warmup: apply Viterbi + native TF configuration decoding.
     from fiberhmm.core.hmm import HAS_NUMBA

@@ -19,7 +19,13 @@ from fiberhmm.inference.bam_output import (
     atomic_output,
     ensure_parent_dir,
 )
-from fiberhmm.inference.chimeras import DEFAULT_MIN_SEG, DEFAULT_PURITY
+from fiberhmm.inference.chimeras import (
+    DEFAULT_MIN_BASEQ,
+    DEFAULT_MIN_SEG,
+    DEFAULT_MIN_SPAN,
+    DEFAULT_MULTI_SWITCH,
+    DEFAULT_PURITY,
+)
 from fiberhmm.inference.mp_context import _MP_CONTEXT
 from fiberhmm.inference.region_planning import (
     _get_genome_regions,
@@ -453,6 +459,10 @@ def _process_bam_region_parallel_fused(
     filter_chimeras: bool = True,
     chimera_min_seg: int = DEFAULT_MIN_SEG,
     chimera_purity: float = DEFAULT_PURITY,
+    chimera_min_baseq: int = DEFAULT_MIN_BASEQ,
+    chimera_min_span: int = DEFAULT_MIN_SPAN,
+    chimera_multi_switch: bool = DEFAULT_MULTI_SWITCH,
+    chimera_error_mask_path: Optional[str] = None,
     phase_nrl: int = 0,
     nuc_profile_path: str = None,
     nuc_model_path: str = None,
@@ -526,6 +536,10 @@ def _process_bam_region_parallel_fused(
         'chimera_mode': chimera_mode,
         'chimera_min_seg': chimera_min_seg,
         'chimera_purity': chimera_purity,
+        'chimera_min_baseq': chimera_min_baseq,
+        'chimera_min_span': chimera_min_span,
+        'chimera_multi_switch': chimera_multi_switch,
+        'chimera_error_mask_path': chimera_error_mask_path,
         'phase_nrl': phase_nrl,
         'nuc_profile_path': nuc_profile_path,
         'nuc_model_path': nuc_model_path,
@@ -565,6 +579,7 @@ def _process_bam_region_parallel_fused(
                     nuc_profile=file_digest(nuc_profile_path, memo),
                     nuc_model=file_digest(nuc_model_path, memo),
                     daf_snp_mask=file_digest(daf_snp_mask_path, memo),
+                    chimera_error_mask=file_digest(chimera_error_mask_path, memo),
                     daf_insert_evidence=file_digest(daf_insert_evidence_path, memo),
                     reference=reference_identity(ref_fasta_path, memo),
                 ),
