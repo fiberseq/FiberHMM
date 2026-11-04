@@ -646,6 +646,13 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--zones` | — | Scan only the genome-grid units whose owned zones meet this window (0-based, half-open; repeatable; implies --genome). Units keep their genome-grid spans (not clipped to the window), so their results are the genome scan's (the Python API's run_units(..., extend=True) reuses them across plans; --continue needs the same plan). FiberBrowser's view scans print this form |
 | `--modules` | `fp,nfr,peaks` | Comma-separated modules (default fp,nfr,peaks; nfr is an EXPERIMENTAL preview) |
 | `--parameters` | — | JSON {"fp": {...}, "nfr": {...}, "peaks": {...}, "read_policy": {...}}; see --schema |
+| `--nucreg-window` | — | Regularity window (default 2000) |
+| `--nucreg-step` | — | Window step = tile width (default 250) |
+| `--nucreg-signal` | — | Signal: raw m6A calls (default) or nucleosome-call occupancy Choices: `m6a`, `occupancy`. |
+| `--nucreg-band` | — | Period band of the peak in bp (default 140-260) |
+| `--nucreg-mask-open` | — | Mask open stretches (gaps between nucleosome calls) of at least BP (default off; 0 = off) |
+| `--nucreg-thin` | — | Thin m6A calls to PER_KB per kb before scoring (default off; 0 = off) |
+| `--no-nucreg` | off | Do not compute or write nucreg |
 | `--input-type` | `called-bam` | --bam input type; signal-bam filters producer-scored schema 5 records before all modules Choices: `called-bam`, `signal-bam`. |
 | `--signal-filters` | — | JSON file of boolean hideBackground, excludeUnscored, requireDetectable, requireStructure predicates (with --input-type signal-bam) |
 | `--chemistry` | — | Chemistry for --bam inputs whose header does not declare one Choices: `ddda`, `dddb`, `hia5-pacbio`, `hia5-nanopore`. |
