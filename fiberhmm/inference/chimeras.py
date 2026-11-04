@@ -134,13 +134,42 @@ def _error_masked_query_positions(read, error_mask):
     sites = load_error_mask(error_mask).get(getattr(read, 'reference_name', None))
     if not sites or not hasattr(read, 'get_aligned_pairs'):
         return set()
+    import numpy as np
+    from fiberhmm.daf.aligned_arrays import matched_base_arrays
     from fiberhmm.daf.snps import wrapped_reference_sites
-    sites = wrapped_reference_sites(read, sites)
+    wrapped = wrapped_reference_sites(read, sites)
+    if wrapped is sites:
+        # Skip reads that cover no masked site (most reads of a large genome).
+        ordered = _sorted_sites(error_mask, read.reference_name, sites)
+        start, end = read.reference_start, read.reference_end or read.reference_start
+        lo = int(np.searchsorted(ordered, start))
+        if lo >= ordered.size or ordered[lo] >= end:
+            return set()
+    arrays = matched_base_arrays(read)
+    if arrays is not None:
+        qpos, rpos = arrays[0], arrays[1]
+        ordered = np.fromiter(wrapped, dtype=np.int64, count=len(wrapped))
+        return set(qpos[np.isin(rpos, ordered)].tolist())
     try:
         return {int(q) for q, r in read.get_aligned_pairs(matches_only=True)
-                if r in sites}
+                if r in wrapped}
     except (ValueError, TypeError, IndexError):
         return set()
+
+
+_SORTED_SITES = {}
+
+
+def _sorted_sites(path, contig, sites):
+    key = (path, contig)
+    ordered = _SORTED_SITES.get(key)
+    if ordered is None or ordered[0] is not sites:
+        import numpy as np
+        if len(_SORTED_SITES) > 4096:
+            _SORTED_SITES.clear()
+        ordered = (sites, np.array(sorted(sites), dtype=np.int64))
+        _SORTED_SITES[key] = ordered
+    return ordered[1]
 
 
 def filter_chimera_events(read, ct, ga, cfg):
