@@ -76,6 +76,9 @@ class RegularityParams:
             raise ValueError('nucreg: need window_bp >= 64, step_bp >= 1 and nfft >= window_bp')
         if not (0 < self.band_bp[0] < self.band_bp[1]) or not (0 < self.ref_bp[0] < self.ref_bp[1]):
             raise ValueError('nucreg: band_bp and ref_bp must be increasing positive (lo, hi)')
+        if self.band_bp[1] > PERIOD_OFFSET + 255:
+            raise ValueError(f'nucreg: band_bp upper end must be at most {PERIOD_OFFSET + 255} bp '
+                             '(the period byte stores period - 100)')
         if self.mask_open_bp is not None and self.mask_open_bp <= 0:
             raise ValueError('nucreg: mask_open_bp must be positive (None = off)')
         if self.thin_per_kb is not None and self.thin_per_kb <= 0:

@@ -264,6 +264,8 @@ def test_params_round_trip_and_validation():
         RegularityParams(signal='dna')
     with pytest.raises(ValueError):
         RegularityParams(band_bp=(260, 140))
+    with pytest.raises(ValueError):
+        RegularityParams(band_bp=(140, 400))                 # beyond what the period byte holds
 
 
 def test_a_20kb_molecule_is_fast():
