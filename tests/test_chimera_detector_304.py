@@ -453,3 +453,23 @@ def test_call_without_error_mask_says_why(tmp_path, extra, reason, state):
     assert side['min_baseq'] == 15             # the quality filter still applies
     assert _ds(tmp_path / 'calls.bam')['chimera_error_mask'] == state
     assert not (tmp_path / 'qc/calls.daf_snps.chimera_error_mask.bed').exists()
+
+
+@pytest.mark.parametrize('min_baseq', [0, 15, 30])
+def test_error_mask_voters_use_fixed_q15(tmp_path, min_baseq):
+    """Voter quality is 15 whatever --chimera-min-baseq is."""
+    from fiberhmm.daf.snps import (
+        _error_mask_voter, _read_arrays_with_query, call_opposite_conversion_snps,
+    )
+    region = range(START, START + LENGTH)
+    all_low = build('lowq', lambda r: 'CT', seed=3, low_q=set(region))
+    cfg = detector_config(min_baseq=min_baseq)
+    assert _error_mask_voter(all_low, _read_arrays_with_query(all_low), cfg) == (None, None)
+    good = build('good', lambda r: 'CT', seed=4)
+    assert _error_mask_voter(good, _read_arrays_with_query(good), cfg)[0] == 'CT'
+    # Q5 recurrent errors never make a mask site, at any detector setting.
+    bam, error, low_error, _hot = _error_library(tmp_path)
+    payload = call_opposite_conversion_snps(bam, chimera_error_mask=True,
+                                            chimera_detector=cfg)
+    masked = {s['position_0based'] for s in payload['chimera_error_mask']['sites']}
+    assert error in masked and low_error not in masked

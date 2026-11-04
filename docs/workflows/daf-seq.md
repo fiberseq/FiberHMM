@@ -235,8 +235,9 @@ them, because it requires support on both strands. When the
 [SNP screen](#snp-screening) runs, its two passes also build a chimera-only
 error mask, with no extra pass over the BAM. Only clearly single-strand
 fibers vote: at least 10 deaminations of one strand at purity 0.92 or more,
-counting deaminations with base quality of at least `--chimera-min-baseq`,
-and not chimeric under the run's detector. Chimeric fibers do not vote, so
+counting deaminations with base quality of at least 15 (fixed, independent
+of `--chimera-min-baseq`; records without QUAL are not filtered), and not
+chimeric under the run's detector. Chimeric fibers do not vote, so
 real accessible sites on chimeric reads are not masked. A site is masked
 for the opposite-strand event when, among voters of the other strand, it has
 

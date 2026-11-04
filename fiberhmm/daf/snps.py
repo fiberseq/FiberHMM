@@ -615,14 +615,16 @@ def _error_mask_voter(read, arrays, detector):
     A voter is a clearly single-strand, non-chimeric fiber: >=
     ``ERROR_MASK_VOTER_MIN_EVENTS`` events of one direction at purity >=
     ``ERROR_MASK_VOTER_MIN_PURITY``, counting only events with base quality
-    >= the detector's ``min_baseq`` (when QUAL is present), and not a
-    chimera under the run's detector on those events. ``good`` marks the
+    >= ``ERROR_MASK_VOTER_MIN_BASEQ`` (15, fixed: independent of the
+    detector's ``min_baseq``; when QUAL is present), and not a chimera under
+    the run's detector on those events. ``good`` marks the
     aligned bases with sufficient quality (all when there is no QUAL). The
     SNP and error masks do not exist yet at this point, so the voter test
     sees every event.
     """
     from fiberhmm.daf.encoder import is_daf_chimera
     from fiberhmm.inference.chimeras import (
+        ERROR_MASK_VOTER_MIN_BASEQ,
         ERROR_MASK_VOTER_MIN_EVENTS,
         ERROR_MASK_VOTER_MIN_PURITY,
     )
@@ -630,8 +632,8 @@ def _error_mask_voter(read, arrays, detector):
     qpos, _rpos, ref_codes, query_codes = arrays
     ct_mask, ga_mask = _conversion_masks(ref_codes, query_codes)
     quals = _query_qualities(read)
-    min_baseq = int(detector.get("min_baseq") or 0)
-    if quals is not None and min_baseq > 0 and quals.size:
+    min_baseq = ERROR_MASK_VOTER_MIN_BASEQ
+    if quals is not None and quals.size:
         inside = (qpos >= 0) & (qpos < quals.size)
         good = np.zeros(qpos.size, dtype=bool)
         good[inside] = quals[qpos[inside]] >= min_baseq

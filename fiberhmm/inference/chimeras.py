@@ -36,6 +36,7 @@ LEGACY_MULTI_SWITCH = False
 # mismatches among voters are recurrent and improbable as random error.
 ERROR_MASK_VOTER_MIN_EVENTS = 10
 ERROR_MASK_VOTER_MIN_PURITY = 0.92
+ERROR_MASK_VOTER_MIN_BASEQ = 15     # fixed; independent of --chimera-min-baseq
 ERROR_MASK_MIN_DEPTH = 20           # voter fibers covering the site
 ERROR_MASK_MIN_MISMATCHES = 4       # voter fibers with the opposite event
 ERROR_MASK_MIN_FRACTION = 0.05
