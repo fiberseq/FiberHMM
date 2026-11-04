@@ -316,12 +316,14 @@ def chimera_warning(stats):
     basis = (f" ({grade['basis_note']})" if grade.get('basis_note') else '')
     if grade.get('severity') == 'high':
         return (f"WARNING: very high DAF strand-swap chimera rate: {percent:.1f}% "
-                f"of reads{basis}, and same-strand chimeras are not detectable. "
-                "Treat read counts and occupancy from this library with strong "
-                "caution.")
+                f"of reads{basis}. Same-strand chimeras are invisible, so the "
+                "unflagged reads still hold about as many again. Treat read "
+                "counts, occupancy and long-range results from this library "
+                "with strong caution.")
     return (f"WARNING: high DAF strand-swap chimera rate: {percent:.1f}% of "
-            f"reads{basis}; same-strand chimeras are not detectable. Take read "
-            "counts and occupancy from this library with caution.")
+            f"reads{basis}; same-strand chimeras are invisible, so the unflagged "
+            "reads still hold about as many again. Take read counts, occupancy "
+            "and long-range results from this library with caution.")
 
 
 def detector_details(stats):

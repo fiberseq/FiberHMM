@@ -2891,8 +2891,9 @@ def _overall_verdict(analysis: dict, chimera_grade: Optional[dict] = None) -> di
 
     A DAF chimera grade of WARN turns a PASS into WARN (``warned_by``). It
     never makes a FAIL and is not part of the score: flagged chimeras are
-    excluded from analysis, and the remaining reads are usable. Without a
-    WARN chimera grade the result is exactly the component verdict.
+    excluded from analysis. The unflagged reads still hold about as many
+    undetectable same-strand chimeras as were flagged (``CHIMERA_NOTE``).
+    Without a WARN chimera grade the result is exactly the component verdict.
 
     When the in-MSP efficiency and/or outside-MSP background are graded they
     replace the overall-rate grade (which stays in ``signal`` as a reported
