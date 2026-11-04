@@ -127,9 +127,14 @@ with `plot: not written (install matplotlib)`.
   `severity` `moderate` or, from 20%, `high`; INSUFFICIENT below 100
   checked reads), a `regions` table (per-region counts and fractions; also
   written to `<prefix>.qc.chimera_regions.tsv`), `split` statistics for
-  split mode and a fixed `note`: same-strand chimeras cannot be detected, so
-  the true rate is higher, and read counts and occupancy from a library with
-  many chimeras should be taken with caution. The text summary prints a
+  split mode and a fixed `note`: only opposite-strand chimeras are
+  detectable and same-strand chimeras are invisible, so with balanced
+  strands the unflagged reads still contain roughly as many undetected
+  chimeras as were flagged; read counts, occupancy and long-range results
+  from a library with many chimeras should be taken with caution.
+  Duplicate-flagged reads are not counted (`n_duplicates_excluded`), and the
+  section records the detector settings (`min_baseq`, `min_span`,
+  `multi_switch`) and the chimera `error_mask` block. The text summary prints a
   chimera block and the PDF/PNG a coloured status box under the duplication
   panel; TSV columns `chimeras_status`, `chimeras_severity` and
   `chimeras_basis` follow the existing columns. The grade comes from the
@@ -138,13 +143,15 @@ with `plot: not written (install matplotlib)`.
   split BAMs without their sidecar are not graded. The grade records the
   detector that made the count (`min_seg`, `purity`) and its `basis`:
   `default` for the 3.0.4 detector, `lenient` for a looser one such as a
-  FiberHMM 3.0.3 sidecar or BAM (5 and 0.8), which is graded on its recorded
-  count with a `basis_note` saying the default detector marks fewer reads.
-  A chimera WARN turns an overall PASS into WARN (`overall.warned_by:
-  ["chimeras"]`); it never fails a sample and is not part of the score,
-  since flagged chimeras are excluded from calls and the remaining reads
-  are usable. Without a chimera WARN, and for every non-DAF run, the
-  overall verdict is as before.
+  FiberHMM 3.0.3 sidecar or BAM (5 and 0.8, no base-quality or span limit),
+  which is graded on its recorded count with a `basis_note` saying the
+  default detector marks fewer reads. A chimera WARN turns an overall PASS
+  into WARN (`overall.warned_by: ["chimeras"]`); it never fails a sample and
+  is not part of the score, since flagged chimeras are excluded from calls.
+  The grade measures detectable chimeras only: at a 10% WARN about one
+  unflagged read in nine is still a same-strand chimera, at a 20% `high`
+  WARN about one in four. Without a chimera WARN, and for every non-DAF run,
+  the overall verdict is as before.
 
 If the run's ML threshold differs by more than 5 from the reference's
 calibration threshold, the rate score is capped at WARN and the mismatch is
