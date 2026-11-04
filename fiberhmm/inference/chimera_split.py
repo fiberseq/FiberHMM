@@ -1,17 +1,21 @@
-"""Cut a DAF strand-swap chimera into two single-strand alignments.
+"""Cut a DAF strand-swap chimera into single-strand alignments.
 
 Used by ``fiberhmm-call --chimeras split`` (an option, not the default).
 Each piece keeps its own-strand events up to the breakpoint gap: piece 0
-is the query from its start to the last left-strand event of the left
-segment, piece 1 from the first right-strand event of the right segment to
-its end. The gap between them, where the template switch happened at an
-unknown point, is in neither piece, so neither piece ends in a stretch
-without deamination created by the cut.
+is the query from its start to the last left-strand event of the first
+segment, the last piece from the first own-strand event of the last
+segment to its end, and an interior piece (a read with several switches,
+for example CT -> GA -> CT) from its first to its last own-strand event.
+The gaps between pieces, where the template switches happened at unknown
+points, are in no piece, so no piece ends in a stretch without deamination
+created by the cut.
 
-Pieces are new records named ``<qname>/c0`` and ``<qname>/c1`` with
-``xc:Z:split``, ``xi:i`` (piece index), ``xn:Z`` (original name) and
-``xb:B:i`` (the gap on the record's reference, 0-based half-open
-``[start, end)``). CIGAR, SEQ, QUAL and MD are cut together and NM is
+Pieces are new records named ``<qname>/c0``, ``<qname>/c1``, ... from left
+to right, with ``xc:Z:split``, ``xi:i`` (piece index), ``xn:Z`` (original
+name) and ``xb:B:i`` (every breakpoint gap of the original record on its
+reference as 0-based half-open ``[start, end)`` pairs, left to right; piece
+``xi`` lies between gap ``xi-1`` and gap ``xi``; a one-switch split has one
+pair, as before 3.0.4). CIGAR, SEQ, QUAL and MD are cut together and NM is
 recomputed. Read-level tags that a cut cannot invalidate are copied
 (:data:`KEPT_TAGS`). Base modifications are kept: ``MM``/``ML`` (and the
 legacy ``Mm``/``Ml``) are re-indexed to the piece (:func:`cut_modifications`)
@@ -286,16 +290,41 @@ def make_piece(read, header, qs, qe, index, gap):
     return piece
 
 
-def split_record(read, header, split):
-    """``(pieces, gap)`` for a record and its :func:`daf_chimera_split`.
+def piece_intervals(read, split):
+    """Query ``(qs, qe)`` of each piece and the query gaps between them.
 
-    ``pieces`` is ``[piece0, piece1]`` with None for a piece that cannot be
-    cut; length filtering is the caller's.
+    ``split`` is a :func:`~fiberhmm.daf.encoder.daf_chimera_segments` result
+    (``pieces``: inclusive ``(lo, hi)``, None at the read ends) or a
+    :func:`~fiberhmm.daf.encoder.daf_chimera_split` result (one switch).
     """
-    name = read.query_name
-    if not name or name == '*' or len(name) + 3 > _MAX_QNAME:
-        return [None, None], None
-    gap = gap_interval(read, split)
+    if 'pieces' in split:
+        bounds = list(split['pieces'])
+    else:
+        bounds = [(None, split['left_last']), (split['right_first'], None)]
     qlen = read.query_length
-    return [make_piece(read, header, 0, split['left_last'] + 1, 0, gap),
-            make_piece(read, header, split['right_first'], qlen, 1, gap)], gap
+    intervals = [(0 if lo is None else lo, qlen if hi is None else hi + 1)
+                 for lo, hi in bounds]
+    gaps = [(left[1], right[0]) for left, right in zip(bounds, bounds[1:])]
+    return intervals, gaps
+
+
+def split_record(read, header, split):
+    """``(pieces, gaps)`` for a record and its split.
+
+    ``pieces`` lists every piece from left to right, None for a piece that
+    cannot be cut; length filtering is the caller's. ``gaps`` lists each
+    breakpoint gap on the reference (0-based half-open, None where it
+    cannot be placed). Every piece carries all gaps in ``xb`` as flat
+    ``[start, end)`` pairs when all of them could be placed.
+    """
+    intervals, query_gaps = piece_intervals(read, split)
+    name = read.query_name
+    suffix = len(f'/c{len(intervals) - 1}')
+    if not name or name == '*' or len(name) + suffix > _MAX_QNAME:
+        return [None] * len(intervals), [None] * len(query_gaps)
+    gaps = [gap_interval(read, {'left_last': left, 'right_first': right})
+            for left, right in query_gaps]
+    flat = (None if any(gap is None for gap in gaps)
+            else [value for gap in gaps for value in gap])
+    return [make_piece(read, header, qs, qe, index, flat)
+            for index, (qs, qe) in enumerate(intervals)], gaps
