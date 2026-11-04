@@ -1966,9 +1966,7 @@ def _main(args):
         # Calling can run in-process beside QC or another caller. Its
         # decision-only pass must not leave detection disabled for them.
         if chimera_filter_config is not None:
-            _engine.configure_daf_chimera_filter(
-                chimera_filter_config['filter'], chimera_filter_config['min_seg'],
-                chimera_filter_config['purity'])
+            _engine.restore_daf_chimera_filter(chimera_filter_config)
         if chimera_tmpdir is not None:
             chimera_tmpdir.cleanup()
         _remove_dedup_temp(dedup_tmp)

@@ -1023,6 +1023,31 @@ def configure_daf_chimera_filter(filter_chimeras: bool = True,
     _DAF_CHIMERA_CFG['error_mask'] = str(error_mask) if error_mask else None
 
 
+def restore_daf_chimera_filter(config: dict) -> None:
+    """Restore every setting of a saved ``dict(_DAF_CHIMERA_CFG)`` snapshot."""
+    configure_daf_chimera_filter(
+        config['filter'], config['min_seg'], config['purity'],
+        min_baseq=config['min_baseq'], min_span=config['min_span'],
+        multi_switch=config['multi_switch'], error_mask=config['error_mask'])
+
+
+def daf_chimera_filter_scope(**settings):
+    """Context manager: apply chimera-filter ``settings`` (keys of
+    :data:`_DAF_CHIMERA_CFG`; omitted keys keep their value) and restore the
+    previous process-wide settings on exit."""
+    from contextlib import contextmanager
+
+    @contextmanager
+    def scope():
+        saved = dict(_DAF_CHIMERA_CFG)
+        restore_daf_chimera_filter({**saved, **settings})
+        try:
+            yield
+        finally:
+            restore_daf_chimera_filter(saved)
+    return scope()
+
+
 def _daf_raw_mismatch_lists(read, ref_fasta=None):
     """Raw (not IUPAC-encoded) C->T / G->A query mismatches of a live read.
 

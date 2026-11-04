@@ -455,3 +455,26 @@ def test_owned_marks_do_not_change_insert_evidence_identity(tmp_path):
     assert engine.daf_insert_evidence(read) == {'evidence': 'retained'}
     clear_chimera_mark(read)
     assert engine.daf_insert_evidence(read) == {'evidence': 'retained'}
+
+
+def test_in_process_call_restores_every_detector_setting(tmp_path, monkeypatch):
+    from fiberhmm.cli import call
+    from fiberhmm.inference import engine
+    source = fixture_bam(tmp_path / 'source.bam')
+    mask = tmp_path / 'prior_mask.bed'
+    mask.write_text('chr1\t10\t11\tG>A\n')
+    engine.configure_daf_chimera_filter(True, 7, 0.85, min_baseq=30, min_span=0,
+                                        multi_switch=False, error_mask=str(mask))
+    policy = dict(engine._DAF_CHIMERA_CFG)
+    try:
+        monkeypatch.setattr(call, '_process_bam_streaming_pipeline_fused',
+                            lambda **kwargs: (0, 0))
+        monkeypatch.setattr(sys, 'argv', [
+            'fiberhmm-call', '-i', str(source), '-o', str(tmp_path / 'calls.bam'),
+            '--enzyme', 'dddb', '--seq', 'nanopore', '-c', '1', '--io-threads', '1',
+            '--no-qc', '--no-dedup', '--no-daf-call-snps',
+            '--daf-insert-consensus', 'off'])
+        call._main(call.parse_args())
+        assert engine._DAF_CHIMERA_CFG == policy
+    finally:
+        engine.configure_daf_chimera_filter()
