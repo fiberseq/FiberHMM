@@ -2869,6 +2869,81 @@ def _grade_chimera_block(chimeras: dict, full_run: bool) -> None:
     chimeras['grade'] = grade
 
 
+def _call_settings(input_path) -> Optional[dict]:
+    """``key=value`` settings of the last ``fiberhmm-call`` @PG DS, or None."""
+    try:
+        with pysam.AlignmentFile(input_path, "rb", check_sq=False) as bam:
+            programs = bam.header.to_dict().get("PG", [])
+    except (OSError, ValueError):
+        return None
+    for pg in reversed(programs):
+        if pg.get("PN") == "fiberhmm-call":
+            return dict(item.split("=", 1) for item in pg.get("DS", "").split()
+                        if "=" in item)
+    return None
+
+
+def _call_chimera_detector(settings, snp_report_path, sidecar_dir, input_stem):
+    """``(detector, error_mask_state)``: the call's strand-swap detector.
+
+    ``detector`` holds the keys of ``engine._DAF_CHIMERA_CFG`` restored from
+    the call's @PG DS (None without one). A call recorded without the 3.0.4
+    settings used the 3.0.3 detector (no base-quality or span limit, one
+    switch, no error mask). The error mask of a call that applied one is
+    found through the SNP report's outputs, else next to the SNP outputs
+    (``qc/<stem>.daf_snps.chimera_error_mask.bed``); when neither exists the
+    state is ``unavailable`` and extraction runs without it.
+    """
+    from fiberhmm.inference.chimeras import (
+        DEFAULT_MIN_BASEQ, DEFAULT_MIN_SPAN, DEFAULT_MULTI_SWITCH,
+        LEGACY_MIN_BASEQ, LEGACY_MIN_SPAN, LEGACY_MULTI_SWITCH,
+    )
+    if settings is None:
+        return None, None
+    modern = "chimera_min_baseq" in settings or "chimera_min_span" in settings
+    try:
+        detector = {
+            "filter": settings.get("chimera_filter", "on") != "off"
+                      and settings.get("chimeras") != "keep",
+            "min_seg": int(settings.get("chimera_min_seg", DEFAULT_CHIMERA_MIN_SEG)),
+            "purity": float(settings.get("chimera_purity", DEFAULT_CHIMERA_PURITY)),
+            "min_baseq": int(settings.get(
+                "chimera_min_baseq", DEFAULT_MIN_BASEQ if modern else LEGACY_MIN_BASEQ)),
+            "min_span": int(settings.get(
+                "chimera_min_span", DEFAULT_MIN_SPAN if modern else LEGACY_MIN_SPAN)),
+            "multi_switch": (settings["chimera_multi_switch"] == "on"
+                             if "chimera_multi_switch" in settings
+                             else (DEFAULT_MULTI_SWITCH if modern
+                                   else LEGACY_MULTI_SWITCH)),
+            "error_mask": None,
+        }
+    except (TypeError, ValueError):
+        return None, None
+    recorded = settings.get("chimera_error_mask", "off")
+    if not recorded.startswith("on"):
+        return detector, recorded
+    candidates = []
+    if snp_report_path and Path(snp_report_path).exists():
+        try:
+            outputs = json.loads(Path(snp_report_path).read_text()).get("outputs", {})
+            if outputs.get("chimera_error_mask_bed"):
+                candidates.append(Path(outputs["chimera_error_mask_bed"]))
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
+    from fiberhmm.daf.snps import chimera_error_mask_paths
+    if snp_report_path:
+        candidates.append(chimera_error_mask_paths(
+            str(snp_report_path)[:-len(".json")] if str(snp_report_path).endswith(".json")
+            else str(snp_report_path))[0])
+    candidates.append(chimera_error_mask_paths(
+        str(Path(sidecar_dir) / f"{input_stem}.daf_snps"))[0])
+    for candidate in candidates:
+        if candidate.is_file():
+            detector["error_mask"] = str(candidate)
+            return detector, "restored"
+    return detector, "unavailable"
+
+
 def _state_rates(input_path, reads, mode, enzyme, **options) -> tuple[dict, dict]:
     """State-aware rates; a failure is reported in the block, never raised."""
     if options.get("state_source") in ("none", "", None):
@@ -3049,6 +3124,12 @@ def run_qc(
         min_opportunities=min_opportunities,
         snp_mask=snp_mask,
     )
+    # Restore the call's chimera detector (and its error mask) before state
+    # extraction, so reads the call kept are not re-detected differently.
+    call_settings = _call_settings(input_path)
+    chimera_detector, error_mask_state = (
+        _call_chimera_detector(call_settings, snp_report_path, sidecar_dir, input_stem)
+        if resolved_mode == "daf" else (None, None))
     state_block, state_arrays = _state_rates(
         input_path, sampled.reads, resolved_mode, resolved_enzyme,
         prob_threshold=prob_threshold, reference_fasta=reference_fasta,
@@ -3056,7 +3137,10 @@ def run_qc(
         min_msp_bp=min_msp_bp, light_call_reads=light_call_reads,
         light_call_seconds=light_call_seconds,
         use_m5c=use_m5c, cpg_mask_policy=cpg_mask_policy,
+        chimera_detector=chimera_detector,
     )
+    if error_mask_state is not None and isinstance(state_block.get("definition"), dict):
+        state_block["definition"]["chimera_error_mask"] = error_mask_state
     efficiency, background = grade_state_rates(state_block, profile, prob_threshold)
     reference_states = ((profile or {}).get("state_rates") or {}).get("by_source", {})
     if state_block.get("source") in reference_states:
@@ -3114,22 +3198,20 @@ def run_qc(
     checked = chimeras["n_reads_checked"]
     chimeras["fraction"] = chimeras["n_chimeric"] / checked if checked else None
     chimeras["detected"] = bool(chimeras["n_chimeric"])
-    with pysam.AlignmentFile(input_path, 'rb', check_sq=False) as bam:
-        for pg in reversed(bam.header.to_dict().get('PG', [])):
-            if pg.get('PN') != 'fiberhmm-call':
-                continue
-            settings = dict(item.split('=', 1) for item in pg.get('DS', '').split() if '=' in item)
-            chimeras['mode'] = (settings.get('chimeras', chimeras['mode'])
-                                if resolved_mode == 'daf' else 'n/a')
-            for field, key, cast in [('min_seg', 'chimera_min_seg', int),
-                                     ('purity', 'chimera_purity', float),
-                                     ('min_baseq', 'chimera_min_baseq', int),
-                                     ('min_span', 'chimera_min_span', int)]:
-                if key in settings:
-                    chimeras[field] = cast(settings[key])
-            chimeras['detected'] = (chimeras['detected']
-                                    or chimeras['mode'] in ('flag', 'remove', 'split'))
-            break
+    if call_settings is not None:
+        settings = call_settings
+        chimeras['mode'] = (settings.get('chimeras', chimeras['mode'])
+                            if resolved_mode == 'daf' else 'n/a')
+        for field, key, cast in [('min_seg', 'chimera_min_seg', int),
+                                 ('purity', 'chimera_purity', float),
+                                 ('min_baseq', 'chimera_min_baseq', int),
+                                 ('min_span', 'chimera_min_span', int)]:
+            if key in settings:
+                chimeras[field] = cast(settings[key])
+        chimeras['detected'] = (chimeras['detected']
+                                or chimeras['mode'] in ('flag', 'remove', 'split'))
+        if error_mask_state is not None:
+            chimeras['error_mask_restored'] = error_mask_state
     if chimeras['mode'] in ('keep', 'n/a'):
         chimeras['n_reads_checked'] = 0
         chimeras['fraction'] = None

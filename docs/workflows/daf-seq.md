@@ -296,6 +296,14 @@ BAM for standalone QC to reproduce remove-mode counts. QC TSV and PDF/PNG
 report chimeras alongside PCR duplication.
 Without the sidecar, standalone QC with the default auto assay mode reports
 the DAF policy from the BAM header and the fraction of marked sampled reads.
+Before measuring state-aware rates, QC restores the call's detector from the
+`@PG` DS (a 3.0.3 call gets the 3.0.3 detector) and the call's chimera error
+mask, found through the SNP report or at
+`qc/<stem>.daf_snps.chimera_error_mask.bed`. When the call applied a mask
+that QC cannot find, the state block's `definition.chimera_error_mask` and
+the chimera block's `error_mask_restored` say `unavailable`. Chimeras
+skipped during state extraction are counted as unique read names, without
+duplicate-flagged reads, as in the chimera count.
 
 ### How many reads are chimeric
 

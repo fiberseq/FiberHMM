@@ -473,3 +473,112 @@ def test_error_mask_voters_use_fixed_q15(tmp_path, min_baseq):
                                             chimera_detector=cfg)
     masked = {s['position_0based'] for s in payload['chimera_error_mask']['sites']}
     assert error in masked and low_error not in masked
+
+
+# --- QC with state processing on ----------------------------------------------
+
+def _call_header(ds):
+    return pysam.AlignmentHeader.from_dict({
+        'HD': {'VN': '1.6', 'SO': 'coordinate'},
+        'SQ': [{'SN': CONTIG, 'LN': REF_LEN}],
+        'PG': [{'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call', 'VN': '3.0.4',
+                'DS': ds}]})
+
+
+_DS_DEFAULT = ('mode=daf enzyme=dddb chimera_filter=on chimeras=flag chimera_min_seg=10 '
+               'chimera_purity=0.9 chimera_min_baseq=15 chimera_min_span=200 '
+               'chimera_multi_switch=on chimera_error_mask={mask} '
+               'daf_run_mask=off')
+
+
+def _write_with_header(path, reads, hdr):
+    reads = sorted(reads, key=lambda x: (x.reference_start, x.query_name))
+    with pysam.AlignmentFile(str(path), 'wb', header=hdr) as out:
+        for read in reads:
+            out.write(pysam.AlignedSegment.fromstring(read.to_string(), hdr))
+    pysam.index(str(path))
+    return str(path)
+
+
+def _qc(bam, tmp_path, name):
+    from fiberhmm.qc.core import run_qc
+    return run_qc(bam, output_prefix=str(tmp_path / 'out' / name), mode='daf',
+                  enzyme='dddb', reference_profile='none', sample_reads=100,
+                  state_source='light-call', stream=None)
+
+
+def test_state_qc_leaves_duplicate_chimeras_out(tmp_path):
+    from fiberhmm.inference.chimeras import mark_chimera
+    make = ct_with_ga_tail(TAIL)
+    reads = [build('clean', lambda r: 'CT', seed=1)]
+    for i in range(3):
+        dup = make(f'dup{i}', seed=20 + i, flag=0x400)
+        mark_chimera(dup)
+        reads.append(dup)
+    # One chimera with two marked records counts once.
+    chim = make('chim', seed=30)
+    supp = make('chim', seed=30, flag=0x800)
+    for read in (chim, supp):
+        mark_chimera(read)
+    reads += [chim, supp]
+    hdr = _call_header(_DS_DEFAULT.format(mask='off'))
+    bam = _write_with_header(tmp_path / 'dups.bam', reads, hdr)
+    result = _qc(bam, tmp_path, 'dups')
+    states = result['state_rates']
+    assert states['source'] == 'light_call'
+    assert states['reads']['reads_chimera_skipped'] == 1
+    chimeras = result['chimeras']
+    assert (chimeras['n_chimeric'], chimeras['n_reads_checked']) == (1, 2)
+    assert chimeras['n_duplicates_excluded'] == 3
+
+
+@pytest.mark.parametrize('with_bed', [True, False])
+def test_standalone_state_qc_restores_the_calls_error_mask(tmp_path, with_bed):
+    from fiberhmm.inference import engine
+    make = ct_with_ga_tail(TAIL)
+    # Chimeric under the default detector, rescued by the call's error mask,
+    # so the call kept it unmarked.
+    reads = [make('rescued', seed=3), build('clean', lambda r: 'CT', seed=4)]
+    hdr = _call_header(_DS_DEFAULT.format(mask=f'on/{len(TAIL)}sites'))
+    bam = _write_with_header(tmp_path / 'calls.bam', reads, hdr)
+    if with_bed:
+        bed = tmp_path / 'qc' / 'calls.daf_snps.chimera_error_mask.bed'
+        bed.parent.mkdir()
+        bed.write_text(''.join(f'{CONTIG}\t{s}\t{s + 1}\tG>A\n' for s in TAIL))
+    before = dict(engine._DAF_CHIMERA_CFG)
+    result = _qc(bam, tmp_path, 'calls')
+    assert engine._DAF_CHIMERA_CFG == before            # restored after QC
+    states = result['state_rates']
+    assert states['source'] == 'light_call'
+    detector = states['definition']['chimera_detector']
+    assert (detector['min_baseq'], detector['min_span'], detector['multi_switch']) == (
+        15, 200, True)
+    if with_bed:
+        assert states['definition']['chimera_error_mask'] == 'restored'
+        assert result['chimeras']['error_mask_restored'] == 'restored'
+        assert detector['error_mask'].endswith('calls.daf_snps.chimera_error_mask.bed')
+        assert states['reads']['reads_chimera_skipped'] == 0
+    else:
+        assert states['definition']['chimera_error_mask'] == 'unavailable'
+        assert result['chimeras']['error_mask_restored'] == 'unavailable'
+        assert detector['error_mask'] is None
+        assert states['reads']['reads_chimera_skipped'] == 1
+
+
+def test_standalone_state_qc_restores_the_calls_detector_settings(tmp_path):
+    make = ct_with_ga_tail(TAIL)
+    # Its GA tail is Q5: a chimera only for a call made with base quality 0.
+    reads = [make('lowq', low_q=set(TAIL)), build('clean', lambda r: 'CT', seed=4)]
+    ds = _DS_DEFAULT.format(mask='off').replace('chimera_min_baseq=15',
+                                                'chimera_min_baseq=0')
+    bam = _write_with_header(tmp_path / 'q0.bam', reads, _call_header(ds))
+    states = _qc(bam, tmp_path, 'q0')['state_rates']
+    assert states['definition']['chimera_detector']['min_baseq'] == 0
+    assert states['reads']['reads_chimera_skipped'] == 1
+    # A 3.0.3 call (no 3.0.4 settings in DS) is restored as the 3.0.3 detector.
+    legacy = ('mode=daf enzyme=dddb chimera_filter=on chimeras=flag chimera_min_seg=5 '
+              'chimera_purity=0.8 daf_run_mask=off')
+    bam = _write_with_header(tmp_path / 'old.bam', reads, _call_header(legacy))
+    detector = _qc(bam, tmp_path, 'old')['state_rates']['definition']['chimera_detector']
+    assert detector == {'filter': True, 'min_seg': 5, 'purity': 0.8, 'min_baseq': 0,
+                        'min_span': 0, 'multi_switch': False, 'error_mask': None}
