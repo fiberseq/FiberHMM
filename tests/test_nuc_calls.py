@@ -222,6 +222,21 @@ def test_a_supplied_calibration_digest_gives_the_same_result():
     assert a.digest == b.digest and a.events == b.events
 
 
+def test_step_median_equals_numpy_nanmedian():
+    import warnings
+    from fiberhmm.nuc.segment import _nanmedian
+    rng = np.random.default_rng(5)
+    for n in range(0, 12):
+        for _ in range(200):
+            v = rng.random(n) * rng.choice([1e-3, 1.0, 1e3])
+            v[rng.random(n) < 0.2] = np.nan
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore', RuntimeWarning)
+                want = np.nanmedian(v) if n else np.nan
+            got = _nanmedian(v)
+            assert (np.isnan(want) and np.isnan(got)) or got == want
+
+
 def test_tf_calls_are_footprints_with_tf_overlap():
     rng = np.random.default_rng(7)
     m = array_molecule([('reg', 10, 190), ('sub', 10, 60)], rng)

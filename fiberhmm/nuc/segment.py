@@ -312,6 +312,17 @@ def _pieces(length: int, msps: np.ndarray, long_msp: int) -> List[Tuple[int, int
     return out
 
 
+def _nanmedian(values: np.ndarray) -> float:
+    """``np.nanmedian`` of a short 1-D float array, with the same arithmetic (the middle value, or the mean of
+    the two middle values) and NaN when every value is NaN, without numpy's per-call overhead."""
+    v = sorted(x for x in values.tolist() if x == x)
+    n = len(v)
+    if n == 0:
+        return float('nan')
+    h = n // 2
+    return v[h] if n % 2 else (v[h - 1] + v[h]) / 2
+
+
 def build_steps(fp_start, fp_end, fp_code, fp_post, fp_is_tf, fp_lambda, fp_trunc,
                 piece: Tuple[int, int], nrl: float, mu_fn, lam_floor: Optional[float],
                 params: NucParams = DEFAULT_PARAMS) -> List[Step]:
@@ -360,22 +371,30 @@ def build_steps(fp_start, fp_end, fp_code, fp_post, fp_is_tf, fp_lambda, fp_trun
     assigned = np.zeros(len(fp_start), dtype=bool)
     for i in far_set:
         assigned[i] = True
-    for j in range(len(dy_pos) - 1):
+    n_gaps = len(dy_pos) - 1
+    if n_gaps > 0:
+        # Each remaining footprint inside the piece belongs to the dyad gap [dy_pos[j], dy_pos[j + 1]) holding
+        # its centre; centres before the first dyad go to the first gap, from the last dyad on to the last gap.
+        # (The same assignment as testing every gap in turn, in one pass.)
+        cand = np.flatnonzero(inside & ~assigned)
+        gap_of = np.clip(np.searchsorted(dy_pos, centres[cand], side='right') - 1, 0, n_gaps - 1)
+        order = np.argsort(gap_of, kind='stable')
+        cand, gap_of = cand[order], gap_of[order]
+        bounds = np.searchsorted(gap_of, np.arange(n_gaps + 1), side='left')
+        cat_c = cats[cand]
+        counted = cat_c >= 0
+        mat = np.zeros((n_gaps, len(CATS)))
+        np.add.at(mat, (gap_of[counted], cat_c[counted]), 1)
+        cant_low = bool(params.seg_cant_tell_low_info)
+    for j in range(n_gaps):
         s, e = dy_pos[j], dy_pos[j + 1]
-        sel = inside & ~assigned & (centres >= s) & (centres < e)
-        if j == 0:
-            sel |= inside & ~assigned & (centres < s)
-        if j == len(dy_pos) - 2:
-            sel |= inside & ~assigned & (centres >= e)
-        assigned |= sel
-        cnt = np.zeros(len(CATS))
-        for i in np.flatnonzero(sel):
-            if cats[i] >= 0:
-                cnt[cats[i]] += 1
-        lam_sel = fp_lambda[sel & ~fp_is_tf]
-        low = bool(params.seg_cant_tell_low_info and cant[sel].any())
-        if lam_floor is not None and len(lam_sel) and np.nanmedian(lam_sel) < lam_floor:
-            low = True
+        members = cand[bounds[j]:bounds[j + 1]]
+        cnt = mat[j].copy()
+        low = bool(cant_low and cant[members].any())
+        if lam_floor is not None and len(members):
+            lam_sel = fp_lambda[members[~fp_is_tf[members]]]
+            if len(lam_sel) and _nanmedian(lam_sel) < lam_floor:
+                low = True
         steps.append(Step(int(round(s)), int(round(e)), float(e - s), float(min(dy_w[j], dy_w[j + 1])),
                           cnt, low, bool(dy_obs[j]), bool(dy_obs[j + 1])))
     for run in runs:
