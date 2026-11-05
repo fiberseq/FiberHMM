@@ -652,6 +652,10 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--nucreg-band` | — | Period band of the peak in bp (default 140-260) |
 | `--nucreg-mask-open` | — | Mask open stretches (gaps between nucleosome calls) of at least BP (default off; 0 = off) |
 | `--nucreg-thin` | — | Thin m6A calls to PER_KB per kb before scoring (default off; 0 = off) |
+| `--nucreg-min-calls` | — | An m6A window needs at least N calls (default 15) |
+| `--nucreg-ends` | — | Read ends: blank (full windows only; default), extend (paint the outer tiles to the read ends) or truncated (score cut windows at the ends) Choices: `blank`, `extend`, `truncated`. |
+| `--nucreg-end-min` | — | --nucreg-ends truncated: narrowest cut window at a read end (default 1000) |
+| `--nucreg-short-min` | — | --nucreg-ends truncated: narrowest window on reads shorter than the window (default 1000) |
 | `--no-nucreg` | off | Do not compute or write nucreg |
 | `--nucpatch` | off | Call regularity patches (MA nucpatch); any --nucpatch-* flag implies it |
 | `--nucpatch-enter` | — | A patch needs a tile this far above the reference median (default 2.0) |
