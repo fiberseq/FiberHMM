@@ -62,6 +62,13 @@ Module columns:
 | `nfr.region` | `nfr status source callable reads censored overflow_reads profile_peak k closed` |
 | `nfr.variant` (parent: its region) | `nfr name L R Lsd Rsd width depth relation prevalence_strict prevalence_em ci_lo ci_hi only with_ref gain_nats stability exp_reads robust` |
 | `peaks.peak`, `peaks.broad` | `tier tier_label threshold width summit mean_reads tier_rule row_rule` |
+| `nuc.geometry` | `geometry open_end P width molecules patches start_mad end_mad edges` (states: `reason patch_start patch_end`) |
+
+nuc is a stitch module, but `nuc.geometry` hits come from single BED units
+(shared regularity-patch geometries of the unit's molecules, `--nucpatch`):
+they are kept by the anchor rule like fp classes, with their values (`share`,
+`share_callable` per dataset and `all`) and per-record states (`1` carries,
+`0` absent, `.` no call or not spanned).
 
 ## Identities
 
@@ -126,10 +133,10 @@ coordinates. Each written group is declared twice in the header: in
 
 - **Names.** A group's name starts with its module's name (`fpcls`,
   `nfrvar`, `nfrmol`; the nucleosome module's `nucsz`, `nucseg`, `nucmol`,
-  `nucreg`).
+  `nucreg`, `nucpatch`, `nucgeo`).
   The name never changes; a change of byte layout or meaning bumps
   `group_version`.
-- **State groups** (`fpcls`, `nfrvar`): one interval per (hit, molecule);
+- **State groups** (`fpcls`, `nfrvar`, `nucgeo`): one interval per (hit, molecule);
   byte 0 is the state (`1` = state 1, `2` = state 0, `3` = abstain); `AN` is
   the hit id.
 - **Scalar groups** (`nfrmol`): one interval covering the record's

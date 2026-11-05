@@ -653,6 +653,18 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--nucreg-mask-open` | — | Mask open stretches (gaps between nucleosome calls) of at least BP (default off; 0 = off) |
 | `--nucreg-thin` | — | Thin m6A calls to PER_KB per kb before scoring (default off; 0 = off) |
 | `--no-nucreg` | off | Do not compute or write nucreg |
+| `--nucpatch` | off | Call regularity patches (MA nucpatch); any --nucpatch-* flag implies it |
+| `--nucpatch-enter` | — | A patch needs a tile this far above the reference median (default 2.0) |
+| `--nucpatch-extend` | — | and extends over tiles this far above it (default 1.25) |
+| `--nucpatch-min-tiles` | — | Minimum tiles per patch (default 2) |
+| `--nucpatch-snap` | — | Snap closed edges to the nucleosome boundary at the nearest open linker (default), at the nearest linker off the patch period, or keep the tile-grid edges Choices: `open`, `period`, `off`. |
+| `--nucpatch-open-bp` | — | Open linker for --nucpatch-snap open (default 300) |
+| `--nucpatch-ref` | — | Reference median for every dataset (default: the random-packing reference of each dataset's calibration population) |
+| `--nucgeo-tol` | — | Shared geometries: both ends within BP of the consensus (default 500) |
+| `--nucgeo-min-share` | — | Shared geometries: at least this share of the molecules (default 0.03) |
+| `--nucgeo-cohort` | — | Molecules pooled per BED unit: spanning it (default) or overlapping it Choices: `spanning`, `overlapping`. |
+| `--nucgeo-edges` | — | Group patches by their snapped (default) or tile-grid edges Choices: `snapped`, `grid`. |
+| `--no-nucgeo` | off | Call patches but no shared geometries |
 | `--input-type` | `called-bam` | --bam input type; signal-bam filters producer-scored schema 5 records before all modules Choices: `called-bam`, `signal-bam`. |
 | `--signal-filters` | — | JSON file of boolean hideBackground, excludeUnscored, requireDetectable, requireStructure predicates (with --input-type signal-bam) |
 | `--chemistry` | — | Chemistry for --bam inputs whose header does not declare one Choices: `ddda`, `dddb`, `hia5-pacbio`, `hia5-nanopore`. |

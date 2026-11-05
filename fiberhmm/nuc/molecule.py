@@ -129,6 +129,8 @@ class MoleculeResult:
     warnings: List[str] = field(default_factory=list)
     #: sliding-window regularity (``nucreg``); None when not requested
     regularity: Optional[RegularityTrack] = None
+    #: regularity patches (``nucpatch``; :class:`fiberhmm.nuc.patches.MoleculePatches`); None when not requested
+    patches: Optional[object] = None
 
     def scalar_vector(self) -> List[float]:
         return [self.scalars.get(k, float('nan')) for k in SCALARS]
@@ -177,12 +179,17 @@ def _llr_byte(llr: float) -> int:
 
 def molecule_outputs(mol: NucMolecule, params: NucParams = DEFAULT_PARAMS,
                      cal: Optional[NucCalibration] = None, *, segments: bool = True,
-                     regularity: Optional[RegularityParams] = None,
+                     regularity: Optional[RegularityParams] = None, patches=None,
+                     ref_median: Optional[float] = None,
                      calibration_digest: Optional[str] = None) -> MoleculeResult:
     """Coarse (and named) calls, segments and scalars for one molecule; with
-    ``regularity``, also its sliding-window regularity track (``nucreg``).
+    ``regularity``, also its sliding-window regularity track (``nucreg``) and,
+    with ``patches`` (PatchParams) and ``ref_median`` (the dataset's
+    random-packing reference median), its regularity patches (``nucpatch``).
     ``calibration_digest`` is ``cal.digest()`` when the caller already has it
     (a caller looping over many molecules with one record computes it once)."""
+    if patches is not None and (regularity is None or ref_median is None):
+        raise ValueError('nucpatch needs the regularity track (regularity=) and a reference median (ref_median=)')
     if cal is None:
         raise ValueError('molecule_outputs needs a calibration record (calibrate first)')
     fp = footprint_calls(mol, params, cal)
@@ -245,10 +252,14 @@ def molecule_outputs(mol: NucMolecule, params: NucParams = DEFAULT_PARAMS,
                     scal['undersized_fraction'] = min(1.0, sum(
                         max(0, min(b, s.end) - max(a, s.start)) for a, b in und for s in segs) / cov)
                 scal['n_missing'] = float(sum(1 for e in events if e.kind == 17))
+    track = sliding_regularity(mol, regularity) if regularity is not None else None
+    mp = None
+    if patches is not None:
+        from fiberhmm.nuc.patches import call_patches
+        mp = call_patches(track, mol.nucs, ref_median=float(ref_median), params=patches)
     return MoleculeResult(mol.name, mol.length, fp, segs, scal, flags, calls_digest(mol),
                           calibration_digest or cal.digest(), mol.record_key(), sorted(events, key=lambda e: (e.start, e.end, e.kind)),
-                          list(mol.meta.get('evidence_warnings', [])),
-                          sliding_regularity(mol, regularity) if regularity is not None else None)
+                          list(mol.meta.get('evidence_warnings', [])), track, mp)
 
 
 def _union_iv(iv):

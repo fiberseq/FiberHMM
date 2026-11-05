@@ -27,11 +27,19 @@ Four groups, molecular coordinates, each self-contained:
     0, 1) x 254) (0 reserved), Q2 = period - 100 (0 = none). Written only
     when the regularity track was computed; its header contract records the
     parameters.
+``nucpatch.QQQ`` (group version 1)  one interval per regularity patch
+    (:mod:`fiberhmm.nuc.patches`; snapped edges): Q1 = mean score in the
+    ``nucreg`` score byte, Q2 = median period - 100 (0 = none), Q3 = flags
+    (bit 0/1 open at the molecular start/end, bit 2/3 start/end snapped).
+    Written only when patches were called; its header contract records the
+    patch parameters and the reference median.
 
 **Provenance.** Every AN name carries the digest of the calls the group was
 computed from: ``nucsz@<digest8>_<i>`` and ``nucseg@<digest8>_<i>``;
 ``nucreg@<digest8>.<params8>_<i>`` adds the first 8 hex of the regularity
 parameters' digest, so a reader can tell rows made with other settings;
+``nucpatch@<digest8>.<params8>_<i>`` likewise (the patch parameters, the
+regularity parameters and the reference median);
 ``nucmol`` (a scalar group, AN = its name)
 carries the same digest in its last four bytes (``calls_digest_hi``/``_lo``). Names are unique per interval (readers use AN names as
 circular-piece ids). The digest is over call lengths and the gaps between
@@ -45,10 +53,10 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-NUCSZ, NUCSEG, NUCMOL, NUCREG = 'nucsz', 'nucseg', 'nucmol', 'nucreg'
-NUC_GROUPS = (NUCSZ, NUCSEG, NUCMOL, NUCREG)
+NUCSZ, NUCSEG, NUCMOL, NUCREG, NUCPATCH = 'nucsz', 'nucseg', 'nucmol', 'nucreg', 'nucpatch'
+NUC_GROUPS = (NUCSZ, NUCSEG, NUCMOL, NUCREG, NUCPATCH)
 #: per-group layout versions (nucseg and nucmol changed in version 2)
-GROUP_VERSIONS = {NUCSZ: 1, NUCSEG: 2, NUCMOL: 2, NUCREG: 1}
+GROUP_VERSIONS = {NUCSZ: 1, NUCSEG: 2, NUCMOL: 2, NUCREG: 1, NUCPATCH: 1}
 EVENT_MIN_CODE = 16
 TF_FLAG = 16
 
@@ -79,7 +87,7 @@ NUCMOL_SPEC = 'Q' * sum(c[1] for c in NUCMOL_CODECS)
 #: bits of the ``flags`` scalar
 FLAG_BITS = ('too_short_nrl', 'too_short_regularity', 'too_short_snr',
              'too_short_segments', 'low_information')
-SPECS = {NUCSZ: 'QQQQ', NUCSEG: 'QQQ', NUCMOL: NUCMOL_SPEC, NUCREG: 'QQ'}
+SPECS = {NUCSZ: 'QQQQ', NUCSEG: 'QQQ', NUCMOL: NUCMOL_SPEC, NUCREG: 'QQ', NUCPATCH: 'QQQ'}
 
 
 # --- scalar codec (CONTRACTS 6.4, shared with fiberhmm.io.scan_ma) ----------------
@@ -162,6 +170,12 @@ def group_rows(result) -> Dict[str, Tuple[str, List[Tuple[int, int, List[int], s
         tag = f'{dg}.{tr.params_digest[:8]}'
         out[NUCREG] = (SPECS[NUCREG], [(s, n, q, f'{NUCREG}@{tag}_{k}')
                                        for k, (s, n, q) in enumerate(track_rows(tr))])
+    mp = getattr(result, 'patches', None)
+    if mp is not None:
+        from fiberhmm.nuc.patches import patch_rows
+        tag = f'{dg}.{mp.params_digest[:8]}'
+        out[NUCPATCH] = (SPECS[NUCPATCH], [(s, n, q, f'{NUCPATCH}@{tag}_{k}')
+                                           for k, (s, n, q) in enumerate(patch_rows(mp))])
     return out
 
 
@@ -197,8 +211,26 @@ def nucreg_declaration(regularity=None) -> dict:
     return d
 
 
-def ma_group_declarations(regularity=None) -> List[dict]:
-    """The four groups as CONTRACTS 3 ``MAGroupDecl``-shaped dicts."""
+def nucpatch_declaration(patches=None, reference=None) -> dict:
+    """The ``nucpatch`` declaration; with ``patches`` (PatchParams) it records the
+    parameters and where the reference median comes from (``reference``: a
+    number, or a description such as 'calibration')."""
+    from fiberhmm.nuc.regularity import PERIOD_OFFSET, SCORE_LO, SCORE_SPAN
+    d = {'group': NUCPATCH, 'group_version': GROUP_VERSIONS[NUCPATCH], 'kind': 'mark',
+         'quality_names': ['mean_score', 'period_minus_100', 'flags'],
+         'state_codes': {}, 'codecs': [],
+         'an': 'nucpatch@<calls digest8>.<params digest8>_<index>'}
+    if patches is not None:
+        d['score_byte'] = {'lo': SCORE_LO, 'span': SCORE_SPAN, 'missing': 0}
+        d['period_offset'] = PERIOD_OFFSET
+        d['flag_bits'] = {'open_start': 1, 'open_end': 2, 'snapped_start': 4, 'snapped_end': 8}
+        d['params'] = patches.to_dict()
+        d['reference'] = reference
+    return d
+
+
+def ma_group_declarations(regularity=None, patches=None, reference=None) -> List[dict]:
+    """The nuc groups as CONTRACTS 3 ``MAGroupDecl``-shaped dicts."""
     from fiberhmm.nuc.sizes import COARSE_NAMES
     return [
         {'group': NUCSZ, 'group_version': GROUP_VERSIONS[NUCSZ], 'kind': 'mark',
@@ -218,22 +250,23 @@ def ma_group_declarations(regularity=None) -> List[dict]:
                     for n, nb, sc, off, u in NUCMOL_CODECS],
          'an': 'group'},
         nucreg_declaration(regularity),
+        nucpatch_declaration(patches, reference),
     ]
 
 
 def contract_lines(calibration_digest: str = '', params_digest: str = '',
                    calls_program: str = '', module_version: str = '2.4',
-                   scan_id: str = '', regularity=None) -> List[str]:
-    """``@CO FIBERHMM-SCAN-MA:v1:`` lines for the four groups."""
+                   scan_id: str = '', regularity=None, patches=None, reference=None) -> List[str]:
+    """``@CO FIBERHMM-SCAN-MA:v1:`` lines for the nuc groups."""
     from fiberhmm.io.scan_ma import scan_contract_line
     return [scan_contract_line(d, module='nuc', module_version=module_version, scan_id=scan_id,
                                settings_hash=params_digest[:16], calibration=calibration_digest[:16],
                                coordinates='molecular', calls_program=calls_program)
-            for d in ma_group_declarations(regularity)]
+            for d in ma_group_declarations(regularity, patches, reference)]
 
 
 def annotate_header(header, calibration_digest: str = '', params_digest: str = '',
-                    calls_program: str = '', regularity=None):
+                    calls_program: str = '', regularity=None, patches=None, reference=None):
     """Header with the groups declared (MA-TYPES and contract lines) and the
     molecular-frame marker; earlier nuc contract lines are replaced."""
     import pysam
@@ -241,7 +274,8 @@ def annotate_header(header, calibration_digest: str = '', params_digest: str = '
     from fiberhmm.io.scan_ma import with_scan_contracts
     header = append_coord_marker(append_ma_types(header, NUC_GROUPS))
     d = with_scan_contracts(header.to_dict(), contract_lines(calibration_digest, params_digest,
-                                                             calls_program, regularity=regularity))
+                                                             calls_program, regularity=regularity,
+                                                             patches=patches, reference=reference))
     return pysam.AlignmentHeader.from_dict(d)
 
 
@@ -284,7 +318,7 @@ def record_calls_digest(read, *, header=None, context=None, parsed=None, tags=No
 
 
 def read_nuc_groups(read, mol=None, check_digest: bool = True, *, contracts=None, header=None, context=None,
-                    regularity=None) -> Dict[str, dict]:
+                    regularity=None, patches_digest: Optional[str] = None) -> Dict[str, dict]:
     """Parse the nuc groups of one record.
 
     ``contracts`` skips header contract parsing; ``header`` overrides the record
@@ -302,7 +336,12 @@ def read_nuc_groups(read, mol=None, check_digest: bool = True, *, contracts=None
     ``nucreg`` also carries ``params_digest`` (8 hex); decode its rows with
     :func:`fiberhmm.nuc.regularity.decode_rows`. With
     ``regularity`` (the RegularityParams the caller wants) a group made with
-    other parameters is ``stale`` with ``params_stale`` set."""
+    other parameters is ``stale`` with ``params_stale`` set.
+
+    ``nucpatch`` likewise carries ``params_digest``; decode its rows with
+    :func:`fiberhmm.nuc.patches.decode_patch_rows`. With ``patches_digest``
+    (8 hex, :func:`fiberhmm.nuc.patches.patch_digest`) a group made with other
+    parameters or another reference median is ``stale`` with ``params_stale``."""
     from fiberhmm.io.ma_tags import annotation_tags, parse_an_tag, parse_aq_array, parse_ma_tag
     tags = annotation_tags(read)
     if tags is None:
@@ -325,7 +364,7 @@ def read_nuc_groups(read, mol=None, check_digest: bool = True, *, contracts=None
         digests = {n.split('@', 1)[1].split('_', 1)[0] for n in nm if '@' in n}
         out[name] = {'intervals': list(iv), 'q': q, 'digest': digests.pop() if len(digests) == 1 else None,
                      'stale': False, 'version': GROUP_VERSIONS[name]}
-        if name == NUCREG:
+        if name in (NUCREG, NUCPATCH):
             dg = out[name]['digest']
             calls, _dot, pd = (dg or '').partition('.')
             out[name]['digest'] = calls or None
@@ -372,5 +411,11 @@ def read_nuc_groups(read, mol=None, check_digest: bool = True, *, contracts=None
         g['params_stale'] = False
         if regularity is not None and g['intervals']:
             g['params_stale'] = g.get('params_digest') != regularity.digest()[:8]
+            g['stale'] = g['stale'] or g['params_stale']
+    if NUCPATCH in supported:
+        g = supported[NUCPATCH]
+        g['params_stale'] = False
+        if patches_digest is not None and g['intervals']:
+            g['params_stale'] = g.get('params_digest') != patches_digest[:8]
             g['stale'] = g['stale'] or g['params_stale']
     return out

@@ -72,7 +72,7 @@ def test_annotate_and_read_back(tmp_path, reverse):
     ma = read.get_tag('MA')
     heads = [g.partition(':')[0] for g in ma.split(';')[1:]]
     assert heads[:5] == ['nuc.QQQ', 'msp.', 'tf.QQQ', 'ddda_ucg.', 'fire.Q']
-    assert {h.split('.')[0] for h in heads[5:]} == set(NUC_GROUPS)
+    assert {h.split('.')[0] for h in heads[5:]} == set(NUC_GROUPS) - {'nucpatch'}     # patches are opt-in
     names = read.get_tag('AN').split(',')
     nuc_names = [n for n in names if n.startswith(('nucsz@', 'nucseg@', 'nucreg@'))]
     assert any(n.startswith('nucreg@') for n in nuc_names)

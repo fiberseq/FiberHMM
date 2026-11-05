@@ -16,7 +16,14 @@ Wraps :mod:`fiberhmm.nuc` (NUC design; feature-hub CONTRACTS 11):
   ``nucsz``/``nucseg`` marks (molecular intervals with their reference
   envelopes), the ``nucmol`` scalars and, unless ``nucreg`` is null, the
   ``nucreg`` regularity tiles (:mod:`fiberhmm.nuc.regularity`; the header
-  contract records their parameters).
+  contract records their parameters) and, with ``nucpatch`` set, the
+  ``nucpatch`` regularity patches (:mod:`fiberhmm.nuc.patches`) read against
+  the dataset's random-packing reference median, computed in ``calibrate``
+  (``nucreg_reference``) unless ``nucpatch.ref_median`` gives it.
+- ``run_unit`` (BED units, with ``nucpatch`` and ``nucgeo`` set): shared patch
+  geometries of the unit's molecules (:mod:`fiberhmm.nuc.geometries`) as
+  ``nuc.geometry`` hits anchored in the unit, a share per dataset and one
+  state per (geometry, record): 1 carries, 0 absent, . no call or not spanned.
 - ``run_unit``: per-base core tracks over the unit's zone, per observation
   group (``all``, each dataset, each dataset haplotype): molecules with a
   regular / disordered / undetermined / low-information segment and with an
@@ -85,6 +92,7 @@ class NucModule(ScanModuleBase):
     # fiberhmm.nuc.records decodes each annotation's frame from the record's header (DecodeContext), so it gets
     # the stored record: an orchestrator carry would be mirrored a second time on reverse reads
     molecule_frame = 'source'
+    state_groups = {'nuc.geometry': 'nucgeo'}
 
     def __init__(self):
         self._cals: Dict[Tuple[int, str], Any] = {}
@@ -123,6 +131,13 @@ class NucModule(ScanModuleBase):
             'phase_max_p': _p(0.01, 'float', 'null p for a phased window'),
             'nucreg': _p({}, 'dict', 'sliding-window regularity (MA nucreg): fiberhmm.nuc.regularity.'
                          'RegularityParams overrides; null = off'),
+            'nucpatch': _p(None, 'dict', 'regularity patches (MA nucpatch): fiberhmm.nuc.patches.PatchParams '
+                           'overrides plus ref_median (log2; default: the random-packing reference of the '
+                           'calibration population, reference_windows windows, reference_seed); null = off '
+                           '(default); needs nucreg'),
+            'nucgeo': _p({}, 'dict', 'shared patch geometries per BED unit (nuc.geometry hits and states): '
+                         'fiberhmm.nuc.geometries.GeometryParams overrides plus cohort (spanning: records '
+                         'spanning the unit, default; overlapping); null = off; needs nucpatch'),
         }
 
     def resolve(self, params: Mapping[str, Any]) -> dict:
@@ -133,6 +148,12 @@ class NucModule(ScanModuleBase):
         if out.get('nucreg') is not None:
             from fiberhmm.nuc.regularity import RegularityParams
             out['nucreg'] = RegularityParams.from_dict(out['nucreg']).to_dict()
+        if out.get('nucpatch') is not None:
+            if out.get('nucreg') is None:
+                raise ValueError('nuc: nucpatch needs nucreg (the regularity track)')
+            out['nucpatch'] = _resolve_patch_settings(out['nucpatch'])
+        if out.get('nucgeo') is not None:
+            out['nucgeo'] = _resolve_geo_settings(out['nucgeo'])
         if out['calibration'] not in ('thin', 'self'):
             raise ValueError("nuc: calibration must be 'thin' or 'self'")
         if out['groups'] not in ('dataset', 'dataset+haplotype'):
@@ -187,6 +208,15 @@ class NucModule(ScanModuleBase):
                                      scores=(ScoreDecl('dispersion_bp', 'Positional dispersion', 'bp', 'high',
                                                        False), ScoreDecl('P', 'Period', 'bp', 'none', False)),
                                      columns=cols))
+        types.append(FeatureTypeDecl('nuc.geometry', 'nuc', 'Shared patch geometry', 'Shared patch geometries',
+                                     ('hit', 'state'), 'centre',
+                                     scores=(ScoreDecl('share', 'Share of molecules carrying it', 'fraction',
+                                                       'high', True),),
+                                     state_rule='1: the molecule has a member patch; 0: its tiles cover the span '
+                                                'with calls and no member patch; .: no call (over half the '
+                                                'tiles there unscored) or not spanned',
+                                     columns=('geometry', 'open_end', 'P', 'width', 'molecules', 'patches',
+                                              'start_mad', 'end_mad', 'edges')))
         return types
 
     def ma_groups(self) -> List[MAGroupDecl]:
@@ -198,7 +228,13 @@ class NucModule(ScanModuleBase):
                                    tuple(ScalarCodec(c['name'], c['nbytes'], c['scale'], c['offset'], c['unit'])
                                          for c in d['codecs']),
                                    an=d['an']))
+        out.append(MAGroupDecl('nucgeo', 1, 'state', ('state', 'reason'),
+                               state_codes=(('1', 'carries'), ('2', 'absent'), ('3', 'no call or not spanned')),
+                               an='hit_id'))
         return out
+
+    def state_columns(self) -> List[str]:
+        return ['reason', 'patch_start', 'patch_end']
 
     def load_policy(self, settings: Mapping[str, Any]) -> dict:
         return {'reader': 'fiberhmm.nuc full-alignment records', 'molecules': 'all',
@@ -216,13 +252,44 @@ class NucModule(ScanModuleBase):
         value = settings.get('nucreg', {})
         return None if value is None else RegularityParams.from_dict(value)
 
+    @staticmethod
+    def _patches(settings):
+        from fiberhmm.nuc.patches import PatchParams
+        value = settings.get('nucpatch')
+        if value is None:
+            return None
+        return PatchParams.from_dict({k: v for k, v in value.items() if k not in PATCH_EXTRA})
+
     def ma_group_provenance(self, settings) -> Dict[str, dict]:
-        """Extra header-contract fields per group: the nucreg parameters."""
-        from fiberhmm.nuc.tags import NUCREG, nucreg_declaration
+        """Extra header-contract fields per group: the nucreg and nucpatch parameters."""
+        from fiberhmm.nuc.tags import NUCPATCH, NUCREG, nucpatch_declaration, nucreg_declaration
         reg = self._regularity(settings)
         d = nucreg_declaration(reg)
         extra = {k: d[k] for k in ('score_byte', 'period_offset', 'params', 'params_digest') if k in d}
-        return {NUCREG: extra if reg is not None else {'params': None}}
+        pp = self._patches(settings)
+        out = {NUCREG: extra if reg is not None else {'params': None}}
+        if pp is None:
+            out[NUCPATCH] = {'params': None}
+        else:
+            ps = settings['nucpatch']
+            ref = ps['ref_median'] if ps.get('ref_median') is not None else \
+                {'source': 'calibration nucreg_reference', 'windows': ps['reference_windows'],
+                 'seed': ps['reference_seed']}
+            dp = nucpatch_declaration(pp, ref)
+            out[NUCPATCH] = {k: dp[k] for k in ('score_byte', 'period_offset', 'flag_bits', 'params', 'reference')}
+        return out
+
+    def _ref_median(self, settings, calibration, dataset_id):
+        ps = settings.get('nucpatch')
+        if ps is None:
+            return None
+        if ps.get('ref_median') is not None:
+            return float(ps['ref_median'])
+        ref = (calibration or {}).get('nucreg_reference', {}).get(dataset_id)
+        if ref is None:
+            raise ValueError(f'nuc: nucpatch needs a reference median for {dataset_id!r} (none in the calibration '
+                             'record; set nucpatch.ref_median)')
+        return float(ref['median'])
 
     def _cal(self, calibration, dataset_id):
         from fiberhmm.nuc.calibration import NucCalibration
@@ -288,6 +355,20 @@ class NucModule(ScanModuleBase):
                 cal = calibrate_self(mols, params, label=ds.dataset_id, chemistry=chem,
                                      max_molecules=int(settings['calibration_population']))
             out['datasets'][ds.dataset_id] = cal.to_dict()
+            ps = settings.get('nucpatch')
+            if ps is not None and ps.get('ref_median') is None:
+                # the random-packing reference the patches are read against (only with nucpatch on, so the
+                # calibration record of scans without patches is unchanged)
+                from fiberhmm.nuc.regularity import reference_scores
+                progress.report('nuc', f'regularity reference for {ds.dataset_id}')
+                mols, _frs, _s, _chem = load_population(list(ds.paths), params,
+                                                        int(settings['calibration_population']), regions,
+                                                        read_filter=read_filter, fiber_reads=False)
+                if not mols:
+                    raise ValueError(f'nuc: no usable molecules for the regularity reference of {ds.dataset_id}')
+                ref = reference_scores(mols, self._regularity(settings), n_windows=int(ps['reference_windows']),
+                                       seed=int(ps['reference_seed']))
+                out.setdefault('nucreg_reference', {})[ds.dataset_id] = ref.to_dict()
         return out
 
     # ------------------------------------------------------------------ molecule-wide outputs
@@ -301,8 +382,11 @@ class NucModule(ScanModuleBase):
         if key not in self._record_cache:
             params = self._params(settings)
             ctx = self._context(record.dataset_id, record.input_index, read.header, params)
+            pp = self._patches(settings)
             value = record_outputs(read, record, self._cal(calibration, record.dataset_id),
-                                   params=params, context=ctx, regularity=self._regularity(settings))
+                                   params=params, context=ctx, regularity=self._regularity(settings),
+                                   patches=pp, ref_median=self._ref_median(settings, calibration, record.dataset_id)
+                                   if pp is not None else None)
             if len(self._record_cache) >= 512:
                 self._record_cache.pop(next(iter(self._record_cache)))
             self._record_cache[key] = value
@@ -352,6 +436,8 @@ class NucModule(ScanModuleBase):
             groups_seen.append(ds.dataset_id)
             if haps:
                 groups_seen += [f'{ds.dataset_id}:HP1', f'{ds.dataset_id}:HP2']
+        geo_on = unit.mode == 'bed' and settings.get('nucpatch') is not None and settings.get('nucgeo') is not None
+        geo_mols = []                      # (record, molecule layout)
         for ds in inputs.datasets:
             cal = self._cal(calibration, ds.dataset_id)
             for i, path in enumerate(ds.paths):
@@ -365,6 +451,11 @@ class NucModule(ScanModuleBase):
                         mol, res, _mr = self._record_outputs(read, record, settings, calibration)
                         if mol is None:
                             continue
+                        if geo_on and res.patches is not None:
+                            lay = _geometry_layout(mol, res, ds.dataset_id, unit, settings['nucgeo'],
+                                                   bool(settings['nucgeo'].get('snapped', True)))
+                            if lay is not None:
+                                geo_mols.append((record, lay))
                         if res.flags.get('low_information') or not res.segments:
                             # below the floor (D8), too short or nothing to segment:
                             # not measured anywhere
@@ -484,7 +575,10 @@ class NucModule(ScanModuleBase):
             arr(f'measured:{g}')
             for k in SEG_METRICS + ('qsum',):
                 arr(f'{k}:{g}')
-        return UnitResult(status='ok', tracks=tracks, extra={'groups': groups_seen})
+        out = UnitResult(status='ok', tracks=tracks, extra={'groups': groups_seen})
+        if geo_on:
+            _unit_geometries(out, unit, geo_mols, settings['nucgeo'], [d.dataset_id for d in inputs.datasets])
+        return out
 
     # ------------------------------------------------------------------ stitching
     def stitch_support_bp(self, settings) -> int:
@@ -939,3 +1033,86 @@ def _ref_envelope(mol, s: int, e: int) -> Tuple[int, int]:
     k = int(np.argmin(np.abs(cand_q - mid)))
     p = int(cand_r[k])
     return p, p
+
+
+# ---------------------------------------------------------------------- regularity patches and geometries
+#: nucpatch settings that are not PatchParams fields
+PATCH_EXTRA = ('ref_median', 'reference_windows', 'reference_seed')
+GEO_COHORTS = ('spanning', 'overlapping')
+_REASON = {'carries': 1, 'absent': 2, 'no_call': 3, 'not_spanned': 4}
+
+
+def _resolve_patch_settings(value) -> dict:
+    from fiberhmm.nuc.patches import PatchParams
+    value = dict(value or {})
+    extra = {'ref_median': value.pop('ref_median', None),
+             'reference_windows': int(value.pop('reference_windows', 3000)),
+             'reference_seed': int(value.pop('reference_seed', 1))}
+    if extra['ref_median'] is not None:
+        extra['ref_median'] = float(extra['ref_median'])
+    if extra['reference_windows'] < 100:
+        raise ValueError('nuc: nucpatch reference_windows must be at least 100')
+    return dict(PatchParams.from_dict(value).to_dict(), **extra)
+
+
+def _resolve_geo_settings(value) -> dict:
+    from fiberhmm.nuc.geometries import GeometryParams
+    value = dict(value or {})
+    cohort = value.pop('cohort', 'spanning')
+    if cohort not in GEO_COHORTS:
+        raise ValueError(f'nuc: nucgeo cohort must be one of {GEO_COHORTS}')
+    return dict(GeometryParams.from_dict(value).to_dict(), cohort=cohort)
+
+
+def _geometry_layout(mol, res, dataset_id, unit, geo, snapped):
+    """The molecule's layout clipped to the unit, or None when it is not in the unit's cohort."""
+    from fiberhmm.nuc.geometries import molecule_layout
+    if geo['cohort'] == 'spanning':
+        if not (mol.ref_start <= unit.start and mol.ref_end >= unit.end):
+            return None
+    elif mol.ref_end <= unit.start or mol.ref_start >= unit.end:
+        return None
+    lay = molecule_layout(mol, res.regularity, res.patches, dataset_id, snapped=snapped,
+                          view=(unit.start, unit.end))
+    return lay if len(lay.tile_lo) else None
+
+
+def _unit_geometries(out, unit, geo_mols, geo, dataset_ids):
+    """Geometries of one BED unit's cohort as hits, values and per-record states (in place on ``out``)."""
+    from fiberhmm.nuc.geometries import (SCAN_STATE, GeometryParams, assign_states, find_geometries, support)
+    from fiberhmm.scan.types import State
+    if not geo_mols:
+        return
+    gp = GeometryParams.from_dict({k: v for k, v in geo.items() if k != 'cohort'})
+    lays = [lay for _r, lay in geo_mols]
+    geoms = find_geometries(lays, gp, chrom=unit.chrom)
+    states = assign_states(lays, geoms)
+    for g in geoms:
+        key = f'geometry:{g.start}-{g.end}'
+        sup_all = support(lays, states, g.geometry_id)
+        open_end = g.open_left or g.open_right
+        out.hits.append(Hit('nuc.geometry', key, unit.chrom, g.start, g.end, (g.start + g.end) // 2,
+                            score=sup_all['share'], label=g.geometry_id.split('_', 1)[0],
+                            flags=('open_end',) if open_end else (),
+                            columns={'geometry': g.geometry_id, 'open_end': int(open_end),
+                                     'P': g.period if g.period > 0 else '', 'width': g.width,
+                                     'molecules': g.n_molecules, 'patches': g.n_patches,
+                                     'start_mad': round(g.start_mad, 1), 'end_mad': round(g.end_mad, 1),
+                                     'edges': 'snapped' if gp.snapped else 'grid'}))
+        for grp, kind, ds in [('all', 'all', None)] + [(d, 'dataset', d) for d in dataset_ids]:
+            sp = sup_all if ds is None else support(lays, states, g.geometry_id, ds)
+            out.values.append(Value(key, grp, kind, 'share', sp['share'], n_molecules=sp['molecules'],
+                                    n_callable=sp['callable']))
+            out.values.append(Value(key, grp, kind, 'share_callable', sp['share_callable'],
+                                    n_molecules=sp['molecules'], n_callable=sp['callable']))
+        out.values.append(Value(key, 'all', 'all', 'mean_score', g.mean_score))
+        member = {i: k for i, k in g.members}
+        for i, (rec, lay) in enumerate(geo_mols):
+            st = states[i][g.geometry_id]
+            cols = {'reason': st, 'patch_start': '', 'patch_end': ''}
+            interval = None
+            if i in member:
+                p = lay.patches[member[i]]
+                cols.update(patch_start=p.start, patch_end=p.end)
+                interval = (p.start, p.end)
+            out.states.append(State(key, rec, SCAN_STATE[st], (_REASON[st],), cols, interval))

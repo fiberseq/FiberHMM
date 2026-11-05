@@ -4,8 +4,8 @@ A scan writes its per-molecule outputs as extra groups of the read's
 Molecular-annotation tags (``MA``/``AQ``/``AN``), in molecular coordinates:
 
 - *state* groups: one interval per (hit, record) with a state byte first
-  (``fpcls``, ``nfrvar``); AN holds the hit id;
-- *mark* groups: molecule-wide interval marks (``nucsz``, ``nucseg``, ``nucreg``);
+  (``fpcls``, ``nfrvar``, ``nucgeo``); AN holds the hit id;
+- *mark* groups: molecule-wide interval marks (``nucsz``, ``nucseg``, ``nucreg``, ``nucpatch``);
 - *scalar* groups: one whole-molecule interval per record whose bytes encode
   per-molecule scalars by declared codecs (``nfrmol``, ``nucmol``).
 
@@ -33,6 +33,8 @@ SCAN_MA_GROUPS = {
     'nucseg': 'nuc',
     'nucmol': 'nuc',
     'nucreg': 'nuc',
+    'nucpatch': 'nuc',
+    'nucgeo': 'nuc',
 }
 
 _SCAN_NAME_RE = re.compile(r'^[a-z][a-z0-9]{1,15}$')

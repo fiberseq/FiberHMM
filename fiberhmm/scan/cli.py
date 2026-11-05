@@ -59,6 +59,32 @@ def _parser():
     reg.add_argument('--nucreg-thin', type=float, metavar='PER_KB',
                      help='Thin m6A calls to PER_KB per kb before scoring (default off; 0 = off)')
     reg.add_argument('--no-nucreg', action='store_true', help='Do not compute or write nucreg')
+    pat = p.add_argument_group('nuc regularity patches and shared geometries (MA nucpatch, nuc.geometry hits; '
+                               'off by default)')
+    pat.add_argument('--nucpatch', action='store_true',
+                     help='Call regularity patches (MA nucpatch); any --nucpatch-* flag implies it')
+    pat.add_argument('--nucpatch-enter', type=float, metavar='LOG2',
+                     help='A patch needs a tile this far above the reference median (default 2.0)')
+    pat.add_argument('--nucpatch-extend', type=float, metavar='LOG2',
+                     help='and extends over tiles this far above it (default 1.25)')
+    pat.add_argument('--nucpatch-min-tiles', type=int, metavar='N', help='Minimum tiles per patch (default 2)')
+    pat.add_argument('--nucpatch-snap', choices=['open', 'period', 'off'],
+                     help='Snap closed edges to the nucleosome boundary at the nearest open linker (default), '
+                          'at the nearest linker off the patch period, or keep the tile-grid edges')
+    pat.add_argument('--nucpatch-open-bp', type=int, metavar='BP', help='Open linker for --nucpatch-snap open '
+                                                                         '(default 300)')
+    pat.add_argument('--nucpatch-ref', type=float, metavar='LOG2',
+                     help='Reference median for every dataset (default: the random-packing reference of each '
+                          "dataset's calibration population)")
+    pat.add_argument('--nucgeo-tol', type=int, metavar='BP',
+                     help='Shared geometries: both ends within BP of the consensus (default 500)')
+    pat.add_argument('--nucgeo-min-share', type=float, metavar='FRACTION',
+                     help='Shared geometries: at least this share of the molecules (default 0.03)')
+    pat.add_argument('--nucgeo-cohort', choices=['spanning', 'overlapping'],
+                     help='Molecules pooled per BED unit: spanning it (default) or overlapping it')
+    pat.add_argument('--nucgeo-edges', choices=['snapped', 'grid'],
+                     help='Group patches by their snapped (default) or tile-grid edges')
+    pat.add_argument('--no-nucgeo', action='store_true', help='Call patches but no shared geometries')
     p.add_argument('--input-type', choices=['called-bam', 'signal-bam'], default='called-bam',
                    help='--bam input type; signal-bam filters producer-scored schema 5 records before all modules')
     p.add_argument('--signal-filters', help='JSON file of boolean hideBackground, excludeUnscored, '
@@ -189,6 +215,50 @@ def _nucreg_params(parser, args, modules, params):
         parser.error(str(error))
 
 
+NUCPATCH_FLAGS = (('nucpatch_enter', 'enter'), ('nucpatch_extend', 'extend'), ('nucpatch_min_tiles', 'min_tiles'),
+                  ('nucpatch_open_bp', 'open_bp'), ('nucpatch_ref', 'ref_median'))
+NUCGEO_FLAGS = (('nucgeo_tol', 'tol_bp'), ('nucgeo_min_share', 'min_share'), ('nucgeo_cohort', 'cohort'))
+
+
+def _nucpatch_params(parser, args, modules, params):
+    """Fold the --nucpatch* / --nucgeo-* flags into ``params['nuc']['nucpatch']`` / ``['nucgeo']``."""
+    pgiven = {key: getattr(args, flag) for flag, key in NUCPATCH_FLAGS if getattr(args, flag) is not None}
+    if args.nucpatch_snap is not None:
+        if args.nucpatch_snap == 'off':
+            pgiven['snap'] = False
+        else:
+            pgiven.update(snap=True, snap_rule=args.nucpatch_snap)
+    ggiven = {key: getattr(args, flag) for flag, key in NUCGEO_FLAGS if getattr(args, flag) is not None}
+    if args.nucgeo_edges is not None:
+        ggiven['snapped'] = args.nucgeo_edges == 'snapped'
+    if not (args.nucpatch or pgiven or ggiven or args.no_nucgeo):
+        return
+    if 'nuc' not in modules:
+        parser.error('--nucpatch*, --nucgeo-* and --no-nucgeo apply to --modules nuc')
+    nuc = params.setdefault('nuc', {})
+    if not isinstance(nuc, dict):
+        parser.error('--parameters: "nuc" must be a JSON object')
+    if args.no_nucreg:
+        parser.error('--nucpatch needs nucreg (drop --no-nucreg)')
+    if args.no_nucgeo and ggiven:
+        parser.error('--no-nucgeo cannot be combined with other --nucgeo-* flags')
+    if args.nucpatch or pgiven:
+        nuc['nucpatch'] = dict(nuc.get('nucpatch') or {}, **pgiven)
+    elif nuc.get('nucpatch') is None:
+        parser.error('--nucgeo-* and --no-nucgeo need --nucpatch')
+    if args.no_nucgeo:
+        nuc['nucgeo'] = None
+    elif ggiven:
+        nuc['nucgeo'] = dict(nuc.get('nucgeo') or {}, **ggiven)
+    from fiberhmm.scan.modules.nuc import _resolve_geo_settings, _resolve_patch_settings
+    try:
+        nuc['nucpatch'] = _resolve_patch_settings(nuc['nucpatch'])
+        if nuc.get('nucgeo') is not None:
+            nuc['nucgeo'] = _resolve_geo_settings(nuc['nucgeo'])
+    except (TypeError, ValueError) as error:
+        parser.error(str(error))
+
+
 def _schema(modules):
     from fiberhmm.scan.modules import load_module
     from fiberhmm.scan.reads import DEFAULT_READ_POLICY
@@ -246,6 +316,7 @@ def _main(argv=None):
                               signal_filters=json.loads(Path(args.signal_filters).read_text())
                               if args.signal_filters else {}) for b in args.bam]
     _nucreg_params(p, args, modules, params)
+    _nucpatch_params(p, args, modules, params)
     read_policy = dict(params.pop('read_policy', {}) or {})
     from fiberhmm.inference.depth_cap import NAMES
     caps = dict(read_policy.get('caps', {}))

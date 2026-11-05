@@ -164,6 +164,42 @@ from the read name, so a molecule always thins the same way. In Python,
 random-packing comparison: each window's own footprints placed at random,
 m6A simulated at the window's marking rates) and `masked_mark_acf`.
 
+## Regularity patches and shared geometries (`nucpatch`, `nuc.geometry`)
+
+`--nucpatch` turns the regularity track into discrete patches, read as the
+excess over the dataset's random-packing reference median (computed on the
+calibration population, or given with `--nucpatch-ref`). A patch starts at a
+tile at least 2.0 log2 above the reference and extends over tiles at least
+1.25 above it (at least 2 tiles). A single tile without a score is bridged;
+two or more end the patch (no call, not irregular). A patch touching the
+molecule's first or last tile is open-ended. Each patch carries its mean
+score and median period.
+
+Edges start on the tile grid (first tile centre − 125, last tile centre +
+125). Closed edges then snap to a nucleosome boundary: the nucleosome-sized
+footprint (nucleosome call of at least 90 bp) next to the nearest open linker
+(at least 300 bp between footprints, or beyond the outermost footprint)
+within 1 kb of the grid edge, on the patch side. With no open linker in reach
+the grid edge stays. `--nucpatch-snap period` uses linkers whose dyad
+spacing is off the patch period by more than 25% instead; `off` keeps the grid
+edges. The grid edges are always kept in the Python API.
+
+For BED units, the patches of the unit's molecules (default: records that span
+the unit) are grouped by start and end: the (start, end) whose ±500 bp box
+holds the most molecules becomes a geometry (consensus = median ends), its
+members are removed, and the search repeats until a geometry would hold fewer
+than 3% of the molecules. Each geometry is a `nuc.geometry` hit with a share
+per dataset, and each record gets a state: carries, absent, no call (most of
+the span unscored) or not spanned.
+
+```bash
+fiberhmm-scan --bam a.bam --bam b.bam --bed loci.bed --modules nuc --nucpatch --annotate -o nuc_scan
+```
+
+In Python: `fiberhmm.nuc.patches.call_patches(track, mol.nucs, ref_median=...)`,
+`fiberhmm.nuc.geometries.molecule_layout`, `find_geometries` and
+`assign_states`.
+
 ## Running the scan
 
 ```bash

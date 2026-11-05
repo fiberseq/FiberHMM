@@ -171,7 +171,9 @@ def finalize(out: Path, manifest: dict, datasets, reference: Mapping[str, int], 
                     if status[u.unit_id] == 'done':
                         results[u.unit_id] = unit_result_from_json(_read_json(_unit_dir(out, name, u) / 'result.json.gz'))
                 keymap: Dict[Tuple[str, str], str] = {}
-                if mod.reconcile == 'anchor':
+                # stitch modules may also return unit-level hits (nuc: patch geometries of BED units); they are
+                # kept by the anchor rules, with their values, native rows and states
+                if mod.reconcile == 'anchor' or any(r.hits for r in results.values()):
                     missing = [u.unit_id for u in cunits if status[u.unit_id] in ('failed', 'planned')]
                     kept, comps, open_s = reconcile_anchor(
                         [(u, results[u.unit_id].hits) for u in cunits if u.unit_id in results], missing=missing)
@@ -210,7 +212,7 @@ def finalize(out: Path, manifest: dict, datasets, reference: Mapping[str, int], 
                                 w['units'].add(rec.chrom, rec.ref_start, rec.ref_end,
                                                [e.evidence_unit, rec.dataset_id, rec.input_index, rec.qname,
                                                 rec.record, rec.molecule])
-                else:
+                if mod.reconcile == 'stitch':
                     territory, tracks = _stitch_inputs(out, name, mod, settings, cunits, status, None, results)
                     extra = {'scan_statistics': scan_stats[name]} if name in scan_stats else {}
                     stitched = mod.stitch(chrom, territory, tracks, settings, (calibrations or {}).get(name), **extra)

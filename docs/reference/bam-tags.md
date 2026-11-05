@@ -63,12 +63,16 @@ declared in `MA-TYPES:v1` and in a `@CO FIBERHMM-SCAN-MA:v1:` contract line.
 | `nucsz.QQQQ` | coarse, named, posterior, z | footprint (nucleosome and TF calls) | coarse code in bits 0–3 (0 can't tell, 1 short, 2 mono, 3 long, 4 multi2, 5 multi3+, 6 edge-truncated), +16 for a TF call or a footprint overlapping one; named code (0 none, 1 small, 2 hexasome, 3 octasome, 4 chromatosome; absolute calibration only); posterior ×255; `20 z + 128` (255 = missing) |
 | `nucseg.QQQ` (version 2) | code, posterior or 10 × LLR, q̂ − 100 or count | segment, or event | segment rows (partition): 1 regular, 2 disordered, 3 low-information, 4 undetermined; event rows (overlay): 16 undersized run, 17 missing nucleosome |
 | `nucreg.QQ` (version 1) | score, period − 100 | regularity tile (step-wide, centred on a window centre; tiles never overlap) | `1 + round(clip((score + 2) / 10, 0, 1) × 254)` (0 = no score) with score = log2 FFT peak power at 140–260 bp over the median power at 50–1000 bp; local repeat length − 100 (0 = none). Parameters in the contract line |
+| `nucpatch.QQQ` (version 1, `--nucpatch`) | mean score, period − 100, flags | regularity patch (snapped edges) | mean tile score in the `nucreg` score byte; median tile period − 100 (0 = none); flags bit 0/1 open at the molecular start/end, bit 2/3 start/end snapped to a nucleosome boundary. Parameters and the reference median's source in the contract line |
+| `nucgeo` (state group, `--nucpatch`, BED units) | state, reason | (shared geometry, record) | state 1 carries, 2 absent, 3 no call or not spanned; reason 1 carries, 2 absent, 3 no call, 4 not spanned; `AN` is the `nuc.geometry` hit id |
 | `nucmol` (version 2, 27 `Q` bytes) | the molecule scalars | record (`1-L`) | `nrl`, `regularity`, `spectral_snr`, `gap_cv`, `lambda_acc`, `rho_read`, `n_dyads`, `n_short`, `n_mono`, `n_long`, `n_multi`, `n_cant_tell`, `reg_fraction`, `disordered_fraction`, `undetermined_fraction`, `undersized_fraction`, `n_missing`, `flags`, and the calls digest (`calls_digest_hi`/`_lo`); codecs in the contract line |
 
 `nucsz` and `nucseg` AN names are `<group>@<digest>_<index>` (`nucmol` holds
 the digest in its last four bytes; `nucreg` names are
 `nucreg@<digest>.<params8>_<index>`, with the first 8 hex of the regularity
-parameters' digest, so a reader can tell rows made with other settings): the digest is over the call lengths and
+parameters' digest, so a reader can tell rows made with other settings; `nucpatch` names are
+`nucpatch@<digest>.<params8>_<index>`, the 8 hex covering the patch and regularity parameters and the
+reference median): the digest is over the call lengths and
 the gaps between consecutive calls, so it survives `fiberhmm-lift`. A reader
 ignores the groups when the digest no longer matches the record's calls. Every writer that regenerates `nuc`/`msp`/`tf` drops
 them.
