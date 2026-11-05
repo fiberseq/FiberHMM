@@ -879,6 +879,44 @@ def _runs(mask: np.ndarray) -> List[Tuple[int, int]]:
     return list(zip(np.flatnonzero(d == 1).tolist(), np.flatnonzero(d == -1).tolist()))
 
 
+def _ref_envelopes(mol, starts, ends) -> List[Tuple[int, int]]:
+    """``[_ref_envelope(mol, s, e) for s, e in zip(starts, ends)]`` in one pass.
+
+    With alignment blocks ordered and disjoint on both the molecule and the
+    reference (every CIGAR-derived block list; checked here), the blocks a
+    molecular interval overlaps are one contiguous run, the envelope starts in
+    its first block and ends in its last one. Anything else (and an interval
+    with no aligned base) goes through ``_ref_envelope``."""
+    starts = [int(x) for x in starts]
+    ends = [int(x) for x in ends]
+    blocks = mol.blocks
+    if not starts:
+        return []
+    if blocks is None or len(blocks) == 0:
+        return [_ref_envelope(mol, a, b) for a, b in zip(starts, ends)]
+    q0, r0, n = blocks[:, 0], blocks[:, 1], blocks[:, 2]
+    qe, re_ = q0 + n, r0 + n
+    if not (bool((n > 0).all()) and bool((q0[1:] >= qe[:-1]).all()) and bool((r0[1:] >= re_[:-1]).all())):
+        return [_ref_envelope(mol, a, b) for a, b in zip(starts, ends)]
+    s = np.asarray(starts, dtype=np.int64)
+    e = np.asarray(ends, dtype=np.int64)
+    if mol.is_reverse:
+        ss, se = mol.length - e, mol.length - s
+    else:
+        ss, se = s, e
+    first = np.searchsorted(qe, ss, side='right')       # first block ending after the interval's start
+    stop = np.searchsorted(q0, se, side='left')         # blocks before this one start before its end
+    ok = (stop > first) & (se > ss)
+    f = np.minimum(first, len(q0) - 1)
+    l_ = np.clip(stop - 1, 0, len(q0) - 1)
+    rs = r0[f] + (np.maximum(q0[f], ss) - q0[f])
+    rend = r0[l_] + (np.minimum(qe[l_], se) - q0[l_])
+    out = []
+    for i, good in enumerate(ok.tolist()):
+        out.append((int(rs[i]), int(rend[i])) if good else _ref_envelope(mol, starts[i], ends[i]))
+    return out
+
+
 def _ref_envelope(mol, s: int, e: int) -> Tuple[int, int]:
     """Reference envelope of molecular [s, e); zero-width at the nearest
     aligned base (by alignment-block boundaries) when none of it is aligned

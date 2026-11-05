@@ -213,6 +213,30 @@ def test_ref_envelope_of_unaligned_interval_is_the_nearest_aligned_base():
     assert _ref_envelope(r, 9000, 9147) == (1000, 1000)        # in the clip before the block
 
 
+def test_ref_envelopes_equal_one_ref_envelope_per_interval():
+    from fiberhmm.nuc.records import make_molecule
+    from fiberhmm.scan.modules.nuc import _ref_envelope, _ref_envelopes
+    rng = np.random.default_rng(11)
+    for reverse in (False, True):
+        for trial in range(40):
+            # alternating aligned blocks, insertions (query only) and deletions (reference only)
+            q, r, blocks = int(rng.integers(0, 300)), 5000, []
+            for _ in range(int(rng.integers(1, 12))):
+                n = int(rng.integers(1, 400))
+                blocks.append([q, r, n])
+                q += n + int(rng.integers(0, 3)) * int(rng.integers(0, 60))
+                r += n + int(rng.integers(0, 3)) * int(rng.integers(0, 60))
+            length = q + int(rng.integers(0, 300))
+            m = make_molecule(length, blocks=np.array(blocks), ref_start=5000, ref_end=r, is_reverse=reverse)
+            s = rng.integers(-20, length + 20, 400)
+            e = s + rng.integers(-3, 500, 400)
+            assert _ref_envelopes(m, s, e) == [_ref_envelope(m, int(a), int(b)) for a, b in zip(s, e)]
+    # overlapping (non-CIGAR) blocks take the per-interval path
+    m = make_molecule(3000, blocks=np.array([[0, 100, 500], [400, 50, 500]]), ref_start=50, ref_end=600)
+    s, e = [0, 300, 450, 2000], [100, 700, 460, 2100]
+    assert _ref_envelopes(m, s, e) == [_ref_envelope(m, a, b) for a, b in zip(s, e)]
+
+
 def test_thinning_calibrated_scans_are_byte_identical_across_runs_and_cores(scan_bam, tmp_path):
     def run(out, cores):
         units = plan({'chrS': LENGTH}, genome=True, contigs=['chrS'])

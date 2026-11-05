@@ -23,7 +23,7 @@ def record_outputs(read, record, cal, *, params=DEFAULT_PARAMS, context=None, re
     from .molecule import molecule_outputs
     from .tags import NUCMOL, FLAG_BITS, digest_pieces, group_rows
     from fiberhmm.scan.types import Mark, MoleculeResult
-    from fiberhmm.scan.modules.nuc import _ref_envelope
+    from fiberhmm.scan.modules.nuc import _ref_envelopes
     if context is None:
         context = DecodeContext(read.header, params=params)
     mol, _why = decode_record(read, context)
@@ -34,8 +34,8 @@ def record_outputs(read, record, cal, *, params=DEFAULT_PARAMS, context=None, re
     for group, (_spec, rows) in group_rows(result).items():
         if group == NUCMOL:
             continue
-        for start, length, q, name in rows:
-            a, b = _ref_envelope(mol, start, start + length)
+        envelopes = _ref_envelopes(mol, [r[0] for r in rows], [r[0] + r[1] for r in rows])
+        for (start, length, q, name), (a, b) in zip(rows, envelopes):
             marks.append(Mark(record, group, record.chrom, a, b, tuple(int(x) for x in q),
                               name, (int(start), int(length))))
     scalars = {k: None if v is None or not np.isfinite(v) else float(v) for k, v in result.scalars.items()}
