@@ -154,11 +154,13 @@ def _bands(window_bp: int, nfft: int, band: Tuple[int, int], ref: Tuple[int, int
 
 
 def spectral_scores(X: np.ndarray, params: RegularityParams = DEFAULT_REGULARITY,
-                    keep: Optional[np.ndarray] = None) -> Tuple[np.ndarray, np.ndarray]:
+                    keep: Optional[np.ndarray] = None, *, workers: int = 1) -> Tuple[np.ndarray, np.ndarray]:
     """(log2 score, period) per row of ``X`` (windows x ``window_bp``).
 
     ``keep`` (same shape, bool) marks the unmasked positions: masked ones are
-    set to the row's unmasked mean, and rows more than half masked get NaN."""
+    set to the row's unmasked mean, and rows more than half masked get NaN.
+    ``workers``: threads for the FFT over rows (``scipy.fft``; the result is
+    identical for any value)."""
     X = np.asarray(X, dtype=float)
     n, W = X.shape
     if W != params.window_bp:
@@ -178,7 +180,7 @@ def spectral_scores(X: np.ndarray, params: RegularityParams = DEFAULT_REGULARITY
             mu = (x * k).sum(axis=1) / np.maximum(nk, 1)
             x = np.where(k, x, mu[:, None])
         x = (x - x.mean(axis=1, keepdims=True)) * taper
-        P = np.abs(rfft(x, params.nfft, axis=1)) ** 2
+        P = np.abs(rfft(x, params.nfft, axis=1, workers=workers)) ** 2
         ref = np.median(P[:, in_ref], axis=1)
         bandP = P[:, in_band]
         j = np.argmax(bandP, axis=1)
@@ -264,8 +266,10 @@ def tiles(centres: np.ndarray, step_bp: int) -> Tuple[np.ndarray, np.ndarray]:
     return a, a + step_bp
 
 
-def sliding_regularity(mol: NucMolecule, params: RegularityParams = DEFAULT_REGULARITY) -> RegularityTrack:
-    """Regularity track of one molecule (see the module docstring)."""
+def sliding_regularity(mol: NucMolecule, params: RegularityParams = DEFAULT_REGULARITY, *,
+                       workers: int = 1) -> RegularityTrack:
+    """Regularity track of one molecule (see the module docstring); ``workers``
+    threads for the FFT (identical result)."""
     W = params.window_bp
     starts = _window_starts(mol.length, params)
     centres = starts + W // 2
@@ -281,7 +285,7 @@ def sliding_regularity(mol: NucMolecule, params: RegularityParams = DEFAULT_REGU
         sig = occupancy(mol)
     X = _windows(sig, starts, W)
     K = _windows(keep, starts, W) if keep is not None else None
-    score, period = spectral_scores(X, params, K)
+    score, period = spectral_scores(X, params, K, workers=workers)
     if params.signal == 'm6a':
         low = n_calls < params.min_calls
         score[low] = np.nan

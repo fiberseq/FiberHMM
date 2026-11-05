@@ -181,6 +181,12 @@ def test_thinning_is_seeded_by_read_name():
     assert not sliding_regularity(sparse, p).thinned
 
 
+def test_fft_workers_do_not_change_the_track():
+    mol = _array(30_000, np.random.default_rng(9))
+    a, b = sliding_regularity(mol), sliding_regularity(mol, workers=4)
+    assert np.array_equal(a.score, b.score, equal_nan=True) and np.array_equal(a.period, b.period)
+
+
 def test_tiles_abut_and_own_each_position_once():
     rng = np.random.default_rng(6)
     for step in (250, 200, 333):
