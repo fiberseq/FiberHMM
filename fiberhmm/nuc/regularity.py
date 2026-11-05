@@ -21,6 +21,18 @@ Options (both off by default for the layer):
   target is left unthinned (``thinned`` False). The generator is seeded from a
   SHA-256 of the read name, so every caller thins a molecule the same way.
 
+Read ends (``ends``). With ``blank`` (default) only full windows are scored,
+so the first and last ~``window_bp/2 - step_bp/2`` bp of a read (plus up to
+``step_bp - 1`` bp more at the far end) have no tile and reads shorter than
+``window_bp`` have none. ``extend`` stretches the first and last tile to the
+read ends, and leading / trailing unscored tiles take the score of the
+outermost scored tile. ``truncated`` continues the window grid to the read
+ends with windows cut at the read end, scored while at least ``end_min_bp``
+wide (``short_min_bp`` on reads shorter than ``window_bp``, whose windows are
+all cut); each cut window is tapered and transformed at its own width, and the
+outermost tile is anchored at the read end when it falls within one step of
+it. ``min_calls`` stays an absolute count for cut windows.
+
 Every window centre owns one ``step_bp`` tile (``centre - step/2`` to
 ``centre + step/2``), so tiles abut and never overlap. The ``nucreg`` group
 stores one mark per tile with a score: Q bytes ``[score_q, period_q]``
@@ -45,6 +57,7 @@ from scipy.fft import irfft, next_fast_len, rfft
 from fiberhmm.nuc.records import NucMolecule
 
 SIGNALS = ('m6a', 'occupancy')
+ENDS = ('blank', 'extend', 'truncated')
 #: score byte: 1 + round(clip((score - SCORE_LO) / SCORE_SPAN, 0, 1) * 254); 0 is reserved
 SCORE_LO, SCORE_SPAN = -2.0, 10.0
 #: period byte: period - PERIOD_OFFSET (0 = none)
@@ -68,8 +81,18 @@ class RegularityParams:
     #: thinning target (calls per kb outside masked stretches); None = off
     thin_per_kb: Optional[float] = None
     nfft: int = 8192
+    #: read ends: 'blank' (full windows only), 'extend' (paint the outer tiles to the ends) or 'truncated'
+    ends: str = 'blank'
+    #: ends 'truncated': the narrowest cut window scored at a read end
+    end_min_bp: int = 1000
+    #: ends 'truncated': the narrowest window scored on a read shorter than window_bp
+    short_min_bp: int = 1000
 
     def __post_init__(self):
+        if self.ends not in ENDS:
+            raise ValueError(f'nucreg: ends must be one of {ENDS}, not {self.ends!r}')
+        if not (64 <= self.end_min_bp <= self.window_bp) or not (64 <= self.short_min_bp <= self.window_bp):
+            raise ValueError('nucreg: end_min_bp and short_min_bp must be between 64 and window_bp')
         if self.signal not in SIGNALS:
             raise ValueError(f'nucreg: signal must be one of {SIGNALS}, not {self.signal!r}')
         if self.window_bp < 64 or self.step_bp < 1 or self.nfft < self.window_bp:
@@ -85,10 +108,18 @@ class RegularityParams:
             raise ValueError('nucreg: thin_per_kb must be positive (None = off)')
 
     def to_dict(self) -> dict:
+        """The parameters; the read-end fields only when they matter (``ends`` 'blank' leaves all three out,
+        'extend' the two widths), so tags, contracts and digests made before they existed stay identical."""
         out = asdict(self)
         for key, value in list(out.items()):
             if isinstance(value, tuple):
                 out[key] = list(value)
+        if self.ends == 'blank':
+            for key in ('ends', 'end_min_bp', 'short_min_bp'):
+                out.pop(key)
+        elif self.ends == 'extend':
+            out.pop('end_min_bp')
+            out.pop('short_min_bp')
         return out
 
     @classmethod
@@ -142,7 +173,7 @@ class RegularityTrack:
 
 
 # ------------------------------------------------------------------ spectrum
-@lru_cache(maxsize=16)
+@lru_cache(maxsize=512)      # ends 'truncated' cuts windows to many widths
 def _bands(window_bp: int, nfft: int, band: Tuple[int, int], ref: Tuple[int, int]):
     freq = np.fft.rfftfreq(nfft)                       # cycles per bp
     with np.errstate(divide='ignore'):
@@ -154,16 +185,18 @@ def _bands(window_bp: int, nfft: int, band: Tuple[int, int], ref: Tuple[int, int
 
 
 def spectral_scores(X: np.ndarray, params: RegularityParams = DEFAULT_REGULARITY,
-                    keep: Optional[np.ndarray] = None, *, workers: int = 1) -> Tuple[np.ndarray, np.ndarray]:
+                    keep: Optional[np.ndarray] = None, *, workers: int = 1,
+                    cut: bool = False) -> Tuple[np.ndarray, np.ndarray]:
     """(log2 score, period) per row of ``X`` (windows x ``window_bp``).
 
     ``keep`` (same shape, bool) marks the unmasked positions: masked ones are
     set to the row's unmasked mean, and rows more than half masked get NaN.
     ``workers``: threads for the FFT over rows (``scipy.fft``; the result is
-    identical for any value)."""
+    identical for any value). ``cut``: rows may be narrower than ``window_bp``
+    (cut windows at read ends, tapered at their own width)."""
     X = np.asarray(X, dtype=float)
     n, W = X.shape
-    if W != params.window_bp:
+    if W != params.window_bp and not (W <= params.window_bp and cut):
         raise ValueError('spectral_scores: rows must be window_bp long')
     taper, in_band, in_ref, band_periods = _bands(W, params.nfft, tuple(params.band_bp), tuple(params.ref_bp))
     score = np.full(n, np.nan)
@@ -266,10 +299,66 @@ def tiles(centres: np.ndarray, step_bp: int) -> Tuple[np.ndarray, np.ndarray]:
     return a, a + step_bp
 
 
+def window_grid(length: int, params: RegularityParams = DEFAULT_REGULARITY):
+    """(centres, tile_starts, tile_ends, window_starts, window_ends) of a molecule of ``length`` under
+    ``params.ends`` (module docstring). For 'blank' and 'extend' every window is ``window_bp`` wide."""
+    W, step, L = params.window_bp, params.step_bp, int(length)
+    if params.ends != 'truncated':
+        starts = _window_starts(L, params)
+        centres = starts + W // 2
+        ts, te = tiles(centres, step)
+        if params.ends == 'extend' and len(ts):
+            ts = ts.copy(); te = te.copy()
+            ts[0], te[-1] = 0, L
+        return centres, ts, te, starts, starts + W
+    minw = params.short_min_bp if L < W else params.end_min_bp
+    c = W // 2
+    while c - step - step // 2 + step > 0:          # the grid continued down to the first tile touching 0
+        c -= step
+    cs = []
+    while c - step // 2 < L:
+        a, b = max(0, c - W // 2), min(L, c - W // 2 + W)
+        full = a == c - W // 2 and b == c - W // 2 + W
+        if full or b - a >= minw:
+            cs.append(c)
+        c += step
+    centres = np.asarray(cs, dtype=np.int64)
+    if not len(centres):
+        z = np.zeros(0, dtype=np.int64)
+        return z, z, z, z, z
+    ts = np.clip(centres - step // 2, 0, L)
+    te = np.clip(centres - step // 2 + step, 0, L)
+    if ts[0] < step:
+        ts[0] = 0
+    if L - te[-1] < step:
+        te[-1] = L
+    ws = np.maximum(0, centres - W // 2)
+    we = np.minimum(L, centres - W // 2 + W)
+    return centres, ts, te, ws, we
+
+
+def window_reach(length: int, params: RegularityParams = DEFAULT_REGULARITY) -> Optional[Tuple[int, int]]:
+    """Molecular (start, end) covered by the window grid (beyond it: out of window reach), or None."""
+    _c, ts, te, _ws, _we = window_grid(length, params)
+    return (int(ts[0]), int(te[-1])) if len(ts) else None
+
+
+def _paint_ends(score: np.ndarray, period: np.ndarray) -> None:
+    """ends 'extend': unscored tiles before the first / after the last scored tile take its score and period."""
+    ok = np.flatnonzero(np.isfinite(score))
+    if not len(ok):
+        return
+    i0, i1 = ok[0], ok[-1]
+    score[:i0], period[:i0] = score[i0], period[i0]
+    score[i1 + 1:], period[i1 + 1:] = score[i1], period[i1]
+
+
 def sliding_regularity(mol: NucMolecule, params: RegularityParams = DEFAULT_REGULARITY, *,
                        workers: int = 1) -> RegularityTrack:
     """Regularity track of one molecule (see the module docstring); ``workers``
     threads for the FFT (identical result)."""
+    if params.ends == 'truncated':
+        return _sliding_truncated(mol, params, workers)
     W = params.window_bp
     starts = _window_starts(mol.length, params)
     centres = starts + W // 2
@@ -286,6 +375,47 @@ def sliding_regularity(mol: NucMolecule, params: RegularityParams = DEFAULT_REGU
     X = _windows(sig, starts, W)
     K = _windows(keep, starts, W) if keep is not None else None
     score, period = spectral_scores(X, params, K, workers=workers)
+    if params.signal == 'm6a':
+        low = n_calls < params.min_calls
+        score[low] = np.nan
+        period[low] = -1
+    if params.ends == 'extend' and len(ts):
+        ts, te = ts.copy(), te.copy()
+        ts[0], te[-1] = 0, mol.length
+        _paint_ends(score, period)
+    return RegularityTrack(mol.length, centres, ts, te, score, period, n_calls.astype(np.int64),
+                           thinned, density, params.digest()[:8])
+
+
+def _sliding_truncated(mol: NucMolecule, params: RegularityParams, workers: int) -> RegularityTrack:
+    """sliding_regularity for ends 'truncated': full windows as for 'blank', plus cut windows at the ends."""
+    W = params.window_bp
+    centres, ts, te, ws, we = window_grid(mol.length, params)
+    keep = open_mask(mol, params.mask_open_bp)
+    thin = params.thin_per_kb if params.signal == 'm6a' else None
+    hits, thinned, density = thinned_hits(mol, thin, keep)
+    cum = np.concatenate([[0], np.cumsum(hits, dtype=np.int64)])
+    n_calls = cum[we] - cum[ws] if len(ws) else np.zeros(0, dtype=np.int64)
+    sig = hits.astype(float) if params.signal == 'm6a' else occupancy(mol)
+    score = np.full(len(centres), np.nan)
+    period = np.full(len(centres), -1, dtype=np.int64)
+    width = we - ws
+    for w in np.unique(width):
+        idx = np.flatnonzero(width == w)
+        if w == W:
+            st = ws[idx]
+            if len(st) > 1 and np.all(np.diff(st) == params.step_bp):
+                X = _windows(sig, st, W)
+                K = _windows(keep, st, W) if keep is not None else None
+            else:
+                X = np.stack([sig[a:a + W] for a in st])
+                K = np.stack([keep[a:a + W] for a in st]) if keep is not None else None
+            sc, pr = spectral_scores(X, params, K, workers=workers)
+        else:
+            X = np.stack([sig[a:a + w] for a in ws[idx]])
+            K = np.stack([keep[a:a + w] for a in ws[idx]]) if keep is not None else None
+            sc, pr = spectral_scores(X, params, K, workers=workers, cut=True)
+        score[idx], period[idx] = sc, pr
     if params.signal == 'm6a':
         low = n_calls < params.min_calls
         score[low] = np.nan
@@ -478,6 +608,26 @@ def track_rows(track: RegularityTrack) -> List[Tuple[int, int, List[int]]]:
         out.append((a, int(track.tile_ends[i]) - a,
                     [encode_score(float(track.score[i])), encode_period(int(track.period[i]))]))
     return out
+
+
+def track_from_rows(length: int, intervals: Sequence[Tuple[int, int]], q: Sequence[Sequence[int]],
+                    params: "RegularityParams" = None, density_per_kb: float = float('nan')) -> RegularityTrack:
+    """A molecule's full regularity track rebuilt from its ``nucreg`` rows (scored tiles only) and its length:
+    the window grid of ``params``, the rows' byte-resolution scores and periods, NaN / -1 for tiles without a row.
+    ``n_calls`` is unknown (zeros). Patches called on it equal patches called on the original track except for
+    scores within half a score byte (about 0.02 log2) of a threshold."""
+    params = params or DEFAULT_REGULARITY
+    centres, ts, te, _ws, _we = window_grid(int(length), params)
+    score = np.full(len(centres), np.nan)
+    period = np.full(len(centres), -1, dtype=np.int64)
+    if len(ts) and len(intervals):
+        d = decode_rows(intervals, q)
+        idx = np.searchsorted(ts, d['tile_starts'])
+        ok = (idx < len(ts)) & (ts[np.minimum(idx, len(ts) - 1)] == d['tile_starts'])
+        score[idx[ok]] = d['score'][ok]
+        period[idx[ok]] = d['period'][ok]
+    return RegularityTrack(int(length), centres, ts, te, score, period, np.zeros(len(centres), dtype=np.int64),
+                           False, float(density_per_kb), params.digest()[:8])
 
 
 def decode_rows(intervals: Sequence[Tuple[int, int]], q: Sequence[Sequence[int]]) -> Dict[str, np.ndarray]:
