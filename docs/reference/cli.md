@@ -659,11 +659,16 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--nucpatch-min-tiles` | — | Minimum tiles per patch (default 2) |
 | `--nucpatch-snap` | — | Snap closed edges to the nucleosome boundary at the nearest open linker (default), at the nearest linker off the patch period, or keep the tile-grid edges Choices: `open`, `period`, `off`. |
 | `--nucpatch-open-bp` | — | Open linker for --nucpatch-snap open (default 300) |
+| `--nucpatch-search-bp` | — | Snap window: break linkers are searched within BP of the grid edge (default 1000) |
+| `--nucpatch-nuc-min-bp` | — | Snapping: nucleosome-sized footprints are at least BP long (default 90) |
+| `--nucpatch-tol-frac` | — | Snap rule period: a linker breaks when the dyad spacing is off the patch period by more than FRACTION (default 0.25) |
 | `--nucpatch-ref` | — | Reference median for every dataset (default: the random-packing reference of each dataset's calibration population) |
 | `--nucgeo-tol` | — | Shared geometries: both ends within BP of the consensus (default 500) |
 | `--nucgeo-min-share` | — | Shared geometries: at least this share of the molecules (default 0.03) |
 | `--nucgeo-cohort` | — | Molecules pooled per BED unit: spanning it (default) or overlapping it Choices: `spanning`, `overlapping`. |
 | `--nucgeo-edges` | — | Group patches by their snapped (default) or tile-grid edges Choices: `snapped`, `grid`. |
+| `--nucgeo-fold` | — | Fold nested geometries into their longest parent: none, near (other end moved at most --nucgeo-near-max-bp; default) or all Choices: `none`, `near`, `all`. |
+| `--nucgeo-near-max-bp` | — | Largest move of the other end for --nucgeo-fold near (default 1250) |
 | `--no-nucgeo` | off | Call patches but no shared geometries |
 | `--input-type` | `called-bam` | --bam input type; signal-bam filters producer-scored schema 5 records before all modules Choices: `called-bam`, `signal-bam`. |
 | `--signal-filters` | — | JSON file of boolean hideBackground, excludeUnscored, requireDetectable, requireStructure predicates (with --input-type signal-bam) |

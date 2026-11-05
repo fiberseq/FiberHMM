@@ -58,6 +58,15 @@ def _parser():
                      help='Mask open stretches (gaps between nucleosome calls) of at least BP (default off; 0 = off)')
     reg.add_argument('--nucreg-thin', type=float, metavar='PER_KB',
                      help='Thin m6A calls to PER_KB per kb before scoring (default off; 0 = off)')
+    reg.add_argument('--nucreg-min-calls', type=int, metavar='N',
+                     help='An m6A window needs at least N calls (default 15)')
+    reg.add_argument('--nucreg-ends', choices=['blank', 'extend', 'truncated'],
+                     help='Read ends: blank (full windows only; default), extend (paint the outer tiles to the '
+                          'read ends) or truncated (score cut windows at the ends)')
+    reg.add_argument('--nucreg-end-min', type=int, metavar='BP',
+                     help='--nucreg-ends truncated: narrowest cut window at a read end (default 1000)')
+    reg.add_argument('--nucreg-short-min', type=int, metavar='BP',
+                     help='--nucreg-ends truncated: narrowest window on reads shorter than the window (default 1000)')
     reg.add_argument('--no-nucreg', action='store_true', help='Do not compute or write nucreg')
     pat = p.add_argument_group('nuc regularity patches and shared geometries (MA nucpatch, nuc.geometry hits; '
                                'off by default)')
@@ -73,6 +82,13 @@ def _parser():
                           'at the nearest linker off the patch period, or keep the tile-grid edges')
     pat.add_argument('--nucpatch-open-bp', type=int, metavar='BP', help='Open linker for --nucpatch-snap open '
                                                                          '(default 300)')
+    pat.add_argument('--nucpatch-search-bp', type=int, metavar='BP',
+                     help='Snap window: break linkers are searched within BP of the grid edge (default 1000)')
+    pat.add_argument('--nucpatch-nuc-min-bp', type=int, metavar='BP',
+                     help='Snapping: nucleosome-sized footprints are at least BP long (default 90)')
+    pat.add_argument('--nucpatch-tol-frac', type=float, metavar='FRACTION',
+                     help='Snap rule period: a linker breaks when the dyad spacing is off the patch period by '
+                          'more than FRACTION (default 0.25)')
     pat.add_argument('--nucpatch-ref', type=float, metavar='LOG2',
                      help='Reference median for every dataset (default: the random-packing reference of each '
                           "dataset's calibration population)")
@@ -84,6 +100,11 @@ def _parser():
                      help='Molecules pooled per BED unit: spanning it (default) or overlapping it')
     pat.add_argument('--nucgeo-edges', choices=['snapped', 'grid'],
                      help='Group patches by their snapped (default) or tile-grid edges')
+    pat.add_argument('--nucgeo-fold', choices=['none', 'near', 'all'],
+                     help='Fold nested geometries into their longest parent: none, near (other end moved at most '
+                          '--nucgeo-near-max-bp; default) or all')
+    pat.add_argument('--nucgeo-near-max-bp', type=int, metavar='BP',
+                     help='Largest move of the other end for --nucgeo-fold near (default 1250)')
     pat.add_argument('--no-nucgeo', action='store_true', help='Call patches but no shared geometries')
     p.add_argument('--input-type', choices=['called-bam', 'signal-bam'], default='called-bam',
                    help='--bam input type; signal-bam filters producer-scored schema 5 records before all modules')
@@ -179,7 +200,9 @@ def _recorded_command(argv, bam_rank=None):
 
 
 NUCREG_FLAGS = (('nucreg_window', 'window_bp'), ('nucreg_step', 'step_bp'), ('nucreg_signal', 'signal'),
-                ('nucreg_band', 'band_bp'), ('nucreg_mask_open', 'mask_open_bp'), ('nucreg_thin', 'thin_per_kb'))
+                ('nucreg_band', 'band_bp'), ('nucreg_mask_open', 'mask_open_bp'), ('nucreg_thin', 'thin_per_kb'),
+                ('nucreg_min_calls', 'min_calls'), ('nucreg_ends', 'ends'), ('nucreg_end_min', 'end_min_bp'),
+                ('nucreg_short_min', 'short_min_bp'))
 
 
 def _nucreg_params(parser, args, modules, params):
@@ -216,8 +239,11 @@ def _nucreg_params(parser, args, modules, params):
 
 
 NUCPATCH_FLAGS = (('nucpatch_enter', 'enter'), ('nucpatch_extend', 'extend'), ('nucpatch_min_tiles', 'min_tiles'),
-                  ('nucpatch_open_bp', 'open_bp'), ('nucpatch_ref', 'ref_median'))
-NUCGEO_FLAGS = (('nucgeo_tol', 'tol_bp'), ('nucgeo_min_share', 'min_share'), ('nucgeo_cohort', 'cohort'))
+                  ('nucpatch_open_bp', 'open_bp'), ('nucpatch_ref', 'ref_median'),
+                  ('nucpatch_search_bp', 'search_bp'), ('nucpatch_nuc_min_bp', 'nuc_min_bp'),
+                  ('nucpatch_tol_frac', 'tol_frac'))
+NUCGEO_FLAGS = (('nucgeo_tol', 'tol_bp'), ('nucgeo_min_share', 'min_share'), ('nucgeo_cohort', 'cohort'),
+                ('nucgeo_fold', 'fold'), ('nucgeo_near_max_bp', 'near_max_bp'))
 
 
 def _nucpatch_params(parser, args, modules, params):

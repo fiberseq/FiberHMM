@@ -192,6 +192,22 @@ than 3% of the molecules. Each geometry is a `nuc.geometry` hit with a share
 per dataset, and each record gets a state: carries, absent, no call (most of
 the span unscored) or not spanned.
 
+A geometry is nested in a longer one when it lies inside it (with the
+tolerance as slack), shares one end within the tolerance and its other end
+moved by more than the tolerance. `--nucgeo-fold` decides what happens to
+nested geometries: `none` keeps them separate; `near` (default) folds a nested
+geometry into its longest parent only when the other end moved at most
+`--nucgeo-near-max-bp` (default 1250); `all` folds every nested geometry.
+Folding is transitive (a child joins the top parent) and leaves the grouping
+itself unchanged. Molecules carrying only a folded child carry the parent
+partly: the hit's `parent` column names the parent, the values add
+`share_partial`, and such records get state `0` with reason `partial`.
+
+Snapping parameters: `--nucpatch-search-bp` (window, default 1000),
+`--nucpatch-nuc-min-bp` (nucleosome-sized footprint, default 90),
+`--nucpatch-open-bp` (open linker, default 300) and `--nucpatch-tol-frac`
+(period rule, default 0.25).
+
 ```bash
 fiberhmm-scan --bam a.bam --bam b.bam --bed loci.bed --modules nuc --nucpatch --annotate -o nuc_scan
 ```
