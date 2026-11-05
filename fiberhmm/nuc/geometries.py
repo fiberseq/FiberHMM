@@ -26,8 +26,24 @@ cannot express "both ends within 500 bp, at least 3% of molecules" and does
 not scale to kb-wide spans. Its k-means core is used here only as a cross-check
 (:func:`kmeans_cross_check`).
 
+Nested geometries and folding (:func:`nested_pairs`, :func:`fold_geometries`).
+A geometry is *nested* in a longer one when its span lies inside the longer
+span (``tol_bp`` slack on each side), one end is shared within ``tol_bp`` and
+the other end has moved by more than ``tol_bp``. ``GeometryParams.fold``:
+
+- ``none``: geometries stay separate;
+- ``near``: a nested geometry folds into a parent only when its other end moved
+  at most ``near_max_bp``;
+- ``all``: every nested geometry folds, whatever the move.
+
+A folded child joins its longest eligible parent, resolved transitively to the
+top (root) geometry; its carriers carry the root *partly*. Grouping itself is
+unchanged by folding: folding only sets ``Geometry.parent`` and the partial
+state, and shares are reported full and partial separately.
+
 Per molecule and geometry (:func:`assign_states`): ``carries`` (a member
-patch), ``absent`` (its tiles cover the span with calls and no member patch),
+patch), ``partial`` (no member patch of this geometry but one of a geometry
+folded into it), ``absent`` (its tiles cover the span with calls and no member patch),
 ``no_call`` (covers the span but more than half of the tiles there have no
 score) and ``not_spanned`` (its tiles do not cover the span). Scan states:
 carries = 1, absent = 0, no_call / not_spanned = '.'.
@@ -36,7 +52,7 @@ from __future__ import annotations
 
 import hashlib
 import math
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -44,8 +60,11 @@ import numpy as np
 from fiberhmm.nuc.patches import IN_PATCH, NO_CALL, MoleculePatches, patch_ref_interval
 
 CARRIES, ABSENT, NO_CALL_STATE, NOT_SPANNED = 'carries', 'absent', 'no_call', 'not_spanned'
-STATES = (CARRIES, ABSENT, NO_CALL_STATE, NOT_SPANNED)
-SCAN_STATE = {CARRIES: '1', ABSENT: '0', NO_CALL_STATE: '.', NOT_SPANNED: '.'}
+PARTIAL = 'partial'
+STATES = (CARRIES, PARTIAL, ABSENT, NO_CALL_STATE, NOT_SPANNED)
+#: scan state values; a partial carrier does not carry the full span ('0', reason ``partial``)
+SCAN_STATE = {CARRIES: '1', PARTIAL: '0', ABSENT: '0', NO_CALL_STATE: '.', NOT_SPANNED: '.'}
+FOLD_MODES = ('none', 'near', 'all')
 
 
 @dataclass(frozen=True)
@@ -60,10 +79,18 @@ class GeometryParams:
     max_geometries: Optional[int] = None
     #: group the snapped edges (False: the tile-grid edges)
     snapped: bool = True
+    #: fold nested geometries into their parents: 'none', 'near' (other end moved <= near_max_bp) or 'all'
+    fold: str = 'near'
+    #: the largest move of the other end for fold 'near' (bp)
+    near_max_bp: int = 1250
 
     def __post_init__(self):
         if self.tol_bp < 0 or not 0 <= self.min_share < 1 or self.min_molecules < 1:
             raise ValueError('nucgeo: invalid tolerance, share or molecule count')
+        if self.fold not in FOLD_MODES:
+            raise ValueError(f'nucgeo: fold must be one of {FOLD_MODES}')
+        if self.near_max_bp < 0:
+            raise ValueError('nucgeo: near_max_bp must not be negative')
         if self.max_geometries is not None and self.max_geometries < 1:
             raise ValueError('nucgeo: max_geometries must be positive (None = no limit)')
 
@@ -72,7 +99,12 @@ class GeometryParams:
 
     @classmethod
     def from_dict(cls, data: Optional[dict]) -> "GeometryParams":
-        return cls(**(data or {}))
+        data = dict(data or {})
+        known = {f.name for f in fields(cls)}
+        unknown = sorted(set(data) - known)
+        if unknown:
+            raise ValueError(f'unknown nucgeo parameter(s): {", ".join(map(repr, unknown))}')
+        return cls(**data)
 
 
 DEFAULT_GEOMETRIES = GeometryParams()
@@ -122,10 +154,22 @@ class Geometry:
     end_mad: float
     mean_score: float
     period: int
+    #: index of the root geometry this one is folded into (None: not folded)
+    parent: Optional[int] = None
+    #: the parent's geometry_id (None: not folded)
+    parent_id: Optional[str] = None
 
     @property
     def width(self) -> int:
         return self.end - self.start
+
+
+@dataclass(frozen=True)
+class NestedPair:
+    child: int                 # index of the shorter geometry
+    parent: int                # index of the longer one
+    shared: str                # 'start' or 'end' (reference orientation)
+    moved: int                 # bp the other end moved
 
 
 def molecule_layout(mol, track, mp: MoleculePatches, dataset: str = '', *, snapped: bool = True,
@@ -218,12 +262,70 @@ def find_geometries(layouts: Sequence[MoleculeLayout], params: GeometryParams = 
                             _mad(starts.astype(float)), _mad(ends.astype(float)),
                             float(np.nanmedian(sc)) if np.isfinite(sc).any() else float('nan'),
                             int(np.median(pr)) if len(pr) else -1))
+    fold_geometries(out, params)
     return out
 
 
-def molecule_state(lay: MoleculeLayout, g: Geometry, carriers: set, index: int) -> str:
+def nested_pairs(geometries: Sequence[Geometry], tol_bp: int = 500) -> List[NestedPair]:
+    """Every (child, parent) pair where the child is nested in the longer parent (module docstring)."""
+    out = []
+    for ci, c in enumerate(geometries):
+        for qi, q in enumerate(geometries):
+            if ci == qi or q.width <= c.width:
+                continue
+            if c.start < q.start - tol_bp or c.end > q.end + tol_bp:
+                continue
+            ds, de = abs(c.start - q.start), abs(c.end - q.end)
+            shared = 'start' if ds <= tol_bp else 'end' if de <= tol_bp else None
+            if shared is None:
+                continue
+            moved = de if shared == 'start' else ds
+            if moved <= tol_bp:
+                continue
+            out.append(NestedPair(ci, qi, shared, int(moved)))
+    return out
+
+
+def fold_geometries(geometries: List[Geometry], params: GeometryParams = DEFAULT_GEOMETRIES) -> List[NestedPair]:
+    """Set ``parent`` / ``parent_id`` on folded geometries in place (``params.fold``); returns the folded pairs."""
+    for g in geometries:
+        g.parent = g.parent_id = None
+    if params.fold == 'none' or len(geometries) < 2:
+        return []
+    pairs = nested_pairs(geometries, params.tol_bp)
+    if params.fold == 'near':
+        pairs = [z for z in pairs if z.moved <= params.near_max_bp]
+    direct: Dict[int, int] = {}
+    for ci in range(len(geometries)):
+        ps = [z.parent for z in pairs if z.child == ci]
+        if ps:
+            # the longest eligible parent (ties: the earlier, i.e. better supported, geometry)
+            direct[ci] = max(ps, key=lambda qi: (geometries[qi].width, -qi))
+    for ci, pi in direct.items():
+        seen = {ci}
+        while pi in direct and pi not in seen:      # transitively to the root (parents are strictly longer)
+            seen.add(pi)
+            pi = direct[pi]
+        geometries[ci].parent = pi
+        geometries[ci].parent_id = geometries[pi].geometry_id
+    return [z for z in pairs if direct.get(z.child) == z.parent]
+
+
+def children_of(geometries: Sequence[Geometry]) -> Dict[int, List[int]]:
+    """Root index -> indices of the geometries folded into it."""
+    out: Dict[int, List[int]] = {}
+    for i, g in enumerate(geometries):
+        if g.parent is not None:
+            out.setdefault(g.parent, []).append(i)
+    return out
+
+
+def molecule_state(lay: MoleculeLayout, g: Geometry, carriers: set, index: int,
+                   partial_carriers: frozenset = frozenset()) -> str:
     if index in carriers:
         return CARRIES
+    if index in partial_carriers:
+        return PARTIAL
     if not len(lay.tile_lo):
         return NOT_SPANNED
     s0, s1 = lay.span
@@ -240,22 +342,28 @@ def molecule_state(lay: MoleculeLayout, g: Geometry, carriers: set, index: int) 
 def assign_states(layouts: Sequence[MoleculeLayout], geometries: Sequence[Geometry]) -> List[Dict[str, str]]:
     """Per molecule: ``{geometry_id: state}`` (see the module docstring)."""
     out: List[Dict[str, str]] = [dict() for _ in layouts]
-    for g in geometries:
+    kids = children_of(geometries)
+    for gi, g in enumerate(geometries):
         carriers = {i for i, _k in g.members}
+        part = frozenset(i for c in kids.get(gi, ()) for i, _k in geometries[c].members) - carriers
         for i, lay in enumerate(layouts):
-            out[i][g.geometry_id] = molecule_state(lay, g, carriers, i)
+            out[i][g.geometry_id] = molecule_state(lay, g, carriers, i, part)
     return out
 
 
 def support(layouts: Sequence[MoleculeLayout], states: Sequence[Dict[str, str]], geometry_id: str,
             dataset: Optional[str] = None) -> dict:
-    """Carriers, callable molecules (carries + absent) and both shares, optionally for one dataset."""
+    """Carriers (full), partial carriers (a folded child only), callable molecules (carries + partial +
+    absent) and the shares, optionally for one dataset."""
     sel = [i for i, lay in enumerate(layouts) if dataset is None or lay.dataset == dataset]
     n = len(sel)
     c = sum(states[i][geometry_id] == CARRIES for i in sel)
-    callable_ = sum(states[i][geometry_id] in (CARRIES, ABSENT) for i in sel)
-    return dict(molecules=n, carriers=c, callable=callable_,
-                share=c / n if n else None, share_callable=c / callable_ if callable_ else None)
+    pa = sum(states[i][geometry_id] == PARTIAL for i in sel)
+    callable_ = sum(states[i][geometry_id] in (CARRIES, PARTIAL, ABSENT) for i in sel)
+    return dict(molecules=n, carriers=c, partial=pa, callable=callable_,
+                share=c / n if n else None, share_partial=pa / n if n else None,
+                share_callable=c / callable_ if callable_ else None,
+                share_partial_callable=pa / callable_ if callable_ else None)
 
 
 def density_matched_shares(layouts: Sequence[MoleculeLayout], states: Sequence[Dict[str, str]],
@@ -267,7 +375,7 @@ def density_matched_shares(layouts: Sequence[MoleculeLayout], states: Sequence[D
     the pooled bin sizes. Bins where a dataset has fewer than 5 callable
     molecules are left out for every dataset."""
     idx = [i for i, lay in enumerate(layouts) if lay.dataset in datasets and np.isfinite(lay.density_per_kb)
-           and states[i][geometry_id] in (CARRIES, ABSENT)]
+           and states[i][geometry_id] in (CARRIES, PARTIAL, ABSENT)]
     if not idx:
         return {d: None for d in datasets}
     dens = np.array([layouts[i].density_per_kb for i in idx])

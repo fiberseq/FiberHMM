@@ -1039,7 +1039,7 @@ def _ref_envelope(mol, s: int, e: int) -> Tuple[int, int]:
 #: nucpatch settings that are not PatchParams fields
 PATCH_EXTRA = ('ref_median', 'reference_windows', 'reference_seed')
 GEO_COHORTS = ('spanning', 'overlapping')
-_REASON = {'carries': 1, 'absent': 2, 'no_call': 3, 'not_spanned': 4}
+_REASON = {'carries': 1, 'absent': 2, 'no_call': 3, 'not_spanned': 4, 'partial': 5}
 
 
 def _resolve_patch_settings(value) -> dict:
@@ -1098,12 +1098,16 @@ def _unit_geometries(out, unit, geo_mols, geo, dataset_ids):
                                      'P': g.period if g.period > 0 else '', 'width': g.width,
                                      'molecules': g.n_molecules, 'patches': g.n_patches,
                                      'start_mad': round(g.start_mad, 1), 'end_mad': round(g.end_mad, 1),
-                                     'edges': 'snapped' if gp.snapped else 'grid'}))
+                                     'edges': 'snapped' if gp.snapped else 'grid',
+                                     'fold': gp.fold,
+                                     'parent': g.parent_id.split('_', 1)[0] if g.parent_id else ''}))
         for grp, kind, ds in [('all', 'all', None)] + [(d, 'dataset', d) for d in dataset_ids]:
             sp = sup_all if ds is None else support(lays, states, g.geometry_id, ds)
             out.values.append(Value(key, grp, kind, 'share', sp['share'], n_molecules=sp['molecules'],
                                     n_callable=sp['callable']))
             out.values.append(Value(key, grp, kind, 'share_callable', sp['share_callable'],
+                                    n_molecules=sp['molecules'], n_callable=sp['callable']))
+            out.values.append(Value(key, grp, kind, 'share_partial', sp['share_partial'],
                                     n_molecules=sp['molecules'], n_callable=sp['callable']))
         out.values.append(Value(key, 'all', 'all', 'mean_score', g.mean_score))
         member = {i: k for i, k in g.members}
