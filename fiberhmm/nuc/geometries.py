@@ -217,9 +217,21 @@ def _mad(x: np.ndarray) -> float:
     return float(np.median(np.abs(x - np.median(x)))) if len(x) else float('nan')
 
 
+def _box_count(R, order, S, left, a, b, tol) -> int:
+    """Distinct molecules among the unassigned patches with both ends within ``tol`` of (a, b)."""
+    lo = np.searchsorted(S, a - tol, side='left')
+    hi = np.searchsorted(S, a + tol, side='right')
+    sl = order[lo:hi]
+    sl = sl[left[sl] & (np.abs(R[sl, 3] - b) <= tol)]
+    return int(len(np.unique(R[sl, 0]))) if len(sl) else 0
+
+
 def find_geometries(layouts: Sequence[MoleculeLayout], params: GeometryParams = DEFAULT_GEOMETRIES,
                     n_molecules: Optional[int] = None, chrom: str = '') -> List[Geometry]:
-    """Shared geometries of the pooled molecules (``n_molecules`` defaults to ``len(layouts)``)."""
+    """Shared geometries of the pooled molecules (``n_molecules`` defaults to ``len(layouts)``).
+
+    Each candidate's distinct-molecule count is computed once and then updated only for the candidates near the
+    patches a new geometry removes (the result equals recounting every candidate in every round)."""
     rows = [(i, k, p.start, p.end) for i, lay in enumerate(layouts) for k, p in enumerate(lay.patches)]
     if not rows:
         return []
@@ -228,27 +240,32 @@ def find_geometries(layouts: Sequence[MoleculeLayout], params: GeometryParams = 
     need = max(int(params.min_molecules), int(math.ceil(params.min_share * n_mol - 1e-9)))
     tol = int(params.tol_bp)
     left = np.ones(len(R), dtype=bool)
+    U, inv = np.unique(R[:, 2:4], axis=0, return_inverse=True)
+    inv = np.asarray(inv).reshape(-1)
+    reps = np.bincount(inv, minlength=len(U)).astype(np.int64)
+    order = np.argsort(R[:, 2], kind='stable')
+    S = R[order, 2]
+    cnt = np.array([_box_count(R, order, S, left, int(u[0]), int(u[1]), tol) for u in U], dtype=np.int64)
     out: List[Geometry] = []
     while left.any() and (params.max_geometries is None or len(out) < params.max_geometries):
-        L = R[left]
-        cands, reps = np.unique(L[:, 2:4], axis=0, return_counts=True)
-        best = None
-        for c0 in range(0, len(cands), 512):
-            C = cands[c0:c0 + 512]
-            box = (np.abs(L[None, :, 2] - C[:, None, 0]) <= tol) & (np.abs(L[None, :, 3] - C[:, None, 1]) <= tol)
-            for j in range(len(C)):
-                mols = np.unique(L[box[j], 0])
-                key = (len(mols), int(reps[c0 + j]), -int(C[j, 0]), -int(C[j, 1]))
-                if best is None or key > best[0]:
-                    best = (key, C[j])
-        if best is None or best[0][0] < need:
+        alive = np.flatnonzero(reps > 0)
+        if not len(alive):
             break
-        a, b = best[1]
+        # the best candidate: most molecules, then most exact repeats, then the smaller start and end
+        j = alive[np.lexsort((-U[alive, 1], -U[alive, 0], reps[alive], cnt[alive]))[-1]]
+        if cnt[j] < need:
+            break
+        a, b = int(U[j, 0]), int(U[j, 1])
         idx = np.flatnonzero(left)
         inbox = (np.abs(R[idx, 2] - a) <= tol) & (np.abs(R[idx, 3] - b) <= tol)
         mem = idx[inbox]
         left[mem] = False
+        reps -= np.bincount(inv[mem], minlength=len(U))
         starts, ends = R[mem, 2], R[mem, 3]
+        near = np.flatnonzero((reps > 0) & (U[:, 0] >= starts.min() - tol) & (U[:, 0] <= starts.max() + tol)
+                              & (U[:, 1] >= ends.min() - tol) & (U[:, 1] <= ends.max() + tol))
+        for c in near:
+            cnt[c] = _box_count(R, order, S, left, int(U[c, 0]), int(U[c, 1]), tol)
         ps = [layouts[int(i)].patches[int(k)] for i, k, _a, _b in R[mem]]
         cs, ce = int(round(float(np.median(starts)))), int(round(float(np.median(ends))))
         sc = np.array([p.mean_score for p in ps], dtype=float)

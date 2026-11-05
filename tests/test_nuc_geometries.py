@@ -255,3 +255,57 @@ def test_cli_folds_the_new_flags():
     assert (pat['search_bp'], pat['tol_frac'], pat['nuc_min_bp']) == (600, 0.3, 100)
     PatchParams.from_dict({k: v for k, v in pat.items() if k in PatchParams.__dataclass_fields__})
     assert CARRIES and ABSENT
+
+
+# ---------------------------------------------------------------- incremental grouping == the plain greedy rule
+def _reference_groups(layouts, params):
+    """The prototype's greedy rule, recounting every candidate in every round (the original implementation)."""
+    import math
+    rows = [(i, k, p.start, p.end) for i, lay in enumerate(layouts) for k, p in enumerate(lay.patches)]
+    if not rows:
+        return []
+    R = np.asarray(rows, dtype=np.int64)
+    need = max(int(params.min_molecules), int(math.ceil(params.min_share * len(layouts) - 1e-9)))
+    tol = int(params.tol_bp)
+    left = np.ones(len(R), dtype=bool)
+    out = []
+    while left.any() and (params.max_geometries is None or len(out) < params.max_geometries):
+        L = R[left]
+        cands, reps = np.unique(L[:, 2:4], axis=0, return_counts=True)
+        best = None
+        for j, c in enumerate(cands):
+            box = (np.abs(L[:, 2] - c[0]) <= tol) & (np.abs(L[:, 3] - c[1]) <= tol)
+            key = (len(np.unique(L[box, 0])), int(reps[j]), -int(c[0]), -int(c[1]))
+            if best is None or key > best[0]:
+                best = (key, c)
+        if best is None or best[0][0] < need:
+            break
+        a, b = best[1]
+        idx = np.flatnonzero(left)
+        mem = idx[(np.abs(R[idx, 2] - a) <= tol) & (np.abs(R[idx, 3] - b) <= tol)]
+        left[mem] = False
+        out.append(sorted((int(i), int(k)) for i, k in R[mem, :2]))
+    return out
+
+
+@pytest.mark.parametrize('seed', range(6))
+def test_incremental_grouping_equals_the_plain_greedy_rule(seed):
+    rng = np.random.default_rng(seed)
+    centres = [(int(rng.integers(-4000, 2000) // 250 * 250), int(rng.integers(500, 4000) // 250 * 250)) for _ in range(6)]
+    lays = []
+    for m in range(400):
+        spans, pos = [], -5000
+        for _ in range(int(rng.integers(0, 4))):
+            a, w = centres[int(rng.integers(len(centres)))]
+            a = max(pos, a + int(rng.integers(-3, 4)) * int(rng.choice([1, 125, 250])))
+            if a + w > 5000:
+                break
+            # short patches too: a molecule may hold two patches inside one box
+            w = w if rng.random() > 0.15 else int(rng.integers(2, 4)) * 250
+            spans.append((a, a + w))
+            pos = a + w + int(rng.integers(0, 3)) * 250
+        lays.append(_layout(f'm{m}', spans))
+    for tol in (250, 500, 1000):
+        gp = GeometryParams(tol_bp=tol, min_share=0.01, fold='none')
+        got = [sorted(g.members) for g in find_geometries(lays, gp)]
+        assert got == _reference_groups(lays, gp)
