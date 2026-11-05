@@ -180,7 +180,7 @@ def test_nuc_groups_survive_lift(lifted, target, flipped):
         lifted_read, src_read = by[key], source[key]
         assert by[("fwd", False)].is_reverse == flipped
         g_l, g_s = _groups(lifted_read), _groups(src_read)
-        assert set(g_l) == set(NUC_GROUPS)
+        assert set(g_l) == set(NUC_GROUPS) - {"nucpatch"}     # patches are opt-in
         assert g_l == g_s, key                              # identical, molecular frame
         assert not any(v[3] for v in g_l.values())
         # re-running the module on the lifted record reproduces the bytes
@@ -195,7 +195,7 @@ def test_nuc_groups_survive_lift(lifted, target, flipped):
     # the filled supplementary: its partial groups moved with nuc/msp by the clip offset
     supp_l, supp_s = by[("chim", True)], source[("chim", True)]
     g_l, g_s = _groups(supp_l), _groups(supp_s)
-    assert set(g_l) == set(NUC_GROUPS) and not any(v[3] for v in g_l.values())
+    assert set(g_l) == set(NUC_GROUPS) - {"nucpatch"} and not any(v[3] for v in g_l.values())
     assert g_l[NUCSZ][2] == g_s[NUCSZ][2]                  # digest unchanged
     offset = 4000
     for grp in (NUCSZ, NUCSEG):
