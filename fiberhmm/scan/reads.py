@@ -97,16 +97,20 @@ def unit_survey(datasets: Sequence[Dataset], unit: ScanUnit, read_policy: Mappin
 
     callable: bases covered (aligned blocks) by at least ``callable_min_molecules``
     annotated records of the dataset."""
+    from itertools import chain
     import numpy as np
     import pysam
+    from fiberhmm.inference.chimeras import is_marked_chimera
     filters = read_policy['filters']
     min_mol = int(read_policy['callable_min_molecules'])
-    zlen = unit.zone_end - unit.zone_start
+    zone_start, zone_end = unit.zone_start, unit.zone_end
+    zlen = zone_end - zone_start
     records = 0
     chimeras_skipped = 0
     callable_runs = {}
     for ds in datasets:
         delta = np.zeros(zlen + 1, dtype=np.int64)
+        lefts, rights = [], []
         for path in ds.paths:
             with pysam.AlignmentFile(path, 'rb') as bam:
                 if unit.chrom not in bam.references:
@@ -117,17 +121,25 @@ def unit_survey(datasets: Sequence[Dataset], unit: ScanUnit, read_policy: Mappin
                     # Emptiness counts every mapped record, whatever the filters: a module may admit records
                     # the read policy leaves out (peaks with include_duplicates, say).
                     records += 1
-                    from fiberhmm.inference.chimeras import is_marked_chimera
                     if is_marked_chimera(read) and filters.get('chimeras', 'exclude') == 'exclude':
                         chimeras_skipped += 1
                     if not passes(read, filters) or not has_annotations(read):
                         continue
-                    for a, b in read.get_blocks():
-                        a = max(a, unit.zone_start) - unit.zone_start
-                        b = min(b, unit.zone_end) - unit.zone_start
-                        if b > a:
-                            delta[a] += 1
-                            delta[b] -= 1
+                    # Aligned blocks lie within the alignment: one outside the zone adds nothing.
+                    if read.reference_end is None or read.reference_end <= zone_start or read.reference_start >= zone_end:
+                        continue
+                    blocks = read.get_blocks()
+                    if not blocks:
+                        continue
+                    ends = np.fromiter(chain.from_iterable(blocks), dtype=np.int64, count=2 * len(blocks)).reshape(-1, 2)
+                    a = np.maximum(ends[:, 0], zone_start) - zone_start
+                    b = np.minimum(ends[:, 1], zone_end) - zone_start
+                    keep = b > a
+                    lefts.append(a[keep])
+                    rights.append(b[keep])
+        if lefts:
+            delta += np.bincount(np.concatenate(lefts), minlength=zlen + 1)
+            delta -= np.bincount(np.concatenate(rights), minlength=zlen + 1)
         cov = np.cumsum(delta[:-1])
         ok = cov >= min_mol
         runs = []
