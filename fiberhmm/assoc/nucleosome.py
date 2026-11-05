@@ -355,7 +355,7 @@ def vectorized_anchor_appearances(molecules, loci, *, frame='anchor', P=189., pa
             raise ValueError('Unknown frame')
         ip, il, ih = _interior_index_ranges(m, m.msps, params.msp_boundary_sites)
         ch = np.r_[0,np.cumsum(m.hits[ip],dtype=np.int64)]
-        _hc, cum_inf = m._cums()
+        cum_inf = m.cum_informative()
         state,full_mask,stats,marks,counts,hist = appearance_batch(
             a,m.msps,m.nucs,d,cum_inf,ip,il,ih,ch,m.length,m.is_reverse,
             np.asarray(all_bins,dtype=float),P,params.barrier_slop,params.barrier_min_msp,

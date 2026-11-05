@@ -445,3 +445,29 @@ def test_footprint_model_loader_accepts_scan_annotations():
     ma = parse_ma_tag('3000;nuc.Q:11-147;msp.:158-40,500-60;tf.QQQ:300-30;nucsz.QQQQ:11-147')
     assert not _an_linked_footprints(ma, '.,.,.,.,nucsz@abcd1234_0')
     assert _an_linked_footprints(ma, '.,fhw_msp_0,fhw_msp_0,.,.')
+
+
+def test_direct_counts_equal_cumulative_counts():
+    """A molecule without cumulative arrays counts a few intervals directly: same values, dtypes and shapes,
+    and it does not keep the arrays."""
+    from fiberhmm.nuc.records import make_molecule
+    rng = np.random.default_rng(9)
+    hits = rng.random(3000) < 0.1
+    inf = rng.random(3000) < 0.6
+    cases = [(5, 400), (-10, 10), (2990, 4000), (700, 600), (np.int64(3), np.int64(9)),
+             (np.array([1, 50, 2999]), np.array([20, 50, 3100])), (np.array([[0, 10], [5, 7]]), np.array([[3, 30], [6, 2000]])),
+             (100, np.array([150, 90, 2000])), (np.array([0, 1, 2, 3, 4, 5, 6, 7, 8]), 2500)]
+    for s, e in cases:
+        fresh = make_molecule(3000, hits=hits, informative=inf)
+        full = make_molecule(3000, hits=hits, informative=inf)
+        full._cums()
+        got, want = fresh.counts(s, e), full.counts(s, e)
+        for g, w in zip(got, want):
+            assert type(g) is type(w) and np.shape(g) == np.shape(w) and np.array_equal(g, w)
+            assert np.asarray(g).dtype == np.asarray(w).dtype
+        assert (fresh._cum_hit is None) == (np.size(np.maximum(np.asarray(e), np.asarray(s))) <= 8)
+    m = make_molecule(3000, hits=hits, informative=inf)
+    assert m.n_hits == int((hits & inf).sum()) and m.n_informative == int(inf.sum()) and m._cum_hit is None
+    c = m.cum_informative()
+    assert m._cum_inf is None and c.dtype == np.int64 and np.array_equal(c, m._cums()[1])
+    assert m.cum_informative() is m._cum_inf

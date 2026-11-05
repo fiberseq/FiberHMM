@@ -25,6 +25,8 @@ N_CTX = 4096
 UNMETH_OFFSET = 4097
 
 _EMPTY = np.zeros((0, 2), dtype=np.int64)
+#: NucMolecule.counts: at most this many intervals are counted directly on a molecule without cumulative arrays
+_DIRECT_COUNTS = 8
 
 
 def _as_intervals(pairs) -> np.ndarray:
@@ -85,20 +87,49 @@ class NucMolecule:
         return self._cum_hit, self._cum_inf
 
     def counts(self, start, end):
-        """(marks, informative sites) in ``[start, end)``; vectorised."""
-        ch, ci = self._cums()
+        """(marks, informative sites) in ``[start, end)``; vectorised.
+
+        A few intervals on a molecule without its cumulative arrays are
+        counted directly (the same int64 values and shapes), so a caller
+        asking for a handful of counts on many molecules does not build and
+        keep two int64 arrays of every molecule's length."""
         s = np.clip(np.asarray(start), 0, self.length)
         e = np.clip(np.asarray(end), 0, self.length)
         e = np.maximum(e, s)
+        if self._cum_hit is None and e.size <= _DIRECT_COUNTS:
+            return self._direct_counts(s, e)
+        ch, ci = self._cums()
         return ch[e] - ch[s], ci[e] - ci[s]
+
+    def _direct_counts(self, s, e):
+        lo = np.broadcast_to(s, e.shape).ravel().tolist()
+        hi = e.ravel().tolist()
+        h = np.empty(len(hi), dtype=np.int64)
+        i = np.empty(len(hi), dtype=np.int64)
+        for k, (a, b) in enumerate(zip(lo, hi)):
+            h[k] = np.count_nonzero(self.hits[a:b])
+            i[k] = np.count_nonzero(self.informative[a:b])
+        h, i = h.reshape(e.shape), i.reshape(e.shape)
+        return (h[()], i[()]) if e.ndim == 0 else (h, i)
+
+    def cum_informative(self) -> np.ndarray:
+        """Cumulative informative-site counts (length + 1, int64): the cached
+        array when there is one, else computed and not kept."""
+        if self._cum_inf is not None:
+            return self._cum_inf
+        return np.concatenate([[0], np.cumsum(self.informative, dtype=np.int64)])
 
     @property
     def n_hits(self) -> int:
-        return int(self._cums()[0][-1])
+        if self._cum_hit is None:
+            return int(np.count_nonzero(self.hits))
+        return int(self._cum_hit[-1])
 
     @property
     def n_informative(self) -> int:
-        return int(self._cums()[1][-1])
+        if self._cum_inf is None:
+            return int(np.count_nonzero(self.informative))
+        return int(self._cum_inf[-1])
 
     @property
     def is_supplementary(self) -> bool:
