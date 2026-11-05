@@ -403,7 +403,10 @@ def run_unit_task(spec: dict) -> dict:
             if survey_dir.exists():
                 shutil.rmtree(survey_dir)
             survey_dir.mkdir(parents=True)
-            survey = unit_survey(datasets, unit, inputs.read_policy) if datasets else dict(records=-1, callable={})
+            if spec.get('survey') is not None:
+                survey = dict(spec['survey'])  # supplied by the caller (run_units unit_surveys)
+            else:
+                survey = unit_survey(datasets, unit, inputs.read_policy) if datasets else dict(records=-1, callable={})
             _write_json(survey_dir / 'survey.json', survey)
             marker = _publish_marker(survey_dir, survey_key, {})
         survey = _read_json(survey_dir / 'survey.json')
@@ -528,7 +531,8 @@ def run_units(datasets: Sequence[Mapping[str, Any]], units, *, modules: Sequence
               out, annotate: Optional[bool] = None, progress=None, cancel=None, cores: int = 1,
               window_jobs: int = 0, continue_run: bool = False, units_info: Optional[Mapping[str, Any]] = None,
               registry: Optional[Mapping[str, Any]] = None, command: Optional[Sequence[str]] = None,
-              extend: bool = False, evidence=None) -> dict:
+              extend: bool = False, evidence=None,
+              unit_surveys: Optional[Mapping[str, Mapping[str, Any]]] = None) -> dict:
     """Compute (or extend, with ``continue_run``) a scan directory. Returns a summary dict.
 
     ``units``: the plan, as returned by :func:`fiberhmm.scan.units.plan` (``(units, info)``) or a
@@ -538,7 +542,11 @@ def run_units(datasets: Sequence[Mapping[str, Any]], units, *, modules: Sequence
     (dataset_id, input_index, AlignedSegment) tuples. See CONTRACTS.md §14.
     ``continue_run`` finishes an interrupted scan with the same arguments; ``extend`` (with
     ``continue_run``) also accepts another plan or other module settings for the same inputs and read
-    policy (a browser scan appending units): every unit result whose key still matches is reused."""
+    policy (a browser scan appending units): every unit result whose key still matches is reused.
+    ``unit_surveys`` (unit_id -> ``{records, callable[, chimeras_skipped]}``) stands in for the unit survey
+    of those units: a caller that has already read the unit's records (the browser's prepared peak counts)
+    need not read every BAM again. It is trusted as given; ``records`` decides emptiness and ``callable``
+    feeds callable.tsv.bgz."""
     progress = progress or _NullProgress()
     if isinstance(units, tuple) and len(units) == 2 and isinstance(units[1], dict):
         units, units_info = units
@@ -583,7 +591,7 @@ def run_units(datasets: Sequence[Mapping[str, Any]], units, *, modules: Sequence
         annotate = default_annotate(units_info) if annotate is None else bool(annotate)
         return _run_locked(out, resolved, reference, contigs, units, units_info, mods, policy, annotate,
                            progress, cancel, cores, window_jobs, continue_run, registry, command, extend,
-                           prepared_evidence=evidence is not None or signal_input)
+                           prepared_evidence=evidence is not None or signal_input, unit_surveys=unit_surveys)
     finally:
         lock.release()
 
@@ -673,7 +681,8 @@ def _key_view(manifest, key):
 
 
 def _run_locked(out, resolved, reference, contigs, units, units_info, mods, policy, annotate, progress, cancel,
-                cores, window_jobs, continue_run, registry, command, extend=False, prepared_evidence=False) -> dict:
+                cores, window_jobs, continue_run, registry, command, extend=False, prepared_evidence=False,
+                unit_surveys=None) -> dict:
     started = time.monotonic()
     # Calibration (dataset-level, before any unit): nuc only in v1.
     cal_shas: Dict[str, Optional[str]] = {}
@@ -749,7 +758,9 @@ def _run_locked(out, resolved, reference, contigs, units, units_info, mods, poli
     context_path = out / WORK / ('dispatch_' + I.digest(common, 16) + '.json.gz')
     if pending and not context_path.exists():
         _write_json(context_path, common)
-    specs = [dict(context_path=str(context_path), unit=u.to_json(), registry=registry) for u in pending]
+    specs = [dict(context_path=str(context_path), unit=u.to_json(), registry=registry,
+                  **({'survey': dict(unit_surveys[u.unit_id])} if unit_surveys and u.unit_id in unit_surveys else {}))
+             for u in pending]
     progress.report('units', f'{reused} complete from an earlier attempt; {len(pending)} to run ({jobs} at a time)'
                     if reused else f'{len(pending)} to run ({jobs} at a time)', completed=reused, total=len(units))
     completed = _dispatch(specs, jobs, progress, cancel)

@@ -327,3 +327,24 @@ def test_local_rule_with_zero_rare_threshold_needs_coverage():
     for p in res['peaks']:
         if p['layer'] == 3:
             assert tot[p['start']:p['end']].min() >= 5
+
+
+def test_supplied_unit_surveys_replace_the_bam_survey(tmp_path, monkeypatch):
+    """run_units(unit_surveys=...) stands in for the per-unit BAM survey; the hits are unchanged."""
+    from fiberhmm.scan import plan, run_units
+    from fiberhmm.scan import runner
+    path = _bam(tmp_path / 'a.bam', [dict(start=421, cigar='79M', tags={'ns': [0], 'nl': [79]})])
+    units = plan({'chrP': 1500}, genome=True, unit_bp=500, stride_bp=500)
+    ds = [{'dataset_id': 'x', 'paths': [path]}]
+    run_units(ds, units, modules=['peaks'], out=tmp_path / 'surveyed', annotate=False)
+    surveys = {u.unit_id: runner._read_json(tmp_path / 'surveyed' / 'work' / '_unit' / runner.I.unit_dir_name(u.unit_id)
+                                            / 'survey.json')
+               for u in units[0]}
+
+    def refuse(*args, **kwargs):
+        raise AssertionError('the unit survey re-read the BAM')
+    monkeypatch.setattr(runner, 'unit_survey', refuse)
+    run_units(ds, units, modules=['peaks'], out=tmp_path / 'supplied', annotate=False, unit_surveys=surveys)
+    assert ((tmp_path / 'supplied' / 'peaks' / 'hits.tsv.bgz').read_bytes()
+            == (tmp_path / 'surveyed' / 'peaks' / 'hits.tsv.bgz').read_bytes())
+    assert read_all(tmp_path / 'supplied' / 'callable.tsv.bgz') == read_all(tmp_path / 'surveyed' / 'callable.tsv.bgz')
