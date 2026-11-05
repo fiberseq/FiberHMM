@@ -177,9 +177,12 @@ def _llr_byte(llr: float) -> int:
 
 def molecule_outputs(mol: NucMolecule, params: NucParams = DEFAULT_PARAMS,
                      cal: Optional[NucCalibration] = None, *, segments: bool = True,
-                     regularity: Optional[RegularityParams] = None) -> MoleculeResult:
+                     regularity: Optional[RegularityParams] = None,
+                     calibration_digest: Optional[str] = None) -> MoleculeResult:
     """Coarse (and named) calls, segments and scalars for one molecule; with
-    ``regularity``, also its sliding-window regularity track (``nucreg``)."""
+    ``regularity``, also its sliding-window regularity track (``nucreg``).
+    ``calibration_digest`` is ``cal.digest()`` when the caller already has it
+    (a caller looping over many molecules with one record computes it once)."""
     if cal is None:
         raise ValueError('molecule_outputs needs a calibration record (calibrate first)')
     fp = footprint_calls(mol, params, cal)
@@ -243,7 +246,7 @@ def molecule_outputs(mol: NucMolecule, params: NucParams = DEFAULT_PARAMS,
                         max(0, min(b, s.end) - max(a, s.start)) for a, b in und for s in segs) / cov)
                 scal['n_missing'] = float(sum(1 for e in events if e.kind == 17))
     return MoleculeResult(mol.name, mol.length, fp, segs, scal, flags, calls_digest(mol),
-                          cal.digest(), mol.record_key(), sorted(events, key=lambda e: (e.start, e.end, e.kind)),
+                          calibration_digest or cal.digest(), mol.record_key(), sorted(events, key=lambda e: (e.start, e.end, e.kind)),
                           list(mol.meta.get('evidence_warnings', [])),
                           sliding_regularity(mol, regularity) if regularity is not None else None)
 

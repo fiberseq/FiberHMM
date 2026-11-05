@@ -210,6 +210,18 @@ def test_molecule_outputs_are_pure_and_deterministic():
     assert sum(r['type'] == 'nuc.seg' for r in rows) == len(a.segments)
 
 
+def test_a_supplied_calibration_digest_gives_the_same_result():
+    rng = np.random.default_rng(6)
+    m = array_molecule([('reg', 20, 188), ('irr', 10, 0)], rng)
+    cal = flat_calibration()
+    a = molecule_outputs(m, cal=cal)
+    b = molecule_outputs(m, cal=cal, calibration_digest=cal.digest())
+    assert b.calibration_digest == a.calibration_digest == cal.digest()
+    assert repr(a.scalar_vector()) == repr(b.scalar_vector())
+    assert repr([s.as_dict() for s in a.segments]) == repr([s.as_dict() for s in b.segments])
+    assert a.digest == b.digest and a.events == b.events
+
+
 def test_tf_calls_are_footprints_with_tf_overlap():
     rng = np.random.default_rng(7)
     m = array_molecule([('reg', 10, 190), ('sub', 10, 60)], rng)

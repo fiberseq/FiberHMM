@@ -7,7 +7,8 @@ from .params import DEFAULT_PARAMS
 from .regularity import DEFAULT_REGULARITY
 
 
-def record_outputs(read, record, cal, *, params=DEFAULT_PARAMS, context=None, regularity=DEFAULT_REGULARITY):
+def record_outputs(read, record, cal, *, params=DEFAULT_PARAMS, context=None, regularity=DEFAULT_REGULARITY,
+                   calibration_digest=None):
     """Return (decoded molecule, nuc result, scan result) for a complete record.
 
     ``record`` is its scan RecordRef; ``cal`` is a NucCalibration. A cached
@@ -15,6 +16,8 @@ def record_outputs(read, record, cal, *, params=DEFAULT_PARAMS, context=None, re
     off) adds the ``nucreg`` marks, on by default as in the scan. Unusable
     records return (None, None, None).
     Annotation frames are resolved from the record header as in decode_record.
+    ``calibration_digest`` (``cal.digest()``, computed once by a caller that
+    loops over records) saves serializing the calibration for every record.
     """
     from .records import DecodeContext, decode_record
     from .molecule import molecule_outputs
@@ -26,7 +29,7 @@ def record_outputs(read, record, cal, *, params=DEFAULT_PARAMS, context=None, re
     mol, _why = decode_record(read, context)
     if mol is None:
         return None, None, None
-    result = molecule_outputs(mol, params, cal, regularity=regularity)
+    result = molecule_outputs(mol, params, cal, regularity=regularity, calibration_digest=calibration_digest)
     marks = []
     for group, (_spec, rows) in group_rows(result).items():
         if group == NUCMOL:
