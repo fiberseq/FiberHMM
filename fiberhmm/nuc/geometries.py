@@ -41,6 +41,11 @@ top (root) geometry; its carriers carry the root *partly*. Grouping itself is
 unchanged by folding: folding only sets ``Geometry.parent`` and the partial
 state, and shares are reported full and partial separately.
 
+Kinds. Patches carry their kind (high or low regularity, :mod:`fiberhmm.nuc.patches`).
+Geometries are found per kind (``find_geometries(..., kind=)``): a high and a
+low patch with the same span never group together, nesting and folding stay
+within a kind, and low geometries are numbered L1, L2, ... (high: G1, G2, ...).
+
 Per molecule and geometry (:func:`assign_states`): ``carries`` (a member
 patch), ``partial`` (no member patch of this geometry but one of a geometry
 folded into it), ``absent`` (its tiles cover the span with calls and no member patch),
@@ -57,7 +62,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from fiberhmm.nuc.patches import IN_PATCH, NO_CALL, MoleculePatches, patch_ref_interval
+from fiberhmm.nuc.patches import HIGH, IN_PATCH, LOW, NO_CALL, PATCH_KINDS, MoleculePatches, patch_ref_interval
 
 CARRIES, ABSENT, NO_CALL_STATE, NOT_SPANNED = 'carries', 'absent', 'no_call', 'not_spanned'
 PARTIAL = 'partial'
@@ -119,6 +124,7 @@ class RefPatch:
     open_right: bool
     mean_score: float
     period: int
+    kind: str = HIGH
 
 
 @dataclass
@@ -158,6 +164,8 @@ class Geometry:
     parent: Optional[int] = None
     #: the parent's geometry_id (None: not folded)
     parent_id: Optional[str] = None
+    #: 'high' or 'low' regularity
+    kind: str = HIGH
 
     @property
     def width(self) -> int:
@@ -207,7 +215,7 @@ def molecule_layout(mol, track, mp: MoleculePatches, dataset: str = '', *, snapp
                 a, ol = view[0], True
             if b > view[1]:
                 b, orr = view[1], True
-        pts.append(RefPatch(a, b, bool(ol), bool(orr), p.mean_score, p.period))
+        pts.append(RefPatch(a, b, bool(ol), bool(orr), p.mean_score, p.period, getattr(p, 'kind', HIGH)))
     pts.sort(key=lambda x: (x.start, x.end))
     return MoleculeLayout(uid if uid is not None else getattr(mol, 'name', ''), dataset, pts, lo, hi, st,
                           float(getattr(track, 'density_per_kb', float('nan'))))
@@ -227,12 +235,16 @@ def _box_count(R, order, S, left, a, b, tol) -> int:
 
 
 def find_geometries(layouts: Sequence[MoleculeLayout], params: GeometryParams = DEFAULT_GEOMETRIES,
-                    n_molecules: Optional[int] = None, chrom: str = '') -> List[Geometry]:
-    """Shared geometries of the pooled molecules (``n_molecules`` defaults to ``len(layouts)``).
+                    n_molecules: Optional[int] = None, chrom: str = '', kind: str = HIGH) -> List[Geometry]:
+    """Shared geometries of the pooled molecules' patches of one ``kind`` (``n_molecules`` defaults to
+    ``len(layouts)``).
 
     Each candidate's distinct-molecule count is computed once and then updated only for the candidates near the
     patches a new geometry removes (the result equals recounting every candidate in every round)."""
-    rows = [(i, k, p.start, p.end) for i, lay in enumerate(layouts) for k, p in enumerate(lay.patches)]
+    if kind not in PATCH_KINDS:
+        raise ValueError(f'nucgeo: kind must be one of {PATCH_KINDS}')
+    rows = [(i, k, p.start, p.end) for i, lay in enumerate(layouts) for k, p in enumerate(lay.patches)
+            if getattr(p, 'kind', HIGH) == kind]
     if not rows:
         return []
     R = np.asarray(rows, dtype=np.int64)
@@ -270,25 +282,26 @@ def find_geometries(layouts: Sequence[MoleculeLayout], params: GeometryParams = 
         cs, ce = int(round(float(np.median(starts)))), int(round(float(np.median(ends))))
         sc = np.array([p.mean_score for p in ps], dtype=float)
         pr = np.array([p.period for p in ps if p.period > 0])
-        gid = hashlib.sha256(f'{chrom}:{cs}-{ce}:{len(out)}'.encode()).hexdigest()[:12]
-        out.append(Geometry(f'G{len(out) + 1}_{gid}', cs, ce,
+        tag = f'{chrom}:{cs}-{ce}:{len(out)}' if kind == HIGH else f'low:{chrom}:{cs}-{ce}:{len(out)}'
+        gid = hashlib.sha256(tag.encode()).hexdigest()[:12]
+        out.append(Geometry(f'{"G" if kind == HIGH else "L"}{len(out) + 1}_{gid}', cs, ce,
                             sum(p.open_left for p in ps) * 2 > len(ps),
                             sum(p.open_right for p in ps) * 2 > len(ps),
                             int(len(np.unique(R[mem, 0]))), int(len(mem)),
                             [(int(i), int(k)) for i, k in R[mem, :2]],
                             _mad(starts.astype(float)), _mad(ends.astype(float)),
                             float(np.nanmedian(sc)) if np.isfinite(sc).any() else float('nan'),
-                            int(np.median(pr)) if len(pr) else -1))
+                            int(np.median(pr)) if len(pr) else -1, kind=kind))
     fold_geometries(out, params)
     return out
 
 
 def nested_pairs(geometries: Sequence[Geometry], tol_bp: int = 500) -> List[NestedPair]:
-    """Every (child, parent) pair where the child is nested in the longer parent (module docstring)."""
+    """Every (child, parent) pair of one kind where the child is nested in the longer parent (module docstring)."""
     out = []
     for ci, c in enumerate(geometries):
         for qi, q in enumerate(geometries):
-            if ci == qi or q.width <= c.width:
+            if ci == qi or q.width <= c.width or c.kind != q.kind:
                 continue
             if c.start < q.start - tol_bp or c.end > q.end + tol_bp:
                 continue
@@ -429,6 +442,21 @@ def nested_near_duplicates(geometries: Sequence[Geometry], tol_bp: int = 500,
             ds, de = abs(g.start - h.start), abs(g.end - h.end)
             if nested and min(ds, de) <= tol_bp and tol_bp < max(ds, de) <= smear_bp:
                 out.append((g.geometry_id, h.geometry_id))
+    return out
+
+
+def find_all_geometries(layouts: Sequence[MoleculeLayout], params: GeometryParams = DEFAULT_GEOMETRIES,
+                        n_molecules: Optional[int] = None, chrom: str = '',
+                        kinds: Sequence[str] = (HIGH, LOW)) -> List[Geometry]:
+    """High geometries, then low ones (each kind found and folded on its own)."""
+    out: List[Geometry] = []
+    for kind in kinds:
+        G = find_geometries(layouts, params, n_molecules, chrom, kind=kind)
+        off = len(out)
+        for g in G:
+            if g.parent is not None:
+                g.parent += off
+        out += G
     return out
 
 

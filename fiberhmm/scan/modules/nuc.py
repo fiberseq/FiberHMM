@@ -1084,28 +1084,32 @@ def _geometry_layout(mol, res, dataset_id, unit, geo, snapped):
 
 def _unit_geometries(out, unit, geo_mols, geo, dataset_ids):
     """Geometries of one BED unit's cohort as hits, values and per-record states (in place on ``out``)."""
-    from fiberhmm.nuc.geometries import (SCAN_STATE, GeometryParams, assign_states, find_geometries, support)
+    from fiberhmm.nuc.geometries import (SCAN_STATE, GeometryParams, assign_states, find_all_geometries, support)
     from fiberhmm.scan.types import State
     if not geo_mols:
         return
     gp = GeometryParams.from_dict({k: v for k, v in geo.items() if k != 'cohort'})
     lays = [lay for _r, lay in geo_mols]
-    geoms = find_geometries(lays, gp, chrom=unit.chrom)
+    # high-regularity geometries; low-regularity ones (found on their own) when the patches hold any
+    kinds = ('high', 'low') if any(p.kind == 'low' for lay in lays for p in lay.patches) else ('high',)
+    geoms = find_all_geometries(lays, gp, chrom=unit.chrom, kinds=kinds)
     states = assign_states(lays, geoms)
     for g in geoms:
-        key = f'geometry:{g.start}-{g.end}'
+        key = f'geometry:{g.start}-{g.end}' if g.kind == 'high' else f'geometry-low:{g.start}-{g.end}'
         sup_all = support(lays, states, g.geometry_id)
         open_end = g.open_left or g.open_right
+        cols = {'geometry': g.geometry_id, 'open_end': int(open_end),
+                'P': g.period if g.period > 0 else '', 'width': g.width,
+                'molecules': g.n_molecules, 'patches': g.n_patches,
+                'start_mad': round(g.start_mad, 1), 'end_mad': round(g.end_mad, 1),
+                'edges': 'snapped' if gp.snapped else 'grid',
+                'fold': gp.fold,
+                'parent': g.parent_id.split('_', 1)[0] if g.parent_id else ''}
+        if g.kind != 'high':
+            cols['kind'] = g.kind
         out.hits.append(Hit('nuc.geometry', key, unit.chrom, g.start, g.end, (g.start + g.end) // 2,
                             score=sup_all['share'], label=g.geometry_id.split('_', 1)[0],
-                            flags=('open_end',) if open_end else (),
-                            columns={'geometry': g.geometry_id, 'open_end': int(open_end),
-                                     'P': g.period if g.period > 0 else '', 'width': g.width,
-                                     'molecules': g.n_molecules, 'patches': g.n_patches,
-                                     'start_mad': round(g.start_mad, 1), 'end_mad': round(g.end_mad, 1),
-                                     'edges': 'snapped' if gp.snapped else 'grid',
-                                     'fold': gp.fold,
-                                     'parent': g.parent_id.split('_', 1)[0] if g.parent_id else ''}))
+                            flags=('open_end',) if open_end else (), columns=cols))
         for grp, kind, ds in [('all', 'all', None)] + [(d, 'dataset', d) for d in dataset_ids]:
             sp = sup_all if ds is None else support(lays, states, g.geometry_id, ds)
             out.values.append(Value(key, grp, kind, 'share', sp['share'], n_molecules=sp['molecules'],

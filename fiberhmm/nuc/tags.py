@@ -30,9 +30,12 @@ Four groups, molecular coordinates, each self-contained:
 ``nucpatch.QQQ`` (group version 1)  one interval per regularity patch
     (:mod:`fiberhmm.nuc.patches`; snapped edges): Q1 = mean score in the
     ``nucreg`` score byte, Q2 = median period - 100 (0 = none), Q3 = flags
-    (bit 0/1 open at the molecular start/end, bit 2/3 start/end snapped).
-    Written only when patches were called; its header contract records the
-    patch parameters and the reference median.
+    (bit 0/1 open at the molecular start/end, bit 2/3 start/end snapped,
+    bit 4 a low-regularity patch). One group holds both kinds; high and low
+    patches never overlap. With low calling off no row has bit 4 and the
+    group is byte-identical to high-only calling. Written only when patches
+    were called; its header contract records the patch parameters (with a
+    ``low`` block when low calling is on) and the reference median.
 
 **Provenance.** Every AN name carries the digest of the calls the group was
 computed from: ``nucsz@<digest8>_<i>`` and ``nucseg@<digest8>_<i>``;
@@ -224,6 +227,8 @@ def nucpatch_declaration(patches=None, reference=None) -> dict:
         d['score_byte'] = {'lo': SCORE_LO, 'span': SCORE_SPAN, 'missing': 0}
         d['period_offset'] = PERIOD_OFFSET
         d['flag_bits'] = {'open_start': 1, 'open_end': 2, 'snapped_start': 4, 'snapped_end': 8}
+        if getattr(patches, 'low', None) is not None:
+            d['flag_bits']['low'] = 16
         d['params'] = patches.to_dict()
         d['reference'] = reference
     return d

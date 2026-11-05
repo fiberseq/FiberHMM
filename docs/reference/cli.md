@@ -667,6 +667,12 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--nucpatch-nuc-min-bp` | — | Snapping: nucleosome-sized footprints are at least BP long (default 90) |
 | `--nucpatch-tol-frac` | — | Snap rule period: a linker breaks when the dyad spacing is off the patch period by more than FRACTION (default 0.25) |
 | `--nucpatch-ref` | — | Reference median for every dataset (default: the random-packing reference of each dataset's calibration population) |
+| `--nucpatch-low` | off | Also call low-regularity patches (below the reference median; MA nucpatch flag bit 4) and their own shared geometries (L1, L2, ...); any --nucpatch-low-* flag implies it |
+| `--nucpatch-low-enter` | — | A low-regularity patch needs a tile at most this far relative to the reference median (default -1.5) |
+| `--nucpatch-low-extend` | — | and extends over tiles at most this far (default -0.75; below --nucpatch-extend) |
+| `--nucpatch-low-min-tiles` | — | Minimum tiles per low-regularity patch (default 2) |
+| `--nucpatch-low-snap` | — | Edges of low-regularity patches, as --nucpatch-snap (default open) Choices: `open`, `period`, `off`. |
+| `--nucpatch-low-open-bp` | — | Open linker for --nucpatch-low-snap open (default 300) |
 | `--nucgeo-tol` | — | Shared geometries: both ends within BP of the consensus (default 500) |
 | `--nucgeo-min-share` | — | Shared geometries: at least this share of the molecules (default 0.03) |
 | `--nucgeo-cohort` | — | Molecules pooled per BED unit: spanning it (default) or overlapping it Choices: `spanning`, `overlapping`. |

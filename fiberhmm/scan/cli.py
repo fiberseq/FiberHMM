@@ -92,6 +92,20 @@ def _parser():
     pat.add_argument('--nucpatch-ref', type=float, metavar='LOG2',
                      help='Reference median for every dataset (default: the random-packing reference of each '
                           "dataset's calibration population)")
+    pat.add_argument('--nucpatch-low', action='store_true',
+                     help='Also call low-regularity patches (below the reference median; MA nucpatch flag bit 4) '
+                          'and their own shared geometries (L1, L2, ...); any --nucpatch-low-* flag implies it')
+    pat.add_argument('--nucpatch-low-enter', type=float, metavar='LOG2',
+                     help='A low-regularity patch needs a tile at most this far relative to the reference median '
+                          '(default -1.5)')
+    pat.add_argument('--nucpatch-low-extend', type=float, metavar='LOG2',
+                     help='and extends over tiles at most this far (default -0.75; below --nucpatch-extend)')
+    pat.add_argument('--nucpatch-low-min-tiles', type=int, metavar='N',
+                     help='Minimum tiles per low-regularity patch (default 2)')
+    pat.add_argument('--nucpatch-low-snap', choices=['open', 'period', 'off'],
+                     help='Edges of low-regularity patches, as --nucpatch-snap (default open)')
+    pat.add_argument('--nucpatch-low-open-bp', type=int, metavar='BP',
+                     help='Open linker for --nucpatch-low-snap open (default 300)')
     pat.add_argument('--nucgeo-tol', type=int, metavar='BP',
                      help='Shared geometries: both ends within BP of the consensus (default 500)')
     pat.add_argument('--nucgeo-min-share', type=float, metavar='FRACTION',
@@ -242,6 +256,8 @@ NUCPATCH_FLAGS = (('nucpatch_enter', 'enter'), ('nucpatch_extend', 'extend'), ('
                   ('nucpatch_open_bp', 'open_bp'), ('nucpatch_ref', 'ref_median'),
                   ('nucpatch_search_bp', 'search_bp'), ('nucpatch_nuc_min_bp', 'nuc_min_bp'),
                   ('nucpatch_tol_frac', 'tol_frac'))
+NUCPATCH_LOW_FLAGS = (('nucpatch_low_enter', 'enter'), ('nucpatch_low_extend', 'extend'),
+                      ('nucpatch_low_min_tiles', 'min_tiles'), ('nucpatch_low_open_bp', 'open_bp'))
 NUCGEO_FLAGS = (('nucgeo_tol', 'tol_bp'), ('nucgeo_min_share', 'min_share'), ('nucgeo_cohort', 'cohort'),
                 ('nucgeo_fold', 'fold'), ('nucgeo_near_max_bp', 'near_max_bp'))
 
@@ -254,6 +270,14 @@ def _nucpatch_params(parser, args, modules, params):
             pgiven['snap'] = False
         else:
             pgiven.update(snap=True, snap_rule=args.nucpatch_snap)
+    lgiven = {key: getattr(args, flag) for flag, key in NUCPATCH_LOW_FLAGS if getattr(args, flag) is not None}
+    if args.nucpatch_low_snap is not None:
+        if args.nucpatch_low_snap == 'off':
+            lgiven['snap'] = False
+        else:
+            lgiven.update(snap=True, snap_rule=args.nucpatch_low_snap)
+    if args.nucpatch_low or lgiven:
+        pgiven['low'] = lgiven
     ggiven = {key: getattr(args, flag) for flag, key in NUCGEO_FLAGS if getattr(args, flag) is not None}
     if args.nucgeo_edges is not None:
         ggiven['snapped'] = args.nucgeo_edges == 'snapped'

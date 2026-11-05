@@ -41,10 +41,23 @@ patch (``grid_start``/``grid_end``).
 Coordinates are molecular (the track's); :func:`patch_ref_interval` projects a
 patch onto the reference (reverse records flip start/end).
 
+Two kinds of patch. *High-regularity* patches (above) are the default. With
+``PatchParams.low`` (:class:`LowPatchParams`) the same molecule is also called
+for *low-regularity* patches by the mirror hysteresis on the low side: a run of
+tiles whose (bridged) excess is at most ``low.extend`` holding one tile at or
+below ``low.enter`` and at least ``low.min_tiles`` tiles. Low regularity is
+chromatin less regular than random packing of the same nucleosomes, a real
+state of the fibre and not a failed call. The two kinds never overlap
+(``low.extend`` must lie below the high ``extend``). Low patches have their own
+edge settings; with the 'open' snap rule they snap without a period (the rule
+does not use one), with the 'period' rule only when the patch has a period.
+
 The ``nucpatch`` group stores one interval per patch (snapped edges): Q bytes
 ``[score_q, period_q, flags]`` with the ``nucreg`` score and period codecs and
 ``flags`` bit 0/1 = open at the molecular start/end, bit 2/3 = start/end
-snapped.
+snapped, bit 4 = a low-regularity patch. With low calling off no patch has bit
+4 and the parameters (and so the digests) are those of high-only calling, so
+the output is byte-identical to the high-only group.
 """
 from __future__ import annotations
 
@@ -58,11 +71,17 @@ import numpy as np
 from fiberhmm.nuc.regularity import (RegularityTrack, decode_period, decode_score, encode_period,
                                      encode_score)
 
-#: per-tile states of :func:`call_patches`
-NO_CALL, IRREGULAR, IN_PATCH = -1, 0, 1
+#: per-tile states of :func:`call_patches`: no score, scored outside every patch, in a high-regularity patch,
+#: in a low-regularity patch
+NO_CALL, OUTSIDE, IN_PATCH, IN_LOW_PATCH = -1, 0, 1, 2
+#: former name of OUTSIDE (a scored tile in no patch; not a low-regularity call)
+IRREGULAR = OUTSIDE
 #: flag bits of the third Q byte
-OPEN_START, OPEN_END, SNAPPED_START, SNAPPED_END = 1, 2, 4, 8
+OPEN_START, OPEN_END, SNAPPED_START, SNAPPED_END, LOW_KIND = 1, 2, 4, 8, 16
 SNAP_RULES = ('open', 'period')
+#: patch kinds
+HIGH, LOW = 'high', 'low'
+PATCH_KINDS = (HIGH, LOW)
 
 
 @dataclass(frozen=True)
@@ -88,10 +107,15 @@ class PatchParams:
     snap_rule: str = 'open'
     #: an open linker for snap_rule 'open'
     open_bp: int = 300
+    #: low-regularity patches (LowPatchParams); None = high-regularity patches only
+    low: Optional["LowPatchParams"] = None
 
-    def __post_init__(self):
+    def _check_thresholds(self):
         if not self.extend <= self.enter:
             raise ValueError('nucpatch: need extend <= enter')
+
+    def __post_init__(self):
+        self._check_thresholds()
         if self.min_tiles < 1:
             raise ValueError('nucpatch: min_tiles must be at least 1')
         if self.nuc_min_bp < 1 or self.search_bp < 0 or self.merged_bp <= self.nuc_min_bp or self.core_bp < 1:
@@ -102,19 +126,38 @@ class PatchParams:
             raise ValueError(f'nucpatch: snap_rule must be one of {SNAP_RULES}')
         if self.open_bp < 1:
             raise ValueError('nucpatch: open_bp must be positive')
+        if self.low is not None:
+            if isinstance(self, LowPatchParams) or not isinstance(self.low, LowPatchParams):
+                raise ValueError('nucpatch: low must be LowPatchParams (and only on the high parameters)')
+            if not self.low.extend < self.extend:
+                raise ValueError('nucpatch: the low extend threshold must lie below the high extend threshold')
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        """The parameters; ``low`` only when low calling is on (so high-only digests are unchanged)."""
+        d = {f.name: getattr(self, f.name) for f in fields(self) if f.name != 'low'}
+        if self.low is not None:
+            d['low'] = self.low.to_dict()
+        return d
 
     @classmethod
     def from_dict(cls, data: Optional[dict]) -> "PatchParams":
         if not data:
             return cls()
+        data = dict(data)
         known = {f.name for f in fields(cls)}
         unknown = sorted(set(data) - known)
         if unknown:
             raise ValueError(f'unknown nucpatch parameter(s): {", ".join(map(repr, unknown))}')
+        low = data.pop('low', None)
+        if low is not None:
+            if cls is LowPatchParams:
+                raise ValueError('nucpatch: low parameters cannot nest')
+            data['low'] = low if isinstance(low, LowPatchParams) else LowPatchParams.from_dict(low)
         return cls(**data)
+
+    @property
+    def kinds(self) -> Tuple[str, ...]:
+        return (HIGH, LOW) if self.low is not None else (HIGH,)
 
     def digest(self, ref_median: Optional[float] = None) -> str:
         """Full SHA-256 of the parameters and the reference median the excess is read against."""
@@ -124,7 +167,25 @@ class PatchParams:
         return hashlib.sha256(blob.encode()).hexdigest()
 
 
+@dataclass(frozen=True)
+class LowPatchParams(PatchParams):
+    """Low-regularity patches: the mirror hysteresis (start at or below ``enter``, extend while at or below
+    ``extend``, both log2 excess over the random-packing reference median) with their own edge settings.
+
+    Provisional defaults (eve, embryo 2-4 h and 6-8 h, chr2R:9,969,319-9,989,319): the random-packing
+    reference's own scores have their 5th / 25th percentiles at -1.7 / -0.7, and 2.5-2.7% / 9-11% of the
+    molecules' tiles lie at or below -1.5 / -0.75. ``enter`` -1.5 is about the reference's 7th percentile and
+    ``extend`` -0.75 its 25th: the same 0.75 hysteresis gap as the high side (+2.0 / +1.25)."""
+    enter: float = -1.5
+    extend: float = -0.75
+
+    def _check_thresholds(self):
+        if not self.enter <= self.extend:
+            raise ValueError('nucpatch low: need enter <= extend')
+
+
 DEFAULT_PATCHES = PatchParams()
+DEFAULT_LOW_PATCHES = LowPatchParams()
 
 
 def patch_digest(regularity_digest: str, params: PatchParams, ref_median: Optional[float]) -> str:
@@ -148,6 +209,8 @@ class Patch:
     open_end: bool = False
     snapped_start: bool = False
     snapped_end: bool = False
+    #: 'high' or 'low' regularity
+    kind: str = HIGH
 
     @property
     def n_tiles(self) -> int:
@@ -156,7 +219,8 @@ class Patch:
     @property
     def flags(self) -> int:
         return (OPEN_START * self.open_start | OPEN_END * self.open_end
-                | SNAPPED_START * self.snapped_start | SNAPPED_END * self.snapped_end)
+                | SNAPPED_START * self.snapped_start | SNAPPED_END * self.snapped_end
+                | LOW_KIND * (self.kind == LOW))
 
     def edges(self, snapped: bool = True) -> Tuple[int, int]:
         return (self.start, self.end) if snapped else (self.grid_start, self.grid_end)
@@ -164,7 +228,8 @@ class Patch:
 
 @dataclass
 class MoleculePatches:
-    """Patches of one molecule and the per-tile states (``IN_PATCH``, ``IRREGULAR``, ``NO_CALL``)."""
+    """Patches of one molecule (both kinds, sorted by start) and the per-tile states (``IN_PATCH``,
+    ``IN_LOW_PATCH``, ``OUTSIDE``, ``NO_CALL``)."""
     patches: List[Patch]
     tile_state: np.ndarray
     ref_median: float
@@ -187,13 +252,30 @@ def bridged_excess(track: RegularityTrack, ref_median: float) -> np.ndarray:
 
 def call_patches(track: RegularityTrack, nucs: Optional[np.ndarray] = None, *, ref_median: float,
                  params: PatchParams = DEFAULT_PATCHES) -> MoleculePatches:
-    """Patches of one molecule from its regularity track and nucleosome calls (``(n, 2)``, molecular)."""
+    """Patches of one molecule from its regularity track and nucleosome calls (``(n, 2)``, molecular):
+    high-regularity patches, and low-regularity ones when ``params.low`` is set."""
     v = np.asarray(track.score, dtype=float) - float(ref_median)
     w = bridged_excess(track, ref_median)
-    n = len(w)
     called = np.isfinite(w)
-    state = np.where(called, IRREGULAR, NO_CALL).astype(np.int8)
-    ext = called & (w >= params.extend)
+    state = np.where(called, OUTSIDE, NO_CALL).astype(np.int8)
+    out = _call_kind(track, v, w, called, state, float(ref_median), nucs, params, HIGH)
+    if params.low is not None:
+        out += _call_kind(track, v, w, called, state, float(ref_median), nucs, params.low, LOW)
+        out.sort(key=lambda p: (p.start, p.end))
+    return MoleculePatches(out, state, float(ref_median), patch_digest(track.params_digest, params, ref_median))
+
+
+def _call_kind(track, v, w, called, state, ref_median, nucs, params: PatchParams, kind: str) -> List[Patch]:
+    """One kind's patches (hysteresis above for 'high', mirrored below for 'low'); marks their tiles in ``state``."""
+    n = len(w)
+    if kind == HIGH:
+        ext = called & (w >= params.extend)
+        hit = lambda run: (w[run] >= params.enter).any()          # noqa: E731
+        mark = IN_PATCH
+    else:
+        ext = called & (w <= params.extend)
+        hit = lambda run: (w[run] <= params.enter).any()          # noqa: E731
+        mark = IN_LOW_PATCH
     fp = _footprints(nucs, params.nuc_min_bp) if params.snap else None
     out: List[Patch] = []
     j = 0
@@ -205,20 +287,21 @@ def call_patches(track: RegularityTrack, nucs: Optional[np.ndarray] = None, *, r
         while e + 1 < n and ext[e + 1]:
             e += 1
         run = slice(j, e + 1)
-        if (w[run] >= params.enter).any() and e - j + 1 >= params.min_tiles:
-            state[run] = IN_PATCH
+        if hit(run) and e - j + 1 >= params.min_tiles:
+            state[run] = mark
             sc = v[run][np.isfinite(v[run])]
             pr = np.asarray(track.period[run])
             pr = pr[pr > 0]
             period = int(np.median(pr)) if len(pr) else -1
             gs, ge = int(track.tile_starts[j]), int(track.tile_ends[e])
             p = Patch(gs, ge, gs, ge, j, e, float(sc.mean() + ref_median) if len(sc) else float('nan'),
-                      period, open_start=j == 0, open_end=e == n - 1)
-            if fp is not None and period > 0:
+                      period, open_start=j == 0, open_end=e == n - 1, kind=kind)
+            # high patches snap only with a period (as before); low ones also without one under the 'open' rule
+            if fp is not None and (period > 0 or (kind == LOW and params.snap_rule == 'open')):
                 _snap(p, fp, params)
             out.append(p)
         j = e + 1
-    return MoleculePatches(out, state, float(ref_median), patch_digest(track.params_digest, params, ref_median))
+    return out
 
 
 # ---------------------------------------------------------------------------- snapping
@@ -332,5 +415,6 @@ def decode_patch_rows(intervals: Sequence[Tuple[int, int]], q: Sequence[Sequence
         fl = int(b[2]) if len(b) > 2 else 0
         out.append(dict(start=int(s), end=int(e), mean_score=decode_score(b[0]), period=decode_period(b[1]),
                         open_start=bool(fl & OPEN_START), open_end=bool(fl & OPEN_END),
-                        snapped_start=bool(fl & SNAPPED_START), snapped_end=bool(fl & SNAPPED_END)))
+                        snapped_start=bool(fl & SNAPPED_START), snapped_end=bool(fl & SNAPPED_END),
+                        kind=LOW if fl & LOW_KIND else HIGH))
     return out
