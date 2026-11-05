@@ -152,7 +152,12 @@ class NucModule(ScanModuleBase):
             if out.get('nucreg') is None:
                 raise ValueError('nuc: nucpatch needs nucreg (the regularity track)')
             out['nucpatch'] = _resolve_patch_settings(out['nucpatch'])
-        if out.get('nucgeo') is not None:
+        if out.get('nucpatch') is None:
+            # Patches off: neither key enters the settings, so the settings hash, calibration and unit keys stay
+            # those of a scan without patch support (geometries need patches).
+            out.pop('nucpatch', None)
+            out.pop('nucgeo', None)
+        elif out.get('nucgeo') is not None:
             out['nucgeo'] = _resolve_geo_settings(out['nucgeo'])
         if out['calibration'] not in ('thin', 'self'):
             raise ValueError("nuc: calibration must be 'thin' or 'self'")

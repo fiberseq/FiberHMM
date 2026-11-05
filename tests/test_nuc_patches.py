@@ -416,8 +416,8 @@ def test_settings_validation():
     mod = NucModule()
     s = mod.resolve({'nucpatch': {'open_bp': 250, 'ref_median': 3}})
     assert s['nucpatch']['open_bp'] == 250 and s['nucpatch']['ref_median'] == 3.0
-    assert mod.resolve({})['nucpatch'] is None
-    for bad in ({'nucpatch': {}, 'nucreg': None}, {'nucpatch': {'bogus': 1}}, {'nucgeo': {'cohort': 'x'}},
+    assert mod.resolve({}).get('nucpatch') is None and 'nucgeo' not in mod.resolve({})
+    for bad in ({'nucpatch': {}, 'nucreg': None}, {'nucpatch': {'bogus': 1}}, {'nucpatch': {}, 'nucgeo': {'cohort': 'x'}},
                 {'nucpatch': {'reference_windows': 5}}):
         with pytest.raises(ValueError):
             mod.resolve(bad)

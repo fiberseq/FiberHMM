@@ -309,3 +309,16 @@ def test_incremental_grouping_equals_the_plain_greedy_rule(seed):
         gp = GeometryParams(tol_bp=tol, min_share=0.01, fold='none')
         got = [sorted(g.members) for g in find_geometries(lays, gp)]
         assert got == _reference_groups(lays, gp)
+
+
+def test_patches_off_leave_the_settings_and_their_hash_as_without_patch_support():
+    from fiberhmm.scan.identity import settings_hash
+    from fiberhmm.scan.modules.nuc import NucModule
+    m = NucModule()
+    off = m.resolve({})
+    assert 'nucpatch' not in off and 'nucgeo' not in off
+    assert settings_hash(m.resolve({'nucgeo': {'fold': 'all'}})) == settings_hash(off)   # geometries need patches
+    on = m.resolve({'nucpatch': {}})
+    assert on['nucgeo']['fold'] == 'near' and on['nucgeo']['near_max_bp'] == 1250
+    assert settings_hash(on) != settings_hash(off)
+    assert m.resolve({'nucpatch': {}, 'nucgeo': None})['nucgeo'] is None
