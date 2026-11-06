@@ -193,7 +193,10 @@ class PipelineConfig:
         # FiberBrowser 3.0.1 reconstructs the legacy boolean plus call_args.
         # Carry the exact effective mode through its accepted argument field.
         call_args = list(self.call_args)
-        if daf:
+        # Only when --call-args do not already name it: a re-call passes the
+        # recorded call_args back, and appending again would repeat the flag
+        # on every generation (the mode itself is the same either way).
+        if daf and not _call_arg_value(self.call_args, '--chimeras'):
             call_args.extend(['--chimeras', self.effective_chimeras()])
         return {
             "enzyme": self.enzyme,
