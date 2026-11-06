@@ -91,6 +91,15 @@ jobs:
               assert required in names, f"{required} missing from {wheel}"
           print(wheel, sorted(tops))
           EOF
+      # The installed-script run below aligns with minimap2 (fiberhmm-pipeline).
+      - name: Install minimap2 and samtools (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y minimap2 samtools
+      - name: Install minimap2 and samtools (macOS)
+        if: runner.os == 'macOS'
+        run: brew install minimap2 samtools
       - name: Install the wheel into a clean venv (core dependencies only)
         run: |
           python -m venv "$RUNNER_TEMP/venv"
@@ -113,3 +122,11 @@ jobs:
             fi
           done
           exit $status
+      - name: Run installed fiberhmm-call and fiberhmm-pipeline on tiny synthetic data
+        # --help alone passes with a broken _entry shim; this runs the installed executables on
+        # data and checks that the output BAMs carry footprint tags. Outside the checkout, so the
+        # wheel (not the source tree) is imported; the helper itself imports only numpy and pysam.
+        working-directory: ${{ runner.temp }}
+        run: |
+          "$RUNNER_TEMP/venv/bin/python" -I "$GITHUB_WORKSPACE/tools/ci/installed_scripts_smoke.py" \
+            --bin "$RUNNER_TEMP/venv/bin" --workdir "$RUNNER_TEMP/installed-smoke"
