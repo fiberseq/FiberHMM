@@ -30,6 +30,9 @@ class ScanModuleBase:
     """Defaults for the ``ScanModule`` protocol; concrete modules override what they use."""
     name: ClassVar[str] = ''
     version: ClassVar[str] = '0'
+    #: the implementation revision within ``version``: part of the scan's calibration and unit cache keys (a resumed
+    #: scan never reuses records computed by an earlier implementation), never of hit ids or contract lines
+    implementation: ClassVar[str] = ''
     experimental: ClassVar[bool] = False
     reconcile: ClassVar[str] = 'anchor'          # 'anchor' | 'stitch'
     max_support_bp: ClassVar[int] = 12_500
@@ -155,3 +158,10 @@ def available_modules(registry: Optional[Mapping[str, Any]] = None) -> List[str]
     if registry:
         table.update(registry)
     return sorted(table, key=lambda n: (ORDER.index(n) if n in ORDER else len(ORDER), n))
+
+
+def cache_version(mod) -> str:
+    """The module version as the scan's calibration and unit caches key it: ``version``, plus ``implementation``
+    when the module declares one."""
+    impl = str(getattr(mod, 'implementation', '') or '')
+    return f'{mod.version}+{impl}' if impl else str(mod.version)

@@ -48,7 +48,7 @@ import numpy as np
 
 from fiberhmm.assoc import coaccess as C
 from fiberhmm.assoc import strata as ST
-from fiberhmm.assoc.clogit import clogit, score_bootstrap
+from fiberhmm.assoc.clogit import clogit, fit_ok, score_bootstrap
 from fiberhmm.assoc.groups import group_contrast, group_labels
 from fiberhmm.assoc.resample import BlockBootstrap, bh, locus_groups
 
@@ -378,12 +378,19 @@ def _pooled_summary(it: _Items, n_cells: int, Zm, test, *, small_n, n_flip, rng,
     out.update(_adjusted(it, Zm, small_n, n_flip, rng))
     fit = _clogit_effect(it, Zm) if (len(it) and effect) else None
     if fit is not None and fit.get('n_strata'):
+        out['clogit_strata'] = int(fit['n_strata'])
+        out['clogit_converged'] = bool(fit.get('converged'))
+    if fit_ok(fit):
         out['log_or'] = float(fit['beta'][0])
         out['or'] = float(np.exp(fit['beta'][0]))
         out['log_or_se_model'] = float(fit['se'][0])
-        out['clogit_strata'] = int(fit['n_strata'])
     else:
+        # a fit that did not converge has a finite but meaningless estimate: not reported (nor its interval)
         out['log_or'] = out['or'] = float('nan')
+        if fit is not None and fit.get('n_strata'):
+            out['log_or_se_model'] = float('nan')
+            out['effect_note'] = 'conditional logistic fit did not converge: effect not estimable'
+            fit = None
     out['effect'] = 'conditional logistic OR (pairs as strata, covariate-adjusted)'
     return out, fit
 
@@ -549,7 +556,7 @@ def _bootstrap(it, n_cells, fit_all, test, n_boot, seed, git, group_names, gfits
             out = {}
             for k in names:
                 f = fits.get(k)
-                if f is None or not f.get('n_strata'):
+                if not fit_ok(f):
                     out[k] = np.full(W.shape[0], np.nan)
                 else:
                     sub = masks[k]

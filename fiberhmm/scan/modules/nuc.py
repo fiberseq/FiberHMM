@@ -84,6 +84,9 @@ def _p(default, typ, help_):
 class NucModule(ScanModuleBase):
     name = 'nuc'
     version = '2.4'
+    #: r2: per-width reference medians placed at their classes' sampled widths, truncated-reference and geometry
+    #: support/cohort fixes (resumed scans recompute calibrations and units made before them)
+    implementation = 'r2'
     experimental = True
     reconcile = 'stitch'
     max_support_bp = 12_500

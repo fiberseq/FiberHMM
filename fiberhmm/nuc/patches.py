@@ -177,6 +177,10 @@ class PatchParams:
         if ref_widths and ref_widths.get('deltas'):
             d['ref_widths'] = [int(ref_widths.get('window_bp') or 0), int(ref_widths.get('step') or 0),
                                sorted([int(w), round(float(v), 4)] for w, v in ref_widths['deltas'].items())]
+            if ref_widths.get('centres'):
+                # where the deltas are placed (the classes' sampled widths) changes the tiles' references too
+                d['ref_widths'].append(sorted([int(w), round(float(v), 1)]
+                                              for w, v in ref_widths['centres'].items()))
         blob = json.dumps(d, sort_keys=True, separators=(',', ':'))
         return hashlib.sha256(blob.encode()).hexdigest()
 
