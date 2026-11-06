@@ -37,7 +37,11 @@ the other end has moved by more than ``tol_bp``. ``GeometryParams.fold``:
 - ``all``: every nested geometry folds, whatever the move.
 
 A folded child joins its longest eligible parent, resolved transitively to the
-top (root) geometry; its carriers carry the root *partly*. Grouping itself is
+top (root) geometry; its carriers carry the root *partly*. The child itself
+must be eligible against the root by the same rule (nested in it and, for
+``near``, its other end moved at most ``near_max_bp``): a chain A -> B -> C
+whose A is not eligible against C leaves A unfolded (a separate geometry; the
+nested pairs still list it). Grouping itself is
 unchanged by folding: folding only sets ``Geometry.parent`` and the partial
 state, and shares are reported full and partial separately.
 
@@ -320,23 +324,32 @@ def find_geometries(layouts: Sequence[MoleculeLayout], params: GeometryParams = 
     return out
 
 
+def _nested(c: Geometry, q: Geometry, tol_bp: int) -> Optional[NestedPair]:
+    """The nesting of ``c`` in the longer ``q`` (module docstring), or None (indices left 0)."""
+    if q.width <= c.width or c.kind != q.kind:
+        return None
+    if c.start < q.start - tol_bp or c.end > q.end + tol_bp:
+        return None
+    ds, de = abs(c.start - q.start), abs(c.end - q.end)
+    shared = 'start' if ds <= tol_bp else 'end' if de <= tol_bp else None
+    if shared is None:
+        return None
+    moved = de if shared == 'start' else ds
+    if moved <= tol_bp:
+        return None
+    return NestedPair(0, 0, shared, int(moved))
+
+
 def nested_pairs(geometries: Sequence[Geometry], tol_bp: int = 500) -> List[NestedPair]:
     """Every (child, parent) pair of one kind where the child is nested in the longer parent (module docstring)."""
     out = []
     for ci, c in enumerate(geometries):
         for qi, q in enumerate(geometries):
-            if ci == qi or q.width <= c.width or c.kind != q.kind:
+            if ci == qi:
                 continue
-            if c.start < q.start - tol_bp or c.end > q.end + tol_bp:
-                continue
-            ds, de = abs(c.start - q.start), abs(c.end - q.end)
-            shared = 'start' if ds <= tol_bp else 'end' if de <= tol_bp else None
-            if shared is None:
-                continue
-            moved = de if shared == 'start' else ds
-            if moved <= tol_bp:
-                continue
-            out.append(NestedPair(ci, qi, shared, int(moved)))
+            z = _nested(c, q, tol_bp)
+            if z is not None:
+                out.append(NestedPair(ci, qi, z.shared, z.moved))
     return out
 
 
@@ -355,14 +368,22 @@ def fold_geometries(geometries: List[Geometry], params: GeometryParams = DEFAULT
         if ps:
             # the longest eligible parent (ties: the earlier, i.e. better supported, geometry)
             direct[ci] = max(ps, key=lambda qi: (geometries[qi].width, -qi))
+
+    def eligible(ci, qi) -> bool:
+        z = _nested(geometries[ci], geometries[qi], params.tol_bp)
+        return z is not None and (params.fold == 'all' or z.moved <= params.near_max_bp)
+    folded = {}
     for ci, pi in direct.items():
         seen = {ci}
         while pi in direct and pi not in seen:      # transitively to the root (parents are strictly longer)
             seen.add(pi)
             pi = direct[pi]
+        if pi == direct[ci] or eligible(ci, pi):    # the child itself must fold into the root (near_max_bp)
+            folded[ci] = pi
+    for ci, pi in folded.items():
         geometries[ci].parent = pi
         geometries[ci].parent_id = geometries[pi].geometry_id
-    return [z for z in pairs if direct.get(z.child) == z.parent]
+    return [z for z in pairs if z.child in folded and direct.get(z.child) == z.parent]
 
 
 def children_of(geometries: Sequence[Geometry]) -> Dict[int, List[int]]:

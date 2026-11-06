@@ -88,8 +88,12 @@ def test_near_max_move_is_a_parameter():
     lays = _cohort(GROUPS)
     geoms = find_geometries(lays, GeometryParams(fold='near', near_max_bp=1500))
     got = {(g.start, g.end): (geoms[g.parent].start, geoms[g.parent].end) for g in geoms if g.parent is not None}
-    # 0..1500 is nested in 0..3000 (moved 1500) and 0..4000 (moved 2500): near 1500 folds it into 0..3000, which
-    # itself folds into 0..4000 -> root 0..4000
+    # 0..1500 is nested in 0..3000 (moved 1500) and 0..4000 (moved 2500): near 1500 would fold it into 0..3000,
+    # which itself folds into 0..4000, but against that root 0..1500 moved 2500 > 1500: it stays unfolded (the
+    # near limit is checked against the root, not only along the chain)
+    assert got == {(0, 3000): (0, 4000)}
+    geoms = find_geometries(lays, GeometryParams(fold='near', near_max_bp=2500))
+    got = {(g.start, g.end): (geoms[g.parent].start, geoms[g.parent].end) for g in geoms if g.parent is not None}
     assert got == {(0, 3000): (0, 4000), (0, 1500): (0, 4000)}
     geoms = find_geometries(lays, GeometryParams(fold='near', near_max_bp=900))
     assert all(g.parent is None for g in geoms)

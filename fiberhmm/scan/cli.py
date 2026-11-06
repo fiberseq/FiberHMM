@@ -110,8 +110,8 @@ def _parser():
                      help='Shared geometries: both ends within BP of the consensus (default 500)')
     pat.add_argument('--nucgeo-min-share', type=float, metavar='FRACTION',
                      help='Shared geometries: at least this share of the molecules (default 0.03)')
-    pat.add_argument('--nucgeo-cohort', choices=['spanning', 'overlapping'],
-                     help='Molecules pooled per BED unit: spanning it (default) or overlapping it')
+    pat.add_argument('--nucgeo-cohort', choices=['overlapping', 'spanning'],
+                     help='Molecules pooled per BED unit: overlapping it (default, as the browser panel) or spanning it')
     pat.add_argument('--nucgeo-edges', choices=['snapped', 'grid'],
                      help='Group patches by their snapped (default) or tile-grid edges')
     pat.add_argument('--nucgeo-fold', choices=['none', 'near', 'all'],

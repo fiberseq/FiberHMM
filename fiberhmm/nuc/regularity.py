@@ -42,6 +42,15 @@ The random-packing reference (:func:`reference_scores`) places each sampled
 window's own footprints at random non-overlapping positions and, for m6A,
 simulates calls on that layout at the window's own inside/outside marking
 rates. It is a dataset-level comparison, never stored in the tag.
+
+A cut window (ends ``truncated``) is a shorter FFT with fewer band bins, so
+its random-packing null sits below the full window's. With ``ends``
+'truncated' the reference also samples the cut windows the molecules have
+(from their own window grid), simulates each at its own width and keeps a
+median per width class (``step_bp`` wide); a tile is then read against the
+reference of its own window width (:func:`tile_reference`, interpolated
+between classes). Full-width windows are sampled exactly as before, so the
+full-width median does not depend on the read-end mode.
 """
 from __future__ import annotations
 
@@ -163,6 +172,8 @@ class RegularityTrack:
     #: calls per kb outside masked stretches, before thinning
     density_per_kb: float = float('nan')
     params_digest: str = ''
+    #: per tile, the width of its window (bp); None = every window is ``window_bp`` wide (ends blank / extend)
+    window_widths: Optional[np.ndarray] = None
 
     def __len__(self) -> int:
         return len(self.centres)
@@ -421,7 +432,7 @@ def _sliding_truncated(mol: NucMolecule, params: RegularityParams, workers: int)
         score[low] = np.nan
         period[low] = -1
     return RegularityTrack(mol.length, centres, ts, te, score, period, n_calls.astype(np.int64),
-                           thinned, density, params.digest()[:8])
+                           thinned, density, params.digest()[:8], window_widths=width.astype(np.int64))
 
 
 def track_summary(track: RegularityTrack, ref_median: Optional[float] = None) -> Dict[str, Optional[float]]:
@@ -442,6 +453,13 @@ def track_summary(track: RegularityTrack, ref_median: Optional[float] = None) ->
 
 
 # ------------------------------------------------------------------ reference (random packing)
+#: ends 'truncated': cut windows simulated per width class, and the fewest finite scores a class needs to count
+#: (classes with fewer take the reference interpolated from their neighbours)
+CUT_WINDOWS_PER_CLASS, MIN_CUT_SCORES = 500, 100
+#: the fewest finite reference scores a usable reference needs (``ReferenceScores.usable``)
+MIN_REFERENCE_SCORES = 100
+
+
 @dataclass
 class ReferenceScores:
     scores: np.ndarray
@@ -449,14 +467,65 @@ class ReferenceScores:
     quantiles: Dict[float, float] = field(default_factory=dict)
     seed: int = 0
     params_digest: str = ''
+    #: ends 'truncated': width class (lower edge, bp) -> median of the class's reference scores minus ``median``
+    #: (classes with at least ``MIN_CUT_SCORES`` scores); empty for full windows only
+    width_deltas: Dict[int, float] = field(default_factory=dict)
+    #: width class -> its number of finite reference scores (every class sampled, kept or not)
+    width_n: Dict[int, int] = field(default_factory=dict)
+    #: the width-class step (bp); 0 = no width classes
+    width_step: int = 0
+    #: the full window width (bp) the deltas are relative to
+    window_bp: int = 0
 
     @property
     def n(self) -> int:
         return int(len(self.scores))
 
+    def usable(self, min_scores: int = MIN_REFERENCE_SCORES) -> bool:
+        """At least ``min_scores`` finite full-width scores (or, without full windows, width-class scores) and a
+        finite median."""
+        n = self.n if self.n else sum(self.width_n.get(w, 0) for w in self.width_deltas)
+        return bool(n >= min_scores and np.isfinite(self.median))
+
     def to_dict(self) -> dict:
-        return {'n': self.n, 'median': self.median, 'seed': self.seed, 'params_digest': self.params_digest,
-                'quantiles': {str(q): v for q, v in self.quantiles.items()}}
+        out = {'n': self.n, 'median': self.median, 'seed': self.seed, 'params_digest': self.params_digest,
+               'quantiles': {str(q): v for q, v in self.quantiles.items()}}
+        if self.width_n:
+            # only with ends 'truncated', so records of full-window references stay identical
+            out['width_deltas'] = {str(w): round(float(v), 6) for w, v in sorted(self.width_deltas.items())}
+            out['width_n'] = {str(w): int(v) for w, v in sorted(self.width_n.items())}
+            out['width_step'] = int(self.width_step)
+            out['window_bp'] = int(self.window_bp)
+        return out
+
+
+def reference_widths(ref: Optional[dict]) -> Optional[dict]:
+    """The per-width part of a reference record (``ReferenceScores.to_dict``) as ``call_patches`` takes it:
+    ``{'deltas': {width class: delta}, 'step': step, 'window_bp': W}``, or None (full windows only, or an older
+    record)."""
+    if not ref or not ref.get('width_deltas'):
+        return None
+    return {'deltas': {int(w): float(v) for w, v in ref['width_deltas'].items()},
+            'step': int(ref.get('width_step') or 0), 'window_bp': int(ref.get('window_bp') or 0)}
+
+
+def tile_reference(widths: Optional[np.ndarray], ref_median: float, ref_widths: Optional[dict]) -> object:
+    """The reference median each tile is read against: ``ref_median`` for full-width windows, plus the delta of
+    the tile's window width (interpolated between width-class centres; beyond the outer classes, the nearest one).
+    Returns the scalar ``ref_median`` when there are no per-tile widths or no width deltas."""
+    if widths is None or not ref_widths or not ref_widths.get('deltas'):
+        return float(ref_median)
+    W, step = int(ref_widths['window_bp']), int(ref_widths['step'])
+    cls = sorted((int(w), float(d)) for w, d in ref_widths['deltas'].items() if np.isfinite(d))
+    if not cls or W <= 0 or step <= 0:
+        return float(ref_median)
+    xs = [min(W, w + step / 2.0) for w, _d in cls] + [float(W)]
+    ys = [d for _w, d in cls] + [0.0]
+    order = np.argsort(xs, kind='stable')
+    xs, ys = np.asarray(xs)[order], np.asarray(ys)[order]
+    w = np.asarray(widths, dtype=float)
+    delta = np.where(w >= W, 0.0, np.interp(w, xs, ys))
+    return float(ref_median) + delta
 
 
 def _random_layout(sizes: np.ndarray, W: int, rng) -> np.ndarray:
@@ -476,8 +545,41 @@ def _random_layout(sizes: np.ndarray, W: int, rng) -> np.ndarray:
     return (np.cumsum(d[:-1]) > 0).astype(float)
 
 
+def _simulate(mol: NucMolecule, hits: np.ndarray, s: int, W: int, params: RegularityParams, rng):
+    """One random-packing window ``[s, s + W)`` of ``mol`` (its own footprints placed at random, m6A simulated at
+    its own inside / outside rates), or None (an m6A window below ``min_calls``)."""
+    e = s + W
+    nucs = mol.nucs
+    sel = (nucs[:, 1] > s) & (nucs[:, 0] < e) if len(nucs) else np.zeros(0, dtype=bool)
+    iv = np.stack([np.maximum(nucs[sel, 0], s) - s, np.minimum(nucs[sel, 1], e) - s], axis=1) \
+        if sel.any() else np.zeros((0, 2), dtype=np.int64)
+    y = np.zeros(W)
+    for a, b in iv:
+        y[a:b] = 1.0
+    yn = _random_layout((iv[:, 1] - iv[:, 0]).astype(np.int64), W, rng)
+    if params.signal != 'm6a':
+        return yn
+    x = hits[s:e].astype(float)
+    fin, fout = y.sum(), W - y.sum()
+    p_in = x[y == 1].sum() / fin if fin else 0.0
+    p_out = x[y == 0].sum() / fout if fout else 0.0
+    xn = (rng.random(W) < np.where(yn == 1, p_in, p_out)).astype(float)
+    return None if xn.sum() < params.min_calls else xn
+
+
+def _scored(mol: NucMolecule, hits: np.ndarray, ws: np.ndarray, we: np.ndarray, params: RegularityParams):
+    """Which windows ``[ws, we)`` would be scored on the observed molecule (m6A: ``min_calls`` calls; occupancy:
+    any footprint)."""
+    if params.signal == 'm6a':
+        cum = np.concatenate([[0], np.cumsum(hits, dtype=np.int64)])
+        return (cum[we] - cum[ws]) >= params.min_calls
+    occ = np.concatenate([[0], np.cumsum(occupancy(mol), dtype=np.int64)])
+    return (occ[we] - occ[ws]) > 0
+
+
 def reference_scores(mols: Sequence[NucMolecule], params: RegularityParams = DEFAULT_REGULARITY,
-                     n_windows: int = 2000, seed: int = 0) -> ReferenceScores:
+                     n_windows: int = 2000, seed: int = 0, *, cut_windows: int = CUT_WINDOWS_PER_CLASS,
+                     min_cut_scores: int = MIN_CUT_SCORES) -> ReferenceScores:
     """Scores of the random-packing reference on windows sampled from ``mols``.
 
     Each sampled window keeps its own footprints (clipped to the window) and,
@@ -486,63 +588,80 @@ def reference_scores(mols: Sequence[NucMolecule], params: RegularityParams = DEF
     those that would be scored on the observed molecule (m6A: ``min_calls``
     calls; occupancy: any footprint); simulated m6A windows below
     ``min_calls`` are dropped. Masking does not apply (the layout is random);
-    thinning does. Deterministic for a fixed ``seed`` and molecule order."""
+    thinning does. Deterministic for a fixed ``seed`` and molecule order.
+
+    With ``params.ends`` 'truncated' the cut windows of the molecules' own window grids are also sampled, per width
+    class of ``step_bp`` (up to ``cut_windows`` per class, from a separate random stream so the full-width sample
+    is unchanged), each simulated and scored at its own width; ``width_deltas`` keeps each class's median minus the
+    full-width median for classes with at least ``min_cut_scores`` finite scores. Without any full-width window
+    (every molecule shorter than ``window_bp``) the widest kept class is the anchor: ``median`` is its median and
+    the deltas are relative to it."""
     W = params.window_bp
     cand = []                               # (molecule index, window start)
     prepared = []
+    thin = params.thin_per_kb if params.signal == 'm6a' else None
     for i, mol in enumerate(mols):
         starts = _window_starts(mol.length, params)
-        thin = params.thin_per_kb if params.signal == 'm6a' else None
         hits, _t, _d = thinned_hits(mol, thin, open_mask(mol, params.mask_open_bp))
         prepared.append(hits)
         if not len(starts):
             continue
-        if params.signal == 'm6a':
-            cum = np.concatenate([[0], np.cumsum(hits, dtype=np.int64)])
-            ok = (cum[starts + W] - cum[starts]) >= params.min_calls
-        else:
-            occ = np.concatenate([[0], np.cumsum(occupancy(mol), dtype=np.int64)])
-            ok = (occ[starts + W] - occ[starts]) > 0
+        ok = _scored(mol, hits, starts, starts + W, params)
         cand.extend((i, int(s)) for s in starts[ok])
     rng = np.random.default_rng(seed)
-    empty = ReferenceScores(np.zeros(0), float('nan'), {q: float('nan') for q in REFERENCE_QUANTILES},
-                            seed, params.digest()[:8])
-    if not cand:
-        return empty
-    pick = rng.choice(len(cand), size=min(n_windows, len(cand)), replace=False)
-    pick.sort()
-    rows = []
-    for k in pick:
-        i, s = cand[k]
-        mol = mols[i]
-        e = s + W
-        nucs = mol.nucs
-        sel = (nucs[:, 1] > s) & (nucs[:, 0] < e) if len(nucs) else np.zeros(0, dtype=bool)
-        iv = np.stack([np.maximum(nucs[sel, 0], s) - s, np.minimum(nucs[sel, 1], e) - s], axis=1) \
-            if sel.any() else np.zeros((0, 2), dtype=np.int64)
-        y = np.zeros(W)
-        for a, b in iv:
-            y[a:b] = 1.0
-        yn = _random_layout((iv[:, 1] - iv[:, 0]).astype(np.int64), W, rng)
-        if params.signal == 'm6a':
-            x = prepared[i][s:e].astype(float)
-            fin, fout = y.sum(), W - y.sum()
-            p_in = x[y == 1].sum() / fin if fin else 0.0
-            p_out = x[y == 0].sum() / fout if fout else 0.0
-            xn = (rng.random(W) < np.where(yn == 1, p_in, p_out)).astype(float)
-            if xn.sum() < params.min_calls:
+    nan_q = {q: float('nan') for q in REFERENCE_QUANTILES}
+    score = np.zeros(0)
+    if cand:
+        pick = rng.choice(len(cand), size=min(n_windows, len(cand)), replace=False)
+        pick.sort()
+        rows = []
+        for k in pick:
+            i, s = cand[k]
+            x = _simulate(mols[i], prepared[i], s, W, params, rng)
+            if x is not None:
+                rows.append(x)
+        if rows:
+            score, _p = spectral_scores(np.asarray(rows), params)
+            score = score[np.isfinite(score)]
+    median = float(np.median(score)) if len(score) else float('nan')
+    qs = {q: float(np.quantile(score, q)) for q in REFERENCE_QUANTILES} if len(score) else dict(nan_q)
+    deltas: Dict[int, float] = {}
+    width_n: Dict[int, int] = {}
+    step = int(params.step_bp)
+    if params.ends == 'truncated':
+        medians = {}
+        by_class: Dict[int, list] = {}            # class -> [(molecule index, start, width)]
+        for i, mol in enumerate(mols):
+            _c, _ts, _te, ws, we = window_grid(mol.length, params)
+            width = we - ws
+            cut = width < W
+            if not cut.any():
                 continue
-            rows.append(xn)
-        else:
-            rows.append(yn)
-    if not rows:
-        return empty
-    score, _p = spectral_scores(np.asarray(rows), params)
-    score = score[np.isfinite(score)]
-    if not len(score):
-        return empty
-    qs = {q: float(np.quantile(score, q)) for q in REFERENCE_QUANTILES}
-    return ReferenceScores(score, float(np.median(score)), qs, seed, params.digest()[:8])
+            ok = cut & _scored(mol, prepared[i], ws, we, params)
+            for a, w in zip(ws[ok].tolist(), width[ok].tolist()):
+                by_class.setdefault(step * (int(w) // step), []).append((i, int(a), int(w)))
+        crng = np.random.default_rng([int(seed), 1])
+        for c in sorted(by_class):
+            items = by_class[c]
+            pick = np.sort(crng.choice(len(items), size=min(int(cut_windows), len(items)), replace=False))
+            got = []
+            for k in pick:
+                i, a, w = items[k]
+                x = _simulate(mols[i], prepared[i], a, w, params, crng)
+                if x is None:
+                    continue
+                sc, _p = spectral_scores(x[None, :], params, cut=True)
+                if np.isfinite(sc[0]):
+                    got.append(float(sc[0]))
+            width_n[c] = len(got)
+            if len(got) >= int(min_cut_scores):
+                medians[c] = float(np.median(got))
+        if medians and not np.isfinite(median):
+            median = medians[max(medians)]          # no full window anywhere: the widest kept class anchors
+        if np.isfinite(median):
+            deltas = {c: m - median for c, m in medians.items()}
+    return ReferenceScores(score, median, qs, seed, params.digest()[:8], deltas, width_n,
+                           step if width_n else 0, W if width_n else 0)
 
 
 # ------------------------------------------------------------------ masked mark ACF
@@ -617,7 +736,7 @@ def track_from_rows(length: int, intervals: Sequence[Tuple[int, int]], q: Sequen
     ``n_calls`` is unknown (zeros). Patches called on it equal patches called on the original track except for
     scores within half a score byte (about 0.02 log2) of a threshold."""
     params = params or DEFAULT_REGULARITY
-    centres, ts, te, _ws, _we = window_grid(int(length), params)
+    centres, ts, te, ws, we = window_grid(int(length), params)
     score = np.full(len(centres), np.nan)
     period = np.full(len(centres), -1, dtype=np.int64)
     if len(ts) and len(intervals):
@@ -627,7 +746,8 @@ def track_from_rows(length: int, intervals: Sequence[Tuple[int, int]], q: Sequen
         score[idx[ok]] = d['score'][ok]
         period[idx[ok]] = d['period'][ok]
     return RegularityTrack(int(length), centres, ts, te, score, period, np.zeros(len(centres), dtype=np.int64),
-                           False, float(density_per_kb), params.digest()[:8])
+                           False, float(density_per_kb), params.digest()[:8],
+                           window_widths=(we - ws).astype(np.int64) if params.ends == 'truncated' else None)
 
 
 def decode_rows(intervals: Sequence[Tuple[int, int]], q: Sequence[Sequence[int]]) -> Dict[str, np.ndarray]:

@@ -5,7 +5,10 @@ so regular stretches can be joined with other features (TF occupancy, NFR
 state, shared geometries in :mod:`fiberhmm.nuc.geometries`).
 
 Calling (port of the explorer prototype ``callPatches``). Scores are read as
-excess over the dataset's random-packing reference median (``ref_median``):
+excess over the dataset's random-packing reference median (``ref_median``; with
+``ends`` 'truncated' and the reference's width deltas, ``ref_widths``, each tile
+against the reference of its own window width, see
+:func:`fiberhmm.nuc.regularity.tile_reference`):
 
 - a tile with no score is *bridged* when both neighbours have a score: for the
   threshold tests it takes their mean (it never enters the patch's mean score);
@@ -33,7 +36,13 @@ each closed edge moves to a nucleosome boundary (see :func:`snap_edge`):
   ``search_bp``, onto the boundary of the footprint on the patch side of that
   linker (the outermost nucleosome inside the patch);
 - with no break within ``search_bp``, or an edge that would cross the other
-  edge, the grid edge stays and the edge is flagged not snapped.
+  edge, the grid edge stays and the edge is flagged not snapped;
+- a snapped edge never crosses a neighbouring patch of its kind: an edge
+  snapped into or past a neighbour (its grid span or its snapped edge) goes
+  back to its grid edge and is flagged not snapped. A low-regularity patch is
+  also clipped at a high-regularity neighbour's edge (flagged not snapped;
+  high patches stay exactly as high-only calling makes them). Patches of a
+  molecule therefore never overlap.
 
 Open-ended edges are never snapped. The grid edges are always kept on the
 patch (``grid_start``/``grid_end``).
@@ -48,7 +57,8 @@ tiles whose (bridged) excess is at most ``low.extend`` holding one tile at or
 below ``low.enter`` and at least ``low.min_tiles`` tiles. Low regularity is
 chromatin less regular than random packing of the same nucleosomes, a real
 state of the fibre and not a failed call. The two kinds never overlap
-(``low.extend`` must lie below the high ``extend``). Low patches have their own
+(``low.extend`` must lie below the high ``extend``; snapped edges are clamped as
+above). Low patches have their own
 edge settings; with the 'open' snap rule they snap without a period (the rule
 does not use one), with the 'period' rule only when the patch has a period.
 
@@ -159,10 +169,14 @@ class PatchParams:
     def kinds(self) -> Tuple[str, ...]:
         return (HIGH, LOW) if self.low is not None else (HIGH,)
 
-    def digest(self, ref_median: Optional[float] = None) -> str:
-        """Full SHA-256 of the parameters and the reference median the excess is read against."""
+    def digest(self, ref_median: Optional[float] = None, ref_widths: Optional[dict] = None) -> str:
+        """Full SHA-256 of the parameters and the reference median the excess is read against (and, only when
+        given, the reference's per-width deltas, so digests of full-window references are unchanged)."""
         d = self.to_dict()
         d['ref_median'] = None if ref_median is None else round(float(ref_median), 4)
+        if ref_widths and ref_widths.get('deltas'):
+            d['ref_widths'] = [int(ref_widths.get('window_bp') or 0), int(ref_widths.get('step') or 0),
+                               sorted([int(w), round(float(v), 4)] for w, v in ref_widths['deltas'].items())]
         blob = json.dumps(d, sort_keys=True, separators=(',', ':'))
         return hashlib.sha256(blob.encode()).hexdigest()
 
@@ -172,10 +186,8 @@ class LowPatchParams(PatchParams):
     """Low-regularity patches: the mirror hysteresis (start at or below ``enter``, extend while at or below
     ``extend``, both log2 excess over the random-packing reference median) with their own edge settings.
 
-    Provisional defaults (eve, embryo 2-4 h and 6-8 h, chr2R:9,969,319-9,989,319): the random-packing
-    reference's own scores have their 5th / 25th percentiles at -1.7 / -0.7, and 2.5-2.7% / 9-11% of the
-    molecules' tiles lie at or below -1.5 / -0.75. ``enter`` -1.5 is about the reference's 7th percentile and
-    ``extend`` -0.75 its 25th: the same 0.75 hysteresis gap as the high side (+2.0 / +1.25)."""
+    Provisional defaults (embryo Hia5 PacBio): ``enter`` -1.5 is about the random-packing reference's own 7th
+    percentile and ``extend`` -0.75 its 25th, the same 0.75 hysteresis gap as the high side (+2.0 / +1.25)."""
     enter: float = -1.5
     extend: float = -0.75
 
@@ -188,10 +200,11 @@ DEFAULT_PATCHES = PatchParams()
 DEFAULT_LOW_PATCHES = LowPatchParams()
 
 
-def patch_digest(regularity_digest: str, params: PatchParams, ref_median: Optional[float]) -> str:
+def patch_digest(regularity_digest: str, params: PatchParams, ref_median: Optional[float],
+                 ref_widths: Optional[dict] = None) -> str:
     """8 hex naming the patch parameters, the regularity parameters (``RegularityTrack.params_digest``) and
-    the reference median: the ``nucpatch`` AN params digest."""
-    return hashlib.sha256(f'{regularity_digest[:8]}|{params.digest(ref_median)}'.encode()).hexdigest()[:8]
+    the reference (median, and per-width deltas when given): the ``nucpatch`` AN params digest."""
+    return hashlib.sha256(f'{regularity_digest[:8]}|{params.digest(ref_median, ref_widths)}'.encode()).hexdigest()[:8]
 
 
 @dataclass
@@ -236,9 +249,11 @@ class MoleculePatches:
     params_digest: str = ''
 
 
-def bridged_excess(track: RegularityTrack, ref_median: float) -> np.ndarray:
-    """Excess over ``ref_median`` per tile; a lone no-score tile between two scored ones takes their mean."""
-    v = np.asarray(track.score, dtype=float) - float(ref_median)
+def bridged_excess(track: RegularityTrack, ref_median, ref_widths: Optional[dict] = None) -> np.ndarray:
+    """Excess over the reference per tile (``ref_median``, per window width with ``ref_widths``); a lone no-score
+    tile between two scored ones takes their mean."""
+    from fiberhmm.nuc.regularity import tile_reference
+    v = np.asarray(track.score, dtype=float) - tile_reference(track.window_widths, ref_median, ref_widths)
     w = v.copy()
     n = len(v)
     if n >= 3:
@@ -251,21 +266,30 @@ def bridged_excess(track: RegularityTrack, ref_median: float) -> np.ndarray:
 
 
 def call_patches(track: RegularityTrack, nucs: Optional[np.ndarray] = None, *, ref_median: float,
-                 params: PatchParams = DEFAULT_PATCHES) -> MoleculePatches:
+                 params: PatchParams = DEFAULT_PATCHES, ref_widths: Optional[dict] = None) -> MoleculePatches:
     """Patches of one molecule from its regularity track and nucleosome calls (``(n, 2)``, molecular):
-    high-regularity patches, and low-regularity ones when ``params.low`` is set."""
-    v = np.asarray(track.score, dtype=float) - float(ref_median)
-    w = bridged_excess(track, ref_median)
+    high-regularity patches, and low-regularity ones when ``params.low`` is set. ``ref_widths``: the reference's
+    per-width deltas (:func:`fiberhmm.nuc.regularity.reference_widths`); tiles of cut windows (ends 'truncated')
+    are then read against the reference of their own width."""
+    from fiberhmm.nuc.regularity import tile_reference
+    ref_tile = tile_reference(track.window_widths, ref_median, ref_widths)
+    v = np.asarray(track.score, dtype=float) - ref_tile
+    w = bridged_excess(track, ref_median, ref_widths)
     called = np.isfinite(w)
     state = np.where(called, OUTSIDE, NO_CALL).astype(np.int8)
-    out = _call_kind(track, v, w, called, state, float(ref_median), nucs, params, HIGH)
+    out = _call_kind(track, v, w, called, state, nucs, params, HIGH)
+    _clamp_neighbours(out)
     if params.low is not None:
-        out += _call_kind(track, v, w, called, state, float(ref_median), nucs, params.low, LOW)
+        low = _call_kind(track, v, w, called, state, nucs, params.low, LOW)
+        _clamp_neighbours(low)
+        out += _clamp_low(low, out, state)
         out.sort(key=lambda p: (p.start, p.end))
-    return MoleculePatches(out, state, float(ref_median), patch_digest(track.params_digest, params, ref_median))
+    widths = ref_widths if track.window_widths is not None else None
+    return MoleculePatches(out, state, float(ref_median),
+                           patch_digest(track.params_digest, params, ref_median, widths))
 
 
-def _call_kind(track, v, w, called, state, ref_median, nucs, params: PatchParams, kind: str) -> List[Patch]:
+def _call_kind(track, v, w, called, state, nucs, params: PatchParams, kind: str) -> List[Patch]:
     """One kind's patches (hysteresis above for 'high', mirrored below for 'low'); marks their tiles in ``state``."""
     n = len(w)
     if kind == HIGH:
@@ -289,18 +313,51 @@ def _call_kind(track, v, w, called, state, ref_median, nucs, params: PatchParams
         run = slice(j, e + 1)
         if hit(run) and e - j + 1 >= params.min_tiles:
             state[run] = mark
-            sc = v[run][np.isfinite(v[run])]
+            raw = np.asarray(track.score[run], dtype=float)
+            sc = raw[np.isfinite(v[run])]
             pr = np.asarray(track.period[run])
             pr = pr[pr > 0]
             period = int(np.median(pr)) if len(pr) else -1
             gs, ge = int(track.tile_starts[j]), int(track.tile_ends[e])
-            p = Patch(gs, ge, gs, ge, j, e, float(sc.mean() + ref_median) if len(sc) else float('nan'),
+            p = Patch(gs, ge, gs, ge, j, e, float(sc.mean()) if len(sc) else float('nan'),
                       period, open_start=j == 0, open_end=e == n - 1, kind=kind)
             # high patches snap only with a period (as before); low ones also without one under the 'open' rule
             if fp is not None and (period > 0 or (kind == LOW and params.snap_rule == 'open')):
                 _snap(p, fp, params)
             out.append(p)
         j = e + 1
+    return out
+
+
+def _clamp_neighbours(patches: List[Patch]) -> None:
+    """Snapped edges never cross a neighbouring patch (module docstring), in place. Tile runs are disjoint, so
+    grid edges never overlap: an edge snapped into or past a neighbour goes back to its grid edge (not snapped)."""
+    order = sorted(range(len(patches)), key=lambda i: (patches[i].grid_start, patches[i].grid_end))
+    for a, b in zip(order, order[1:]):
+        p, q = patches[a], patches[b]
+        if q.start < p.grid_end:
+            q.start, q.snapped_start = q.grid_start, False
+        if p.end > q.start:
+            p.end, p.snapped_end = p.grid_end, False
+            if p.start >= p.end:
+                p.start, p.snapped_start = p.grid_start, False
+    patches.sort(key=lambda x: (x.start, x.end))
+
+
+def _clamp_low(low: List[Patch], high: List[Patch], state: np.ndarray) -> List[Patch]:
+    """Low patches clipped at the high patches' (snapped) edges, so the kinds never overlap while the high patches
+    stay exactly what high-only calling gives. A low patch clipped to nothing is dropped (its tiles: OUTSIDE)."""
+    out = []
+    for q in low:
+        for h in high:
+            if h.grid_end <= q.grid_start and q.start < h.end:
+                q.start, q.snapped_start = max(q.grid_start, h.end), False
+            elif h.grid_start >= q.grid_end and q.end > h.start:
+                q.end, q.snapped_end = min(q.grid_end, h.start), False
+        if q.end > q.start:
+            out.append(q)
+        else:
+            state[q.first_tile:q.last_tile + 1] = OUTSIDE
     return out
 
 
