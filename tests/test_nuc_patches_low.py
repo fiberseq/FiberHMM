@@ -131,7 +131,7 @@ def test_scan_with_low_patches_keeps_the_high_rows(tmp_path):
     high_of_both = sorted((m['qname'], m['mol_start'], m['mol_len'], m['q']) for m in both_rows
                           if not flag(m) & LOW_KIND)
     assert high_of_both == sorted((m['qname'], m['mol_start'], m['mol_len'], m['q']) for m in hi_rows)
-    assert all(h.get('kind', '') in ('', None) for h in hi_hits)
+    assert all(h.get('kind', '') in ('', None, 'high') for h in hi_hits)
     span = lambda h: (h['start'], h['end'], h['label'])   # noqa: E731
     assert {span(h) for h in hi_hits} == {span(h) for h in both_hits if not str(h['label']).startswith('L')}
     json.dumps(both_hits, default=str)

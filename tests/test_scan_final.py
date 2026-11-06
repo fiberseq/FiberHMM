@@ -238,21 +238,28 @@ def test_fast_projection_matches_per_base_reference(reverse):
 
 
 def test_conditional_logistic_stratum_batching_is_byte_identical(monkeypatch):
+    """The per-stratum moments (both exact routes: DP for small strata, tilted DFT for large ones) are byte-identical
+    whatever the block size of the cancel checks and the number of DFT threads."""
     import fiberhmm.assoc.clogit as C
     rng = np.random.default_rng(8)
-    Xp = rng.normal(size=(80, 30, 9))
-    valid = np.ones((80, 30), bool)
-    kk = rng.integers(2, 14, 80)
-    beta = rng.normal(size=9) * .1
-    for need_q in (True, False):
-        expected = C._dp_full(Xp, valid, kk, beta, need_q)
-        monkeypatch.setattr(C, '_DP_MAX_ELEMENTS', 2000)
-        actual = C._dp(Xp, valid, kk, beta, need_q)
-        for a, b in zip(actual, expected):
-            if a is None:
-                assert b is None
+    sizes = np.r_[rng.integers(5, 40, 60), rng.integers(1500, 3000, 6)]
+    strata = np.repeat(np.arange(len(sizes)), sizes)
+    X = rng.normal(size=(len(strata), 3))
+    y = (rng.random(len(strata)) < np.repeat(rng.uniform(0.2, 0.6, len(sizes)), sizes)).astype(np.int64)
+    Xf, _yf, _rows, offs, kk, _flip = C._pack(X, y, strata)
+    beta = rng.normal(size=3) * .1
+    for need_q, need_pi in ((True, False), (False, True)):
+        monkeypatch.setenv('FIBERHMM_ASSOC_THREADS', '1')
+        monkeypatch.setattr(C, '_CANCEL_ROWS', 10**9)
+        expected = C._moments(Xf, offs, kk, beta, need_q=need_q, need_pi=need_pi)
+        monkeypatch.setenv('FIBERHMM_ASSOC_THREADS', '4')
+        monkeypatch.setattr(C, '_CANCEL_ROWS', 300)
+        actual = C._moments(Xf, offs, kk, beta, need_q=need_q, need_pi=need_pi)
+        for x, e in zip(actual, expected):
+            if e is None:
+                assert x is None
             else:
-                assert a.tobytes() == b.tobytes()
+                assert x.tobytes() == e.tobytes()
 
 
 def test_cached_discovery_fit_keeps_exact_model_and_does_not_mutate_inputs():

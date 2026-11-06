@@ -92,6 +92,7 @@ _CANCEL_ROWS = 50_000
 
 #: threads for the DFT strata (FIBERHMM_ASSOC_THREADS; default min(4, CPUs))
 _POOLS = {}
+_POOLS_LOCK = threading.Lock()
 
 
 def _dft_workers(n_strata: int) -> int:
@@ -107,9 +108,10 @@ def _dft_workers(n_strata: int) -> int:
 
 def _pool(workers: int):
     from concurrent.futures import ThreadPoolExecutor
-    pool = _POOLS.get(workers)
-    if pool is None:
-        pool = _POOLS[workers] = ThreadPoolExecutor(workers, thread_name_prefix='fiberhmm-clogit')
+    with _POOLS_LOCK:                   # fits in several threads create one pool per size, never two
+        pool = _POOLS.get(workers)
+        if pool is None:
+            pool = _POOLS[workers] = ThreadPoolExecutor(workers, thread_name_prefix='fiberhmm-clogit')
     return pool
 
 
@@ -207,13 +209,18 @@ def _clogit(X, y, strata, *, max_iter, tol, l2, beta0):
     Xf, yf, rows, offs, kk, flip = _pack(X, y, strata)
     beta = np.zeros(p) if beta0 is None else np.asarray(beta0, float).copy()
     if not len(kk):
-        return {'beta': beta * np.nan, 'se': beta * np.nan, 'n_strata': 0, 'converged': False,
-                'loglik': float('nan')}
+        # no informative stratum: the full result schema, nothing estimable (score contributions are zero)
+        n = len(y)
+        nanp = np.full((p, p), np.nan)
+        return {'beta': beta * np.nan, 'se': beta * np.nan, 'loglik': float('nan'), 'H': nanp, 'Hinv': nanp.copy(),
+                'pi': np.full(n, np.nan), 'u': np.zeros((n, p)), 'u_split': np.zeros((n, p)), 'n_strata': 0,
+                'n_rows': 0, 'converged': False, 'iterations': 0}
     sid = np.repeat(np.arange(len(kk)), np.diff(offs))
     obs = np.zeros((len(kk), p))
     np.add.at(obs, sid, Xf * yf[:, None])
     ll_old = -np.inf
     converged = False
+    it = -1
     for it in range(max_iter):
         checkpoint('clogit', it, max_iter)
         loge, mean, cov, _ = _moments(Xf, offs, kk, beta)

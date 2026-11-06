@@ -297,7 +297,11 @@ def _nucpatch_params(parser, args, modules, params):
     if args.no_nucgeo and ggiven:
         parser.error('--no-nucgeo cannot be combined with other --nucgeo-* flags')
     if args.nucpatch or pgiven:
-        nuc['nucpatch'] = dict(nuc.get('nucpatch') or {}, **pgiven)
+        base = dict(nuc.get('nucpatch') or {})
+        if 'low' in pgiven and isinstance(base.get('low'), dict):
+            # --nucpatch-low* flags add to (never replace) --parameters' low settings
+            pgiven['low'] = dict(base['low'], **pgiven['low'])
+        nuc['nucpatch'] = dict(base, **pgiven)
     elif nuc.get('nucpatch') is None:
         parser.error('--nucgeo-* and --no-nucgeo need --nucpatch')
     if args.no_nucgeo:
