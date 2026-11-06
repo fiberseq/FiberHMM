@@ -438,6 +438,66 @@ def _sliding_truncated(mol: NucMolecule, params: RegularityParams, workers: int)
                            thinned, density, params.digest()[:8], window_widths=width.astype(np.int64))
 
 
+def base_params(params: RegularityParams) -> RegularityParams:
+    """The parameters of a molecule's full-window track (``ends`` 'blank'): what 'extend' paints and 'truncated'
+    adds cut windows to (``track_from_base``)."""
+    return params if params.ends == 'blank' else RegularityParams.from_dict(dict(params.to_dict(), ends='blank'))
+
+
+def track_from_base(mol: NucMolecule, base: RegularityTrack, params: RegularityParams, *,
+                    workers: int = 1) -> RegularityTrack:
+    """``sliding_regularity(mol, params)`` from the molecule's full-window track ``base`` (``sliding_regularity`` with
+    ``base_params(params)``), identical to computing it: 'blank' is the base, 'extend' paints its outer tiles to the
+    ends, 'truncated' keeps its full windows and computes only the cut windows. A caller keeping the base track of a
+    molecule changes the read-end mode without computing its full windows again."""
+    if base.params_digest != base_params(params).digest()[:8]:
+        raise ValueError('track_from_base: the base track was computed with other parameters')
+    if params.ends == 'blank':
+        return base
+    if params.ends == 'extend':
+        ts, te = base.tile_starts, base.tile_ends
+        score, period = base.score.copy(), base.period.copy()
+        if len(ts):
+            ts, te = ts.copy(), te.copy()
+            ts[0], te[-1] = 0, mol.length
+            _paint_ends(score, period)
+        return RegularityTrack(mol.length, base.centres, ts, te, score, period, base.n_calls, base.thinned,
+                               base.density_per_kb, params.digest()[:8])
+    W = params.window_bp
+    centres, ts, te, ws, we = window_grid(mol.length, params)
+    width = we - ws
+    score = np.full(len(centres), np.nan)
+    period = np.full(len(centres), -1, dtype=np.int64)
+    n_calls = np.zeros(len(centres), dtype=np.int64)
+    full = width == W
+    if full.any():
+        # the full windows are the base's (the same grid: centres W/2 + k * step_bp)
+        at = {int(c): i for i, c in enumerate(base.centres)}
+        idx = np.flatnonzero(full)
+        src = np.asarray([at[int(c)] for c in centres[idx]], dtype=np.int64)
+        score[idx], period[idx], n_calls[idx] = base.score[src], base.period[src], base.n_calls[src]
+    cut = np.flatnonzero(~full)
+    if len(cut):
+        keep = open_mask(mol, params.mask_open_bp)
+        thin = params.thin_per_kb if params.signal == 'm6a' else None
+        hits, _thinned, _density = thinned_hits(mol, thin, keep)
+        cum = np.concatenate([[0], np.cumsum(hits if keep is None else hits & keep, dtype=np.int64)])
+        n_calls[cut] = cum[we[cut]] - cum[ws[cut]]
+        sig = hits.astype(float) if params.signal == 'm6a' else occupancy(mol)
+        for w in np.unique(width[cut]):
+            idx = cut[width[cut] == w]
+            X = np.stack([sig[a:a + w] for a in ws[idx]])
+            K = np.stack([keep[a:a + w] for a in ws[idx]]) if keep is not None else None
+            sc, pr = spectral_scores(X, params, K, workers=workers, cut=True)
+            if params.signal == 'm6a':
+                low = n_calls[idx] < params.min_calls
+                sc = np.where(low, np.nan, sc)
+                pr = np.where(low, -1, pr)
+            score[idx], period[idx] = sc, pr
+    return RegularityTrack(mol.length, centres, ts, te, score, period, n_calls, base.thinned, base.density_per_kb,
+                           params.digest()[:8], window_widths=width.astype(np.int64))
+
+
 def track_summary(track: RegularityTrack, ref_median: Optional[float] = None) -> Dict[str, Optional[float]]:
     """Per-molecule summaries from the tiles: median and max score, the
     fraction of scored tiles above ``ref_median`` and the median repeat length."""
