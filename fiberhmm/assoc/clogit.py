@@ -10,6 +10,11 @@ from one dynamic-programming pass over the stratum's rows (Gail, Lubin and Rubin
 A stratum with more cases than controls is fitted through its complement (controls as cases, x -> -x), so the pass
 needs degree min(k, n - k).
 
+Each stratum's e_k, gradient and Hessian come from one of two exact routes (``fiberhmm.assoc._clogit_kernels``):
+the DP above, one stratum at a time, or, for strata with many cases (pairs of hits with thousands of molecules),
+the inverse DFT of the tilted Poisson-binomial characteristic function, which needs O(n sqrt(n) p) work instead of
+O(n k p^2). Both give the same numbers to floating-point rounding (tests/test_assoc.py).
+
 Intervals use a one-step score bootstrap: beta* = beta + H^-1 sum_i w_i u_i, with the per-row score contributions
 u_i = (x_i - xbar_s)(y_i - pi_i) (pi_i = the conditional probability that row i is a case; xbar_s the stratum mean,
 which leaves every stratum's total unchanged because sum_s (y_i - pi_i) = 0) and bootstrap weights w from
@@ -24,102 +29,129 @@ from typing import Optional
 import numpy as np
 
 
-def _pack(X, y, strata, beta):
-    """Informative strata padded into (S, n_max) arrays, with complements applied."""
+def _pack(X, y, strata):
+    """Informative strata as contiguous row blocks (``offs``), with complements applied: rows (original indices),
+    oriented X and y, the degree k (= min(cases, controls)) and whether the stratum was flipped."""
     order = np.argsort(strata, kind='stable')
     s = strata[order]
-    starts = np.flatnonzero(np.r_[True, s[1:] != s[:-1]])
-    ends = np.r_[starts[1:], len(s)]
+    starts = np.flatnonzero(np.r_[True, s[1:] != s[:-1]]) if len(s) else np.zeros(0, np.int64)
+    ends = np.r_[starts[1:], len(s)].astype(np.int64)
     n = ends - starts
     k = np.add.reduceat(y[order], starts) if len(starts) else np.zeros(0, np.int64)
     keep = (k > 0) & (k < n)
-    starts, ends, n, k = starts[keep], ends[keep], n[keep], k[keep]
+    n, k = n[keep], k[keep]
     flip = k > n - k
-    S = len(starts)
-    n_max = int(n.max()) if S else 0
-    p = X.shape[1]
-    Xp = np.zeros((S, n_max, p))
-    yp = np.zeros((S, n_max))
-    rows = np.full((S, n_max), -1, dtype=np.int64)
-    pos = np.arange(n_max)
-    for t in range(S):           # one copy per stratum (cheap); the DP below is vectorised
-        idx = order[starts[t]:ends[t]]
-        sign = -1.0 if flip[t] else 1.0
-        Xp[t, :n[t]] = sign * X[idx]
-        yp[t, :n[t]] = (1 - y[idx]) if flip[t] else y[idx]
-        rows[t, :n[t]] = idx
-    kk = np.where(flip, n - k, k)
-    valid = pos[None, :] < n[:, None]
-    return Xp, yp, rows, valid, kk.astype(np.int64), flip
+    rows = np.concatenate([order[a:b] for a, b in zip(starts[keep], ends[keep])]) if keep.any() \
+        else np.zeros(0, np.int64)
+    offs = np.r_[0, np.cumsum(n)].astype(np.int64)
+    fr = np.repeat(flip, n)
+    Xf = np.ascontiguousarray(np.where(fr[:, None], -X[rows], X[rows]))
+    yf = np.where(fr, 1 - y[rows], y[rows]).astype(float)
+    kk = np.where(flip, n - k, k).astype(np.int64)
+    return Xf, yf, rows.astype(np.int64), offs, kk, flip
 
 
-_DP_MAX_ELEMENTS = 1_000_000
+# DFT cut: frequencies whose terms are all below exp(-(T0 + T1 log N)) are left out (module _clogit_kernels)
+_DFT_T0, _DFT_T1 = 40.0, 3.0
+# strata checked for a cancel between blocks of about this many rows
+_CANCEL_ROWS = 50_000
 
 
-def _dp(Xp, valid, kk, beta, need_q=True):
-    """Bound dynamic-programming workspace by batching independent strata.
-
-    Each stratum keeps its original recurrence and rounding. Concatenation
-    restores the original order before likelihood, gradient and Hessian sums.
-    """
-    S, _n, p = Xp.shape
-    width = (int(kk.max()) + 1) * (max(1, p*p) if need_q else max(1, p)) if S else 1
-    block = max(1, _DP_MAX_ELEMENTS // width)
-    if S <= block:
-        return _dp_full(Xp, valid, kk, beta, need_q)
-    parts = [_dp_full(Xp[a:a+block], valid[a:a+block], kk[a:a+block], beta, need_q)
-             for a in range(0, S, block)]
-    return tuple(None if parts[0][i] is None else np.concatenate([part[i] for part in parts], axis=0)
-                 for i in range(4))
+#: threads for the DFT strata (FIBERHMM_ASSOC_THREADS; default min(4, CPUs))
+_POOLS = {}
 
 
-def _dp_full(Xp, valid, kk, beta, need_q=True):
-    """log-likelihood pieces per stratum: (log e_k, mean of sum_S x, covariance of sum_S x)."""
-    S, n_max, p = Xp.shape
-    eta = Xp @ beta
-    eta = np.where(valid, eta, -np.inf)
-    m = np.max(eta, axis=1, keepdims=True)
-    m = np.where(np.isfinite(m), m, 0.0)
-    r = np.where(valid, np.exp(eta - m), 0.0)
-    K = int(kk.max()) if S else 0
-    e = np.zeros((S, K + 1))
-    e[:, 0] = 1.0
-    s = np.zeros((S, K + 1, p))
-    Q = np.zeros((S, K + 1, p, p)) if need_q else None
-    logsc = np.zeros(S)
-    above = np.arange(K + 1)[None, :] > kk[:, None]
-    for j in range(n_max):
-        rj = r[:, j]
-        if not np.any(rj):
-            continue
-        xj = Xp[:, j, :]
-        ep, sp = e[:, :-1], s[:, :-1]
+def _dft_workers(n_strata: int) -> int:
+    import os
+    try:
+        w = int(os.environ.get('FIBERHMM_ASSOC_THREADS', '0'))
+    except ValueError:
+        w = 0
+    if w <= 0:
+        w = min(4, os.cpu_count() or 1)
+    return max(1, min(w, n_strata))
+
+
+def _pool(workers: int):
+    from concurrent.futures import ThreadPoolExecutor
+    pool = _POOLS.get(workers)
+    if pool is None:
+        pool = _POOLS[workers] = ThreadPoolExecutor(workers, thread_name_prefix='fiberhmm-clogit')
+    return pool
+
+
+def _moments(Xf, offs, kk, beta, need_q=True, need_pi=False):
+    """Per stratum: log e_k, the conditional mean of sum_cases x and (need_q) its covariance; (need_pi) the case
+    probabilities of every row. Each stratum takes the DFT route when its band is narrow enough, else the DP."""
+    from . import _clogit_kernels as K
+    from .control import cancelled
+    S = len(kk)
+    p = Xf.shape[1]
+    eta = Xf @ beta
+    a = np.zeros(S)
+    M = np.zeros(S, np.int64)
+    K.tilt(eta, offs, kk, _DFT_T0, _DFT_T1, a, M)
+    loge = np.zeros(S)
+    mean = np.zeros((S, p))
+    cov = np.zeros((S, p, p)) if need_q else np.zeros((1, 1, 1))
+    pi = np.zeros(len(eta)) if need_pi else None
+    small = np.flatnonzero(M < 0)
+    # DP strata in blocks of about _CANCEL_ROWS rows, with a cancel check between blocks
+    if len(small):
+        sizes = (offs[small + 1] - offs[small]) * (kk[small] + 1)
+        blocks = np.cumsum(sizes) // max(1, _CANCEL_ROWS * 50)
+        for b in np.unique(blocks):
+            if cancelled():
+                from .control import AssociationCancelled
+                raise AssociationCancelled('association cancelled')
+            which = small[blocks == b].astype(np.int64)
+            K.dp_strata(Xf, eta, offs, kk, which, need_q, loge, mean, cov)
+            if need_pi:
+                K.dp_case_probabilities(eta, offs, kk, which, pi)
+    big = np.flatnonzero(M >= 0)
+    want = need_q or need_pi
+
+    def one(t):
+        a0, a1 = int(offs[t]), int(offs[t + 1])
+        Mt = int(M[t])
+        shape = (a1 - a0, Mt + 1) if want else (0, 0)
+        Qr, Qi = np.empty(shape), np.empty(shape)
+        le, pr, wv, c = K.dft_stratum(eta, a0, a1, int(kk[t]), float(a[t]), Mt, want, Qr, Qi)
+        loge[t] = le
+        if not want:
+            return
+        x = Xf[a0:a1]
+        xbar = x.mean(0)
+        xc = x - xbar
+        mc = xc.T @ pr                                    # mean of sum_cases (x - xbar)
+        mean[t] = mc + kk[t] * xbar
+        if need_pi:
+            pi[a0:a1] = pr
         if need_q:
-            Qp = Q[:, :-1]
-            xs = xj[:, None, :, None] * sp[:, :, None, :]
-            Q[:, 1:] = Q[:, 1:] + rj[:, None, None, None] * (
-                Qp + xs + np.swapaxes(xs, 2, 3) + (xj[:, :, None] * xj[:, None, :])[:, None] * ep[:, :, None, None])
-        s[:, 1:] = s[:, 1:] + rj[:, None, None] * (sp + xj[:, None, :] * ep[:, :, None])
-        e[:, 1:] = e[:, 1:] + rj[:, None] * ep
-        # coefficients above a stratum's own degree are never needed: zero them, then rescale every stratum's
-        # polynomials by its largest needed coefficient (ratios s/e and Q/e are unchanged); scales kept in log
-        e[above] = 0.0
-        s[above] = 0.0
-        if need_q:
-            Q[above] = 0.0
-        sc = np.max(e, axis=1)
-        sc = np.where(sc > 0, sc, 1.0)
-        e /= sc[:, None]
-        s /= sc[:, None, None]
-        if need_q:
-            Q /= sc[:, None, None, None]
-        logsc += np.log(sc)
-    ar = np.arange(S)
-    ek = e[ar, kk]
-    mean = s[ar, kk] / ek[:, None]
-    loge = np.log(ek) + logsc + kk * m[:, 0]
-    cov = (Q[ar, kk] / ek[:, None, None] - mean[:, :, None] * mean[:, None, :]) if need_q else None
-    return loge, mean, cov, r
+            # g_m of the centred rows, (p, M + 1); Re sum_m c_m g_m g_m' in real arithmetic
+            Gr, Gi = xc.T @ Qr, xc.T @ Qi
+            cr, ci = c.real, c.imag
+            M2 = (Gr * cr) @ Gr.T - (Gi * cr) @ Gi.T - (Gr * ci) @ Gi.T - (Gi * ci) @ Gr.T
+            M2 += (xc * wv[:, None]).T @ xc
+            cov[t] = M2 - np.outer(mc, mc)
+
+    # strata are independent (each writes its own slots): a few threads (the kernels release the GIL), with a
+    # cancel check between blocks of about _CANCEL_ROWS rows
+    rows = np.diff(offs)[big]
+    blocks = np.cumsum(rows) // _CANCEL_ROWS
+    workers = _dft_workers(len(big))
+    pool = _pool(workers) if workers > 1 else None
+    for b in np.unique(blocks):
+        if cancelled():
+            from .control import AssociationCancelled
+            raise AssociationCancelled('association cancelled')
+        part = big[blocks == b]
+        if pool is None:
+            for t in part:
+                one(t)
+        else:
+            list(pool.map(one, part))
+    return loge, mean, (cov if need_q else None), pi
 
 
 def clogit(X, y, strata, *, max_iter: int = 50, tol: float = 1e-8, l2: float = 1e-6,
@@ -127,22 +159,38 @@ def clogit(X, y, strata, *, max_iter: int = 50, tol: float = 1e-8, l2: float = 1
     """Fit by Newton-Raphson. ``X`` (n, p) without intercept, ``y`` 0/1, ``strata`` labels. Returns beta, the
     model-based SE, the log-likelihood, H (observed information), the per-row conditional case probabilities
     ``pi`` and score contributions ``u`` (n, p), and the number of informative strata."""
+    # the per-stratum products are small: one BLAS thread each (threaded BLAS spends far longer waking threads)
+    try:
+        from threadpoolctl import threadpool_limits
+        limits = threadpool_limits(limits=1, user_api='blas')
+    except Exception:   # noqa: BLE001 - optional at run time
+        import contextlib
+        limits = contextlib.nullcontext()
+    with limits:
+        return _clogit(X, y, strata, max_iter=max_iter, tol=tol, l2=l2, beta0=beta0)
+
+
+def _clogit(X, y, strata, *, max_iter, tol, l2, beta0):
+    from .control import checkpoint
     X = np.asarray(X, dtype=float)
     if X.ndim == 1:
         X = X[:, None]
     y = np.asarray(y, dtype=np.int64)
     strata = np.unique(np.asarray(strata), return_inverse=True)[1]
     p = X.shape[1]
-    Xp, yp, rows, valid, kk, flip = _pack(X, y, strata, None)
+    Xf, yf, rows, offs, kk, flip = _pack(X, y, strata)
     beta = np.zeros(p) if beta0 is None else np.asarray(beta0, float).copy()
     if not len(kk):
         return {'beta': beta * np.nan, 'se': beta * np.nan, 'n_strata': 0, 'converged': False,
                 'loglik': float('nan')}
-    obs = np.einsum('snp,sn->sp', Xp, yp)
+    sid = np.repeat(np.arange(len(kk)), np.diff(offs))
+    obs = np.zeros((len(kk), p))
+    np.add.at(obs, sid, Xf * yf[:, None])
     ll_old = -np.inf
     converged = False
     for it in range(max_iter):
-        loge, mean, cov, _ = _dp(Xp, valid, kk, beta)
+        checkpoint('clogit', it, max_iter)
+        loge, mean, cov, _ = _moments(Xf, offs, kk, beta)
         ll = float(np.sum(obs @ beta - loge)) - 0.5 * l2 * float(beta @ beta)
         g = (obs - mean).sum(0) - l2 * beta
         H = cov.sum(0) + l2 * np.eye(p)
@@ -154,7 +202,7 @@ def clogit(X, y, strata, *, max_iter: int = 50, tol: float = 1e-8, l2: float = 1
         t = 1.0
         while t > 1e-4:
             nb = beta + t * step
-            l2_, _, _, _ = _dp(Xp, valid, kk, nb, need_q=False)
+            l2_, _, _, _ = _moments(Xf, offs, kk, nb, need_q=False)
             lln = float(np.sum(obs @ nb - l2_)) - 0.5 * l2 * float(nb @ nb)
             if lln >= ll - 1e-10:
                 break
@@ -164,7 +212,8 @@ def clogit(X, y, strata, *, max_iter: int = 50, tol: float = 1e-8, l2: float = 1
             converged = True
             break
         ll_old = ll
-    loge, mean, cov, r = _dp(Xp, valid, kk, beta)
+    checkpoint('clogit', max_iter, max_iter)
+    loge, mean, cov, pi = _moments(Xf, offs, kk, beta, need_pi=True)
     H = cov.sum(0) + l2 * np.eye(p)
     try:
         Hinv = np.linalg.inv(H)
@@ -172,72 +221,25 @@ def clogit(X, y, strata, *, max_iter: int = 50, tol: float = 1e-8, l2: float = 1
     except np.linalg.LinAlgError:
         Hinv = np.full((p, p), np.nan)
         se = np.full(p, np.nan)
-    pi = _case_probabilities(r, valid, kk)
     # per-row score contributions in the original orientation; x centred within its stratum (stratum totals are
     # unchanged because the residuals y - pi sum to zero in every stratum)
     n = len(y)
+    fr = np.repeat(flip, np.diff(offs))
+    pr = np.where(fr, 1 - pi, pi)
     pi_row = np.full(n, np.nan)
+    pi_row[rows] = pr
+    ns = np.diff(offs).astype(float)
+    xr = X[rows]
+    xsum = np.zeros((len(kk), p))
+    np.add.at(xsum, sid, xr)
+    xc = xr - (xsum / ns[:, None])[sid]
     u = np.zeros((n, p))
     u_split = np.zeros((n, p))
-    for t_ in range(len(kk)):
-        idx = rows[t_][valid[t_]]
-        pr = pi[t_][valid[t_]]
-        if flip[t_]:
-            pr = 1 - pr
-        pi_row[idx] = pr
-        xc = X[idx] - X[idx].mean(0)
-        u[idx] = xc * (y[idx] - pr)[:, None]
-        ns = len(idx)
-        u_split[idx] = u[idx] * (ns / (ns - 1))             # leave-molecule-out residual scale
+    u[rows] = xc * (y[rows] - pr)[:, None]
+    u_split[rows] = u[rows] * (ns / (ns - 1))[sid][:, None]          # leave-molecule-out residual scale
     ll = float(np.sum(obs @ beta - loge))
     return {'beta': beta, 'se': se, 'loglik': ll, 'H': H, 'Hinv': Hinv, 'pi': pi_row, 'u': u, 'u_split': u_split,
-            'n_strata': int(len(kk)), 'n_rows': int(valid.sum()), 'converged': converged, 'iterations': it + 1}
-
-
-def _case_probabilities(r, valid, kk):
-    """pi_i = r_i e_{k-1}(r without i) / e_k(r), by forward and backward elementary polynomials (each row rescaled,
-    scales kept in log, so large balanced strata do not overflow)."""
-    S, n_max = r.shape
-    K = int(kk.max()) if S else 0
-    F = np.zeros((S, n_max + 1, K + 1))
-    lF = np.zeros((S, n_max + 1))
-    F[:, 0, 0] = 1.0
-    above = np.arange(K + 1)[None, :] > kk[:, None]
-    for j in range(n_max):
-        row = F[:, j].copy()
-        row[:, 1:] += r[:, j, None] * F[:, j, :-1]
-        row[above] = 0.0
-        sc = row.max(1)
-        sc = np.where(sc > 0, sc, 1.0)
-        F[:, j + 1] = row / sc[:, None]
-        lF[:, j + 1] = lF[:, j] + np.log(sc)
-    B = np.zeros((S, n_max + 2, K + 1))
-    lB = np.zeros((S, n_max + 2))
-    B[:, n_max + 1, 0] = 1.0
-    B[:, n_max, 0] = 1.0
-    for j in range(n_max - 1, -1, -1):
-        row = B[:, j + 2].copy()
-        row[:, 1:] += r[:, j, None] * B[:, j + 2, :-1]
-        row[above] = 0.0
-        sc = row.max(1)
-        sc = np.where(sc > 0, sc, 1.0)
-        B[:, j + 1] = row / sc[:, None]
-        lB[:, j + 1] = lB[:, j + 2] + np.log(sc)
-    ar = np.arange(S)
-    log_ek = np.log(F[ar, n_max, kk]) + lF[:, n_max]
-    pi = np.zeros((S, n_max))
-    for j in range(n_max):
-        # e_{k-1} without row j = sum_l F[j][l] B[j+2][k-1-l]
-        tot = np.zeros(S)
-        for l in range(K):
-            idx = kk - 1 - l
-            ok = idx >= 0
-            tot[ok] += F[ok, j, l] * B[ok, j + 2, idx[ok]]
-        with np.errstate(divide='ignore'):
-            lp = np.log(np.where(r[:, j] > 0, r[:, j], 1.0)) + np.log(np.where(tot > 0, tot, 1.0)) \
-                + lF[:, j] + lB[:, j + 2] - log_ek
-        pi[:, j] = np.where(valid[:, j] & (tot > 0) & (r[:, j] > 0), np.exp(lp), 0.0)
-    return pi
+            'n_strata': int(len(kk)), 'n_rows': int(len(rows)), 'converged': converged, 'iterations': it + 1}
 
 
 def score_bootstrap(fit: dict, weights_iter, index: int = 0, split_strata: bool = False) -> np.ndarray:

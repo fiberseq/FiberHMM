@@ -57,6 +57,27 @@ def test_hia5_pools_directions_and_rejects_duplicate_physical_molecules():
     with pytest.raises(ValueError,match='Repeated physical molecule'): prepare_sources(data,options)
 
 
+def test_repeated_molecules_are_counted_per_dataset_pair_without_read_names():
+    """The same PacBio molecules in two datasets (one movie assigned to both samples):
+    one error naming the datasets and the count, never a read name."""
+    data=payload(); s=data['strata'][0]; s['chemistry']='hia5-pacbio'
+    for i,u in enumerate(s['units']): u.update(read_name=f'movieA/{i}/ccs')
+    other=deepcopy(s);other['dataset_id']='other'
+    for i,u in enumerate(other['units']): u['read_name']=f'movieB/{i}/ccs' if i>=2 else f'movieA/{i}/ccs'
+    data['strata'].append(other)
+    options=parse_options(parameters())
+    with pytest.raises(ValueError,match='Repeated physical molecule') as raised: prepare_sources(data,options)
+    message=str(raised.value)
+    assert '2 molecules in more than one dataset (other, test)' in message
+    assert 'movieA' not in message and '/ccs' not in message
+    # Distinct molecules in each dataset pass.
+    for i,u in enumerate(other['units']): u['read_name']=f'movieB/{i}/ccs'
+    assert len(prepare_sources(data,options))==2
+    # A repeat inside one dataset is still refused, and said so.
+    other['units'][1]['read_name']=other['units'][0]['read_name']
+    with pytest.raises(ValueError,match='repeated within other'): prepare_sources(data,options)
+
+
 def test_empty_calls_still_have_complete_empty_stages(tmp_path):
     data=payload()
     for u in data['strata'][0]['units']:u['raw_tf_intervals']=u['representative_raw_tf_intervals']=[]

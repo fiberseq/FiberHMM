@@ -44,3 +44,9 @@ def cooperative(fn):
     run.__doc__ = (fn.__doc__ or '') + ('\n\nOptional cancel() is checked between resampling batches and raises '
         'AssociationCancelled when true. progress(stage, completed, total) reports batch progress.')
     return run
+
+
+def cancelled() -> bool:
+    """True when this call's cancel callback says stop (no progress report): for checks inside tight loops."""
+    cancel, _progress = _control.get()
+    return bool(cancel is not None and cancel())

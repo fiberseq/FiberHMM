@@ -397,3 +397,56 @@ def test_per_pair_rows_do_not_depend_on_the_pooling_threshold():
     A, B, mt = _tiny_states({i: i % 2 for i in range(4)}, {i: int(i < 2) for i in range(4)})
     res = cooccurrence(A, B, mt, min_molecules=2, n_boot=0, effect=False)
     assert res['n_pair_rows'] == 1 and res['pooled'].get('n_molecules', 0) == 0
+
+
+# ---------------------------------------------------------------- clogit speed: DFT route and cancellation
+def _large_strata(seed=3, n_strata=5, p=3):
+    rng = np.random.default_rng(seed)
+    n = rng.integers(200, 900, n_strata)
+    st = np.repeat(np.arange(n_strata), n)
+    X = rng.normal(size=(len(st), p))
+    X[:, 0] = rng.random(len(st)) < 0.3
+    base = np.repeat(rng.normal(0, 1, n_strata), n)
+    y = (rng.random(len(st)) < 1 / (1 + np.exp(-(base + X @ rng.normal(0, 0.5, p))))).astype(int)
+    return X, y, st
+
+
+def test_clogit_dft_route_equals_the_dp_recurrence(monkeypatch):
+    """Strata with many cases take the tilted-DFT route: the same moments and fit as the exact DP recurrence."""
+    from fiberhmm.assoc import _clogit_kernels as K
+    from fiberhmm.assoc import clogit as CL
+    X, y, st = _large_strata()
+    Xf, yf, rows, offs, kk, flip = CL._pack(X, y, st)
+    beta = np.array([0.4, -0.3, 0.2])
+    a, M = np.zeros(len(kk)), np.zeros(len(kk), np.int64)
+    K.tilt(Xf @ beta, offs, kk, CL._DFT_T0, CL._DFT_T1, a, M)
+    assert (M >= 0).all() and (M < np.diff(offs) // 3).all()
+    dft = CL._moments(Xf, offs, kk, beta, need_pi=True)
+    fit_dft = clogit(X, y, st)
+    monkeypatch.setattr(CL, '_DFT_T0', 1e12)            # every stratum takes the DP
+    dp = CL._moments(Xf, offs, kk, beta, need_pi=True)
+    fit_dp = clogit(X, y, st)
+    for u, v in zip(dft, dp):
+        assert np.allclose(u, v, rtol=1e-10, atol=1e-10)
+    for key in ('beta', 'se', 'Hinv', 'pi', 'u', 'u_split'):
+        assert np.allclose(fit_dft[key], fit_dp[key], rtol=1e-9, atol=1e-11), key
+    assert np.add.reduceat(dft[3], offs[:-1]) == pytest.approx(kk)
+
+
+def test_clogit_stops_on_cancel_inside_the_fit():
+    from fiberhmm.assoc.control import AssociationCancelled, cooperative
+    X, y, st = _large_strata()
+    calls = []
+
+    @cooperative
+    def fit():
+        return clogit(X, y, st)
+
+    def cancel():
+        calls.append(1)
+        return len(calls) > 3
+    with pytest.raises(AssociationCancelled):
+        fit(cancel=cancel)
+    stages = []
+    fit(progress=lambda stage, done, total: stages.append(stage))
+    assert 'clogit' in stages

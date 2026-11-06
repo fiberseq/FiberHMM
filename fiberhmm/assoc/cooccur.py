@@ -447,6 +447,7 @@ def cooccurrence(a: FeatureStates, b: FeatureStates, molecules: MoleculeTable, *
         rows, P, M, X, Y, CELL, UNIT = [], [], [], [], [], [], []
         n_cells = n_units = 0
         for pid, i, j, nest, mols, x, y, oa, ob in pair_data:
+            checkpoint("strata", pid, len(pair_data))
             keep = scope_mask[mols]
             mols, x, y = mols[keep], x[keep], y[keep]
             if len(mols) < 2:
