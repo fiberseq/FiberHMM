@@ -224,7 +224,7 @@ def tilt(eta, offs, kk, T0, T1, out_a, out_M):
 def dft_stratum(eta, a0, a1, k, a, M, need_pi, Qr, Qi):
     """One stratum by the tilted DFT, frequencies m = 0..M (the conjugate m -> -m folded in as weight 2).
     Returns (log e_k, pi, wv, c): with need_pi, pi_i, wv_i = Re sum_m c_m q_im (1 - q_im) / C, c[m] = weighted
-    c_m / C, and Qr[i, m] + 1j Qi[i, m] = q_im."""
+    c_m / C, and Qr[i, m] + 1j Qi[i, m] = q_im. Loops run rows outside, frequencies inside (vectorisable)."""
     n = a1 - a0
     N = n + 1
     pr = np.empty(n)
@@ -233,45 +233,62 @@ def dft_stratum(eta, a0, a1, k, a, M, need_pi, Qr, Qi):
         v = eta[a0 + i] + a
         pr[i] = _sigmoid(v)
         lsum += _softplus(v)
-    c = np.empty(M + 1, dtype=np.complex128)
-    w = np.empty(M + 1, dtype=np.complex128)
+    cw = np.empty(M + 1)
+    sw = np.empty(M + 1)
     for m in range(M + 1):
         th = 2.0 * math.pi * m / N
-        w[m] = complex(math.cos(th), math.sin(th))
-        phr = 1.0
-        phi = 0.0
-        wr, wi = w[m].real, w[m].imag
-        for i in range(n):
-            p = pr[i]
-            dr = 1.0 - p + p * wr
-            di = p * wi
-            nr = phr * dr - phi * di
-            phi = phr * di + phi * dr
-            phr = nr
-        ang = -k * th
-        cr, ci = math.cos(ang), math.sin(ang)
-        wt = 1.0 if m == 0 else 2.0
-        c[m] = wt * complex(phr * cr - phi * ci, phr * ci + phi * cr)
+        cw[m] = math.cos(th)
+        sw[m] = math.sin(th)
+    # phi_m = prod_i (1 - p_i + p_i e^{i theta_m})
+    phr = np.ones(M + 1)
+    phi = np.zeros(M + 1)
+    for i in range(n):
+        p = pr[i]
+        q0 = 1.0 - p
+        for m in range(M + 1):
+            dr = q0 + p * cw[m]
+            di = p * sw[m]
+            t = phr[m] * dr - phi[m] * di
+            phi[m] = phr[m] * di + phi[m] * dr
+            phr[m] = t
+    cr = np.empty(M + 1)
+    ci = np.empty(M + 1)
     C = 0.0
     for m in range(M + 1):
-        C += c[m].real
+        ang = -k * 2.0 * math.pi * m / N
+        er, ei = math.cos(ang), math.sin(ang)
+        wt = 1.0 if m == 0 else 2.0
+        cr[m] = wt * (phr[m] * er - phi[m] * ei)
+        ci[m] = wt * (phr[m] * ei + phi[m] * er)
+        C += cr[m]
     loge = -k * a + lsum + math.log(C / N)
+    c = np.empty(M + 1, dtype=np.complex128)
     pi = np.zeros(n if need_pi else 0)
     wv = np.zeros(n if need_pi else 0)
     if need_pi:
         for m in range(M + 1):
-            c[m] = c[m] / C
+            cr[m] /= C
+            ci[m] /= C
+            c[m] = complex(cr[m], ci[m])
         for i in range(n):
             p = pr[i]
+            q0 = 1.0 - p
             sp = 0.0
-            sw = 0.0
+            sv = 0.0
             for m in range(M + 1):
-                q = p * w[m] / (1.0 - p + p * w[m])
-                cq = c[m] * q
-                Qr[i, m] = q.real
-                Qi[i, m] = q.imag
-                sp += cq.real
-                sw += (cq * (1.0 - q)).real
+                # q = p e^{i theta} / d = p e^{i theta} conj(d) / |d|^2
+                dr = q0 + p * cw[m]
+                di = p * sw[m]
+                f = p / (dr * dr + di * di)
+                qr = f * (cw[m] * dr + sw[m] * di)
+                qi = f * (sw[m] * dr - cw[m] * di)
+                Qr[i, m] = qr
+                Qi[i, m] = qi
+                sp += cr[m] * qr - ci[m] * qi
+                # q (1 - q) = (qr - qr^2 + qi^2) + i (qi - 2 qr qi)
+                ur = qr - qr * qr + qi * qi
+                ui = qi - 2.0 * qr * qi
+                sv += cr[m] * ur - ci[m] * ui
             pi[i] = sp
-            wv[i] = sw
+            wv[i] = sv
     return loge, pi, wv, c

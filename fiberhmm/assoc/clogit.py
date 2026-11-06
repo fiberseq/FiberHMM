@@ -57,6 +57,29 @@ _DFT_T0, _DFT_T1 = 40.0, 3.0
 _CANCEL_ROWS = 50_000
 
 
+#: threads for the DFT strata (FIBERHMM_ASSOC_THREADS; default min(4, CPUs))
+_POOLS = {}
+
+
+def _dft_workers(n_strata: int) -> int:
+    import os
+    try:
+        w = int(os.environ.get('FIBERHMM_ASSOC_THREADS', '0'))
+    except ValueError:
+        w = 0
+    if w <= 0:
+        w = min(4, os.cpu_count() or 1)
+    return max(1, min(w, n_strata))
+
+
+def _pool(workers: int):
+    from concurrent.futures import ThreadPoolExecutor
+    pool = _POOLS.get(workers)
+    if pool is None:
+        pool = _POOLS[workers] = ThreadPoolExecutor(workers, thread_name_prefix='fiberhmm-clogit')
+    return pool
+
+
 def _moments(Xf, offs, kk, beta, need_q=True, need_pi=False):
     """Per stratum: log e_k, the conditional mean of sum_cases x and (need_q) its covariance; (need_pi) the case
     probabilities of every row. Each stratum takes the DFT route when its band is narrow enough, else the DP."""
@@ -85,23 +108,18 @@ def _moments(Xf, offs, kk, beta, need_q=True, need_pi=False):
             K.dp_strata(Xf, eta, offs, kk, which, need_q, loge, mean, cov)
             if need_pi:
                 K.dp_case_probabilities(eta, offs, kk, which, pi)
-    done = 0
-    for t in np.flatnonzero(M >= 0):
+    big = np.flatnonzero(M >= 0)
+    want = need_q or need_pi
+
+    def one(t):
         a0, a1 = int(offs[t]), int(offs[t + 1])
-        done += a1 - a0
-        if done > _CANCEL_ROWS:
-            done = 0
-            if cancelled():
-                from .control import AssociationCancelled
-                raise AssociationCancelled('association cancelled')
         Mt = int(M[t])
-        want = need_q or need_pi
         shape = (a1 - a0, Mt + 1) if want else (0, 0)
         Qr, Qi = np.empty(shape), np.empty(shape)
         le, pr, wv, c = K.dft_stratum(eta, a0, a1, int(kk[t]), float(a[t]), Mt, want, Qr, Qi)
         loge[t] = le
         if not want:
-            continue
+            return
         x = Xf[a0:a1]
         xbar = x.mean(0)
         xc = x - xbar
@@ -116,6 +134,23 @@ def _moments(Xf, offs, kk, beta, need_q=True, need_pi=False):
             M2 = (Gr * cr) @ Gr.T - (Gi * cr) @ Gi.T - (Gr * ci) @ Gi.T - (Gi * ci) @ Gr.T
             M2 += (xc * wv[:, None]).T @ xc
             cov[t] = M2 - np.outer(mc, mc)
+
+    # strata are independent (each writes its own slots): a few threads (the kernels release the GIL), with a
+    # cancel check between blocks of about _CANCEL_ROWS rows
+    rows = np.diff(offs)[big]
+    blocks = np.cumsum(rows) // _CANCEL_ROWS
+    workers = _dft_workers(len(big))
+    pool = _pool(workers) if workers > 1 else None
+    for b in np.unique(blocks):
+        if cancelled():
+            from .control import AssociationCancelled
+            raise AssociationCancelled('association cancelled')
+        part = big[blocks == b]
+        if pool is None:
+            for t in part:
+                one(t)
+        else:
+            list(pool.map(one, part))
     return loge, mean, (cov if need_q else None), pi
 
 
