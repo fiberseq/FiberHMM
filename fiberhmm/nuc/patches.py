@@ -380,9 +380,9 @@ def _to_grid(p: Patch, side: str) -> bool:
 def _clamp_low(low: List[Patch], high: List[Patch], state: np.ndarray) -> List[Patch]:
     """Low patches clipped at the high patches' (snapped) edges, so the kinds never overlap while the high patches
     stay exactly what high-only calling gives. When clipping one edge leaves the other edge (snapped past the clip
-    point) on the wrong side, that edge goes back to its grid edge, clipped in turn. A low patch left with none of
-    its own tiles (clipped to nothing, or lying wholly beyond its tile grid under a high patch's snapped edge) is
-    dropped (its tiles: OUTSIDE)."""
+    point) on the wrong side, that edge goes back to its grid edge, clipped in turn. A low patch clipped to nothing,
+    or clipped to lie wholly beyond its own tiles (under a high patch's snapped edge), is dropped (its tiles:
+    OUTSIDE)."""
     out = []
     for q in low:
         lo = max((h.end for h in high if h.grid_end <= q.grid_start), default=None)
@@ -398,7 +398,10 @@ def _clamp_low(low: List[Patch], high: List[Patch], state: np.ndarray) -> List[P
                 q.end, q.snapped_end = q.grid_end if hi is None else min(q.grid_end, hi), False
             elif clip_e and not clip_s:
                 q.start, q.snapped_start = q.grid_start if lo is None else max(q.grid_start, lo), False
-        if q.start < q.end and q.start < q.grid_end and q.end > q.grid_start:
+        # a clip that pushed the patch wholly past its own tiles leaves a phantom: dropped (an unclipped patch is
+        # kept exactly as calling and snapping made it)
+        phantom = (clip_s or clip_e) and not (q.start < q.grid_end and q.end > q.grid_start)
+        if q.start < q.end and not phantom:
             out.append(q)
         else:
             state[q.first_tile:q.last_tile + 1] = OUTSIDE

@@ -72,8 +72,16 @@ def test_a_low_patch_clipped_on_one_side_keeps_its_free_grid():
     assert len(kept) == 1 and (kept[0].start, kept[0].end) == (1100, 1500)
 
 
+def test_an_unclipped_low_patch_stays_as_snapping_made_it():
+    # both edges snapped past the grid end, no high patch near: kept exactly (only a clip makes a phantom)
+    q = Patch(8180, 8316, 7375, 8125, 26, 28, -2.0, -1, snapped_start=True, snapped_end=True, kind=LOW)
+    state = np.full(40, OUTSIDE, dtype=np.int8)
+    kept = _clamp_low([q], [], state)
+    assert len(kept) == 1 and (kept[0].start, kept[0].end) == (8180, 8316) and kept[0].snapped_start
+
+
 @pytest.mark.parametrize('rule', ['open', 'period'])
-def test_called_patches_are_valid_and_low_patches_hold_their_own_tiles(rule):
+def test_called_patches_are_valid(rule):
     rng = np.random.default_rng(11)
     params = PatchParams(enter=0.4, extend=0.1, search_bp=1500, snap_rule=rule, open_bp=150,
                          low=DEFAULT_LOW_PATCHES)
@@ -83,8 +91,6 @@ def test_called_patches_are_valid_and_low_patches_hold_their_own_tiles(rule):
         track = sliding_regularity(mol, RegularityParams())
         mp = call_patches(track, mol.nucs, ref_median=float(np.nanmedian(track.score)), params=params)
         _valid(mp.patches)
-        for p in mp.patches:
-            assert p.start < p.grid_end and p.end > p.grid_start, p
         n += len(mp.patches)
     assert n > 40
 
