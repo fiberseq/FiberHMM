@@ -2113,3 +2113,31 @@ def test_generator_v5_writer_to_real_bam_annotation_smoke(tmp_path):
         "jsonl_sha256"
     ]
     assert audit_bam(str(output))["valid"] is True
+
+
+def test_strand_rescue_audit_main_validates_an_overlay_and_writes_the_report(tmp_path, capsys):
+    """A real fiberhmm-strand-rescue-audit main() run (coverage audit item 29; before this only the
+    path-alias guard ran): the CLI audits a real overlay BAM, prints the summary, writes the full
+    report and exits 0 for a valid file."""
+    from fiberhmm.cli.strand_rescue_audit import main
+
+    source = tmp_path / "source.bam"
+    output = tmp_path / "overlay.bam"
+    _make_bam(source)
+    write_overlay_bam(
+        str(source), output, region=("chr1", 90, 210),
+        decisions_by_read={"read1": [_decision()]},
+        harmonizations_by_read={"read1": [_geometry_decision()]},
+        report_sha256="a" * 64, minimum_posterior=0.0,
+        command_line="fiberhmm-strand-rescue-annotate test",
+    )
+    report_path = tmp_path / "audit" / "audit.json"
+    report_path.parent.mkdir()
+    assert main(["-i", str(output), "-o", str(report_path)]) == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["valid"] is True and printed["file_count"] == 1
+    assert printed["output"] == str(report_path.resolve())
+    report = json.loads(report_path.read_text())
+    assert report["valid"] is True
+    assert report["totals"] == printed["totals"]
+    assert report["threshold_states"]["128"]["R"] == {"TF": 1, "A": 0}

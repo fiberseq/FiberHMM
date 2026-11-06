@@ -6871,3 +6871,33 @@ def test_boundary_family_null_cohort_does_not_force_a_family():
 
     assert model["family_probability"] < 0.05
     assert model["component_probabilities"][0] > 0.9
+
+
+def test_cli_runs_the_real_analysis_on_a_committed_tiny_bam(tmp_path, capsys):
+    """A real fiberhmm-strand-rescue main() run (coverage audit item 29): the other CLI test uses a
+    fake BAM and patched analysis. This one loads the committed two-read synthetic fixture, runs
+    evidence loading, site handling and report assembly unpatched, and checks the written report
+    and proposal TSV. (Two reads give no rescue decision; the wiring and outputs are the point.)"""
+    repo = Path(__file__).resolve().parents[1]
+    bam = repo / "tests" / "fixtures" / "fibertools_frame" / "fiberhmm3.0.0_call.bam"
+    model = repo / "fiberhmm" / "models" / "hia5_pacbio.json"
+    report_path = tmp_path / "report.json"
+    proposals = tmp_path / "proposals.tsv"
+    assert strand_rescue_cli.main([
+        "-i", str(bam), "--preset", "hia5-nanopore", "--model", str(model),
+        "--nuc-model", str(model), "--region", "chrT:1-8000", "--min-support", "1",
+        "--site", "1000-1020", "-o", str(report_path), "--proposal-tsv", str(proposals),
+    ]) == 0
+    summary = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert summary["raw_reads"] == 2 and summary["sites"] == 1
+    assert summary["output"] == str(report_path)
+    report = json.loads(report_path.read_text())
+    assert report["schema"] == "fiberhmm.strand_rescue.v6"
+    assert report["n_raw_reads"] == 2 and report["n_analyzed_molecules"] == 2
+    assert report["input"]["bams"] == [str(bam)]
+    assert report["input"]["focal_region"] == ["chrT", 1, 8000]
+    assert report["input"]["prob_threshold"] == 248  # the preset's hard threshold is applied
+    assert report["strand_rescue"]["applicable"] is True
+    assert len(report["strand_rescue"]["sites"]) == 1
+    header = proposals.read_text().splitlines()[0].split("\t")
+    assert header[:4] == ["decision_id", "library_id", "read", "target_strand"]
