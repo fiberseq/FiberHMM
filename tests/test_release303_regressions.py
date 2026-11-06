@@ -228,7 +228,7 @@ def test_streaming_skips_write_before_eof(tmp_path, monkeypatch, benchmark_model
 
 
 def test_auto_nrl_matches_302_exclusion(tmp_path, monkeypatch):
-    """Use real DAF extraction; deterministic recalled spacings isolate NRL policy."""
+    """Wiring test (stages faked; real path in test_call_cli.py / test_call_pipeline.py). Use real DAF extraction; deterministic recalled spacings isolate NRL policy."""
     from fiberhmm.cli import call
     from fiberhmm.inference import engine, nrl_estimate as ne
     source = fixture_bam(tmp_path / 'source.bam')

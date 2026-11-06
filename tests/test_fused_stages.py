@@ -1,4 +1,9 @@
-"""Tests for fused apply/recall stage boundaries."""
+"""Tests for fused apply/recall stage boundaries.
+
+Most tests here are wiring tests: they replace the stages they name with fakes and check only the
+hand-offs between them. The real decode/recall path is exercised end to end by test_call_cli.py and
+test_call_pipeline.py.
+"""
 
 from __future__ import annotations
 
@@ -105,6 +110,7 @@ def test_circular_derived_tf_gate_requires_tiled_hmm_coordinates():
 
 
 def test_run_ddda_mcg_stage_excludes_apply_nucs_and_builds_mask(monkeypatch):
+    """Wiring test: the stages it names are faked; it checks only how they are connected. The real path is covered end to end by test_call_cli.py and test_call_pipeline.py."""
     from fiberhmm.daf import m5c
 
     captured = {}
@@ -137,6 +143,7 @@ def test_run_ddda_mcg_stage_excludes_apply_nucs_and_builds_mask(monkeypatch):
 
 
 def test_build_fused_recall_result_runs_recall_and_aligns_kept_scores(monkeypatch):
+    """Wiring test: the stages it names are faked; it checks only how they are connected. The real path is covered end to end by test_call_cli.py and test_call_pipeline.py."""
     seen = {"interval_args": None, "scan_args": []}
 
     def fake_build_scan_intervals(
@@ -208,6 +215,7 @@ def test_build_fused_recall_result_runs_recall_and_aligns_kept_scores(monkeypatc
 
 
 def test_build_fused_recall_result_projects_circular_tf_calls(monkeypatch):
+    """Wiring test: the stages it names are faked; it checks only how they are connected. The real path is covered end to end by test_call_cli.py and test_call_pipeline.py."""
     captured = {}
 
     def fake_build_scan_intervals(ns, nl, msps, msp_lengths, read_length, unify_threshold):
@@ -284,6 +292,7 @@ def test_build_fused_recall_result_projects_circular_tf_calls(monkeypatch):
 
 
 def test_run_tf_recall_stage_forwards_m5c_tables_and_mask(monkeypatch):
+    """Wiring test: the stages it names are faked; it checks only how they are connected. The real path is covered end to end by test_call_cli.py and test_call_pipeline.py."""
     captured = {}
 
     monkeypatch.setattr(
@@ -307,6 +316,7 @@ def test_run_tf_recall_stage_forwards_m5c_tables_and_mask(monkeypatch):
 
 
 def test_baseline_radial_nuc_finalization_never_receives_tf_calls(monkeypatch):
+    """Wiring test: the stages it names are faked; it checks only how they are connected. The real path is covered end to end by test_call_cli.py and test_call_pipeline.py."""
     radial = [NucCall(20, 120, 200, 10, 12, dyad=80)]
     profile = object()
     seen = {}
@@ -359,6 +369,7 @@ def test_baseline_radial_nuc_finalization_never_receives_tf_calls(monkeypatch):
 
 
 def test_ddda_baseline_stage_order_is_nuc_then_tf(monkeypatch):
+    """Wiring test: the stages it names are faked; it checks only how they are connected. The real path is covered end to end by test_call_cli.py and test_call_pipeline.py."""
     events = []
     radial = [NucCall(20, 120, 200, 10, 12, dyad=80)]
 
@@ -416,6 +427,7 @@ def test_ddda_baseline_stage_order_is_nuc_then_tf(monkeypatch):
 
 
 def test_fused_ddda_uses_separate_tf_and_nuc_likelihood_tables(monkeypatch):
+    """Wiring test: the stages it names are faked; it checks only how they are connected. The real path is covered end to end by test_call_cli.py and test_call_pipeline.py."""
     seen = {}
     radial = [NucCall(20, 120, 200, 10, 12, dyad=80)]
 
@@ -479,7 +491,7 @@ def test_fused_ddda_uses_separate_tf_and_nuc_likelihood_tables(monkeypatch):
 
 @pytest.mark.parametrize("circular", [False, True])
 def test_ddda_driver_threads_nuc_profile_to_finalizer(monkeypatch, circular):
-    """Both production drivers must activate HMM-crossing model comparison."""
+    """Wiring test (stages faked; real path in test_call_cli.py / test_call_pipeline.py). Both production drivers must activate HMM-crossing model comparison."""
     profile = object()
 
     class ProfileObserved(RuntimeError):
