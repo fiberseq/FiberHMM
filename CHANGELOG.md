@@ -139,6 +139,10 @@
 
 ### Fixed
 
+- `fiberhmm-pipeline` records the DAF chimera mode in `outputs.json`
+  `call_args` once: a re-call that passes those `call_args` back no longer
+  adds another `--chimeras <mode>` each generation.
+
 - M2 group contrasts use the joint two-way bootstrap covariance for chained
   loci, resample whole matched-set × molecule intersections in its subtraction
   term, and count contributing clusters separately per group. Two-group
