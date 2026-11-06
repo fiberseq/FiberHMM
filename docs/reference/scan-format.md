@@ -67,7 +67,9 @@ Module columns:
 nuc is a stitch module, but `nuc.geometry` hits come from single BED units
 (shared regularity-patch geometries of the unit's molecules, `--nucpatch`):
 they are kept by the anchor rule like fp classes, with their values (`share`,
-`share_callable` and `share_partial` per dataset and `all`) and per-record
+`share_callable` and `share_partial` per dataset and `all`; `share_dm`, the
+share standardised to the pooled m6A/kb quintiles, per dataset when the unit
+has several, else the plain share) and per-record
 states (`1` carries, `0` absent or partial (reason `partial`: carries only a
 geometry folded into this one, see `--nucgeo-fold`), `.` no call or not
 spanned).

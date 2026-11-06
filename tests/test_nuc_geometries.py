@@ -322,3 +322,36 @@ def test_patches_off_leave_the_settings_and_their_hash_as_without_patch_support(
     assert on['nucgeo']['fold'] == 'near' and on['nucgeo']['near_max_bp'] == 1250
     assert settings_hash(on) != settings_hash(off)
     assert m.resolve({'nucpatch': {}, 'nucgeo': None})['nucgeo'] is None
+
+
+def test_scan_geometry_values_carry_the_density_matched_share_per_dataset():
+    """The scan's ``share_dm`` per dataset is FiberHMM's density-matched share (what FiberBrowser's panel shows as
+    the per-dataset prevalence); with one dataset it is the plain share; 'all' keeps the pooled share."""
+    from types import SimpleNamespace
+    from fiberhmm.scan.modules.nuc import _unit_geometries
+    rng = np.random.default_rng(3)
+    lays = []
+    for k in range(120):
+        ds = 'a' if k % 2 else 'b'
+        dens = float(rng.uniform(20, 60) + (15 if ds == 'a' else 0))
+        spans = [(0, 3000)] if rng.random() < (0.5 if dens > 50 else 0.25) else []
+        lays.append(_layout(f'm{k}', spans, ds=ds, density=dens))
+    geo = dict(GeometryParams().to_dict(), cohort='spanning')
+
+    def run(datasets, keep):
+        out = SimpleNamespace(hits=[], values=[], states=[])
+        _unit_geometries(out, SimpleNamespace(chrom='chrS'), [(f'r{i}', lay) for i, lay in enumerate(keep)], geo, datasets)
+        return out
+    out = run(['a', 'b'], lays)
+    assert out.hits
+    key = out.hits[0].key
+    vals = {(v.group, v.value_name): v.value for v in out.values if v.hit_key == key}
+    from fiberhmm.nuc.geometries import find_all_geometries
+    states = assign_states(lays, find_all_geometries(lays, GeometryParams(), chrom='chrS', kinds=('high',)))
+    gid = out.hits[0].columns['geometry']
+    want = density_matched_shares(lays, states, gid, ['a', 'b'])
+    assert vals[('a', 'share_dm')] == pytest.approx(want['a']) and vals[('b', 'share_dm')] == pytest.approx(want['b'])
+    assert vals[('all', 'share_dm')] == pytest.approx(vals[('all', 'share')])
+    one = run(['a'], [lay for lay in lays if lay.dataset == 'a'])
+    v1 = {(v.group, v.value_name): v.value for v in one.values if v.hit_key == one.hits[0].key}
+    assert v1[('a', 'share_dm')] == pytest.approx(v1[('a', 'share')])

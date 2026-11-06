@@ -189,8 +189,9 @@ the unit) are grouped by start and end: the (start, end) whose ±500 bp box
 holds the most molecules becomes a geometry (consensus = median ends), its
 members are removed, and the search repeats until a geometry would hold fewer
 than 3% of the molecules. Each geometry is a `nuc.geometry` hit with a share
-per dataset, and each record gets a state: carries, absent, no call (most of
-the span unscored) or not spanned.
+per dataset (`share`, and `share_dm` standardised to the pooled m6A/kb
+quintiles, since scores rise with marking density), and each record gets a
+state: carries, absent, no call (most of the span unscored) or not spanned.
 
 A geometry is nested in a longer one when it lies inside it (with the
 tolerance as slack), shares one end within the tolerance and its other end

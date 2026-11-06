@@ -216,7 +216,9 @@ class NucModule(ScanModuleBase):
         types.append(FeatureTypeDecl('nuc.geometry', 'nuc', 'Shared patch geometry', 'Shared patch geometries',
                                      ('hit', 'state'), 'centre',
                                      scores=(ScoreDecl('share', 'Share of molecules carrying it', 'fraction',
-                                                       'high', True),),
+                                                       'high', True),
+                                             ScoreDecl('share_dm', 'Share, m6A density matched', 'fraction',
+                                                       'high', True)),
                                      state_rule='1: the molecule has a member patch; 0: its tiles cover the span '
                                                 'with calls and no member patch; .: no call (over half the '
                                                 'tiles there unscored) or not spanned',
@@ -1084,7 +1086,8 @@ def _geometry_layout(mol, res, dataset_id, unit, geo, snapped):
 
 def _unit_geometries(out, unit, geo_mols, geo, dataset_ids):
     """Geometries of one BED unit's cohort as hits, values and per-record states (in place on ``out``)."""
-    from fiberhmm.nuc.geometries import (SCAN_STATE, GeometryParams, assign_states, find_all_geometries, support)
+    from fiberhmm.nuc.geometries import (SCAN_STATE, GeometryParams, assign_states, density_matched_shares,
+                                         find_all_geometries, support)
     from fiberhmm.scan.types import State
     if not geo_mols:
         return
@@ -1110,8 +1113,16 @@ def _unit_geometries(out, unit, geo_mols, geo, dataset_ids):
         out.hits.append(Hit('nuc.geometry', key, unit.chrom, g.start, g.end, (g.start + g.end) // 2,
                             score=sup_all['share'], label=g.geometry_id.split('_', 1)[0],
                             flags=('open_end',) if open_end else (), columns=cols))
+        # Per dataset, the carrier share standardised to the pooled m6A/kb distribution (scores rise with marking
+        # density, so datasets compare density matched; FiberBrowser's panel shows the same). One dataset: its share.
+        present = [d for d in dataset_ids if any(lay.dataset == d for lay in lays)]
+        dms = density_matched_shares(lays, states, g.geometry_id, present) if len(present) > 1 else {}
         for grp, kind, ds in [('all', 'all', None)] + [(d, 'dataset', d) for d in dataset_ids]:
             sp = sup_all if ds is None else support(lays, states, g.geometry_id, ds)
+            dm = sp['share'] if ds is None or len(present) <= 1 else dms.get(ds)
+            if dm is not None:
+                out.values.append(Value(key, grp, kind, 'share_dm', dm, n_molecules=sp['molecules'],
+                                        n_callable=sp['callable']))
             out.values.append(Value(key, grp, kind, 'share', sp['share'], n_molecules=sp['molecules'],
                                     n_callable=sp['callable']))
             out.values.append(Value(key, grp, kind, 'share_callable', sp['share_callable'],
