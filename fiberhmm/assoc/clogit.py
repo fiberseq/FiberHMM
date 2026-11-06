@@ -30,6 +30,11 @@ from typing import Optional
 
 import numpy as np
 
+#: hold the process at one BLAS thread while a fit runs (``single_thread_blas``). Off: the fit's hot products run in
+#: numba loops and einsum (no BLAS), as fast as with the limit, so a fit never throttles the process's other threads
+#: (threadpoolctl's limit is process-wide; it cannot be scoped to the fit's threads).
+LIMIT_BLAS = False
+
 _BLAS_LOCK = threading.Lock()
 _BLAS_DEPTH = 0
 _BLAS_LIMIT = None
@@ -60,6 +65,12 @@ def single_thread_blas():
                     _BLAS_LIMIT.restore_original_limits()
                 finally:
                     _BLAS_LIMIT = None
+
+
+def _mv(A, b):
+    """A @ b for the fit's tall, narrow matrices without BLAS (``einsum``'s own loop): a threaded BLAS call per
+    Newton step leaves its threads spinning against the fit's own kernels."""
+    return np.einsum('ij,j->i', A, b)
 
 
 def _pack(X, y, strata):
@@ -122,7 +133,7 @@ def _moments(Xf, offs, kk, beta, need_q=True, need_pi=False):
     from .control import cancelled
     S = len(kk)
     p = Xf.shape[1]
-    eta = Xf @ beta
+    eta = _mv(Xf, beta)
     a = np.zeros(S)
     M = np.zeros(S, np.int64)
     K.tilt(eta, offs, kk, _DFT_T0, _DFT_T1, a, M)
@@ -140,9 +151,9 @@ def _moments(Xf, offs, kk, beta, need_q=True, need_pi=False):
                 from .control import AssociationCancelled
                 raise AssociationCancelled('association cancelled')
             which = small[blocks == b].astype(np.int64)
-            K.dp_strata(Xf, eta, offs, kk, which, need_q, loge, mean, cov)
+            K.dp_strata(Xf, eta, offs, kk, which, need_q, loge, mean, cov, a)
             if need_pi:
-                K.dp_case_probabilities(eta, offs, kk, which, pi)
+                K.dp_case_probabilities(eta, offs, kk, which, pi, a)
     big = np.flatnonzero(M >= 0)
     want = need_q or need_pi
 
@@ -155,20 +166,10 @@ def _moments(Xf, offs, kk, beta, need_q=True, need_pi=False):
         loge[t] = le
         if not want:
             return
-        x = Xf[a0:a1]
-        xbar = x.mean(0)
-        xc = x - xbar
-        mc = xc.T @ pr                                    # mean of sum_cases (x - xbar)
-        mean[t] = mc + kk[t] * xbar
         if need_pi:
             pi[a0:a1] = pr
-        if need_q:
-            # g_m of the centred rows, (p, M + 1); Re sum_m c_m g_m g_m' in real arithmetic
-            Gr, Gi = xc.T @ Qr, xc.T @ Qi
-            cr, ci = c.real, c.imag
-            M2 = (Gr * cr) @ Gr.T - (Gi * cr) @ Gi.T - (Gr * ci) @ Gi.T - (Gi * ci) @ Gr.T
-            M2 += (xc * wv[:, None]).T @ xc
-            cov[t] = M2 - np.outer(mc, mc)
+        # E[sum_cases x] and its covariance from the DFT sums (numba loops, no BLAS: K.dft_products)
+        K.dft_products(Xf[a0:a1], pr, wv, c, Qr, Qi, int(kk[t]), need_q, mean[t], cov[t] if need_q else cov[0])
 
     # strata are independent (each writes its own slots): a few threads (the kernels release the GIL), with a
     # cancel check between blocks of about _CANCEL_ROWS rows
@@ -194,7 +195,7 @@ def clogit(X, y, strata, *, max_iter: int = 50, tol: float = 1e-8, l2: float = 1
     """Fit by Newton-Raphson. ``X`` (n, p) without intercept, ``y`` 0/1, ``strata`` labels. Returns beta, the
     model-based SE, the log-likelihood, H (observed information), the per-row conditional case probabilities
     ``pi`` and score contributions ``u`` (n, p), and the number of informative strata."""
-    with single_thread_blas():
+    with single_thread_blas() if LIMIT_BLAS else contextlib.nullcontext():
         return _clogit(X, y, strata, max_iter=max_iter, tol=tol, l2=l2, beta0=beta0)
 
 
@@ -224,7 +225,7 @@ def _clogit(X, y, strata, *, max_iter, tol, l2, beta0):
     for it in range(max_iter):
         checkpoint('clogit', it, max_iter)
         loge, mean, cov, _ = _moments(Xf, offs, kk, beta)
-        ll = float(np.sum(obs @ beta - loge)) - 0.5 * l2 * float(beta @ beta)
+        ll = float(np.sum(_mv(obs, beta) - loge)) - 0.5 * l2 * float(beta @ beta)
         g = (obs - mean).sum(0) - l2 * beta
         H = cov.sum(0) + l2 * np.eye(p)
         try:
@@ -240,7 +241,7 @@ def _clogit(X, y, strata, *, max_iter, tol, l2, beta0):
         while t > 1e-4:
             nb = beta + t * step
             l2_, _, _, _ = _moments(Xf, offs, kk, nb, need_q=False)
-            lln = float(np.sum(obs @ nb - l2_)) - 0.5 * l2 * float(nb @ nb)
+            lln = float(np.sum(_mv(obs, nb) - l2_)) - 0.5 * l2 * float(nb @ nb)
             if np.isfinite(lln) and lln >= ll - 1e-10:
                 accepted = True
                 break
@@ -280,9 +281,17 @@ def _clogit(X, y, strata, *, max_iter, tol, l2, beta0):
     u_split = np.zeros((n, p))
     u[rows] = xc * (y[rows] - pr)[:, None]
     u_split[rows] = u[rows] * (ns / (ns - 1))[sid][:, None]          # leave-molecule-out residual scale
-    ll = float(np.sum(obs @ beta - loge))
+    ll = float(np.sum(_mv(obs, beta) - loge))
     return {'beta': beta, 'se': se, 'loglik': ll, 'H': H, 'Hinv': Hinv, 'pi': pi_row, 'u': u, 'u_split': u_split,
             'n_strata': int(len(kk)), 'n_rows': int(len(rows)), 'converged': converged, 'iterations': it + 1}
+
+
+def fit_ok(fit: Optional[dict]) -> bool:
+    """Whether a fit's estimate may be reported: Newton converged to a finite coefficient vector. A fit that stopped
+    early (iteration cap, a step that could not improve the likelihood) has a finite but meaningless beta and SE,
+    so callers report its effect, SE and bootstrap interval as not estimable instead."""
+    return bool(fit) and bool(fit.get('n_strata')) and bool(fit.get('converged')) and \
+        bool(np.all(np.isfinite(fit.get('beta', np.nan))))
 
 
 def score_bootstrap(fit: dict, weights_iter, index: int = 0, split_strata: bool = False) -> np.ndarray:

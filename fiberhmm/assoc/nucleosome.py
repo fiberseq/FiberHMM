@@ -624,7 +624,7 @@ def reverse_association(locus, molecule, y, x, log_lambda, pattern=None, *, n_bo
     """NUC 3.8 item 7: Y (anchor state) against X (a flank state), per (locus, molecule) row. CMH common OR over
     locus x lambda strata and a conditional logistic regression with loci as strata (Y ~ X + log lambda + coverage
     pattern dummies); both with locus-group bootstrap intervals (two-way variance when groups chain)."""
-    from fiberhmm.assoc.clogit import clogit, score_bootstrap
+    from fiberhmm.assoc.clogit import clogit, fit_ok, score_bootstrap
     from fiberhmm.assoc.cooccur import _mh_counts
     from fiberhmm.assoc.resample import BlockBootstrap, locus_groups, wald_p
     locus = np.asarray(locus, np.int64)
@@ -649,14 +649,21 @@ def reverse_association(locus, molecule, y, x, log_lambda, pattern=None, *, n_bo
                    'rbg_lo': float(np.exp(lo)) if np.isfinite(lo) else float('nan'),
                    'rbg_hi': float(np.exp(hi)) if np.isfinite(hi) else float('nan')},
            'clogit': {'log_or': float(fit['beta'][0]), 'or': float(np.exp(fit['beta'][0])),
-                      'se_model': float(fit['se'][0]), 'n_strata': int(fit['n_strata'])}}
+                      'se_model': float(fit['se'][0]), 'n_strata': int(fit['n_strata']),
+                      'converged': bool(fit.get('converged'))}}
+    ok = fit_ok(fit)
+    if not ok:
+        # a fit that did not converge has a finite but meaningless estimate: not reported (nor its interval)
+        out['clogit'].update({'log_or': float('nan'), 'or': float('nan'), 'se_model': float('nan'),
+                              'note': 'conditional logistic fit did not converge: effect not estimable'})
     if n_boot and len(y):
         g = locus_groups(locus, molecule, int(locus.max()) + 1)
         bb = BlockBootstrap(g, locus, molecule, seed=seed)
         cat_m = cell * 4 + cat
 
         def fn(W):
-            res = {'clogit': score_bootstrap(fit, [W], split_strata=bb.mode != 'groups')}
+            res = {'clogit': score_bootstrap(fit, [W], split_strata=bb.mode != 'groups') if ok
+                   else np.full(W.shape[0], np.nan)}
             c4 = np.stack([np.bincount(cat_m, weights=w, minlength=4 * nc).reshape(nc, 4).T for w in W])
             a, b, c, d = c4[:, 0], c4[:, 1], c4[:, 2], c4[:, 3]
             nn = a + b + c + d
