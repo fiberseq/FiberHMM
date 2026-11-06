@@ -679,6 +679,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--nucgeo-edges` | — | Group patches by their snapped (default) or tile-grid edges Choices: `snapped`, `grid`. |
 | `--nucgeo-fold` | — | Fold nested geometries into their longest parent: none, near (other end moved at most --nucgeo-near-max-bp; default) or all Choices: `none`, `near`, `all`. |
 | `--nucgeo-near-max-bp` | — | Largest move of the other end for --nucgeo-fold near (default 1250) |
+| `--nucgeo-edge-min-bp` | — | A patch cut by the BED-unit edge joins the grouping only with at least BP inside the unit (default 500; 0 = keep every patch) |
 | `--no-nucgeo` | off | Call patches but no shared geometries |
 | `--input-type` | `called-bam` | --bam input type; signal-bam filters producer-scored schema 5 records before all modules Choices: `called-bam`, `signal-bam`. |
 | `--signal-filters` | — | JSON file of boolean hideBackground, excludeUnscored, requireDetectable, requireStructure predicates (with --input-type signal-bam) |

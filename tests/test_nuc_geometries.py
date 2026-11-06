@@ -355,3 +355,27 @@ def test_scan_geometry_values_carry_the_density_matched_share_per_dataset():
     one = run(['a'], [lay for lay in lays if lay.dataset == 'a'])
     v1 = {(v.group, v.value_name): v.value for v in one.values if v.hit_key == one.hits[0].key}
     assert v1[('a', 'share_dm')] == pytest.approx(v1[('a', 'share')])
+
+
+def test_edge_slivers_cut_by_the_view_stay_out_of_the_grouping():
+    """Patches cut by the view edge with less than edge_min_bp inside never group (they would form short edge
+    'geometries'); edge_min_bp 0 keeps them; patches open at a read end are unaffected; molecule_layout marks the
+    clipped side."""
+    from fiberhmm.nuc.geometries import find_all_geometries, groupable
+    lays = []
+    for k in range(40):
+        pts = [RefPatch(4600 + (k % 3) * 20, 5000, False, True, 4.0, 190, clip_right=True)]   # 380-400 bp slivers
+        if k < 20:
+            pts.insert(0, RefPatch(-3000 + (k % 3) * 40, -1000, False, False, 4.0, 190))
+        lays.append(MoleculeLayout(f'm{k}', 'a', pts, np.arange(-5000, 5000, 250), np.arange(-4750, 5250, 250),
+                                   np.full(40, IRREGULAR, dtype=np.int8), 50.0))
+    on = find_all_geometries(lays, GeometryParams(), kinds=('high',))
+    assert [(g.start < 0) for g in on] == [True]
+    off = find_all_geometries(lays, GeometryParams(edge_min_bp=0), kinds=('high',))
+    assert any(g.start > 4000 for g in off)
+    assert groupable(RefPatch(4900, 5000, False, True, 1.0, 190), GeometryParams())       # open at a read end
+    assert not groupable(RefPatch(4900, 5000, False, True, 1.0, 190, clip_right=True), GeometryParams())
+    assert groupable(RefPatch(4400, 5000, False, True, 1.0, 190, clip_right=True), GeometryParams())
+    with pytest.raises(ValueError):
+        GeometryParams(edge_min_bp=-1)
+    assert GeometryParams.from_dict({'edge_min_bp': 300}).edge_min_bp == 300

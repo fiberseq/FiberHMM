@@ -193,6 +193,11 @@ per dataset (`share`, and `share_dm` standardised to the pooled m6A/kb
 quintiles, since scores rise with marking density), and each record gets a
 state: carries, absent, no call (most of the span unscored) or not spanned.
 
+A patch that runs past the unit's edge is clipped there; when less than
+`--nucgeo-edge-min-bp` (default 500) of it lies inside the unit it is left out
+of the grouping, so short slivers at the edge never form geometries of their
+own (the patch itself stays in the `nucpatch` tag).
+
 A geometry is nested in a longer one when it lies inside it (with the
 tolerance as slack), shares one end within the tolerance and its other end
 moved by more than the tolerance. `--nucgeo-fold` decides what happens to

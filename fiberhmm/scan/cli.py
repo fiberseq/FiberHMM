@@ -119,6 +119,9 @@ def _parser():
                           '--nucgeo-near-max-bp; default) or all')
     pat.add_argument('--nucgeo-near-max-bp', type=int, metavar='BP',
                      help='Largest move of the other end for --nucgeo-fold near (default 1250)')
+    pat.add_argument('--nucgeo-edge-min-bp', type=int, metavar='BP',
+                     help='A patch cut by the BED-unit edge joins the grouping only with at least BP inside the unit '
+                          '(default 500; 0 = keep every patch)')
     pat.add_argument('--no-nucgeo', action='store_true', help='Call patches but no shared geometries')
     p.add_argument('--input-type', choices=['called-bam', 'signal-bam'], default='called-bam',
                    help='--bam input type; signal-bam filters producer-scored schema 5 records before all modules')
@@ -259,7 +262,8 @@ NUCPATCH_FLAGS = (('nucpatch_enter', 'enter'), ('nucpatch_extend', 'extend'), ('
 NUCPATCH_LOW_FLAGS = (('nucpatch_low_enter', 'enter'), ('nucpatch_low_extend', 'extend'),
                       ('nucpatch_low_min_tiles', 'min_tiles'), ('nucpatch_low_open_bp', 'open_bp'))
 NUCGEO_FLAGS = (('nucgeo_tol', 'tol_bp'), ('nucgeo_min_share', 'min_share'), ('nucgeo_cohort', 'cohort'),
-                ('nucgeo_fold', 'fold'), ('nucgeo_near_max_bp', 'near_max_bp'))
+                ('nucgeo_fold', 'fold'), ('nucgeo_near_max_bp', 'near_max_bp'),
+                ('nucgeo_edge_min_bp', 'edge_min_bp'))
 
 
 def _nucpatch_params(parser, args, modules, params):

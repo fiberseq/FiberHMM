@@ -213,7 +213,7 @@ class NucModule(ScanModuleBase):
                                      scores=(ScoreDecl('dispersion_bp', 'Positional dispersion', 'bp', 'high',
                                                        False), ScoreDecl('P', 'Period', 'bp', 'none', False)),
                                      columns=cols))
-        types.append(FeatureTypeDecl('nuc.geometry', 'nuc', 'Shared patch geometry', 'Shared patch geometries',
+        types.append(FeatureTypeDecl('nuc.geometry', 'nuc', 'Shared regularity geometry', 'Shared regularity geometries',
                                      ('hit', 'state'), 'centre',
                                      scores=(ScoreDecl('share', 'Share of molecules carrying it', 'fraction',
                                                        'high', True),

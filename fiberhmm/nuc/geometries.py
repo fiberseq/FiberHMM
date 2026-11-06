@@ -41,6 +41,12 @@ top (root) geometry; its carriers carry the root *partly*. Grouping itself is
 unchanged by folding: folding only sets ``Geometry.parent`` and the partial
 state, and shares are reported full and partial separately.
 
+Edge slivers. With a view (a BED unit, the browser's view) a patch running past
+its edge is clipped there (``RefPatch.clip_left`` / ``clip_right``). Clipped
+patches with less than ``GeometryParams.edge_min_bp`` inside the view are left
+out of the grouping (they would pile up as short open-ended "geometries" at the
+edge); they stay in the molecule's layout and in the layer.
+
 Kinds. Patches carry their kind (high or low regularity, :mod:`fiberhmm.nuc.patches`).
 Geometries are found per kind (``find_geometries(..., kind=)``): a high and a
 low patch with the same span never group together, nesting and folding stay
@@ -88,6 +94,9 @@ class GeometryParams:
     fold: str = 'near'
     #: the largest move of the other end for fold 'near' (bp)
     near_max_bp: int = 1250
+    #: a patch cut by the view / BED-unit edge joins the grouping only when at least this much of it (bp) lies
+    #: inside; shorter slivers would pile up as edge "geometries" (0 = keep every patch). Still in the layer.
+    edge_min_bp: int = 500
 
     def __post_init__(self):
         if self.tol_bp < 0 or not 0 <= self.min_share < 1 or self.min_molecules < 1:
@@ -96,6 +105,8 @@ class GeometryParams:
             raise ValueError(f'nucgeo: fold must be one of {FOLD_MODES}')
         if self.near_max_bp < 0:
             raise ValueError('nucgeo: near_max_bp must not be negative')
+        if self.edge_min_bp < 0:
+            raise ValueError('nucgeo: edge_min_bp must not be negative')
         if self.max_geometries is not None and self.max_geometries < 1:
             raise ValueError('nucgeo: max_geometries must be positive (None = no limit)')
 
@@ -125,6 +136,18 @@ class RefPatch:
     mean_score: float
     period: int
     kind: str = HIGH
+    #: cut by the view / unit edge on that side (open there because of the clipping, not the read end)
+    clip_left: bool = False
+    clip_right: bool = False
+
+    @property
+    def clipped(self) -> bool:
+        return self.clip_left or self.clip_right
+
+
+def groupable(p: RefPatch, params: "GeometryParams") -> bool:
+    """Whether a patch joins the grouping: a patch cut by the view edge needs ``edge_min_bp`` inside the view."""
+    return not (p.clip_left or p.clip_right) or (p.end - p.start) >= params.edge_min_bp
 
 
 @dataclass
@@ -208,14 +231,15 @@ def molecule_layout(mol, track, mp: MoleculePatches, dataset: str = '', *, snapp
         if r is None:
             continue
         a, b, ol, orr = r
+        cl = cr = False
         if view is not None:
             if b <= view[0] or a >= view[1]:
                 continue
             if a < view[0]:
-                a, ol = view[0], True
+                a, ol, cl = view[0], True, True
             if b > view[1]:
-                b, orr = view[1], True
-        pts.append(RefPatch(a, b, bool(ol), bool(orr), p.mean_score, p.period, getattr(p, 'kind', HIGH)))
+                b, orr, cr = view[1], True, True
+        pts.append(RefPatch(a, b, bool(ol), bool(orr), p.mean_score, p.period, getattr(p, 'kind', HIGH), cl, cr))
     pts.sort(key=lambda x: (x.start, x.end))
     return MoleculeLayout(uid if uid is not None else getattr(mol, 'name', ''), dataset, pts, lo, hi, st,
                           float(getattr(track, 'density_per_kb', float('nan'))))
@@ -244,7 +268,7 @@ def find_geometries(layouts: Sequence[MoleculeLayout], params: GeometryParams = 
     if kind not in PATCH_KINDS:
         raise ValueError(f'nucgeo: kind must be one of {PATCH_KINDS}')
     rows = [(i, k, p.start, p.end) for i, lay in enumerate(layouts) for k, p in enumerate(lay.patches)
-            if getattr(p, 'kind', HIGH) == kind]
+            if getattr(p, 'kind', HIGH) == kind and groupable(p, params)]
     if not rows:
         return []
     R = np.asarray(rows, dtype=np.int64)
