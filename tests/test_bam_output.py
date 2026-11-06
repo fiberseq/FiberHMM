@@ -586,3 +586,29 @@ def test_real_samtools_merge_combines_two_bams_in_coordinate_order(tmp_path):
     bam_output._samtools_merge_bams([a, b], out, str(tmp_path / "list.txt"))
     assert [n for n, _, _ in _names(out)] == ["r1", "r2", "r3", "r4"]
     assert not (tmp_path / "list.txt").exists()
+
+
+@pytest.mark.skipif(__import__("shutil").which("bedToBigBed") is None,
+                    reason="bedToBigBed is not on PATH; the real BigBed conversion needs it")
+@pytest.mark.parametrize("with_scores", [False, True])
+def test_real_bedtobigbed_accepts_the_autosql_schema(tmp_path, capsys, with_scores):
+    """The autoSql written by write_autosql_schema is accepted by the real bedToBigBed, so the
+    extended BED12(+1) BigBed is built from it rather than through the plain-BED12 fallback."""
+    bed = tmp_path / "calls.bed"
+    row = ["chrS", "100", "400", "read_a", "500", "+", "100", "400", "0", "2", "50,60", "0,240"]
+    row2 = ["chrS", "10", "90", "read_b", "800", "-", "10", "90", "0", "2", "30,1", "0,79"]
+    if with_scores:
+        row.append("700,900")
+        row2.append("650,0")
+    bed.write_text("\t".join(row) + "\n" + "\t".join(row2) + "\n")
+    sizes = tmp_path / "chrom.sizes"
+    sizes.write_text("chrS\t1000\n")
+    autosql = tmp_path / "schema.as"
+    bam_output.write_autosql_schema(str(autosql), with_scores=with_scores)
+    out = tmp_path / "calls.bb"
+    assert bam_output.convert_to_bigbed_with_schema(
+        str(bed), str(sizes), str(autosql), str(out), with_scores=with_scores) is True
+    printed = capsys.readouterr().out
+    assert "bedToBigBed error" not in printed, printed
+    assert "Fallback" not in printed, printed
+    assert out.read_bytes()[:4] in (b"\xeb\xf2\x89\x87", b"\x87\x89\xf2\xeb")  # bigBed magic
