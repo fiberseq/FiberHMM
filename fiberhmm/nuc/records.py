@@ -81,10 +81,15 @@ class NucMolecule:
 
     # --- counting ----------------------------------------------------------
     def _cums(self):
-        if self._cum_hit is None:
-            self._cum_hit = np.concatenate([[0], np.cumsum(self.hits, dtype=np.int64)])
-            self._cum_inf = np.concatenate([[0], np.cumsum(self.informative, dtype=np.int64)])
-        return self._cum_hit, self._cum_inf
+        # Read once into locals and publish the informative array before the hit array: a molecule shared
+        # between threads (or slimmed while another thread counts) never hands out a half-built pair.
+        ch, ci = self._cum_hit, self._cum_inf
+        if ch is None or ci is None:
+            ch = np.concatenate([[0], np.cumsum(self.hits, dtype=np.int64)])
+            ci = np.concatenate([[0], np.cumsum(self.informative, dtype=np.int64)])
+            self._cum_inf = ci
+            self._cum_hit = ch
+        return ch, ci
 
     def counts(self, start, end):
         """(marks, informative sites) in ``[start, end)``; vectorised.
