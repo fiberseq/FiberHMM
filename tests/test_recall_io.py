@@ -211,6 +211,9 @@ def test_recall_nucs_entry_point_runs_a_real_nucleosome_recall(called_bams, monk
     tmp, legacy, _ma_only = called_bams
     output = str(tmp / "entry.recall_nucs.bam")
     monkeypatch.setenv("FIBERHMM_NO_UPDATE_CHECK", "1")
+    # An in-process run initialises the module's worker state (nuc config, tables); keep that
+    # from leaking into later tests in this process.
+    monkeypatch.setattr(recall_tfs, "_WORKER", dict(recall_tfs._WORKER))
     monkeypatch.setattr(sys, "argv", ["fiberhmm-recall-nucs", "-i", legacy, "-o", output,
                                       "--enzyme", "hia5", "--seq", "pacbio", "-c", "1"])
     recall_tfs.main_recall_nucs()
