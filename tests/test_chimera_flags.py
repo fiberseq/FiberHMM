@@ -204,6 +204,36 @@ def test_pipeline_modes_and_legacy_mapping(tmp_path, old, explicit, expected):
         p.close()
 
 
+@pytest.mark.parametrize('mode', ['flag', 'keep', 'remove'])
+@pytest.mark.parametrize('enzyme', ['dddb', 'ddda'])
+def test_recorded_calling_settings_fed_back_come_out_unchanged(tmp_path, mode, enzyme):
+    """A re-call passes the recorded call_args back (FiberBrowser Library: --call-args, plus
+    --no-chimera-filter for keep): the settings it records are the same, with --chimeras once."""
+    import shlex
+    from fiberhmm.cli.pipeline import parse_args, config_from_args
+    base = ['a.bam', '--reference', 'ref.fa', '--enzyme', enzyme, '-o', str(tmp_path)]
+    first = config_from_args(parse_args([*base, '--chimeras', mode])).calling_settings()
+    assert first['call_args'] == ['--chimeras', mode]
+    recorded = first
+    for _ in range(3):  # three re-call generations
+        argv = [*base, '--call-args', shlex.join(recorded['call_args'])]
+        if not recorded['chimera_filter']:
+            argv.append('--no-chimera-filter')
+        again = config_from_args(parse_args(argv)).calling_settings()
+        assert again == recorded
+        recorded = again
+    assert recorded['call_args'].count('--chimeras') == 1
+
+
+def test_explicit_chimeras_in_call_args_is_recorded_once(tmp_path):
+    from fiberhmm.cli.pipeline import parse_args, config_from_args
+    cfg = config_from_args(parse_args(['a.bam', '--reference', 'ref.fa', '--enzyme', 'dddb',
+                                       '-o', str(tmp_path), '--call-args', '--min-llr 6 --chimeras=remove']))
+    settings = cfg.calling_settings()
+    assert settings['call_args'] == ['--min-llr', '6', '--chimeras=remove']
+    assert cfg.effective_chimeras() == 'remove' and settings['chimera_filter'] is True
+
+
 def test_pipeline_qc_contains_chimeras(tmp_path, monkeypatch):
     from types import SimpleNamespace
     from fiberhmm.pipeline.runner import Pipeline, PipelineConfig, qc_verdicts
