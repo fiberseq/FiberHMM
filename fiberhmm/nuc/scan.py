@@ -8,14 +8,14 @@ from .regularity import DEFAULT_REGULARITY
 
 
 def record_outputs(read, record, cal, *, params=DEFAULT_PARAMS, context=None, regularity=DEFAULT_REGULARITY,
-                   patches=None, ref_median=None, calibration_digest=None):
+                   patches=None, ref_median=None, calibration_digest=None, ref_widths=None):
     """Return (decoded molecule, nuc result, scan result) for a complete record.
 
     ``record`` is its scan RecordRef; ``cal`` is a NucCalibration. A cached
     DecodeContext may be supplied. ``regularity`` (RegularityParams; None =
     off) adds the ``nucreg`` marks, on by default as in the scan; ``patches``
-    (PatchParams) with ``ref_median`` adds the ``nucpatch`` marks (off by
-    default). Unusable records return (None, None, None).
+    (PatchParams) with ``ref_median`` (and ``ref_widths``, the reference's
+    per-width deltas) adds the ``nucpatch`` marks (off by default). Unusable records return (None, None, None).
     Annotation frames are resolved from the record header as in decode_record.
     ``calibration_digest`` (``cal.digest()``, computed once by a caller that
     loops over records) saves serializing the calibration for every record.
@@ -31,7 +31,7 @@ def record_outputs(read, record, cal, *, params=DEFAULT_PARAMS, context=None, re
     if mol is None:
         return None, None, None
     result = molecule_outputs(mol, params, cal, regularity=regularity, patches=patches, ref_median=ref_median,
-                              calibration_digest=calibration_digest)
+                              calibration_digest=calibration_digest, ref_widths=ref_widths)
     marks = []
     for group, (_spec, rows) in group_rows(result).items():
         if group == NUCMOL:

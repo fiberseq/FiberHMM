@@ -675,7 +675,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--nucpatch-low-open-bp` | — | Open linker for --nucpatch-low-snap open (default 300) |
 | `--nucgeo-tol` | — | Shared geometries: both ends within BP of the consensus (default 500) |
 | `--nucgeo-min-share` | — | Shared geometries: at least this share of the molecules (default 0.03) |
-| `--nucgeo-cohort` | — | Molecules pooled per BED unit: spanning it (default) or overlapping it Choices: `spanning`, `overlapping`. |
+| `--nucgeo-cohort` | — | Molecules pooled per BED unit: overlapping it (default, as the browser panel) or spanning it Choices: `overlapping`, `spanning`. |
 | `--nucgeo-edges` | — | Group patches by their snapped (default) or tile-grid edges Choices: `snapped`, `grid`. |
 | `--nucgeo-fold` | — | Fold nested geometries into their longest parent: none, near (other end moved at most --nucgeo-near-max-bp; default) or all Choices: `none`, `near`, `all`. |
 | `--nucgeo-near-max-bp` | — | Largest move of the other end for --nucgeo-fold near (default 1250) |

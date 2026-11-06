@@ -181,11 +181,14 @@ def molecule_outputs(mol: NucMolecule, params: NucParams = DEFAULT_PARAMS,
                      cal: Optional[NucCalibration] = None, *, segments: bool = True,
                      regularity: Optional[RegularityParams] = None, patches=None,
                      ref_median: Optional[float] = None,
-                     calibration_digest: Optional[str] = None) -> MoleculeResult:
+                     calibration_digest: Optional[str] = None,
+                     ref_widths: Optional[dict] = None) -> MoleculeResult:
     """Coarse (and named) calls, segments and scalars for one molecule; with
     ``regularity``, also its sliding-window regularity track (``nucreg``) and,
     with ``patches`` (PatchParams) and ``ref_median`` (the dataset's
-    random-packing reference median), its regularity patches (``nucpatch``).
+    random-packing reference median; ``ref_widths`` its per-width deltas for
+    cut windows, :func:`fiberhmm.nuc.regularity.reference_widths`), its
+    regularity patches (``nucpatch``).
     ``calibration_digest`` is ``cal.digest()`` when the caller already has it
     (a caller looping over many molecules with one record computes it once)."""
     if patches is not None and (regularity is None or ref_median is None):
@@ -256,7 +259,7 @@ def molecule_outputs(mol: NucMolecule, params: NucParams = DEFAULT_PARAMS,
     mp = None
     if patches is not None:
         from fiberhmm.nuc.patches import call_patches
-        mp = call_patches(track, mol.nucs, ref_median=float(ref_median), params=patches)
+        mp = call_patches(track, mol.nucs, ref_median=float(ref_median), params=patches, ref_widths=ref_widths)
     return MoleculeResult(mol.name, mol.length, fp, segs, scal, flags, calls_digest(mol),
                           calibration_digest or cal.digest(), mol.record_key(), sorted(events, key=lambda e: (e.start, e.end, e.kind)),
                           list(mol.meta.get('evidence_warnings', [])), track, mp)

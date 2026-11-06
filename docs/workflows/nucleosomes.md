@@ -173,7 +173,12 @@ tile at least 2.0 log2 above the reference and extends over tiles at least
 1.25 above it (at least 2 tiles). A single tile without a score is bridged;
 two or more end the patch (no call, not irregular). A patch touching the
 molecule's first or last tile is open-ended. Each patch carries its mean
-score and median period.
+score and median period. With `--nucreg-ends truncated` the cut windows at
+read ends (and on reads shorter than the window) are shorter FFTs whose
+random-packing null lies lower, so the reference is also computed per window
+width (in `step_bp` classes, from the molecules' own cut windows) and each
+tile is read against the reference of its own width; a `--nucpatch-ref`
+override shifts those per-width references with it.
 
 Edges start on the tile grid (first tile centre − 125, last tile centre +
 125). Closed edges then snap to a nucleosome boundary: the nucleosome-sized
@@ -184,14 +189,17 @@ the grid edge stays. `--nucpatch-snap period` uses linkers whose dyad
 spacing is off the patch period by more than 25% instead; `off` keeps the grid
 edges. The grid edges are always kept in the Python API.
 
-For BED units, the patches of the unit's molecules (default: records that span
-the unit) are grouped by start and end: the (start, end) whose ±500 bp box
+For BED units, the patches of the unit's molecules (default: records that
+overlap the unit, as the browser's panel; `--nucgeo-cohort spanning` keeps
+only records spanning it; one record per physical molecule and dataset, the
+first primary record) are grouped by start and end: the (start, end) whose ±500 bp box
 holds the most molecules becomes a geometry (consensus = median ends), its
 members are removed, and the search repeats until a geometry would hold fewer
 than 3% of the molecules. Each geometry is a `nuc.geometry` hit with a share
-per dataset (`share`, and `share_dm` standardised to the pooled m6A/kb
-quintiles, since scores rise with marking density), and each record gets a
-state: carries, absent, no call (most of the span unscored) or not spanned.
+per dataset (`share` of all molecules, and `share_dm`: the share of callable
+molecules, standardised to the pooled m6A/kb quintiles when the unit has
+several datasets, since scores rise with marking density; one dataset and
+`all`: the plain callable share), and each record gets a state: carries, absent, no call (most of the span unscored) or not spanned.
 
 A patch that runs past the unit's edge is clipped there; when less than
 `--nucgeo-edge-min-bp` (default 500) of it lies inside the unit it is left out

@@ -24,9 +24,42 @@ molecule's own outcome does not shrink its residual.
 """
 from __future__ import annotations
 
+import contextlib
+import threading
 from typing import Optional
 
 import numpy as np
+
+_BLAS_LOCK = threading.Lock()
+_BLAS_DEPTH = 0
+_BLAS_LIMIT = None
+
+
+@contextlib.contextmanager
+def single_thread_blas():
+    """One BLAS thread while any fit runs (the per-stratum products are small: threaded BLAS spends far longer waking
+    threads). threadpoolctl's limit is process-wide and restores the value it saw on entry, so overlapping fits in
+    several threads would restore in the wrong order and leave the process at one thread: the limit is reference
+    counted instead. The first fit to enter applies it, the last to leave restores what the process had."""
+    global _BLAS_DEPTH, _BLAS_LIMIT
+    with _BLAS_LOCK:
+        if _BLAS_DEPTH == 0:
+            try:
+                from threadpoolctl import threadpool_limits
+                _BLAS_LIMIT = threadpool_limits(limits=1, user_api='blas')
+            except Exception:   # noqa: BLE001 - optional at run time
+                _BLAS_LIMIT = None
+        _BLAS_DEPTH += 1
+    try:
+        yield
+    finally:
+        with _BLAS_LOCK:
+            _BLAS_DEPTH -= 1
+            if _BLAS_DEPTH == 0 and _BLAS_LIMIT is not None:
+                try:
+                    _BLAS_LIMIT.restore_original_limits()
+                finally:
+                    _BLAS_LIMIT = None
 
 
 def _pack(X, y, strata):
@@ -159,14 +192,7 @@ def clogit(X, y, strata, *, max_iter: int = 50, tol: float = 1e-8, l2: float = 1
     """Fit by Newton-Raphson. ``X`` (n, p) without intercept, ``y`` 0/1, ``strata`` labels. Returns beta, the
     model-based SE, the log-likelihood, H (observed information), the per-row conditional case probabilities
     ``pi`` and score contributions ``u`` (n, p), and the number of informative strata."""
-    # the per-stratum products are small: one BLAS thread each (threaded BLAS spends far longer waking threads)
-    try:
-        from threadpoolctl import threadpool_limits
-        limits = threadpool_limits(limits=1, user_api='blas')
-    except Exception:   # noqa: BLE001 - optional at run time
-        import contextlib
-        limits = contextlib.nullcontext()
-    with limits:
+    with single_thread_blas():
         return _clogit(X, y, strata, max_iter=max_iter, tol=tol, l2=l2, beta0=beta0)
 
 
@@ -198,15 +224,25 @@ def _clogit(X, y, strata, *, max_iter, tol, l2, beta0):
             step = np.linalg.solve(H, g)
         except np.linalg.LinAlgError:
             step = np.linalg.lstsq(H, g, rcond=None)[0]
-        # damped step when the likelihood falls
+        # damped step when the likelihood falls; a step whose likelihood is not finite (e_k under- or overflowing
+        # on a nearly separated stratum) is a failed step, never an infinitely good one
+        if not (np.isfinite(ll) and np.all(np.isfinite(step))):
+            break
         t = 1.0
+        accepted = False
         while t > 1e-4:
             nb = beta + t * step
             l2_, _, _, _ = _moments(Xf, offs, kk, nb, need_q=False)
             lln = float(np.sum(obs @ nb - l2_)) - 0.5 * l2 * float(nb @ nb)
-            if lln >= ll - 1e-10:
+            if np.isfinite(lln) and lln >= ll - 1e-10:
+                accepted = True
                 break
             t /= 2
+        if not accepted:
+            # no improvement along the step: a tiny step as before, but only to a point with a finite likelihood
+            l2_, _, _, _ = _moments(Xf, offs, kk, beta + t * step, need_q=False)
+            if not np.all(np.isfinite(l2_)):
+                break                   # keep the last finite beta
         beta = beta + t * step
         if np.max(np.abs(t * step)) < tol:
             converged = True
