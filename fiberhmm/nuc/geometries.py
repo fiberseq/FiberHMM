@@ -1,8 +1,7 @@
 """Shared patch geometries across molecules (pool -> find -> compare).
 
 Patches (:mod:`fiberhmm.nuc.patches`) of every molecule of one or more
-datasets are pooled in reference coordinates and grouped by start AND end
-(port of the explorer prototype ``ensurePatches``):
+datasets are pooled in reference coordinates and grouped by start AND end:
 
 1. every observed (start, end) is a candidate centre; its group is every
    unassigned patch with both ends within ``tol_bp`` of it;
@@ -12,7 +11,7 @@ datasets are pooled in reference coordinates and grouped by start AND end
    member patches; its members are removed and the search repeats;
 4. it stops when the best group would hold fewer than
    ``max(min_molecules, ceil(min_share x n_molecules))`` molecules (or after
-   ``max_geometries``; the prototype stopped at 12, its colour count).
+   ``max_geometries``).
 
 Why not the consensus engines? ``inference.consensus.call_clustering``
 (``weighted_clusters`` / ``fold_clusters``) scores pairs by overlap over the
@@ -213,8 +212,7 @@ def molecule_layout(mol, track, mp: MoleculePatches, dataset: str = '', *, snapp
     """Project one molecule's patches and tiles onto the reference.
 
     With ``view`` (reference ``(start, end)``) tiles and patches are clipped to it,
-    and a patch cut by a view edge is open on that side (the prototype's
-    windowed cohort)."""
+    and a patch cut by a view edge is open on that side (a windowed cohort)."""
     lo, hi, st = [], [], []
     for i in range(len(track.tile_starts)):
         env = mol.mol_interval_to_ref(int(track.tile_starts[i]), int(track.tile_ends[i]))
@@ -363,28 +361,21 @@ def fold_geometries(geometries: List[Geometry], params: GeometryParams = DEFAULT
     pairs = nested_pairs(geometries, params.tol_bp)
     if params.fold == 'near':
         pairs = [z for z in pairs if z.moved <= params.near_max_bp]
-    direct: Dict[int, int] = {}
-    for ci in range(len(geometries)):
-        ps = [z.parent for z in pairs if z.child == ci]
-        if ps:
-            # the longest eligible parent (ties: the earlier, i.e. better supported, geometry)
-            direct[ci] = max(ps, key=lambda qi: (geometries[qi].width, -qi))
-
-    def eligible(ci, qi) -> bool:
-        z = _nested(geometries[ci], geometries[qi], params.tol_bp)
-        return z is not None and (params.fold == 'all' or z.moved <= params.near_max_bp)
-    folded = {}
-    for ci, pi in direct.items():
-        seen = {ci}
-        while pi in direct and pi not in seen:      # transitively to the root (parents are strictly longer)
-            seen.add(pi)
-            pi = direct[pi]
-        if pi == direct[ci] or eligible(ci, pi):    # the child itself must fold into the root (near_max_bp)
-            folded[ci] = pi
+    # widest first: every candidate parent (strictly wider) is settled as a root or folded before its children,
+    # and a geometry folds into the widest eligible parent that is itself a root (ties: the earlier, i.e. better
+    # supported, geometry). An eligible parent that folded elsewhere is skipped for the next eligible root.
+    cands: Dict[int, List[int]] = {}
+    for z in pairs:
+        cands.setdefault(z.child, []).append(z.parent)
+    folded: Dict[int, int] = {}
+    for ci in sorted(range(len(geometries)), key=lambda i: (-geometries[i].width, i)):
+        roots = [qi for qi in cands.get(ci, ()) if qi not in folded]
+        if roots:
+            folded[ci] = max(roots, key=lambda qi: (geometries[qi].width, -qi))
     for ci, pi in folded.items():
         geometries[ci].parent = pi
         geometries[ci].parent_id = geometries[pi].geometry_id
-    return [z for z in pairs if z.child in folded and direct.get(z.child) == z.parent]
+    return [z for z in pairs if folded.get(z.child) == z.parent]
 
 
 def children_of(geometries: Sequence[Geometry]) -> Dict[int, List[int]]:

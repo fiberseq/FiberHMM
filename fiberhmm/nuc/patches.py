@@ -4,7 +4,7 @@ Discrete calls on a molecule's regularity track (:mod:`fiberhmm.nuc.regularity`)
 so regular stretches can be joined with other features (TF occupancy, NFR
 state, shared geometries in :mod:`fiberhmm.nuc.geometries`).
 
-Calling (port of the explorer prototype ``callPatches``). Scores are read as
+Calling. Scores are read as
 excess over the dataset's random-packing reference median (``ref_median``; with
 ``ends`` 'truncated' and the reference's width deltas, ``ref_widths``, each tile
 against the reference of its own window width, see
@@ -190,7 +190,7 @@ class LowPatchParams(PatchParams):
     """Low-regularity patches: the mirror hysteresis (start at or below ``enter``, extend while at or below
     ``extend``, both log2 excess over the random-packing reference median) with their own edge settings.
 
-    Provisional defaults (embryo Hia5 PacBio): ``enter`` -1.5 is about the random-packing reference's own 7th
+    Provisional defaults (Hia5 PacBio data): ``enter`` -1.5 is about the random-packing reference's own 7th
     percentile and ``extend`` -0.75 its 25th, the same 0.75 hysteresis gap as the high side (+2.0 / +1.25)."""
     enter: float = -1.5
     extend: float = -0.75
@@ -335,7 +335,12 @@ def _call_kind(track, v, w, called, state, nucs, params: PatchParams, kind: str)
 
 def _clamp_neighbours(patches: List[Patch]) -> None:
     """Snapped edges never cross a neighbouring patch (module docstring), in place. Tile runs are disjoint, so
-    grid edges never overlap: an edge snapped into or past a neighbour goes back to its grid edge (not snapped)."""
+    grid edges never overlap: an edge snapped into or past a neighbour goes back to its grid edge (not snapped).
+
+    One pass over neighbouring pairs settles the usual case. A reset can reopen an earlier pair (an edge back at
+    its grid edge now crossed by a neighbour's snapped edge further away) or invert a patch whose other edge had
+    snapped past the reset point, so the rule is then applied to every pair until nothing moves. Each step puts one
+    edge back on its grid edge, so this ends, at worst with every edge on the grid (never overlapping)."""
     order = sorted(range(len(patches)), key=lambda i: (patches[i].grid_start, patches[i].grid_end))
     for a, b in zip(order, order[1:]):
         p, q = patches[a], patches[b]
@@ -345,20 +350,55 @@ def _clamp_neighbours(patches: List[Patch]) -> None:
             p.end, p.snapped_end = p.grid_end, False
             if p.start >= p.end:
                 p.start, p.snapped_start = p.grid_start, False
+    ps = [patches[i] for i in order]
+    moved = True
+    while moved:
+        moved = False
+        for x in ps:
+            if x.start >= x.end:
+                moved |= _to_grid(x, 'start') | _to_grid(x, 'end')
+        for i, p in enumerate(ps):
+            for q in ps[i + 1:]:
+                if q.start < p.grid_end:
+                    moved |= _to_grid(q, 'start')
+                if p.end > q.start:
+                    moved |= _to_grid(p, 'end')
     patches.sort(key=lambda x: (x.start, x.end))
+
+
+def _to_grid(p: Patch, side: str) -> bool:
+    """Put one edge back on its grid edge (not snapped); whether it moved."""
+    if side == 'start':
+        moved = p.start != p.grid_start
+        p.start, p.snapped_start = p.grid_start, False
+    else:
+        moved = p.end != p.grid_end
+        p.end, p.snapped_end = p.grid_end, False
+    return moved
 
 
 def _clamp_low(low: List[Patch], high: List[Patch], state: np.ndarray) -> List[Patch]:
     """Low patches clipped at the high patches' (snapped) edges, so the kinds never overlap while the high patches
-    stay exactly what high-only calling gives. A low patch clipped to nothing is dropped (its tiles: OUTSIDE)."""
+    stay exactly what high-only calling gives. When clipping one edge leaves the other edge (snapped past the clip
+    point) on the wrong side, that edge goes back to its grid edge, clipped in turn. A low patch left with none of
+    its own tiles (clipped to nothing, or lying wholly beyond its tile grid under a high patch's snapped edge) is
+    dropped (its tiles: OUTSIDE)."""
     out = []
     for q in low:
-        for h in high:
-            if h.grid_end <= q.grid_start and q.start < h.end:
-                q.start, q.snapped_start = max(q.grid_start, h.end), False
-            elif h.grid_start >= q.grid_end and q.end > h.start:
-                q.end, q.snapped_end = min(q.grid_end, h.start), False
-        if q.end > q.start:
+        lo = max((h.end for h in high if h.grid_end <= q.grid_start), default=None)
+        hi = min((h.start for h in high if h.grid_start >= q.grid_end), default=None)
+        clip_s = lo is not None and q.start < lo
+        clip_e = hi is not None and q.end > hi
+        if clip_s:
+            q.start, q.snapped_start = max(q.grid_start, lo), False
+        if clip_e:
+            q.end, q.snapped_end = min(q.grid_end, hi), False
+        if q.end <= q.start:
+            if clip_s and not clip_e:
+                q.end, q.snapped_end = q.grid_end if hi is None else min(q.grid_end, hi), False
+            elif clip_e and not clip_s:
+                q.start, q.snapped_start = q.grid_start if lo is None else max(q.grid_start, lo), False
+        if q.start < q.end and q.start < q.grid_end and q.end > q.grid_start:
             out.append(q)
         else:
             state[q.first_tile:q.last_tile + 1] = OUTSIDE

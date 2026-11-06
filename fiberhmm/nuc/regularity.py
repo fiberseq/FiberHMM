@@ -549,9 +549,12 @@ class ReferenceScores:
         return int(len(self.scores))
 
     def usable(self, min_scores: int = MIN_REFERENCE_SCORES) -> bool:
-        """At least ``min_scores`` finite full-width scores (or, without full windows, width-class scores) and a
-        finite median."""
-        n = self.n if self.n else sum(self.width_n.get(w, 0) for w in self.width_deltas)
+        """At least ``min_scores`` finite full-width scores, or (fewer full windows, the widest width class
+        anchoring the median: :func:`reference_scores`) at least ``min_scores`` scores in the kept width classes,
+        and a finite median."""
+        if self.n >= min_scores:
+            return bool(np.isfinite(self.median))
+        n = sum(self.width_n.get(w, 0) for w in self.width_deltas)
         return bool(n >= min_scores and np.isfinite(self.median))
 
     def to_dict(self) -> dict:
@@ -657,7 +660,8 @@ def _scored(mol: NucMolecule, hits: np.ndarray, ws: np.ndarray, we: np.ndarray, 
 
 def reference_scores(mols: Sequence[NucMolecule], params: RegularityParams = DEFAULT_REGULARITY,
                      n_windows: int = 2000, seed: int = 0, *, cut_windows: int = CUT_WINDOWS_PER_CLASS,
-                     min_cut_scores: int = MIN_CUT_SCORES) -> ReferenceScores:
+                     min_cut_scores: int = MIN_CUT_SCORES,
+                     min_full_scores: int = MIN_REFERENCE_SCORES) -> ReferenceScores:
     """Scores of the random-packing reference on windows sampled from ``mols``.
 
     Each sampled window keeps its own footprints (clipped to the window) and,
@@ -671,9 +675,10 @@ def reference_scores(mols: Sequence[NucMolecule], params: RegularityParams = DEF
     With ``params.ends`` 'truncated' the cut windows of the molecules' own window grids are also sampled, per width
     class of ``step_bp`` (up to ``cut_windows`` per class, from a separate random stream so the full-width sample
     is unchanged), each simulated and scored at its own width; ``width_deltas`` keeps each class's median minus the
-    full-width median for classes with at least ``min_cut_scores`` finite scores. Without any full-width window
-    (every molecule shorter than ``window_bp``) the widest kept class is the anchor: ``median`` is its median and
-    the deltas are relative to it."""
+    full-width median for classes with at least ``min_cut_scores`` finite scores. Without enough full-width windows
+    (fewer than ``min_full_scores`` finite scores: most molecules shorter than ``window_bp``, with at most a few
+    longer ones) the widest kept class is the anchor: ``median`` is its median and the deltas are relative to it
+    (``scores`` and the quantiles stay those of the full windows)."""
     W = params.window_bp
     cand = []                               # (molecule index, window start)
     prepared = []
@@ -736,8 +741,8 @@ def reference_scores(mols: Sequence[NucMolecule], params: RegularityParams = DEF
             if len(got) >= int(min_cut_scores):
                 medians[c] = float(np.median(got))
                 centres[c] = float(np.median(got_w))
-        if medians and not np.isfinite(median):
-            median = medians[max(medians)]          # no full window anywhere: the widest kept class anchors
+        if medians and (not np.isfinite(median) or len(score) < int(min_full_scores)):
+            median = medians[max(medians)]          # (almost) no full window: the widest kept class anchors
         if np.isfinite(median):
             deltas = {c: m - median for c, m in medians.items()}
             centres = {c: centres[c] for c in deltas}

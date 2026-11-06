@@ -120,21 +120,24 @@ class NucMolecule:
     def cum_informative(self) -> np.ndarray:
         """Cumulative informative-site counts (length + 1, int64): the cached
         array when there is one, else computed and not kept."""
-        if self._cum_inf is not None:
-            return self._cum_inf
+        ci = self._cum_inf               # read once: another thread may slim the molecule meanwhile
+        if ci is not None:
+            return ci
         return np.concatenate([[0], np.cumsum(self.informative, dtype=np.int64)])
 
     @property
     def n_hits(self) -> int:
-        if self._cum_hit is None:
+        ch = self._cum_hit
+        if ch is None:
             return int(np.count_nonzero(self.hits))
-        return int(self._cum_hit[-1])
+        return int(ch[-1])
 
     @property
     def n_informative(self) -> int:
-        if self._cum_inf is None:
+        ci = self._cum_inf
+        if ci is None:
             return int(np.count_nonzero(self.informative))
-        return int(self._cum_inf[-1])
+        return int(ci[-1])
 
     @property
     def is_supplementary(self) -> bool:
