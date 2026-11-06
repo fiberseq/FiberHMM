@@ -30,8 +30,8 @@ def _track(scores, step=250, first=1000, periods=None):
                            params_digest='abcdef12')
 
 
-def _prototype_call(v, enter=2.0, extend=1.25, min_w=2):
-    """Line-by-line transcription of the explorer's callPatches (JS)."""
+def _reference_call(v, enter=2.0, extend=1.25, min_w=2):
+    """An independent, loop-by-loop statement of the calling rule (no snapping)."""
     n = len(v)
     w = [x if x is not None else ((v[j - 1] + v[j + 1]) / 2 if 0 < j < n - 1 and v[j - 1] is not None
                                   and v[j + 1] is not None else None) for j, x in enumerate(v)]
@@ -86,12 +86,12 @@ def test_hysteresis_gaps_and_open_ends():
                                           params=PatchParams(snap=False, min_tiles=1)).patches) == 1
 
 
-def test_calls_match_the_prototype_on_random_tracks():
+def test_calls_match_an_independent_statement_of_the_rule_on_random_tracks():
     rng = np.random.default_rng(5)
     for _ in range(300):
         n = int(rng.integers(3, 40))
         v = [None if rng.random() < 0.15 else float(np.round(rng.normal(1.2, 1.2), 1)) for _ in range(n)]
-        st, want = _prototype_call(v)
+        st, want = _reference_call(v)
         mp = call_patches(_track(v), ref_median=0.0, params=NOSNAP)       # exact thresholds: no offset
         got = [(p.first_tile, p.last_tile, p.mean_score, p.open_start, p.open_end) for p in mp.patches]
         assert [g[:2] + g[3:] for g in got] == [w[:2] + w[3:] for w in want]

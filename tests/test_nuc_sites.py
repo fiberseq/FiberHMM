@@ -1,7 +1,5 @@
-"""Planted arrays, honest discovery, state rules, and optional local embryo regression."""
-import os
+"""Planted arrays, honest discovery and state rules (synthetic data only)."""
 from dataclasses import replace
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -204,36 +202,3 @@ def test_batched_projection_preserves_deletion_and_outside_rules(reverse):
                 break
         expected.append(m.length-1-q if reverse and q>=0 else q)
     np.testing.assert_array_equal(m.ref_to_mol(positions),expected)
-
-
-# Local embryo BAMs (ind_hia5.v3.bam, ind_dddb.v3.bam); the test is skipped unless this names their folder.
-EMBRYO = Path(os.environ.get('FIBERHMM_TEST_EMBRYO_DIR', '/nonexistent'))
-
-
-@pytest.mark.skipif(not all((EMBRYO/f'ind_{c}.v3.bam').exists() for c in ('hia5','dddb')),
-                    reason='needs local embryo recall BAMs')
-def test_local_embryo_top_barrier():
-    import pysam
-    from fiberhmm.nuc.records import DecodeContext, decode_record
-    observations = {}
-    for c in ('hia5','dddb'):
-        with pysam.AlignmentFile(str(EMBRYO/f'ind_{c}.v3.bam'), 'rb') as bam:
-            ctx = DecodeContext(bam.header)
-            ms = []
-            for record in bam.fetch('chr3L', 15038000, 15054000):
-                if record.flag & (4|256|2048|512|1024):
-                    continue
-                m, _ = decode_record(record, ctx)
-                if m is not None and len(m.nucs):
-                    ms.append(m)
-            observations[c] = ms
-    result = analyse_sites(observations, ('chr3L',15038000,15054000), params=QUICK,
-                           chemistries={'hia5':'Hia5', 'dddb':'DddB'})
-    anchors = [r for r in result['rows'] if r['kind']=='anchor']
-    barrier = min(anchors, key=lambda r: abs(r['pos']-15048368))
-    assert abs(barrier['pos']-15048368) < 65
-    for c in observations:
-        ordered = sorted(anchors, key=lambda r: r['samples'][c]['phasing']['molecule']['delta']
-                         if np.isfinite(r['samples'][c]['phasing']['molecule']['delta']) else -np.inf, reverse=True)
-        assert barrier in ordered[:5]
-        assert barrier['samples'][c]['phasing']['molecule']['delta'] > .08

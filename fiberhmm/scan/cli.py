@@ -266,6 +266,29 @@ NUCGEO_FLAGS = (('nucgeo_tol', 'tol_bp'), ('nucgeo_min_share', 'min_share'), ('n
                 ('nucgeo_edge_min_bp', 'edge_min_bp'))
 
 
+def tiled_bed_geometry_note(planned, modules, params) -> str:
+    """Shared geometries (nuc.geometry) are found per BED interval, over its whole span. A BED interval longer
+    than one unit is scanned as grid units and gets none: the note naming them, or '' when none is affected."""
+    units, info = planned
+    nuc = (params or {}).get('nuc') or {}
+    if 'nuc' not in modules or info.get('mode') != 'bed' or nuc.get('nucpatch') is None \
+            or ('nucgeo' in nuc and nuc['nucgeo'] is None):
+        return ''
+    spans = []                          # each tiled interval: its grid units' zones are contiguous
+    for u in sorted((u for u in units if u.mode == 'grid'), key=lambda u: (u.chrom, u.zone_start)):
+        if spans and spans[-1][0] == u.chrom and spans[-1][2] == u.zone_start:
+            spans[-1][2] = u.zone_end
+        else:
+            spans.append([u.chrom, u.zone_start, u.zone_end])
+    if not spans:
+        return ''
+    shown = ', '.join(f'{c}:{a}-{b}' for c, a, b in spans[:5])
+    more = f' and {len(spans) - 5} more' if len(spans) > 5 else ''
+    width = max(u.end - u.start for u in units)
+    return (f'{len(spans)} BED interval(s) longer than one unit ({shown}{more}) are scanned as grid units and get '
+            f'no nuc.geometry hits or nucgeo states; split them into intervals of at most {width} bp')
+
+
 def _nucpatch_params(parser, args, modules, params):
     """Fold the --nucpatch* / --nucgeo-* flags into ``params['nuc']['nucpatch']`` / ``['nucgeo']``."""
     pgiven = {key: getattr(args, flag) for flag, key in NUCPATCH_FLAGS if getattr(args, flag) is not None}
@@ -401,6 +424,9 @@ def _main(argv=None):
                      zones=[_parse_region(p, z, '--zones') for z in args.zones] if args.zones else None)
     except (PlanError, ScanRefused) as error:
         p.exit(2, f'fiberhmm-scan: error: {error}\n')
+    note = tiled_bed_geometry_note(units, modules, params)
+    if note:
+        print(f'fiberhmm-scan: warning: {note}', file=sys.stderr)
     from fiberhmm.inference.consensus.cli import Progress
     from fiberhmm.scan.runner import run_units
     progress = Progress(args.json_progress)
