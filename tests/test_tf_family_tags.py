@@ -205,3 +205,36 @@ def test_tag_tf_families_projects_sr_groups_in_the_header_frame(tmp_path):
     _write_assignments(assignments, call_start=150, call_end=160)
     summary = tag_tf_families(source, output, assignments)
     assert summary["assigned_tf_sr"] == 1
+
+
+def test_tag_consensus_main_writes_tagged_bam_and_summary(tmp_path, capsys):
+    """A real fiberhmm-tag-consensus main() run (coverage audit item 29): CLI flags reach
+    tag_tf_families, the BAM is written and indexed, the JSON summary goes to stdout, and the
+    @PG/CO header records the command."""
+    import json
+    from fiberhmm.cli.tag_families import main
+
+    source = tmp_path / "source.bam"
+    output = tmp_path / "family.bam"
+    assignments = tmp_path / "assignments.tsv"
+    _make_input(source)
+    _write_assignments(assignments)
+    assert main(["-i", str(source), "-o", str(output), "-a", str(assignments)]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["schema"] == "fiberhmm.tf_family_tagging.v1"
+    assert summary["assigned_tf_sr"] == 1 and summary["assignment_rows"] == 1
+    assert summary["output_bam"] == str(output)
+    assert output.with_suffix(".bam.bai").is_file()
+    with pysam.AlignmentFile(output, "rb") as bam:
+        read = next(bam.fetch(until_eof=True))
+        header = bam.header.to_dict()
+    parsed = parse_ma_tag(read.get_tag("MA"))
+    rows = parse_aq_array(read.get_tag("AQ"), [g[2] for g in parsed["raw_types"]],
+                          [len(g[3]) for g in parsed["raw_types"]])
+    assert rows[-1] == [200, 10, 20, 7, 204]
+    assert any("fiberhmm-tag-consensus" in str(pg.get("CL", "")) for pg in header.get("PG", []))
+
+    # A second run without --force refuses to replace the output (exit status 2 from argparse).
+    with pytest.raises(SystemExit) as refused:
+        main(["-i", str(source), "-o", str(output), "-a", str(assignments)])
+    assert refused.value.code == 2
