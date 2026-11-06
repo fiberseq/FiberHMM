@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from . import identity as I
-from .modules import ORDER, load_module
+from .modules import ORDER, cache_version, load_module
 from .reads import overlapping_records, record_ref, resolve_read_policy, unit_survey
 from .seams import reconcile_anchor, territory_runs
 from .tables import COMMON, TableWriter
@@ -702,7 +702,7 @@ def _run_locked(out, resolved, reference, contigs, units, units_info, mods, poli
         # Calibration runs once per scan; a cached record is reused only for the same inputs, module
         # settings and plan.
         cal_dir = out / WORK / name / '_calibration'
-        cal_key = I.digest([base, name, mod.version, I.settings_hash(settings),
+        cal_key = I.digest([base, name, cache_version(mod), I.settings_hash(settings),
                             plan_digest if mod.calibration_uses_plan(settings) else None])
         cal = None
         cached = cal_dir / 'calibration.json'
@@ -734,7 +734,7 @@ def _run_locked(out, resolved, reference, contigs, units, units_info, mods, poli
         keys = {}
         for u in units:
             up = [[dep, unit_keys[dep][u.unit_id]] for dep in sorted(mod.needs(settings))]
-            keys[u.unit_id] = _unit_key(base, name, mod.version, sh, cal_shas.get(name), u, up)
+            keys[u.unit_id] = _unit_key(base, name, cache_version(mod), sh, cal_shas.get(name), u, up)
         unit_keys[name] = keys
     module_specs = [dict(name=n, settings=s, needs=sorted(m.needs(s)), calibration=calibrations.get(n),
                          unit_keys=unit_keys[n]) for n, m, s in mods]

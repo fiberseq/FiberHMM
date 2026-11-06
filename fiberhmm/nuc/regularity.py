@@ -539,6 +539,10 @@ class ReferenceScores:
     width_step: int = 0
     #: the full window width (bp) the deltas are relative to
     window_bp: int = 0
+    #: width class -> the median width (bp) of the windows whose scores gave its delta: where the delta is placed
+    #: when tiles are read against their width (a class is rarely populated uniformly: cut windows at a molecule's
+    #: ends sit at the grid's own widths, often the class's lower edge)
+    width_centres: Dict[int, float] = field(default_factory=dict)
 
     @property
     def n(self) -> int:
@@ -561,6 +565,8 @@ class ReferenceScores:
             out['width_n'] = {str(w): int(v) for w, v in sorted(self.width_n.items())}
             out['width_step'] = int(self.width_step)
             out['window_bp'] = int(self.window_bp)
+            if self.width_centres:
+                out['width_centres'] = {str(w): round(float(v), 1) for w, v in sorted(self.width_centres.items())}
         return out
 
 
@@ -570,21 +576,26 @@ def reference_widths(ref: Optional[dict]) -> Optional[dict]:
     record)."""
     if not ref or not ref.get('width_deltas'):
         return None
-    return {'deltas': {int(w): float(v) for w, v in ref['width_deltas'].items()},
-            'step': int(ref.get('width_step') or 0), 'window_bp': int(ref.get('window_bp') or 0)}
+    out = {'deltas': {int(w): float(v) for w, v in ref['width_deltas'].items()},
+           'step': int(ref.get('width_step') or 0), 'window_bp': int(ref.get('window_bp') or 0)}
+    if ref.get('width_centres'):
+        out['centres'] = {int(w): float(v) for w, v in ref['width_centres'].items()}
+    return out
 
 
 def tile_reference(widths: Optional[np.ndarray], ref_median: float, ref_widths: Optional[dict]) -> object:
     """The reference median each tile is read against: ``ref_median`` for full-width windows, plus the delta of
-    the tile's window width (interpolated between width-class centres; beyond the outer classes, the nearest one).
-    Returns the scalar ``ref_median`` when there are no per-tile widths or no width deltas."""
+    the tile's window width (interpolated between the classes' sampled widths, ``centres``: the median width of the
+    windows behind each class's delta; a record without them, the class mid-points; beyond the outer classes, the
+    nearest one). Returns the scalar ``ref_median`` when there are no per-tile widths or no width deltas."""
     if widths is None or not ref_widths or not ref_widths.get('deltas'):
         return float(ref_median)
     W, step = int(ref_widths['window_bp']), int(ref_widths['step'])
     cls = sorted((int(w), float(d)) for w, d in ref_widths['deltas'].items() if np.isfinite(d))
     if not cls or W <= 0 or step <= 0:
         return float(ref_median)
-    xs = [min(W, w + step / 2.0) for w, _d in cls] + [float(W)]
+    centres = ref_widths.get('centres') or {}
+    xs = [min(W, float(centres[w]) if w in centres else w + step / 2.0) for w, _d in cls] + [float(W)]
     ys = [d for _w, d in cls] + [0.0]
     order = np.argsort(xs, kind='stable')
     xs, ys = np.asarray(xs)[order], np.asarray(ys)[order]
@@ -696,7 +707,7 @@ def reference_scores(mols: Sequence[NucMolecule], params: RegularityParams = DEF
     width_n: Dict[int, int] = {}
     step = int(params.step_bp)
     if params.ends == 'truncated':
-        medians = {}
+        medians, centres = {}, {}
         by_class: Dict[int, list] = {}            # class -> [(molecule index, start, width)]
         for i, mol in enumerate(mols):
             _c, _ts, _te, ws, we = window_grid(mol.length, params)
@@ -711,7 +722,7 @@ def reference_scores(mols: Sequence[NucMolecule], params: RegularityParams = DEF
         for c in sorted(by_class):
             items = by_class[c]
             pick = np.sort(crng.choice(len(items), size=min(int(cut_windows), len(items)), replace=False))
-            got = []
+            got, got_w = [], []
             for k in pick:
                 i, a, w = items[k]
                 x = _simulate(mols[i], prepared[i], a, w, params, crng)
@@ -720,15 +731,22 @@ def reference_scores(mols: Sequence[NucMolecule], params: RegularityParams = DEF
                 sc, _p = spectral_scores(x[None, :], params, cut=True)
                 if np.isfinite(sc[0]):
                     got.append(float(sc[0]))
+                    got_w.append(w)
             width_n[c] = len(got)
             if len(got) >= int(min_cut_scores):
                 medians[c] = float(np.median(got))
+                centres[c] = float(np.median(got_w))
         if medians and not np.isfinite(median):
             median = medians[max(medians)]          # no full window anywhere: the widest kept class anchors
         if np.isfinite(median):
             deltas = {c: m - median for c, m in medians.items()}
+            centres = {c: centres[c] for c in deltas}
+        else:
+            centres = {}
+    else:
+        centres = {}
     return ReferenceScores(score, median, qs, seed, params.digest()[:8], deltas, width_n,
-                           step if width_n else 0, W if width_n else 0)
+                           step if width_n else 0, W if width_n else 0, centres)
 
 
 # ------------------------------------------------------------------ masked mark ACF
