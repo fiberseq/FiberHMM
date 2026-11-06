@@ -58,7 +58,8 @@ within a kind, and low geometries are numbered L1, L2, ... (high: G1, G2, ...).
 
 Per molecule and geometry (:func:`assign_states`): ``carries`` (a member
 patch), ``partial`` (no member patch of this geometry but one of a geometry
-folded into it), ``absent`` (its tiles cover the span with calls and no member patch),
+folded into it, and its tiles cover the span with calls), ``absent`` (its tiles cover the span with calls and
+no member patch),
 ``no_call`` (covers the span but more than half of the tiles there have no
 score) and ``not_spanned`` (its tiles do not cover the span). Scan states:
 carries = 1, absent = 0, no_call / not_spanned = '.'.
@@ -399,8 +400,8 @@ def molecule_state(lay: MoleculeLayout, g: Geometry, carriers: set, index: int,
                    partial_carriers: frozenset = frozenset()) -> str:
     if index in carriers:
         return CARRIES
-    if index in partial_carriers:
-        return PARTIAL
+    # a partial carrier is callable evidence that the molecule lacks the full span only where it covers that span
+    # with calls: otherwise it is not spanned / no call like any other molecule
     if not len(lay.tile_lo):
         return NOT_SPANNED
     s0, s1 = lay.span
@@ -411,7 +412,7 @@ def molecule_state(lay: MoleculeLayout, g: Geometry, carriers: set, index: int,
         return NOT_SPANNED
     if (lay.tile_state[inside] == NO_CALL).sum() * 2 > inside.sum():
         return NO_CALL_STATE
-    return ABSENT
+    return PARTIAL if index in partial_carriers else ABSENT
 
 
 def assign_states(layouts: Sequence[MoleculeLayout], geometries: Sequence[Geometry]) -> List[Dict[str, str]]:
@@ -482,6 +483,8 @@ def nested_near_duplicates(geometries: Sequence[Geometry], tol_bp: int = 500,
     out = []
     for i, g in enumerate(geometries):
         for h in geometries[i + 1:]:
+            if getattr(g, 'kind', HIGH) != getattr(h, 'kind', HIGH):
+                continue                                    # a high and a low geometry are never one array twice
             inner, outer = (g, h) if g.width <= h.width else (h, g)
             nested = outer.start - tol_bp <= inner.start and inner.end <= outer.end + tol_bp
             ds, de = abs(g.start - h.start), abs(g.end - h.end)

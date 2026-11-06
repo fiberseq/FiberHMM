@@ -248,3 +248,103 @@ def test_line_search_never_accepts_a_non_finite_likelihood():
     y[np.argsort(x + rng.normal(0, 1e-3, n))[-k:]] = 1        # cases all in the x = 0 half: nearly separated
     fit = clogit(x[:, None], y, np.zeros(n, dtype=np.int64), max_iter=40)
     assert np.all(np.isfinite(fit['beta'])) and np.isfinite(fit['loglik'])
+
+
+# ---------------------------------------------------------------- second audit (unverified findings, verified here)
+def test_regularity_params_validate_cut_widths_only_when_truncated_and_bound_the_step():
+    p = RegularityParams(window_bp=800)                       # blank: the cut widths do not apply
+    assert RegularityParams.from_dict(p.to_dict()) == p
+    with pytest.raises(ValueError):
+        RegularityParams(window_bp=800, ends='truncated')      # cut widths above the window
+    assert RegularityParams(window_bp=800, ends='truncated', end_min_bp=500, short_min_bp=500).ends == 'truncated'
+    with pytest.raises(ValueError):
+        RegularityParams(window_bp=1000, step_bp=1500)
+    with pytest.raises(ValueError):
+        RegularityParams(band_bp=(90, 260))                    # the period byte stores period - 100
+
+
+def test_full_random_layout_is_occupied_and_reference_dict_is_json_safe():
+    import json
+    from fiberhmm.nuc.regularity import _random_layout
+    rng = np.random.default_rng(0)
+    assert _random_layout(np.array([100, 100]), 200, rng).all()
+    d = ReferenceScores(np.zeros(0), float('nan'), {0.5: float('nan')}).to_dict()
+    assert d['median'] is None and d['quantiles']['0.5'] is None
+    json.dumps(d, allow_nan=False)
+
+
+def test_min_calls_counts_only_unmasked_calls():
+    L = 4000
+    nucs = [(s, s + 147) for s in range(100, 1500, 190)] + [(s, s + 147) for s in range(2600, 3900, 190)]
+    hits = np.zeros(L, bool)
+    hits[1600:2500:30] = True                                   # every call in the open stretch
+    mol = make_molecule(L, nucs=nucs, hits=hits, name='m')
+    t = sliding_regularity(mol, RegularityParams(mask_open_bp=300))
+    assert (t.n_calls == 0).all() and not np.isfinite(t.score).any()
+
+
+def test_partial_carriers_need_the_span_covered_with_calls():
+    from fiberhmm.nuc.geometries import (NOT_SPANNED, PARTIAL, GeometryParams, assign_states, find_geometries)
+    lays = [_layout(f'f{i}', 'a', [(1000, 4000)]) for i in range(6)]                            # the root
+    lays += [_layout(f's{i}', 'a', [(1000, 2100)], span=(0, 2250)) for i in range(6)]          # child, short reads
+    lays += [_layout(f'c{i}', 'a', [(1000, 2100)]) for i in range(6)]                           # child, spanning
+    G = find_geometries(lays, GeometryParams(fold='all', tol_bp=300, min_share=0.0, min_molecules=3))
+    root = next(g for g in G if g.parent is None and g.width > 2500)
+    st = assign_states(lays, G)
+    assert all(st[i][root.geometry_id] == NOT_SPANNED for i in range(6, 12))
+    assert all(st[i][root.geometry_id] == PARTIAL for i in range(12, 18))
+
+
+def test_near_duplicates_never_pair_a_high_with_a_low_geometry():
+    from fiberhmm.nuc.geometries import Geometry, nested_near_duplicates
+    g = Geometry('G1_x', 1000, 4000, False, False, 5, 5, [], 0, 0, 1.0, 190)
+    h = Geometry('L1_y', 1000, 3000, False, False, 5, 5, [], 0, 0, 1.0, 190, kind='low')
+    assert nested_near_duplicates([g, h]) == []
+    assert nested_near_duplicates([g, Geometry('G2_z', 1000, 3000, False, False, 5, 5, [], 0, 0, 1.0, 190)])
+
+
+def test_cli_low_flags_merge_into_parameters_low():
+    from fiberhmm.scan.cli import _nucpatch_params, _parser as build_parser
+    p = build_parser()
+    params = {'nuc': {'nucpatch': {'low': {'enter': -2.0}}}}
+    _nucpatch_params(p, p.parse_args(['--nucpatch-low-min-tiles', '4']), ['nuc'], params)
+    low = params['nuc']['nucpatch']['low']
+    assert low['enter'] == -2.0 and low['min_tiles'] == 4
+
+
+def test_clogit_without_informative_strata_returns_the_full_schema():
+    from fiberhmm.assoc.clogit import clogit, score_bootstrap
+    fit = clogit(np.ones((6, 1)), np.array([1, 1, 1, 0, 0, 0]), np.array([0, 0, 0, 1, 1, 1]))
+    assert fit['n_strata'] == 0 and fit['u_split'].shape == (6, 1)
+    score_bootstrap(fit, [np.ones((2, 6))], split_strata=True)
+    x = np.r_[np.zeros(5), np.ones(5)][:, None]
+    assert clogit(x, np.array([0, 1] * 5), np.zeros(10, int), max_iter=0)['iterations'] == 0
+
+
+def test_scan_geometry_keys_unique_and_carrier_interval_spans_its_member_patches():
+    from fiberhmm.scan.modules.nuc import _resolve_geo_settings, _unit_geometries
+    from fiberhmm.nuc import geometries as GM
+    geo = _resolve_geo_settings({'min_share': 0.0, 'min_molecules': 2, 'tol_bp': 300})
+    mols = [(_rec(f'a{i}'), _layout(f'a{i}', 'a', [(1000, 3000), (1100, 3100)])) for i in range(3)]
+    out = _Out()
+    _unit_geometries(out, _Unit(), mols, geo, ['a'])
+    st = [s for s in out.states if s.state == '1']
+    assert st and all(s.interval == (1000, 3100) for s in st)
+    # two geometries with one consensus span get distinct keys
+    real_find = GM.find_all_geometries
+
+    def twice(lays, gp, chrom='', kinds=('high',)):
+        G = real_find(lays, gp, chrom=chrom, kinds=kinds)
+        import dataclasses
+        return G + [dataclasses.replace(G[0], geometry_id='G2_dup')]
+    import fiberhmm.nuc.geometries
+    old = fiberhmm.nuc.geometries.find_all_geometries
+    fiberhmm.nuc.geometries.find_all_geometries = twice
+    try:
+        out = _Out()
+        _unit_geometries(out, _Unit(), mols, geo, ['a'])
+    finally:
+        fiberhmm.nuc.geometries.find_all_geometries = old
+    keys = [h.key for h in out.hits]
+    assert len(keys) == len(set(keys)) == 2
+    assert {h.columns['kind'] for h in out.hits} == {'high'}

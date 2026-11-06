@@ -228,7 +228,7 @@ class NucModule(ScanModuleBase):
                                                 'with calls and no member patch; .: no call (over half the '
                                                 'tiles there unscored) or not spanned',
                                      columns=('geometry', 'open_end', 'P', 'width', 'molecules', 'patches',
-                                              'start_mad', 'end_mad', 'edges')))
+                                              'start_mad', 'end_mad', 'edges', 'fold', 'parent', 'kind')))
         return types
 
     def ma_groups(self) -> List[MAGroupDecl]:
@@ -311,9 +311,9 @@ class NucModule(ScanModuleBase):
         widths = reference_widths(ref)
         if ps.get('ref_median') is not None:
             return float(ps['ref_median']), widths
-        if ref is None:
+        if ref is None or ref.get('median') is None:
             raise ValueError(f'nuc: nucpatch needs a reference median for {dataset_id!r} (none in the calibration '
-                             'record; set nucpatch.ref_median)')
+                             'record, or its calibration population had no window to score; set nucpatch.ref_median)')
         return float(ref['median']), widths
 
     def _cal(self, calibration, dataset_id):
@@ -1165,8 +1165,13 @@ def _unit_geometries(out, unit, geo_mols, geo, dataset_ids, aliases=()):
     kinds = ('high', 'low') if any(p.kind == 'low' for lay in lays for p in lay.patches) else ('high',)
     geoms = find_all_geometries(lays, gp, chrom=unit.chrom, kinds=kinds)
     states = assign_states(lays, geoms)
+    seen_keys = set()
     for g in geoms:
         key = f'geometry:{g.start}-{g.end}' if g.kind == 'high' else f'geometry-low:{g.start}-{g.end}'
+        if key in seen_keys:
+            # two geometries of one kind with the same consensus span (different members): one key each
+            key = f'{key}:{g.geometry_id.split("_", 1)[0]}'
+        seen_keys.add(key)
         sup_all = support(lays, states, g.geometry_id)
         open_end = g.open_left or g.open_right
         cols = {'geometry': g.geometry_id, 'open_end': int(open_end),
@@ -1176,8 +1181,7 @@ def _unit_geometries(out, unit, geo_mols, geo, dataset_ids, aliases=()):
                 'edges': 'snapped' if gp.snapped else 'grid',
                 'fold': gp.fold,
                 'parent': g.parent_id.split('_', 1)[0] if g.parent_id else ''}
-        if g.kind != 'high':
-            cols['kind'] = g.kind
+        cols['kind'] = g.kind
         out.hits.append(Hit('nuc.geometry', key, unit.chrom, g.start, g.end, (g.start + g.end) // 2,
                             score=sup_all['share'], label=g.geometry_id.split('_', 1)[0],
                             flags=('open_end',) if open_end else (), columns=cols))
@@ -1199,15 +1203,19 @@ def _unit_geometries(out, unit, geo_mols, geo, dataset_ids, aliases=()):
             out.values.append(Value(key, grp, kind, 'share_partial', sp['share_partial'],
                                     n_molecules=sp['molecules'], n_callable=sp['callable']))
         out.values.append(Value(key, 'all', 'all', 'mean_score', g.mean_score))
-        member = {i: k for i, k in g.members}
+        member: Dict[int, List[int]] = {}
+        for i, k in g.members:
+            member.setdefault(i, []).append(k)
         for i, (rec, lay) in enumerate(geo_mols):
             st = states[i][g.geometry_id]
             cols = {'reason': st, 'patch_start': '', 'patch_end': ''}
             interval = None
             if i in member:
-                p = lay.patches[member[i]]
-                cols.update(patch_start=p.start, patch_end=p.end)
-                interval = (p.start, p.end)
+                # every member patch of the molecule (two patches in one box: their hull)
+                ps = [lay.patches[k] for k in member[i]]
+                a, b = min(p.start for p in ps), max(p.end for p in ps)
+                cols.update(patch_start=a, patch_end=b)
+                interval = (a, b)
             out.states.append(State(key, rec, SCAN_STATE[st], (_REASON[st],), cols, interval))
         for rec, i in aliases:
             st = states[i][g.geometry_id]

@@ -188,7 +188,8 @@ def test_blank_ends_are_byte_identical_to_the_parameters_before_read_end_modes()
     mol = _array(9_731, rng)
     a, b = sliding_regularity(mol), sliding_regularity(mol, RegularityParams.from_dict(old))
     assert track_rows(a) == track_rows(b)
-    for bad in (dict(ends='both'), dict(end_min_bp=10), dict(short_min_bp=5000)):
+    # the cut-window widths are checked where they apply (ends 'truncated')
+    for bad in (dict(ends='both'), dict(ends='truncated', end_min_bp=10), dict(ends='truncated', short_min_bp=5000)):
         with pytest.raises(ValueError):
             RegularityParams(**bad)
 

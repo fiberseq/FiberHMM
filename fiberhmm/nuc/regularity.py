@@ -100,16 +100,18 @@ class RegularityParams:
     def __post_init__(self):
         if self.ends not in ENDS:
             raise ValueError(f'nucreg: ends must be one of {ENDS}, not {self.ends!r}')
-        if not (64 <= self.end_min_bp <= self.window_bp) or not (64 <= self.short_min_bp <= self.window_bp):
+        # the cut-window widths matter (and are stored) only for ends 'truncated'
+        if self.ends == 'truncated' and (not (64 <= self.end_min_bp <= self.window_bp)
+                                         or not (64 <= self.short_min_bp <= self.window_bp)):
             raise ValueError('nucreg: end_min_bp and short_min_bp must be between 64 and window_bp')
         if self.signal not in SIGNALS:
             raise ValueError(f'nucreg: signal must be one of {SIGNALS}, not {self.signal!r}')
-        if self.window_bp < 64 or self.step_bp < 1 or self.nfft < self.window_bp:
-            raise ValueError('nucreg: need window_bp >= 64, step_bp >= 1 and nfft >= window_bp')
+        if self.window_bp < 64 or not 1 <= self.step_bp <= self.window_bp or self.nfft < self.window_bp:
+            raise ValueError('nucreg: need window_bp >= 64, 1 <= step_bp <= window_bp and nfft >= window_bp')
         if not (0 < self.band_bp[0] < self.band_bp[1]) or not (0 < self.ref_bp[0] < self.ref_bp[1]):
             raise ValueError('nucreg: band_bp and ref_bp must be increasing positive (lo, hi)')
-        if self.band_bp[1] > PERIOD_OFFSET + 255:
-            raise ValueError(f'nucreg: band_bp upper end must be at most {PERIOD_OFFSET + 255} bp '
+        if self.band_bp[1] > PERIOD_OFFSET + 255 or self.band_bp[0] <= PERIOD_OFFSET:
+            raise ValueError(f'nucreg: band_bp must lie within {PERIOD_OFFSET + 1}..{PERIOD_OFFSET + 255} bp '
                              '(the period byte stores period - 100)')
         if self.mask_open_bp is not None and self.mask_open_bp <= 0:
             raise ValueError('nucreg: mask_open_bp must be positive (None = off)')
@@ -377,7 +379,8 @@ def sliding_regularity(mol: NucMolecule, params: RegularityParams = DEFAULT_REGU
     keep = open_mask(mol, params.mask_open_bp)
     thin = params.thin_per_kb if params.signal == 'm6a' else None
     hits, thinned, density = thinned_hits(mol, thin, keep)
-    cum = np.concatenate([[0], np.cumsum(hits, dtype=np.int64)])
+    # min_calls counts the calls the spectrum sees: masked stretches' calls are replaced by the window mean
+    cum = np.concatenate([[0], np.cumsum(hits if keep is None else hits & keep, dtype=np.int64)])
     n_calls = cum[starts + W] - cum[starts] if len(starts) else np.zeros(0, dtype=np.int64)
     if params.signal == 'm6a':
         sig = hits.astype(float)
@@ -405,7 +408,7 @@ def _sliding_truncated(mol: NucMolecule, params: RegularityParams, workers: int)
     keep = open_mask(mol, params.mask_open_bp)
     thin = params.thin_per_kb if params.signal == 'm6a' else None
     hits, thinned, density = thinned_hits(mol, thin, keep)
-    cum = np.concatenate([[0], np.cumsum(hits, dtype=np.int64)])
+    cum = np.concatenate([[0], np.cumsum(hits if keep is None else hits & keep, dtype=np.int64)])
     n_calls = cum[we] - cum[ws] if len(ws) else np.zeros(0, dtype=np.int64)
     sig = hits.astype(float) if params.signal == 'm6a' else occupancy(mol)
     score = np.full(len(centres), np.nan)
@@ -488,8 +491,10 @@ class ReferenceScores:
         return bool(n >= min_scores and np.isfinite(self.median))
 
     def to_dict(self) -> dict:
-        out = {'n': self.n, 'median': self.median, 'seed': self.seed, 'params_digest': self.params_digest,
-               'quantiles': {str(q): v for q, v in self.quantiles.items()}}
+        """JSON-safe: non-finite numbers (no reference) are None."""
+        fin = lambda v: float(v) if v is not None and np.isfinite(v) else None      # noqa: E731
+        out = {'n': self.n, 'median': fin(self.median), 'seed': self.seed, 'params_digest': self.params_digest,
+               'quantiles': {str(q): fin(v) for q, v in self.quantiles.items()}}
         if self.width_n:
             # only with ends 'truncated', so records of full-window references stay identical
             out['width_deltas'] = {str(w): round(float(v), 6) for w, v in sorted(self.width_deltas.items())}
@@ -533,8 +538,10 @@ def _random_layout(sizes: np.ndarray, W: int, rng) -> np.ndarray:
     ``W`` bp: random cut points for the free length, sizes in permuted order."""
     y = np.zeros(W)
     free = W - int(sizes.sum())
-    if not len(sizes) or free <= 0:
+    if not len(sizes):
         return y
+    if free <= 0:
+        return np.ones(W)               # footprints fill the window: fully occupied, whatever the order
     cuts = np.sort(rng.integers(0, free + 1, len(sizes)))
     order = rng.permutation(len(sizes))
     sz = sizes[order]
