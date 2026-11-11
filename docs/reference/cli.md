@@ -579,6 +579,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--json-progress` / `--progress-json` | off | Structured progress on stderr (JSON lines) |
 | `--daf-mask-runs` | — | DAF only: thin targets in same-strand runs of &gt;= N original C (CT) or G (GA) bases in lattices and native replay (2 = CC/GG and longer; 0 = off). Default: per dataset chemistry, DddA keep-one on runs &gt;= 2 (duplex-validated), DddB off |
 | `--daf-run-policy` | `keep-one` | With --daf-mask-runs: keep each run's 5'-most target (default) or drop the run Choices: `keep-one`, `drop`. |
+| `--daf-snp-mask` | — | Exclude SNP sites from DAF observations and native replay (reference-coordinate BED, e.g. fiberhmm-call QC .daf_snps.bed). Opt-in; BAM input only; no SNP discovery |
 | `--no-bam` | off | Save frozen results/reports without materializing family-tagged BAMs |
 | `--bam-scope` | `regions` | Export whole alignments overlapping analyzed windows (default), or the full source BAM Choices: `regions`, `full`. |
 | `--bam-grouping` | `datasets` | One BAM per logical dataset (default) or original source file Choices: `datasets`, `files`. |
@@ -604,6 +605,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--bam-scope` | `regions` | Export alignments overlapping the target windows (default), or the full source BAM Choices: `regions`, `full`. |
 | `--bam-grouping` | `datasets` | One BAM per logical dataset (default) or per source file Choices: `datasets`, `files`. |
 | `--json-progress` | off | Structured progress on stderr |
+| `--daf-snp-mask` | — | Exclude target SNP sites from DAF observations and native replay (reference-coordinate BED). Opt-in; BAM input only; source masks are not inherited |
 | `--cores` | — | Worker processes for scoring (default: this machine's consensus default) |
 | `--dataset-map` | — | Use the frozen per-channel boxes and spots of source dataset SOURCE for target dataset TARGET (needed when several source datasets share the target chemistry) |
 | `--include-training-molecules` | off | Score molecules the catalog was trained on (default: exclude them, as for staged families); use for self-application checks |

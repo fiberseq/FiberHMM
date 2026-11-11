@@ -136,6 +136,7 @@ def _main(argv=None):
     p.add_argument('--json-progress','--progress-json',action='store_true',help='Structured progress on stderr (JSON lines)')
     p.add_argument('--daf-mask-runs',type=int,default=None,metavar='N',help='DAF only: thin targets in same-strand runs of >= N original C (CT) or G (GA) bases in lattices and native replay (2 = CC/GG and longer; 0 = off). Default: per dataset chemistry, DddA keep-one on runs >= 2 (duplex-validated), DddB off')
     p.add_argument('--daf-run-policy',choices=['keep-one','drop'],default='keep-one',help="With --daf-mask-runs: keep each run's 5'-most target (default) or drop the run")
+    p.add_argument('--daf-snp-mask',metavar='BED',help='Exclude SNP sites from DAF observations and native replay (reference-coordinate BED, e.g. fiberhmm-call QC .daf_snps.bed). Opt-in; BAM input only; no SNP discovery')
     p.add_argument('--no-bam',action='store_true',help='Save frozen results/reports without materializing family-tagged BAMs')
     p.add_argument('--bam-scope',choices=['regions','full'],default='regions',help='Export whole alignments overlapping analyzed windows (default), or the full source BAM')
     p.add_argument('--bam-grouping',choices=['datasets','files'],default='datasets',help='One BAM per logical dataset (default) or original source file')
@@ -186,8 +187,11 @@ def _main(argv=None):
         p.error('Resume an individual window_XXXXXX directory or a pooled run, not the batch parent directory '
                 '(to finish an interrupted multi-window run in place, use --continue with its original inputs and --output)')
     if resume: values=saved_parameters(read_json(resume/'manifest.json')['parameters'])
-    if args.parameters:
-        for k,v in read_json(args.parameters).items(): values.setdefault(k,{}).update(v)
+    from .snp_mask import prepare_mask_option
+    explicit = read_json(args.parameters) if args.parameters else {}
+    try: prepare_mask_option(explicit,args.daf_snp_mask,replay=bool(args.evidence or resume))
+    except ValueError as error: p.error(str(error))
+    for k,v in explicit.items(): values.setdefault(k,{}).update(v)
     from ..depth_cap import NAMES
     for name in NAMES:
         if getattr(args, name) is not None:

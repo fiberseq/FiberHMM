@@ -94,6 +94,40 @@ analysis. `--evidence-pad full` keeps whole-read geometry (memory then grows
 with read length: about 280 KB per 30 kb read). The Python API and FiberBrowser
 keep whole reads unless a pad is passed (`input.evidence_pad_bp`, default -1).
 
+## Optional DAF SNP masking
+
+Consensus reconstructs observations from the BAM; an earlier SNP-masked
+`fiberhmm-call` does **not** permanently mask its sequence or `MD` tag.
+To exclude those variants during consensus, explicitly reuse the SNP BED:
+
+```bash
+fiberhmm-consensus --bam out/sample.calls.bam --region chr1:10000-10500 \
+    --daf-snp-mask out/qc/sample.calls.daf_snps.bed --output out/classes
+```
+
+`--daf-snp-mask BED` (also `input.daf_snp_mask` in `--parameters`) is opt-in.
+It accepts the BED produced by `fiberhmm-call`, `fiberhmm-daf-snps`, or a
+reviewed variant mask; consensus does not call SNPs itself. Coordinates must
+be **0-based, half-open genomic coordinates**, with contig names matching
+the BAM. The mask applies to every DAF dataset in the run, before any pooled
+window orientation. Hia5 observations are unaffected.
+
+Both converted and unconverted observations at masked sites are excluded:
+they contribute neither deamination nor protection evidence. The same mask
+is used for duplicate fingerprints, the scoring lattices and native TF
+replay, including paired duplex observations. It does not refit the input
+BAM's HMM/MSP scaffold or change the source BAM. Native replay must be on
+(`input.correct_native=true`). For haplotype comparisons, use a common,
+reviewed mask on both haplotypes; excluding sites can reduce resolution and
+does not remove every effect of sequence differences on assay sensitivity.
+
+The prepared evidence and dataset model metadata record the mask path,
+SHA-256, unique site count and exclusion policy. `--continue` checks the
+mask file's identity as well as the other inputs. `--evidence`/`--resume`
+reuse already prepared observations and cannot accept a new mask; rebuild
+from BAM to change it. Saved masked evidence can be replayed without the
+original BED. BAM-based [transfer](transfer.md) needs an explicit target mask.
+
 ## How the lattice recaller works
 
 The default engine, the **lattice recaller** (`cr.engine=lattice_recaller`),

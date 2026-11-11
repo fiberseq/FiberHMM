@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.3.0 (unreleased)
+
+### Added
+
+- `fiberhmm-consensus` and BAM-based `fiberhmm-transfer` accept
+  `--daf-snp-mask BED` (`input.daf_snp_mask`) to exclude SNP positions from
+  DAF evidence and native replay. Converted and unconverted masked sites
+  are unknown observations, including on merged duplexes. The mask is
+  recorded in evidence metadata and checked by `--continue`; frozen
+  transfer requires an explicit target mask, and saved-evidence replay
+  cannot change its mask. Previously a mask used by `fiberhmm-call` was not
+  reapplied when consensus reconstructed observations from the BAM.
+
 ## 3.2.1
 
 ### Fixed

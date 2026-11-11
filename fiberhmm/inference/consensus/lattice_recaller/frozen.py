@@ -254,6 +254,9 @@ def transfer_options(catalog, strata, overrides=None, cores=None):
     from ..parameters import parse_options, saved_parameters
     from ...depth_cap import NAMES
     values = saved_parameters(catalog['parameters'])
+    # A source BED is a preparation input in its original genomic frame, not
+    # portable class geometry. Targets must explicitly supply their own mask.
+    values.setdefault('input', {}).pop('daf_snp_mask', None)
     for group, settings in (overrides or {}).items():
         sampling_only = group == 'recaller' and not (set(settings) - set(NAMES))
         if group not in OVERRIDABLE_GROUPS and not sampling_only:

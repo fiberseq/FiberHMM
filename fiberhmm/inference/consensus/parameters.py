@@ -17,6 +17,7 @@ def control(default, label, help, minimum=None, maximum=None, step=None, choices
 
 @dataclass
 class InputOptions:
+    daf_snp_mask: str = control('', 'DAF SNP mask BED', 'Optional reference-coordinate BED of sites excluded from DAF evidence and native replay. Reuse the BED from fiberhmm-call or fiberhmm-daf-snps. Applies to BAM preparation only; saved evidence already fixes its observations.')
     legacy_hia5_annotation_frame: str = control('disabled', 'Legacy Hia5 MSP/nucleosome tag frame', 'Only for BAMs without MA/Ma: explicitly declare whether as/al and ns/nl coordinates use stored SEQ or molecular orientation. Disabled uses molecular when the header shows fibertools wrote the tags (a fibertools nucleosome command with no later FiberHMM caller), otherwise stops; it never guesses or flips REV from the data. The verified ind 2–4 h input uses seq.', choices=['disabled','seq','molecular'])
     correct_native: bool = control(True, "Replay corrected native TF decoder", "Re-score fixed MSPs with the multi-interval decoder. Original BAM calls remain untouched in the native layer.")
     ddda_m5c_correction: bool = control(True, "Honor DddA mCG substrate annotations", "Use the production DddA mCG rate correction at tagged CpGs, in native replay and every downstream lattice score. Untagged observations are unchanged.")

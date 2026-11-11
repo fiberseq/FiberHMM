@@ -1213,11 +1213,18 @@ def hard_observations(
         if read.is_reverse:
             raise ValueError('Joint duplex evidence requires the forward reference-frame merge output')
         conv,ct,ga=decode_ry_consensus(sequence)
-        return encode_daf_both_strand(conv,ct,ga,*masks,edge_trim=10,context_size=context_size), 'BOTH'
+        observations = encode_daf_both_strand(conv,ct,ga,*masks,edge_trim=10,context_size=context_size)
+        from .engine import _daf_snp_masked_query_positions
+        for q in _daf_snp_masked_query_positions(read):
+            observations[q] = 2 * 4 ** (2 * context_size) + 1
+        return observations, 'BOTH'
     # Bases an MM '?' entry leaves unlisted carry no call: they are encoded
     # non-target (as in fiberhmm-call), not as misses.
     if strand_mode == "daf":
-        extracted = extract_modification_calls(read, "daf", context_size)
+        from .engine import _daf_reference_mask
+        snp_sites = _daf_reference_mask(read)
+        extracted = extract_modification_calls(read, "daf", context_size,
+            **({'excluded_reference_positions': snp_sites} if snp_sites else {}))
         if extracted is None:
             return None
         modification_positions, symbol, sequence, unknown_positions = extracted

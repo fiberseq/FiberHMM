@@ -175,6 +175,11 @@ is observational: read sequences and `MD` are unchanged. Outputs go to
 `--no-daf-call-snps`, `--daf-call-snps` (force), `--daf-snp-mask BED` (apply
 a reviewed mask instead), and `--daf-snp-min-*` thresholds.
 
+`fiberhmm-consensus` and BAM-based `fiberhmm-transfer` reconstruct evidence
+from the BAM. To preserve these exclusions, pass the BED explicitly with
+their `--daf-snp-mask` option; masking in `fiberhmm-call` does not rewrite
+the sequence or `MD`. See [consensus SNP masking](consensus.md#optional-daf-snp-masking).
+
 **Standalone.**
 
 ```bash

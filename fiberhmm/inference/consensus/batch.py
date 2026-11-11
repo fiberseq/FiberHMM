@@ -86,6 +86,10 @@ def run_record(datasets, windows, values, options, memo=None):
     Dataset paths are normalised exactly as the loader reads them (a single path may be given as a string)."""
     from .bam import _flatten_paths
     memo = memo if memo is not None else DigestMemo()
+    options = dict(options)
+    mask = values.get('input', {}).get('daf_snp_mask')
+    if mask:
+        options['daf_snp_mask'] = file_identity(mask, memo)
     return dict(datasets=[dict(dataset_id=d['dataset_id'], chemistry=d.get('chemistry'),
                                paths=[file_identity(p, memo) for p in _flatten_paths(d.get('paths') or [])])
                           for d in datasets],

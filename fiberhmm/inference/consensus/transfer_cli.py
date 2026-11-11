@@ -47,6 +47,7 @@ def _main(argv=None):
     parser.add_argument('--bam-scope',choices=['regions','full'],default='regions',help='Export alignments overlapping the target windows (default), or the full source BAM')
     parser.add_argument('--bam-grouping',choices=['datasets','files'],default='datasets',help='One BAM per logical dataset (default) or per source file')
     parser.add_argument('--json-progress',action='store_true',help='Structured progress on stderr')
+    parser.add_argument('--daf-snp-mask',metavar='BED',help='Exclude target SNP sites from DAF observations and native replay (reference-coordinate BED). Opt-in; BAM input only; source masks are not inherited')
     recaller=parser.add_argument_group('lattice_recaller catalogs')
     recaller.add_argument('--cores',type=int,help='Worker processes for scoring (default: this machine\'s consensus default)')
     recaller.add_argument('--dataset-map',action='append',default=[],metavar='TARGET=SOURCE',
@@ -62,7 +63,7 @@ def _main(argv=None):
     if out.exists() and any(out.iterdir()):parser.error('Output directory must be empty')
     out.mkdir(parents=True,exist_ok=True);progress=Progress(args.json_progress)
     if args.freeze_run:
-        if args.bam or args.datasets or args.evidence or args.bed or args.chip_bed:parser.error('--freeze-run accepts no target inputs')
+        if args.bam or args.datasets or args.evidence or args.bed or args.chip_bed or args.daf_snp_mask:parser.error('--freeze-run accepts no target inputs')
         if run_engine(args.freeze_run)==RECALLER_MODE:
             from .lattice_recaller.frozen import CATALOG_NAME
             catalog=export_run(args.freeze_run,out/CATALOG_NAME)
@@ -96,9 +97,11 @@ def _main(argv=None):
     from .regions import load_bed,pool_payloads
     from .bam import load_bam_payload
     from .parameters import parse_options
-    options=parse_options(dict(cr={'engine':'staged_native_families'}))
-    if args.parameters:
-        params=read_json(args.parameters);params.setdefault('cr',{})['engine']='staged_native_families';options=parse_options(params)
+    params=read_json(args.parameters) if args.parameters else {}
+    from .snp_mask import prepare_mask_option
+    try: prepare_mask_option(params,args.daf_snp_mask,replay=bool(args.evidence))
+    except ValueError as error: parser.error(str(error))
+    params.setdefault('cr',{})['engine']='staged_native_families';options=parse_options(params)
     datasets=read_json(args.datasets) if args.datasets else [dict(dataset_id=Path(p).stem,paths=[p],**({'chemistry':args.chemistry} if args.chemistry else {})) for p in (args.bam or [])]
     if len({d['dataset_id'] for d in datasets})!=len(datasets):parser.error('Duplicate dataset names; use --datasets with unique IDs')
     check_chemistry(parser,datasets)
@@ -166,7 +169,7 @@ def _main(argv=None):
         from .bam_export import export_bams
         export_bams(analyses,out/'bams',grouping=args.bam_grouping,scope=args.bam_scope,progress=progress)
     from .harmonized_families.workflow import implementation_hashes
-    write_json(out/'manifest.json',dict(implementation_sha256=implementation_hashes(),preparation_parameters=read_json(args.parameters) if args.parameters else None,schema='fiberhmm.transfer_run.v1',model_sha256=bundle['content_sha256'],windows=len(windows),refitted=False,
+    write_json(out/'manifest.json',dict(implementation_sha256=implementation_hashes(),preparation_parameters=params,schema='fiberhmm.transfer_run.v1',model_sha256=bundle['content_sha256'],windows=len(windows),refitted=False,
         source_provenance=bundle['provenance'],input_digests=[r['input_digest'] for r in all_results],training_molecule_exclusions=sum(len(r['exclusions']) for r in all_results),
         chip_label='peak overlaps supplied window' if args.chip_bed else None))
     rows=''.join('<tr>'+''.join('<td>'+html.escape(str(r.get(k,'')))+'</td>' for k in summary_fields)+'</tr>' for r in summary)
@@ -199,7 +202,10 @@ def _apply_recaller(args,parser,out,progress,model_path):
     if not args.evidence and not args.bed:parser.error('BAM transfer requires oriented BED6')
     if args.evidence and args.chip_bed:parser.error('ChIP evaluation requires explicit target BED windows')
     catalog=F.load_catalog(model_path);frame=catalog['frame']['region'];width=frame['end']-frame['start']
-    overrides=read_json(args.parameters) if args.parameters else None
+    overrides=read_json(args.parameters) if args.parameters else {}
+    from .snp_mask import prepare_mask_option
+    try: prepare_mask_option(overrides,args.daf_snp_mask,replay=bool(args.evidence))
+    except ValueError as error: parser.error(str(error))
     try:F.transfer_options(catalog,[],overrides,1)   # a group the catalog fixes, or a bad value: a usage error
     except ValueError as error:parser.error(f'--parameters {args.parameters}: {error}')
     dataset_map={}
