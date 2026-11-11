@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.0.4
+
+### Fixed
+
+- `fiberhmm-pipeline` records the DAF chimera mode once in the `call_args` of
+  `outputs.json`. Before, each re-call that passed those settings back (for
+  example a FiberBrowser Library re-call) added another `--chimeras <mode>`,
+  so the settings grew with every generation and the Library listed the mode
+  as a custom option. Calls are unchanged.
+
 ## 3.0.3
 
 ### Changed
