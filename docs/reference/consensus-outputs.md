@@ -48,17 +48,27 @@ windows; and the exported families).
 | `calls`, `stability` | discovery calls in the class; its prediction strength, averaged over the split-halves |
 | `molecules` | molecules scored (for unscored rows: molecules in the window) |
 | `prevalence`, `prevalence_edge`, `prevalence_loose` | core, edge and loose tiers |
-| `prevalence_lower_bound` | Wilson 95% lower bound of the core prevalence |
+| `prevalence_lower_bound` | Wilson-formula lower bound using `molecules × prevalence`; a heuristic support screen, not an uncertainty-calibrated interval for latent occupancy |
 | `broader`, `other_shape`, `accessible` | the remaining mixture weights |
 | `support_gain_nats`, `supported` | held-out likelihood gain and the support verdict |
-| `resolution_nats`, `resolved` | expected evidence per molecule and the resolution verdict |
+| `resolution_nats`, `resolved` | median span `KL(p_accessible || p_protected)` over molecules with sites spanning the span ±30 bp, and the resolution verdict; computed before channel edge contraction |
 | `spots` | learned internal spots, `position:rate` |
 | `edge_contraction` | the kept contraction, or why it was rejected (`from <channel>: …` in a transfer) |
 | `unknown_accessible_fraction` | the channel's accessible fraction for unknown sites |
 | `efficiency` | per-channel efficiency factor, when `efficiency_calibration` is on |
+| `median_span_opportunities` | median usable target count in `[start, end)` among the actual scored molecules |
+| `median_left_flank_opportunities`, `median_right_flank_opportunities` | median usable target count in `[L0 − flank_bp, L0)` and `[R1, R1 + flank_bp)` among scored molecules |
+| `scored_span_accessible_nats`, `scored_span_protected_nats` | median summed span KL in the accessible→protected and protected→accessible directions, respectively, among scored molecules |
 | `order_robustness`, `robust` | only with `--robust N` (`recaller.order_replicates`): the fraction of the N+1 read orders in which the class was found and supported, and whether that reaches `recaller.order_robust_fraction` (default 1: every order). See [Reproducibility](../workflows/consensus.md#reproducibility) |
 
 Unscored rows leave the estimate columns empty.
+
+The opportunity summaries use the actual scored denominator and final channel
+edge boxes. This differs from `resolution_nats`'s spanning-molecule set. Both
+KL directions use the raw model emissions, without learned spots. These are
+observability diagnostics, not extra support thresholds, a guarantee of edge
+resolution, or an empirical calibration test. See
+[Comparing haplotypes and samples](../workflows/consensus-comparisons.md).
 
 ## `molecules.tsv.gz`
 
@@ -66,11 +76,23 @@ Unscored rows leave the estimate columns empty.
 |---|---|
 | `class_id`, `channel`, `unit_id` | class, channel and molecule |
 | `posterior` | EM class posterior |
-| `log_bf` | log of posterior odds over prior odds |
+| `log_bf` | log class likelihood divided by the fitted mixture likelihood of all other hypotheses, with alternative weights renormalized |
 | `label` | `member`, `non_member` or `abstain` (threshold `recaller.bf_threshold`) |
 | `tier` | `core` for members; `edge` / `loose` for non-members counted in those tiers; empty otherwise |
 | `start`, `end` | the molecule's own call for the class (lattice midpoint edges), when it has one |
-| `edge_range` | `l0-l1,r0-r1`: how far each edge can move before a mark contradicts it |
+| `edge_range` | `l0-l1,r0-r1`: left/right edge ranges of the selected call; for core members, the chosen lattice configuration intersected with the class edge boxes; not a confidence interval |
+
+`log_bf` is calculated directly from log likelihoods, using the same `1e-12`
+mixture-weight floor as EM; alternatives whose weights all reach the floor
+are consequently weighted equally. This equals posterior odds divided by effective
+prior odds away from numerical boundaries. Older runs recovered it from
+clipped posterior/prior odds, which could erase evidence near zero or one.
+New manifests record `recaller.label_semantics = likelihood_ratio_v2` (also
+under `transfer` for transfers). Labels, molecule edges and label-gated tiers
+can change at these boundaries; the EM point estimates are unchanged.
+The alternative mixture remains channel-dependent. A `member` is an evidence
+label and can have a low posterior; see the
+[counting discussion](../workflows/consensus-comparisons.md#confident-counts-and-fitted-prevalence-are-different-endpoints).
 
 ## `broader.tsv.gz`
 

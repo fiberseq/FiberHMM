@@ -957,7 +957,10 @@ def extract_modification_calls(read, mode: str, context_size: int = 3,
         ml_tag = []
     if not mm_tag or not ml_tag:
         if mode == 'daf':
-            md_result = getattr(read, '_daf_md_result', None)
+            # Cached strand selection predates this caller's reference mask.
+            # Recompute from MD when applying exclusions, including strand
+            # detection after removing conversion-like SNPs.
+            md_result = None if excluded_reference_positions else getattr(read, '_daf_md_result', None)
             if md_result is None and hasattr(read, 'get_aligned_pairs'):
                 from fiberhmm.daf.encoder import get_daf_positions
                 md_result = get_daf_positions(read, excluded_reference_positions=excluded_reference_positions) if excluded_reference_positions else get_daf_positions(read)

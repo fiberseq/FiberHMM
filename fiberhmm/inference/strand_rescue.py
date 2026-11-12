@@ -1213,9 +1213,13 @@ def hard_observations(
         if read.is_reverse:
             raise ValueError('Joint duplex evidence requires the forward reference-frame merge output')
         conv,ct,ga=decode_ry_consensus(sequence)
-        observations = encode_daf_both_strand(conv,ct,ga,*masks,edge_trim=10,context_size=context_size)
         from .engine import _daf_snp_masked_query_positions
-        for q in _daf_snp_masked_query_positions(read):
+        excluded = _daf_snp_masked_query_positions(read)
+        # As in single-strand extraction, remove converted SNPs before context
+        # restoration and adjacent-target thinning, not only after encoding.
+        ct, ga = set(ct) - excluded, set(ga) - excluded
+        observations = encode_daf_both_strand(conv,ct,ga,*masks,edge_trim=10,context_size=context_size)
+        for q in excluded:
             observations[q] = 2 * 4 ** (2 * context_size) + 1
         return observations, 'BOTH'
     # Bases an MM '?' entry leaves unlisted carry no call: they are encoded

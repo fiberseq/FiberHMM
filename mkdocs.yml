@@ -100,6 +100,7 @@ nav:
       - Scanning features genome-wide: workflows/scanning.md
       - Associating features: workflows/association.md
       - Transferring classes: workflows/transfer.md
+      - Comparing haplotypes and samples: workflows/consensus-comparisons.md
       - Strand rescue: workflows/strand-rescue.md
       - Tag consensus states: workflows/tag-consensus.md
       - Motif footprints (ft footprint analogue): workflows/motif-footprint.md

@@ -67,6 +67,81 @@ def test_duplex_masks_both_opportunity_types(tmp_path):
     assert list(obs[60:64]) == [8193] * 4
 
 
+@pytest.mark.parametrize('strand,sequence,neighbor', [('CT', 'AYCGT', 62), ('GA', 'ACGRT', 62)])
+@pytest.mark.parametrize('context_size', [2, 3])
+@pytest.mark.parametrize('run_min,policy', [(0, 'keep-one'), (2, 'keep-one'), (2, 'drop')])
+def test_duplex_mask_precedes_context_restoration_and_run_thinning(strand, sequence, neighbor, context_size, run_min, policy):
+    from fiberhmm.core.bam_reader import ContextEncoder, daf_run_mask_scope
+    read, _, _ = read_with_variant(strand, 'ry')
+    read.query_sequence = sequence * 40
+    read.set_tag('st', strand)
+    q = 61 if strand == 'CT' else 63
+    with daf_snp_mask_scope({'chr1': {100 + q}}), daf_run_mask_scope(run_min, policy):
+        single, _ = hard_observations(read, 'daf', 'daf', context_size, None)
+        read.set_tag('cs', 'ct;ga')
+        read.set_tag('MA', '200;deam+:1-200;deam-:1-200;msp.:1-200')
+        joint, physical = hard_observations(read, 'daf', 'daf', context_size, None)
+    unknown = 2 * ContextEncoder.get_n_codes(context_size) + 1
+    assert physical == 'BOTH'
+    assert single[q] == joint[q] == unknown
+    assert single[neighbor] != unknown
+    assert joint[neighbor] == single[neighbor]
+
+
+def test_reference_mask_invalidates_cached_md_strand_result():
+    from fiberhmm.daf.encoder import get_daf_positions
+    from fiberhmm.inference.tf_recaller import extract_modification_calls
+    read, _, _ = read_with_variant('CT', 'md')
+    class CachedRead:
+        _daf_md_result = get_daf_positions(read)
+        def __getattr__(self, name):
+            return getattr(read, name)
+    cached = CachedRead()
+    assert cached._daf_md_result[2] == 'CT'
+    # Removing every conversion makes the MD evidence unassignable. A stale
+    # cache must not retain the old CT strand and turn the read into all misses.
+    excluded = {100 + q for q in cached._daf_md_result[0]}
+    assert get_daf_positions(read, excluded_reference_positions=excluded) is None
+    assert extract_modification_calls(cached, 'daf', 3, excluded_reference_positions=excluded) is None
+
+
+@pytest.mark.parametrize('strand,unconverted,converted,q', [('CT', 'ACCGT', 'AYCGT', 61),
+                                                         ('GA', 'ACGGT', 'ACGRT', 63)])
+@pytest.mark.parametrize('duplex', [False, True])
+def test_point_mask_retains_neighbor_context_limitation_and_expanded_mask_removes_it(strand, unconverted, converted, q, duplex):
+    from fiberhmm.core.bam_reader import daf_run_mask_scope
+    def observations(pattern, padding, joint):
+        read, _, _ = read_with_variant(strand, 'ry')
+        # Keep independent R/Y evidence elsewhere so the unconverted version
+        # still has an encoding and a known chemical strand.
+        sequence = list(unconverted * 40)
+        if pattern == converted:
+            sequence[q] = 'Y' if strand == 'CT' else 'R'
+        sequence[11 if strand == 'CT' else 13] = 'Y' if strand == 'CT' else 'R'
+        read.query_sequence = ''.join(sequence)
+        if joint:
+            read.set_tag('cs', 'ct;ga')
+            read.set_tag('MA', '200;deam+:1-200;deam-:1-200;msp.:1-200')
+        mask = {'chr1': set(range(100 + q - padding, 101 + q + padding))}
+        with daf_snp_mask_scope(mask), daf_run_mask_scope(2, 'keep-one'):
+            return hard_observations(read, 'daf', 'daf', 3, None)[0]
+    # Point masks remove the position, not its neighboring sequence effects.
+    # Native unconverted CC/GG can still thin the neighboring target; removing
+    # a conversion leaves T/A there instead. Single and duplex paths agree.
+    point_ref = observations(unconverted, 0, duplex)
+    point_alt = observations(converted, 0, duplex)
+    assert point_ref[q] == point_alt[q] == 8193
+    assert point_ref[62] == 8193 and point_alt[62] != 8193
+    for pattern in (unconverted, converted):
+        assert observations(pattern, 0, False)[62] == observations(pattern, 0, True)[62]
+    expanded_ref = observations(unconverted, 3, duplex)
+    expanded_alt = observations(converted, 3, duplex)
+    # This short-run example becomes invariant after masking the affected
+    # neighborhood; longer runs can require a wider sensitivity mask.
+    np.testing.assert_array_equal(expanded_ref, expanded_alt)
+    assert all(expanded_ref[q-3:q+4] == 8193)
+
+
 def test_mm_deamination_and_unconverted_sites_are_both_masked():
     import array
     read, hit, miss = read_with_variant('CT', 'md')

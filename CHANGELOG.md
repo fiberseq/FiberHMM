@@ -12,6 +12,21 @@
   transfer requires an explicit target mask, and saved-evidence replay
   cannot change its mask. Previously a mask used by `fiberhmm-call` was not
   reapplied when consensus reconstructed observations from the BAM.
+- Consensus/transfer class tables include span and flank opportunity counts
+  and expected information in both accessible/protected directions on scored
+  molecules. A new comparison guide explains strand eligibility, matched
+  source models, variant handling, and limitations of differential counts.
+
+### Fixed
+
+- Lattice-recaller BF labels now use direct log-likelihood ratios against
+  the fitted alternative mixture. Clipping posterior odds could erase strong
+  evidence when EM weights approached zero or one. EM estimates and scientific
+  thresholds are unchanged; affected labels, molecule edges and label-gated
+  tiers can change. Manifests record `label_semantics=likelihood_ratio_v2`.
+- Explicit DAF SNP masks remove duplex conversion calls before context
+  restoration and adjacent-target thinning, matching single-strand behavior.
+  Masked MD extraction also invalidates cached strand decisions.
 
 ## 3.2.1
 

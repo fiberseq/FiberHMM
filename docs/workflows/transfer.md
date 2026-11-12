@@ -6,6 +6,11 @@ discovering or fitting classes again: new datasets at the same locus, or
 other loci aligned to the same frame with oriented BED windows. It works for
 both consensus engines.
 
+For haplotype or sample comparisons, read
+[Comparing haplotypes and samples](consensus-comparisons.md). A shared catalogue
+does not by itself equalize sensitivity or guarantee identical per-channel
+boxes and learned spots; source mapping and target opportunities matter.
+
 ## Two steps
 
 ```bash

@@ -112,14 +112,17 @@ be **0-based, half-open genomic coordinates**, with contig names matching
 the BAM. The mask applies to every DAF dataset in the run, before any pooled
 window orientation. Hia5 observations are unaffected.
 
-Both converted and unconverted observations at masked sites are excluded:
-they contribute neither deamination nor protection evidence. The same mask
+Both converted and unconverted observations at masked coordinates are excluded
+from hit/miss scoring at those coordinates. The same mask
 is used for duplicate fingerprints, the scoring lattices and native TF
 replay, including paired duplex observations. It does not refit the input
 BAM's HMM/MSP scaffold or change the source BAM. Native replay must be on
 (`input.correct_native=true`). For haplotype comparisons, use a common,
-reviewed mask on both haplotypes; excluding sites can reduce resolution and
-does not remove every effect of sequence differences on assay sensitivity.
+reviewed mask on both haplotypes. A point mask does not make neighboring
+contexts or run-thinning decisions invariant to the site's allele or
+conversion state. Inspect and test a common expanded context/run mask for
+allelic interpretation; see [comparison guidance](consensus-comparisons.md#keep-the-compared-class-definitions-and-observations-comparable).
+Excluding more sites can reduce resolution.
 
 The prepared evidence and dataset model metadata record the mask path,
 SHA-256, unique site count and exclusion policy. `--continue` checks the
@@ -188,10 +191,17 @@ each class is then scored on each channel.
    least `support_minimum_lower_bound` (0.02). A channel **resolves** a class
    when the expected evidence per molecule over the class span reaches
    `resolution_nats` (5); an unresolved estimate is reported but flagged.
-5. **Per-molecule labels.** A molecule is a `member` when its posterior odds
-   exceed the class's prior odds by `bf_threshold` (3), a `non_member` below
-   the inverse, and otherwise `abstain`. Prevalence comes from EM and does
-   not use the labels.
+5. **Per-molecule labels.** A molecule is a `member` when its class likelihood
+   exceeds that of the fitted alternative mixture by `bf_threshold` (3), a
+   `non_member` below the inverse, and otherwise `abstain`. The ratio is
+   computed directly in log space so rounding of near-zero or near-one
+   posteriors cannot erase the evidence. Prevalence comes from EM and does
+   not use the labels. A BF-based member need not have a high posterior.
+
+For differential binding, see
+[Comparing haplotypes and samples](consensus-comparisons.md): strand eligibility,
+variant masks, opportunity diagnostics, matched source models and the limits
+of hard counts and fitted prevalence.
 
 The run's mode is always CR: classes are shared by construction, and no SR
 boundary normalization or XCR relationship graph is computed (`sr.enabled`

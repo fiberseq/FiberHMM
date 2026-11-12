@@ -278,9 +278,10 @@ def quantify(sources, classes, tiles, opt, progress, cores=1, frozen=None, sampl
                              spots=';'.join(f'{p}:{v:.3f}' for p, v in res['spots'][c].items()), edge_contraction=res['edges'][c],
                              spot_rates={str(p): float(v) for p, v in res['spots'][c].items()},   # full precision (frozen transfer)
                              unknown_accessible_fraction=round(f, 4),
-                             efficiency=None if not efficiency else round(efficiency.get(ch, 1.), 4)))
-            for u, p, call in zip(res['units'], res['P'][:, c], res['calls']):
-                lab, lbf = Mo.label(p, w[c], opt.bf_threshold)
+                             efficiency=None if not efficiency else round(efficiency.get(ch, 1.), 4),
+                             **{key: round(value, 4) for key, value in Mo.opportunity_diagnostics(res['units'], res['gs'][c], opt).items()}))
+            for u, p, call, log_bf in zip(res['units'], res['P'][:, c], res['calls'], res['log_bf'][:, c]):
+                lab, lbf = Mo.label(p, w[c], opt.bf_threshold, log_bf=log_bf)
                 # tier: 'core' for members; for the rest, 'edge' / 'loose' when their likelier wider or other-shape
                 # protection matches the class (the looser prevalence tiers), with that call's edges.
                 upper = call['tiers'][c] if lab != 'member' else None
@@ -461,7 +462,9 @@ def snapshot(sources, classes, rows, mols, opt, stage='resolved', region=None, b
 CLASS_FIELDS = ['class_id', 'group', 'channel', 'dataset', 'strand', 'start', 'end', 'L0', 'L1', 'R0', 'R1', 'status', 'unscored_reason',
                 'calls', 'stability', 'molecules',
                 'prevalence', 'prevalence_edge', 'prevalence_loose', 'prevalence_lower_bound', 'broader', 'other_shape', 'accessible', 'support_gain_nats', 'supported',
-                'resolution_nats', 'resolved', 'spots', 'edge_contraction', 'unknown_accessible_fraction', 'efficiency']
+                'resolution_nats', 'resolved', 'spots', 'edge_contraction', 'unknown_accessible_fraction', 'efficiency',
+                'median_span_opportunities', 'median_left_flank_opportunities', 'median_right_flank_opportunities',
+                'scored_span_accessible_nats', 'scored_span_protected_nats']
 ROBUST_FIELDS = ['order_robustness', 'robust']     # only with recaller.order_replicates > 0
 MOLECULE_FIELDS = ['class_id', 'channel', 'unit_id', 'posterior', 'log_bf', 'label', 'tier', 'start', 'end', 'edge_range']
 BROADER_FIELDS = ['group', 'classes', 'channel', 'unit_id', 'posterior', 'start', 'end', 'edge_range']
@@ -541,7 +544,7 @@ def run_lattice_recaller(payload, options, output_dir=None, progress=None, froze
                    family_count_cap=None, native_source_modified=False, stages=stages, last_stage='resolved',
                    datasets=[dict(dataset_id=s['dataset_id'], chemistry=s['chemistry'], units=len(s['units']), model=s.get('model_manifest'))
                              for s in sources],
-                   recaller=dict(classes=len(classes),
+                   recaller=dict(classes=len(classes), label_semantics=Mo.LABEL_SEMANTICS,
                                  # Scored on at least one channel and supported on none (hidden from the catalog unless
                                  # recaller.report_unsupported_classes).
                                  unsupported_classes=sorted(c for c, v in status.items() if v == 'unsupported'),
