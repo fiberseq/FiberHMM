@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.0.5
+
+### Changed
+
+- Updated the bundled DddB emission table (`dddb_nanopore.json`). The
+  accessible-state level is now set against PacBio Hia5 Fiber-seq at matched
+  Drosophila amplicons (1.245x the naked-DNA table), and the neighbouring-base
+  effects were refit on a seeded subsample of whole-genome DAF-seq. Nucleosome
+  calls and accessibility are essentially unchanged; DddB footprint calls near
+  the LLR threshold can differ slightly. Re-call DddB data to use the new table.
+
 ## 3.0.4
 
 ### Fixed
