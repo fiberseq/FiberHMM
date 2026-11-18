@@ -1274,8 +1274,18 @@ def load_region_evidence(
     ma_annotation_frame: str = 'molecular',
     sampling_counts: Optional[Dict[str, int]] = None,
     alignment_cache: Optional[Dict[str, object]] = None,
+    evidence_pad: Optional[int] = None,
 ) -> List[ReadEvidence]:
     """Load hard-call evidence and selected TF/nucleosome MA layers.
+
+    ``evidence_pad`` (bp; None = whole read) crops each read's retained
+    geometry to ``[start - pad, end + pad)``: TF/nucleosome/MSP calls that
+    overlap it are kept whole (never clipped), and aligned blocks and m6A
+    fingerprint positions are kept under that span widened to cover the kept
+    calls (``evidence_crop``). DAF fingerprints stay whole-read because
+    amplification-duplicate collapse compares them. Molecular-frame interval
+    copies and CIGAR tuples, used only by strand rescue, are not retained.
+    Requires ``evidence_scope='region'`` and ``projection='full'``.
 
     ``tf`` remains the inference default.  Post-inference family-catalog tools
     can select ``tf_sr`` so rescued and edge-normalized calls are classified
@@ -1297,6 +1307,17 @@ def load_region_evidence(
         raise ValueError("projection must be 'full' or 'targeted_family'")
     if evidence_scope not in {"region", "full-alignment"}:
         raise ValueError("evidence_scope must be 'region' or 'full-alignment'")
+    if evidence_pad is not None and (
+        int(evidence_pad) < 0 or evidence_scope != "region" or projection != "full"
+    ):
+        raise ValueError(
+            "evidence_pad needs a non-negative pad, evidence_scope='region' "
+            "and projection='full'"
+        )
+    crop_span = (
+        (int(start) - int(evidence_pad), int(end) + int(evidence_pad))
+        if evidence_pad is not None else None
+    )
     if required_annotation_overlap is not None:
         annotation_name, annotation_start, annotation_end = (
             required_annotation_overlap
@@ -1481,6 +1502,53 @@ def load_region_evidence(
                     provenance_legacy_frame_used = True
                 parsed_annotations = legacy_annotations(read, read_legacy_frame) or {}
             projected_full = projection == "full"
+            tf_calls = (
+                _mapped_annotations(
+                    read,
+                    tf_layer,
+                    reference_positions,
+                    retain_topology_only=True,
+                    parsed_annotations=parsed_annotations,
+                )
+                if projected_full else []
+            )
+            nuc_calls = (
+                _mapped_annotations(
+                    read,
+                    nuc_layer,
+                    reference_positions,
+                    retain_topology_only=True,
+                    parsed_annotations=parsed_annotations,
+                )
+                if projected_full else []
+            )
+            msp_calls = _mapped_annotations(
+                read,
+                "msp",
+                reference_positions,
+                parsed_annotations=parsed_annotations,
+            )
+            alignment_blocks = tuple(
+                (int(left), int(right)) for left, right in read.get_blocks()
+            )
+            if crop_span is not None:
+                from .evidence_crop import (
+                    crop_blocks, crop_calls, crop_positions, effective_span,
+                )
+                crop_lo, crop_hi = crop_span
+                tf_calls = crop_calls(tf_calls, crop_lo, crop_hi)
+                nuc_calls = crop_calls(nuc_calls, crop_lo, crop_hi)
+                msp_calls = crop_calls(msp_calls, crop_lo, crop_hi)
+                kept_lo, kept_hi = effective_span(
+                    crop_lo, crop_hi,
+                    ((c.start, c.end) for c in (*tf_calls, *nuc_calls, *msp_calls)),
+                )
+                alignment_blocks = crop_blocks(alignment_blocks, kept_lo, kept_hi)
+                if strand_mode != "daf":
+                    fingerprint_positions_array = crop_positions(
+                        fingerprint_positions_array, kept_lo, kept_hi
+                    )
+            keep_molecular = projected_full and crop_span is None
             reads.append(
                 ReadEvidence(
                     name=read.query_name,
@@ -1495,41 +1563,16 @@ def load_region_evidence(
                     steps=steps_array[order],
                     hits=hits_array[order],
                     contexts=contexts_array[order],
-                    tfs=(
-                        _mapped_annotations(
-                            read,
-                            tf_layer,
-                            reference_positions,
-                            retain_topology_only=True,
-                            parsed_annotations=parsed_annotations,
-                        )
-                        if projected_full else []
-                    ),
-                    nucs=(
-                        _mapped_annotations(
-                            read,
-                            nuc_layer,
-                            reference_positions,
-                            retain_topology_only=True,
-                            parsed_annotations=parsed_annotations,
-                        )
-                        if projected_full else []
-                    ),
-                    msps=_mapped_annotations(
-                        read,
-                        "msp",
-                        reference_positions,
-                        parsed_annotations=parsed_annotations,
-                    ),
+                    tfs=tf_calls,
+                    nucs=nuc_calls,
+                    msps=msp_calls,
                     fingerprint_positions=fingerprint_positions_array,
                     library_id=library_id,
                     alignment_flag=int(read.flag),
                     cigar=read.cigarstring,
                     record_sha256=record_sha256,
                     alignment_occurrence=alignment_occurrence,
-                    alignment_blocks=tuple(
-                        (int(left), int(right)) for left, right in read.get_blocks()
-                    ),
+                    alignment_blocks=alignment_blocks,
                     input_index=int(input_index),
                     input_record_ordinal=int(input_record_ordinal),
                     query_length=query_length if projected_full else 0,
@@ -1538,7 +1581,7 @@ def load_region_evidence(
                             (int(operation), int(length))
                             for operation, length in (read.cigartuples or ())
                         )
-                        if projected_full else None
+                        if keep_molecular else None
                     ),
                     molecular_tfs=(
                         _molecular_annotation_intervals(
@@ -1546,7 +1589,7 @@ def load_region_evidence(
                             tf_layer,
                             parsed_annotations=parsed_annotations,
                         )
-                        if projected_full else None
+                        if keep_molecular else None
                     ),
                     molecular_nucs=(
                         _molecular_annotation_intervals(
@@ -1554,7 +1597,7 @@ def load_region_evidence(
                             nuc_layer,
                             parsed_annotations=parsed_annotations,
                         )
-                        if projected_full else None
+                        if keep_molecular else None
                     ),
                     molecular_msps=(
                         _molecular_annotation_intervals(
@@ -1562,7 +1605,7 @@ def load_region_evidence(
                             "msp",
                             parsed_annotations=parsed_annotations,
                         )
-                        if projected_full else None
+                        if keep_molecular else None
                     ),
                 )
             )
@@ -1574,6 +1617,9 @@ def load_region_evidence(
             # targeted region cannot change the returned evidence.
             if max_reads and len(reads) >= max_reads:
                 break
+        if load_diagnostics is not None and evidence_pad is not None:
+            # Recorded only when cropping, so whole-read payload digests are unchanged.
+            load_diagnostics['evidence_pad'] = int(evidence_pad)
         if load_diagnostics is not None and provenance_legacy_frame_used:
             load_diagnostics['legacy_annotation_frame_from_provenance'] = dict(
                 frame=provenance_legacy_frame[0], reason=provenance_legacy_frame[1])

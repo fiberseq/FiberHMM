@@ -119,6 +119,9 @@ def _main(argv=None):
     p.add_argument('--flank',type=int,metavar='BP',help='Analysis evidence flank (sets compute.evidence_flank_bp; default 500, -1 = whole '
                    'molecule): each molecule\'s analysis copy keeps only calls, MSPs and nucleosomes overlapping the window '
                    'plus this flank. Memory only; evidence.json.gz and digests keep the whole molecule')
+    p.add_argument('--evidence-pad',metavar='BP|full',help='Keep each loaded read\'s calls, MSPs, nucleosomes and aligned blocks '
+                   'that overlap the window plus BP (sets input.evidence_pad_bp; default 1000). Calls crossing the pad boundary '
+                   'are kept whole. "full" keeps whole-read geometry (memory grows with read length)')
     p.add_argument('--robust',type=int,metavar='N',help='lattice_recaller only, optional and slower: also rerun discovery under N other read orders '
                    'and mark which classes are robust to read order (supported in every one of the N+1 orders, or the share set by '
                    'recaller.order_robust_fraction; classes.tsv columns '
@@ -195,6 +198,11 @@ def _main(argv=None):
             if value: p.error(f'{flag} applies to --engine staged_native_families only; the lattice recaller discovers and scores classes in one pass '
                               '(every run saves evidence.json.gz for replay with --evidence or --resume)')
     values.setdefault('cr',{})['engine']=engine
+    if args.evidence_pad is not None:
+        from fiberhmm.inference.evidence_crop import parse_pad
+        try: pad=parse_pad(args.evidence_pad)
+        except ValueError: p.error('--evidence-pad takes a number of bp or "full"')
+        values.setdefault('input',{})['evidence_pad_bp']=-1 if pad is None else pad
     for group,name,value in [('families','physical_radius_bp',args.consolidation_bp),('families','stop_after',args.stop_after),
                              ('compute','cores',args.cores),('compute','evidence_flank_bp',args.flank),('compute','fit_cache_dir',args.cache),('recaller','order_replicates',args.robust)]:
         if value is not None: values.setdefault(group,{})[name]=value

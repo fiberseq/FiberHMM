@@ -49,8 +49,15 @@ def _chemistry_runtime(runtime, chemistry, **unused):
     return preset,model,context,mode,hit,miss
 
 
+def evidence_pad(options):
+    """input.evidence_pad_bp as a pad in bp, or None for whole-read evidence (-1)."""
+    pad=int(getattr(options['input'],'evidence_pad_bp',-1))
+    return None if pad<0 else pad
+
+
 def _load_dataset_evidence(state, dsid, chemistry, *, chrom, evidence_start, evidence_end,
-                           runtime, minimum_mapq, legacy_annotation_frame=None, read_names=None, decode_cache=None, alignment_cache=None, **unused):
+                           runtime, minimum_mapq, legacy_annotation_frame=None, read_names=None, decode_cache=None, alignment_cache=None,
+                           pad=None, **unused):
     ds=state.get_dataset(dsid)
     preset,model,context,mode,hit,miss=_chemistry_runtime(runtime,chemistry)
     reads=[]; files=[]
@@ -67,6 +74,7 @@ def _load_dataset_evidence(state, dsid, chemistry, *, chrom, evidence_start, evi
             context_size=context,prob_threshold=preset.get('prob_threshold'),llr_hit=hit,llr_miss=miss,
             min_mapq=minimum_mapq,tf_layer='tf',nuc_layer='nuc',max_reads=0,input_index=i,ma_annotation_frame='auto',
             load_diagnostics=diagnostics,**({'alignment_cache':alignment_cache.setdefault(i,{})} if alignment_cache is not None else {}),
+            **({'evidence_pad':pad} if pad is not None else {}),
             **({'required_read_names':pending,'sampling_counts':diagnostics['decoded_channels']} if read_names is not None else {}),**({'legacy_annotation_frame':legacy_annotation_frame} if legacy_annotation_frame is not None else {}))
         if cached:
             diagnostics = dict(cached['diagnostics'], **diagnostics)
@@ -294,6 +302,7 @@ def _load_payload_once(state,request,options,progress):
                 alignment_cache=(request.get('_alignment_cache',{}).get(dsid) if options['input'].correct_native
                                  or (chemistry=='ddda' and options['input'].ddda_m5c_correction) else None),
                 allow_population=True,require_nucleosomes=False,tf_layer='tf',minimum_mapq=options['input'].minimum_mapq,
+                pad=evidence_pad(options),
                 **({'legacy_annotation_frame':options['input'].legacy_hia5_annotation_frame} if chemistry.startswith('hia5') and options['cr'].engine in (HARMONIZATION_MODE,*STAGED_LIKE) else {}))
             if any(read.pair_partner for read in reads):
                 raise ValueError('Paired source reads are not independent molecules. Run fiberhmm-pair (pair -> merge -> recall) before population consensus; if pairs failed to merge, --pairs-only excludes those unresolved pairs.')
@@ -393,6 +402,13 @@ def _load_payload_once(state,request,options,progress):
                                     u['native_multi_interval_calls']=calls;u['native_multi_interval_tf_intervals']=[c['interval'] for c in calls]
                             found.add(key)
                 if len(found)!=len(lookup):raise ValueError(f'{ds.label}: could not identify every representative alignment for native replay')
+                pad=evidence_pad(options)
+                if pad is not None:
+                    # Replay decoded whole alignments; keep its calls, recalled nucleosomes and MSPs that overlap the
+                    # padded window (whole), as the loader did for the BAM's own calls.
+                    from fiberhmm.inference.evidence_crop import crop_unit_intervals
+                    for read,unit in zip(representatives,units):
+                        crop_unit_intervals(unit,start-pad,end+pad)
                 if alignment_cache is not None:
                     # A replayed alignment is never needed again: its replacement fields are in the
                     # replay cache. Drop the whole SAM record (sequence, MM/ML, every tag) now, so a

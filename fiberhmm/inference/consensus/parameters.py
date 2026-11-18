@@ -29,6 +29,7 @@ class InputOptions:
     hia5_pacbio_minimum_llr: float = control(-1., "Hia5 PacBio native LLR (−1 = preset)", "Native nomination threshold in nats. This is not a scan-length-calibrated false discovery rate.", -1, 10000, .5)
     hia5_nanopore_minimum_llr: float = control(-1., "Hia5 ONT native LLR (−1 = preset)", "Uses the ONT native emission model; a user threshold cannot add unobserved modification opportunities.", -1, 10000, .5)
     molecule_min_jaccard: float = control(.95, "Same-strand duplicate Jaccard", "Collapse amplification copies within a chemical strand. Does not pair complementary strands.", 0, 1, .01)
+    evidence_pad_bp: int = control(1000, "Loaded evidence pad (bp; -1 = whole read)", "Memory control. Each loaded read keeps only the calls, MSPs, nucleosomes, aligned blocks and m6A fingerprint that overlap the window plus this pad; a call that crosses the pad boundary is kept whole, never clipped or dropped. Native replay still decodes the whole alignment, and its calls are cropped by the same rule. Lattice positions are always limited to the window. -1 keeps whole-read geometry (3.0.6 and earlier); DAF duplicate fingerprints always stay whole-read.", -1, 1000000, 50)
     molecule_min_deam: int = control(10, "Minimum duplicate fingerprint hits", "Below this number, do not assert amplification identity from a sparse pattern.", 1, 100000, 1)
 
 
