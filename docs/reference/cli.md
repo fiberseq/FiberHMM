@@ -527,6 +527,9 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--stop-after` | — | staged_native_families only: last stage to compute (the lattice recaller runs in one pass) Choices: `native`, `parents`, `consolidated`, `resolved`. |
 | `--start-at` | `native` | staged_native_families only: consolidation restarts from saved native fits Choices: `native`, `consolidation`. |
 | `--cores` | — | Worker processes (sets compute.cores; default 4) |
+| `--flank` | — | Analysis evidence flank (sets compute.evidence_flank_bp; default 500, -1 = whole molecule): each molecule's analysis copy keeps only calls, MSPs and nucleosomes overlapping the window plus this flank. Memory only; evidence.json.gz and digests keep the whole molecule |
+| `--max-memory-gb` | — | --pool-loci runs: refuse to start, or lower --cores, when the pre-run peak-memory estimate (always logged) exceeds GB. The estimate is a planning figure (~30%) |
+| `--evidence-pad` | — | Keep each loaded read's calls, MSPs, nucleosomes and aligned blocks that overlap the window plus BP (sets input.evidence_pad_bp; default 1000). Calls crossing the pad boundary are kept whole. "full" keeps whole-read geometry (memory grows with read length) |
 | `--robust` | — | lattice_recaller only, optional and slower: also rerun discovery under N other read orders and mark which classes are robust to read order (supported in every one of the N+1 orders, or the share set by recaller.order_robust_fraction; classes.tsv columns order_robustness and robust). Takes about N+1 times as long; the classes themselves are unchanged. Sets recaller.order_replicates (default 0 = off) |
 | `--cache` | — | staged_native_families only: persistent exact native-fit cache directory |
 | `--json-progress` / `--progress-json` | off | Structured progress on stderr (JSON lines) |

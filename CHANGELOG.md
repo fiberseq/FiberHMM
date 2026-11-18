@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- `fiberhmm-consensus` memory: loaded reads are cropped to the window plus
+  `--evidence-pad` bp (default 1000; `full` keeps whole reads). Calls crossing
+  the pad boundary are kept whole. On PacBio Hia5 promoter windows (30 kb
+  reads) classes and per-molecule results are identical to whole-read loading
+  at pads 0-2000, with about 30-50% less peak memory.
+- Pooled runs (`--pool-loci`) with both molecule caps decode only the molecules
+  the caps can select (one global read-name hash threshold), instead of every
+  molecule of every window; the selection and classes are unchanged.
+- The lattice recaller's identity test and scoring keep smaller matrices
+  (bit-identical results), and its worker tasks are built as workers free up.
+- A pre-run peak-memory estimate is logged for pooled runs; `--max-memory-gb`
+  lowers `--cores` to fit or refuses to start.
+
 ## 3.0.6
 
 ### Changed

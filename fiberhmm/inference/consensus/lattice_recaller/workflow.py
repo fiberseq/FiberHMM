@@ -90,10 +90,10 @@ def discover(sources, region, opt, progress, cores=1, sampling=None):
     found, diagnostics, tasks, which = [], [], [], []
     for t, (w0, w1) in enumerate(tiles):
         counts = []
-        Un.tile_units(sources, w0, w1, opt.call_min_llr, opt.call_max_bp,
-                      cap=opt.max_discovery_molecules, seed=opt.sample_seed, counts=counts, select_only=True)
-        available, chosen = counts
+        chosen = Un.tile_units(sources, w0, w1, opt.call_min_llr, opt.call_max_bp,
+                               cap=opt.max_discovery_molecules, seed=opt.sample_seed, counts=counts, select_only=True)
         if sampling is not None:
+            available, _ = counts
             used = chosen if len(chosen) >= opt.minimum_channel_units else []
             sampling.append(Cap.record(available, used, None, opt, lambda pair: Un.channel_of(*pair),
                                        phase='discovery', window=[w0, w1]))
