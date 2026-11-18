@@ -1,0 +1,325 @@
+"""fiberhmm-footprint: motif-anchored footprint scoring from FiberHMM calls."""
+from __future__ import annotations
+
+import array
+
+import pysam
+import pytest
+
+from fiberhmm.inference import motif_footprint as mf
+from fiberhmm.io.ma_tags import ambiguity_to_edge, parse_an_tag, parse_aq_array, parse_ma_tag
+
+L = 1000            # read length
+POS = 1000          # alignment start: query i <-> reference POS + i
+HEADER = {'HD': {'VN': '1.6', 'SO': 'coordinate'}, 'SQ': [{'SN': 'chr1', 'LN': 10000}],
+          'PG': [{'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call', 'VN': '3.0.6',
+                  'DS': 'FiberHMM call; coord=molecular'}]}
+
+
+def ma_tag(nucs, msps, tfs, reverse):
+    """MA/AQ in molecular frame from SEQ-frame intervals.
+
+    tfs: [(start, end, tq, amb_left, amb_right)] (SEQ frame, ambiguities in bp)."""
+    def mol(s, e):
+        return (L - e, e - s) if reverse else (s, e - s)
+    parts, aq = [str(L)], []
+    if nucs:
+        items = sorted(mol(s, e) for s, e in nucs)
+        parts.append('nuc.Q:' + ','.join(f'{s + 1}-{n}' for s, n in items))
+        aq += [200] * len(items)
+    if msps:
+        parts.append('msp.:' + ','.join(f'{s + 1}-{n}' for s, n in sorted(mol(s, e) for s, e in msps)))
+    if tfs:
+        items = []
+        for s, e, tq, al, ar in tfs:
+            el, er = ambiguity_to_edge(al), ambiguity_to_edge(ar)
+            if reverse:
+                el, er = er, el
+            items.append((*mol(s, e), tq, el, er))
+        items.sort()
+        parts.append('tf.QQQ:' + ','.join(f'{s + 1}-{n}' for s, n, *_ in items))
+        for *_, tq, el, er in items:
+            aq += [tq, el, er]
+    return ';'.join(parts), aq
+
+
+def make_read(header, name, *, nucs=(), msps=(), tfs=(), reverse=False, pos=POS, length=L, m6a=(), annotate=True):
+    r = pysam.AlignedSegment(header)
+    r.query_name = name
+    r.query_sequence = 'A' * length
+    r.flag = 16 if reverse else 0
+    r.reference_id = 0
+    r.reference_start = pos
+    r.mapping_quality = 60
+    r.cigar = [(0, length)]
+    r.query_qualities = pysam.qualitystring_to_array('I' * length)
+    if annotate:
+        ma, aq = ma_tag(nucs, msps, tfs, reverse)
+        r.set_tag('MA', ma, 'Z')
+        if aq:
+            r.set_tag('AQ', array.array('B', aq))
+    if m6a:
+        # MM is in original-read orientation; with an all-A SEQ the reverse read's
+        # original strand is all T, so use the A+a call on the SEQ strand (T-a) only for forward reads.
+        assert not reverse
+        pos_sorted = sorted(m6a)
+        deltas = [pos_sorted[0]] + [b - a - 1 for a, b in zip(pos_sorted, pos_sorted[1:])]
+        r.set_tag('MM', 'A+a,' + ','.join(map(str, deltas)) + ';', 'Z')
+        r.set_tag('ML', array.array('B', [250] * len(pos_sorted)))
+    return r
+
+
+def write_bam(path, reads):
+    header = pysam.AlignmentHeader.from_dict(HEADER)
+    built = [f(header) for f in reads]
+    with pysam.AlignmentFile(str(path), 'wb', header=header) as out:
+        for r in sorted(built, key=lambda r: r.reference_start):
+            out.write(r)
+    pysam.index(str(path))
+    return path
+
+
+def bed(tmp_path, rows, name='motifs.bed'):
+    p = tmp_path / name
+    p.write_text(''.join('\t'.join(map(str, r)) + '\n' for r in rows))
+    return p
+
+
+def run(bam, motifs, **opts):
+    options = mf.FootprintOptions(**opts)
+    return mf.run_footprint(bam, motifs, options), options
+
+
+def one(by_motif, motif_index=0, read='r1'):
+    return next(o for o in by_motif[motif_index] if o.read_name == read)
+
+
+# A call with conservative SEQ bounds [200, 230), ambiguity 5 bp left and 3 bp right:
+# outer (exclusive of the terminating hits) = [195, 233) -> reference [1195, 1233).
+CALL = (200, 230, 80, 5, 3)
+MSP = (100, 400)
+
+
+def basic(reverse=False, tfs=(CALL,), msps=(MSP,), **kw):
+    return lambda h: make_read(h, 'r1', msps=msps, tfs=tfs, reverse=reverse, **kw)
+
+
+def motif(start, end, strand='+', name='CTCF', index=0):
+    return mf.Motif(index, 'chr1', POS + start, POS + end, strand, name, mf.sanitize_label(name))
+
+
+@pytest.mark.parametrize('reverse', [False, True])
+def test_outer_vs_conservative_edges(tmp_path, reverse):
+    bam = write_bam(tmp_path / 'a.bam', [basic(reverse)])
+    m = [motif(196, 232)]             # inside outer [195,233), not inside conservative [200,230)
+    o = one(run(bam, m)[0])
+    assert (o.code, o.status, o.edge) == (3, mf.FOOTPRINTED, 'outer')
+    assert o.call[:4] == (POS + 200, POS + 230, POS + 195, POS + 233)
+    o = one(run(bam, m, edges='conservative')[0])
+    assert (o.code, o.status, o.reason) == (1, mf.NOT_FOOTPRINTED, 'partial_overlap')
+    o = one(run(bam, [motif(202, 228)], edges='conservative')[0])
+    assert (o.code, o.edge) == (3, 'conservative')
+
+
+@pytest.mark.parametrize('reverse', [False, True])
+def test_outer_bound_exclusive_vs_inclusive(tmp_path, reverse):
+    bam = write_bam(tmp_path / 'a.bam', [basic(reverse)])
+    # [195, 234) needs the terminating position 233 on the right
+    assert one(run(bam, [motif(195, 234)])[0]).code == 1
+    assert one(run(bam, [motif(195, 234)], outer_bound='inclusive')[0]).code == 3
+    # [194, 233) needs the terminating position 194 on the left
+    assert one(run(bam, [motif(194, 233)])[0]).code == 1
+    assert one(run(bam, [motif(194, 233)], outer_bound='inclusive')[0]).code == 3
+
+
+def test_width_cap(tmp_path):
+    wide = (180, 260, 90, 0, 0)       # 80 bp
+    bam = write_bam(tmp_path / 'a.bam', [basic(tfs=(wide,))])
+    m = [motif(200, 220)]
+    o = one(run(bam, m, max_width=68)[0])
+    assert (o.code, o.reason) == (1, 'too_wide')
+    assert one(run(bam, m, max_width=80)[0]).code == 3
+    assert one(run(bam, m, max_width=0)[0]).code == 3
+    assert mf.FootprintOptions().max_width == mf.PROVISIONAL_MAX_WIDTH
+
+
+def test_narrowest_qualifying_call_is_reported(tmp_path):
+    bam = write_bam(tmp_path / 'a.bam', [basic(tfs=((150, 300, 120, 0, 0), (195, 225, 60, 0, 0)))])
+    o = one(run(bam, [motif(200, 220)], max_width=0)[0])
+    assert o.call[:2] == (POS + 195, POS + 225) and o.call[4] == 60
+
+
+def test_min_llr(tmp_path):
+    bam = write_bam(tmp_path / 'a.bam', [basic(tfs=((195, 225, 49, 0, 0),))])
+    assert one(run(bam, [motif(200, 220)])[0]).reason == 'no_call'
+    assert one(run(bam, [motif(200, 220)], min_llr=4.9)[0]).code == 3
+
+
+def test_motif_at_msp_edge_uses_ft_spans_rule(tmp_path):
+    # ft: MSP start < motif start and MSP end >= motif end (reference)
+    bam = write_bam(tmp_path / 'a.bam', [basic(tfs=((95, 140, 80, 0, 0), (370, 405, 80, 0, 0)))])
+    at_start = one(run(bam, [motif(100, 120)])[0])
+    assert (at_start.code, at_start.status) == (2, mf.NO_MSP)      # footprinted but not eligible
+    assert one(run(bam, [motif(101, 121)])[0]).code == 3
+    assert one(run(bam, [motif(380, 400)])[0]).code == 3            # MSP end == motif end
+    assert one(run(bam, [motif(381, 401)])[0]).code == 2
+
+
+def test_not_spanning_and_unannotated(tmp_path):
+    bam = write_bam(tmp_path / 'a.bam', [
+        basic(),
+        lambda h: make_read(h, 'r2', msps=[(0, 300)], pos=POS + 205),   # starts inside the motif
+        lambda h: make_read(h, 'r3', annotate=False)])
+    by = run(bam, [motif(200, 220)])[0]
+    assert one(by, read='r2').code == mf.SPAN_NOT and one(by, read='r2').status == mf.NOT_SPANNING
+    assert one(by, read='r3').status == mf.UNANNOTATED and one(by, read='r3').code == 0
+    row = mf.motif_row(motif(200, 220), by[0])
+    cols = dict(zip(mf.TABLE_COLUMNS, row))
+    assert (cols['n_spanning_fibers'], cols['n_spanning_msps'], cols['n_footprinted'], cols['n_not_spanning']) == \
+        ('2', '1', '1', '1')
+    assert cols['fraction_footprinted'] == '1'
+
+
+def test_strand_and_read_orientation_agree(tmp_path):
+    fwd = write_bam(tmp_path / 'f.bam', [basic(False, nucs=[(500, 650)])])
+    rev = write_bam(tmp_path / 'r.bam', [basic(True, nucs=[(500, 650)])])
+    for strand in '+-':
+        ms = [motif(196, 232, strand), motif(520, 540, strand, index=1)]
+        a, b = run(fwd, ms)[0], run(rev, ms)[0]
+        for i in (0, 1):
+            oa, ob = one(a, i), one(b, i)
+            assert (oa.code, oa.status, oa.call, oa.nuc_overlap) == (ob.code, ob.status, ob.call, ob.nuc_overlap)
+        assert one(a, 1).nuc_overlap and one(a, 1).code == 0      # inside a nucleosome: no MSP
+
+
+def test_require_unmodified(tmp_path):
+    bam = write_bam(tmp_path / 'a.bam', [basic(m6a=(210,))])
+    assert one(run(bam, [motif(200, 220)])[0]).code == 3
+    o = one(run(bam, [motif(200, 220)], require_unmodified=True)[0])
+    assert (o.code, o.reason) == (1, 'modified')
+    assert one(run(bam, [motif(212, 222)], require_unmodified=True)[0]).code == 3
+
+
+def test_parallel_matches_serial(tmp_path):
+    bam = write_bam(tmp_path / 'a.bam', [basic(), lambda h: make_read(h, 'r2', msps=[MSP], tfs=[CALL], pos=POS + 5000)])
+    ms = [motif(196, 232), motif(5196, 5232, index=1), motif(300, 320, index=2)]
+    s = mf.run_footprint(bam, ms, mf.FootprintOptions())
+    p = mf.run_footprint(bam, ms, mf.FootprintOptions(), cores=2)
+    key = lambda by: {i: sorted((o.read_name, o.code, o.call) for o in v) for i, v in by.items()}
+    assert key(s) == key(p)
+
+
+def test_sanitize_and_bed_grouping(tmp_path):
+    assert mf.sanitize_label('CTCF') == 'CTCF'
+    assert mf.sanitize_label('MA0139.1 CTCF+core-1') == 'MA0139_1_CTCF_core_1'
+    assert mf.sanitize_label('fp_REST') == 'REST'
+    assert mf.sanitize_label('...') == 'motif'
+    p = bed(tmp_path, [('chr1', 10, 20, 'CTCF', 0, '+'), ('chr1', 30, 40, 'REST.v2', 0, '-'), ('chr1', 50, 60)])
+    ms = mf.load_motif_bed(p)
+    assert [(m.label, m.strand) for m in ms] == [('CTCF', '+'), ('REST_v2', '-'), ('motif', '+')]
+    assert {m.label for m in mf.load_motif_bed(p, layer_name='set A')} == {'set_A'}
+    with pytest.raises(ValueError):
+        mf.load_motif_bed(bed(tmp_path, [('chr1', 20, 10)], 'bad.bed'))
+
+
+# ------------------------------------------------------------------ MA output
+
+def layers_of(read):
+    p = parse_ma_tag(read.get_tag('MA'))
+    q = parse_aq_array(read.get_tag('AQ') if read.has_tag('AQ') else None,
+                       [t[2] for t in p['raw_types']], [len(t[3]) for t in p['raw_types']])
+    names = parse_an_tag(read.get_tag('AN')) if read.has_tag('AN') else [''] * len(q)
+    out, k = {}, 0
+    for name, strand, spec, ivs in p['raw_types']:
+        for s, n in ivs:
+            out.setdefault(name, []).append((s, n, q[k], names[k]))
+            k += 1
+    return out
+
+
+def footprint_bam(tmp_path, src, rows, out, layer_name=None, **opts):
+    motifs = mf.load_motif_bed(bed(tmp_path, rows, f'{out}.bed'), layer_name)
+    options = mf.FootprintOptions(**opts)
+    by = mf.run_footprint(src, motifs, options, want_spans=True)
+    return mf.write_annotated_bam(src, tmp_path / out, motifs, by, options, 'x.bed')
+
+
+def reads_by_name(path):
+    with pysam.AlignmentFile(str(path)) as bam:
+        return {r.query_name: r for r in bam.fetch(until_eof=True)}, bam.header.to_dict()
+
+
+@pytest.mark.parametrize('reverse', [False, True])
+def test_ma_annotation_round_trip_and_stacking(tmp_path, reverse):
+    src = write_bam(tmp_path / 'src.bam', [
+        lambda h: make_read(h, 'r1', nucs=[(500, 650)], msps=[MSP], tfs=[CALL, (300, 330, 70, 0, 0)], reverse=reverse)])
+    orig, _ = reads_by_name(src)
+    ctcf = [('chr1', POS + 196, POS + 232, 'CTCF', 0, '+'), ('chr1', POS + 340, POS + 360, 'CTCF', 0, '-')]
+    rest = [('chr1', POS + 302, POS + 328, 'REST', 0, '+')]
+    footprint_bam(tmp_path, src, ctcf, 'one.bam')
+    footprint_bam(tmp_path, tmp_path / 'one.bam', rest, 'two.bam')
+    reads, header = reads_by_name(tmp_path / 'two.bam')
+    r = reads['r1']
+    lay = layers_of(r)
+    assert set(lay) == {'nuc', 'msp', 'tf', 'fp_CTCF', 'fpneg_CTCF', 'fp_REST'}
+    # original sections and AQ bytes are byte-identical
+    o = orig['r1']
+    assert r.get_tag('MA').startswith(o.get_tag('MA') + ';')
+    assert list(r.get_tag('AQ'))[:len(o.get_tag('AQ'))] == list(o.get_tag('AQ'))
+    # round trip: interval maps back to the motif's reference coordinates
+    def ref_span(s, n):
+        if reverse:
+            s = L - s - n
+        return POS + s, POS + s + n
+    (s, n, q, name), = lay['fp_CTCF']
+    assert ref_span(s, n) == (POS + 196, POS + 232) and name == f'chr1:{POS + 196}-{POS + 232}:+'
+    assert q == [80, 30, 2]                                    # tq, conservative width, outer-only edge flag
+    (s, n, q, name), = lay['fpneg_CTCF']
+    assert ref_span(s, n) == (POS + 340, POS + 360) and q == [mf.REASON_CODE['no_call']]
+    (s, n, q, _), = lay['fp_REST']
+    assert ref_span(s, n) == (POS + 302, POS + 328) and q == [70, 30, 1]
+    co = '\n'.join(header['CO'])
+    assert 'fp_CTCF' in co and 'fp_REST' in co and mf.CONTRACT in co
+
+
+def test_rerun_replaces_layer(tmp_path):
+    src = write_bam(tmp_path / 'src.bam', [basic(nucs=[(500, 650)])])
+    footprint_bam(tmp_path, src, [('chr1', POS + 196, POS + 232, 'CTCF', 0, '+')], 'one.bam')
+    footprint_bam(tmp_path, tmp_path / 'one.bam', [('chr1', POS + 202, POS + 228, 'CTCF', 0, '+')], 'two.bam',
+                  edges='conservative')
+    reads, header = reads_by_name(tmp_path / 'two.bam')
+    lay = layers_of(reads['r1'])
+    assert len(lay['fp_CTCF']) == 1 and lay['fp_CTCF'][0][2][2] == 1    # replaced: conservative edge flag
+    assert reads['r1'].get_tag('MA').count('fp_CTCF.') == 1
+    assert sum(c.startswith(mf.CONTRACT) for c in header['CO']) == 1
+    # a re-run whose motifs no longer footprint the read removes the stale layer
+    footprint_bam(tmp_path, tmp_path / 'two.bam', [('chr1', POS + 600, POS + 620, 'CTCF', 0, '+')], 'three.bam')
+    lay = layers_of(reads_by_name(tmp_path / 'three.bam')[0]['r1'])
+    assert 'fp_CTCF' not in lay and set(lay) == {'nuc', 'msp', 'tf'}
+    orig = reads_by_name(src)[0]['r1']
+    three = reads_by_name(tmp_path / 'three.bam')[0]['r1']
+    assert three.get_tag('MA') == orig.get_tag('MA') and list(three.get_tag('AQ')) == list(orig.get_tag('AQ'))
+
+
+def test_layer_name_override_and_header_types(tmp_path):
+    src = write_bam(tmp_path / 'src.bam', [basic()])
+    footprint_bam(tmp_path, src, [('chr1', POS + 196, POS + 232, 'CTCF', 0, '+')], 'o.bam', layer_name='my set')
+    reads, header = reads_by_name(tmp_path / 'o.bam')
+    assert 'fp_my_set' in layers_of(reads['r1'])
+    from fiberhmm.io.bam_header import declared_ma_types
+    assert {'fp_my_set', 'fpneg_my_set'} <= set(declared_ma_types(pysam.AlignmentHeader.from_dict(header)))
+
+
+def test_cli_writes_tables(tmp_path):
+    from fiberhmm.cli.motif_footprint import main
+    src = write_bam(tmp_path / 'src.bam', [basic()])
+    b = bed(tmp_path, [('chr1', POS + 196, POS + 232, 'CTCF', 0, '+')])
+    main(['--bam', str(src), '--bed', str(b), '-o', str(tmp_path / 't.tsv'),
+          '--per-molecule', str(tmp_path / 'm.tsv'), '--out-bam', str(tmp_path / 'o.bam')])
+    t = (tmp_path / 't.tsv').read_text().splitlines()
+    assert t[0].split('\t') == mf.TABLE_COLUMNS
+    assert t[1].split('\t')[6:10] == ['1', '1', '1', '1']
+    m = (tmp_path / 'm.tsv').read_text().splitlines()
+    assert m[0].split('\t') == mf.MOLECULE_COLUMNS and m[1].split('\t')[7:9] == ['footprinted', '3']
+    with pytest.raises(SystemExit):
+        main(['--bam', str(src), '--bed', str(b), '--max-width', '-1'])
