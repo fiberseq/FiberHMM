@@ -605,7 +605,12 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--bam` | required | Indexed BAM with FiberHMM calls (MA tf/nuc/msp layers) |
-| `--bed` | required | Motif BED (BED6: chrom, start, end, name, score, strand; 0-based half-open; .gz ok). Each distinct name is one motif set and one MA layer pair (fp_NAME, fpneg_NAME) |
+| `--bed` | required | Motifs: BED (BED6: chrom, start, end, name, score, strand; 0-based half-open; .gz ok) or bigBed (detected by its magic number; e.g. JASPAR genome-wide TFBS tracks; queried only where the BAM has reads, or in --region). Each distinct name (bigBed: TF-name field when present) is one motif set and one MA layer pair (fp_NAME, fpneg_NAME) |
+| `--motif-name` | — | Keep motifs whose name, TF name or matrix ID matches (case-insensitive; MA0139 matches MA0139.2) |
+| `--min-score` | — | Keep motifs with score column &gt;= this |
+| `--max-pvalue` | — | bigBed with a p-value field only: keep motifs with p &lt;= this (JASPAR UCSC tracks instead encode p in the score: score = -log10(p) x 100) |
+| `--region` | — | bigBed only: query just these regions (repeatable; 0-based half-open) |
+| `--allow-many-layers` | off | Allow more than 20 motif sets (MA layer pairs) in one run |
 | `-o` / `--out` | `-` | Per-motif table, ft footprint style (default: stdout) |
 | `--per-molecule` | — | Also write one row per molecule x motif (status, code, call bounds, LLR), in genomic order of the motifs |
 | `--out-bam` | — | Also write a copy of --bam with per-motif MA layers fp_NAME (footprinted) and fpneg_NAME (eligible, not footprinted). Existing layers are kept; layers of the same name are replaced |

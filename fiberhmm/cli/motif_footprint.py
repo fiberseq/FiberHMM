@@ -18,6 +18,9 @@ import sys
 
 from fiberhmm.inference.motif_footprint import (
     DEFAULT_MAX_WIDTH,
+    MAX_LAYERS_WITHOUT_CONFIRMATION,
+    BigBedMotifs,
+    check_layer_count,
     MOLECULE_COLUMNS,
     TABLE_COLUMNS,
     FootprintOptions,
@@ -34,8 +37,21 @@ def build_parser() -> argparse.ArgumentParser:
         prog='fiberhmm-footprint', description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--bam', required=True, help='Indexed BAM with FiberHMM calls (MA tf/nuc/msp layers)')
     p.add_argument('--bed', required=True,
-                   help='Motif BED (BED6: chrom, start, end, name, score, strand; 0-based half-open; .gz ok). '
-                        'Each distinct name is one motif set and one MA layer pair (fp_NAME, fpneg_NAME)')
+                   help='Motifs: BED (BED6: chrom, start, end, name, score, strand; 0-based half-open; .gz ok) or '
+                        'bigBed (detected by its magic number; e.g. JASPAR genome-wide TFBS tracks; queried only '
+                        'where the BAM has reads, or in --region). Each distinct name (bigBed: TF-name field when '
+                        'present) is one motif set and one MA layer pair (fp_NAME, fpneg_NAME)')
+    p.add_argument('--motif-name', metavar='NAME[,NAME...]',
+                   help='Keep motifs whose name, TF name or matrix ID matches (case-insensitive; MA0139 matches '
+                        'MA0139.2)')
+    p.add_argument('--min-score', type=float, help='Keep motifs with score column >= this')
+    p.add_argument('--max-pvalue', type=float,
+                   help='bigBed with a p-value field only: keep motifs with p <= this (JASPAR UCSC tracks instead '
+                        'encode p in the score: score = -log10(p) x 100)')
+    p.add_argument('--region', action='append', metavar='CHROM[:START-END]',
+                   help='bigBed only: query just these regions (repeatable; 0-based half-open)')
+    p.add_argument('--allow-many-layers', action='store_true',
+                   help=f'Allow more than {MAX_LAYERS_WITHOUT_CONFIRMATION} motif sets (MA layer pairs) in one run')
     p.add_argument('-o', '--out', default='-',
                    help='Per-motif table, ft footprint style (default: stdout)')
     p.add_argument('--per-molecule', metavar='TSV',
@@ -80,6 +96,13 @@ def _open(path):
 
 def main(argv=None):
     p = build_parser()
+    try:
+        return _main(p, argv)
+    except ValueError as error:
+        p.exit(2, f'{p.prog}: error: {error}\n')
+
+
+def _main(p, argv):
     args = p.parse_args(argv)
     if args.cores < 1:
         p.error('--cores must be >= 1')
@@ -89,32 +112,56 @@ def main(argv=None):
                                    min_ml=args.ml, flag_filter=args.filter, min_mapq=args.min_mapq)
     except ValueError as error:
         p.error(str(error))
-    motifs = load_motif_bed(args.bed, args.layer_name)
-    # Stream: each cluster's observations become table rows (kept, small) and
-    # per-molecule rows (written at once, in genomic order), then are dropped.
+    from fiberhmm.io.bigbed_motifs import MotifFilter, is_bigbed
+    names = [n for n in (args.motif_name or '').split(',') if n.strip()] or None
+    filt = MotifFilter(names=names, min_score=args.min_score, max_pvalue=args.max_pvalue) \
+        if (names or args.min_score is not None or args.max_pvalue is not None) else None
+    bigbed = is_bigbed(args.bed)
+    if not bigbed and (args.region or args.max_pvalue is not None):
+        p.error('--region and --max-pvalue apply to bigBed motif input')
+    if bigbed:
+        motifs = BigBedMotifs(args.bed, bam_path=args.bam, regions=args.region, motif_filter=filt,
+                              layer_name=args.layer_name)
+    else:
+        motifs = load_motif_bed(args.bed, args.layer_name, filt)
+        check_layer_count({m.label for m in motifs}, args.allow_many_layers, args.layer_name)
+    # Stream: each cluster's observations become table rows and per-molecule
+    # rows (written at once, in genomic order), then are dropped. A BED table
+    # keeps BED order (rows held until the end); a bigBed table is written as
+    # it goes, in genomic order.
+    out = _open(args.out)
     table = {}
+    labels = set()
+    count = 0
     mol = open(args.per_molecule, 'w') if args.per_molecule else None
     try:
+        out.write('\t'.join(TABLE_COLUMNS) + '\n')
         if mol:
             mol.write('\t'.join(MOLECULE_COLUMNS) + '\n')
         for m, obs in iter_footprint(args.bam, motifs, options, cores=args.cores, msp_bam_path=args.msp_bam):
-            table[m.index] = '\t'.join(motif_row(m, obs))
+            count += 1
+            if m.label not in labels:
+                labels.add(m.label)
+                check_layer_count(labels, args.allow_many_layers, args.layer_name)
+            row = '\t'.join(motif_row(m, obs))
+            if bigbed:
+                out.write(row + '\n')
+            else:
+                table[m.index] = row
             if mol:
                 mol.writelines('\t'.join(molecule_row(m, o)) + '\n' for o in obs)
+        if not bigbed:
+            out.writelines(table[m.index] + '\n' for m in motifs)
     finally:
         if mol:
             mol.close()
-    out = _open(args.out)
-    try:
-        out.write('\t'.join(TABLE_COLUMNS) + '\n')
-        out.writelines(table[m.index] + '\n' for m in motifs)
-    finally:
         if out is not sys.stdout:
             out.close()
-    summary = dict(status='complete', motifs=len(motifs), parameters=options.__dict__)
+    summary = dict(status='complete', motifs=count, motif_sets=len(labels), parameters=options.__dict__)
     if args.out_bam:
         summary['out_bam'] = write_annotated_bam(args.bam, args.out_bam, motifs, None, options, args.bed,
-                                                 args.msp_bam, argv=['fiberhmm-footprint', *(argv or sys.argv[1:])])
+                                                 args.msp_bam, argv=['fiberhmm-footprint', *(argv or sys.argv[1:])],
+                                                 labels=labels)
     print(json.dumps(summary), file=sys.stderr)
 
 

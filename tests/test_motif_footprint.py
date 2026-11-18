@@ -438,3 +438,116 @@ def test_streamed_bam_pass_matches_stored_observations(tmp_path):
                            msp_bam_path=src), options, 'x.bed', msp_bam_path=src)
     mf.write_annotated_bam(src, tmp_path / 'd.bam', motifs, None, options, 'x.bed', msp_bam_path=src)
     assert _strings(tmp_path / 'c.bam') == _strings(tmp_path / 'd.bam') == _strings(tmp_path / 'a.bam')
+
+
+# ------------------------------------------------------------------ bigBed motif input
+
+import shutil
+import subprocess
+
+AUTOSQL = '''table jasparLike
+"JASPAR-like TFBS"
+(
+string chrom; "Chromosome"
+uint chromStart; "Start"
+uint chromEnd; "End"
+string name; "JASPAR matrix ID"
+uint score; "Score"
+char[1] strand; "Strand"
+string TFName; "Transcription factor name"
+)
+'''
+
+
+def _bigbed(tmp_path, rows):
+    if not shutil.which('bedToBigBed'):
+        pytest.skip('bedToBigBed not on PATH')
+    bedp = tmp_path / 'm.bed'
+    bedp.write_text(''.join('\t'.join(map(str, r)) + '\n' for r in sorted(rows, key=lambda r: (r[0], r[1]))))
+    (tmp_path / 'sizes').write_text('chr1\t10000\n')
+    (tmp_path / 'm.as').write_text(AUTOSQL)
+    out = tmp_path / 'motifs.data'          # no .bb extension: detection is by magic number
+    subprocess.run(['bedToBigBed', '-type=bed6+1', f'-as={tmp_path / "m.as"}', str(bedp), str(tmp_path / 'sizes'),
+                    str(out)], check=True, capture_output=True)
+    return out
+
+
+JROWS = [('chr1', POS + 196, POS + 232, 'MA0139.2', 500, '+', 'CTCF'),
+         ('chr1', POS + 340, POS + 360, 'MA0139.2', 300, '+', 'CTCF'),
+         ('chr1', POS + 302, POS + 328, 'MA0138.3', 450, '-', 'REST'),
+         ('chr1', POS + 5196, POS + 5232, 'MA0139.2', 900, '+', 'CTCF')]
+
+
+def _backends():
+    out = []
+    try:
+        import pyBigWig  # noqa: F401
+        out.append('pybigwig')
+    except ImportError:
+        pass
+    if shutil.which('bigBedToBed'):
+        out.append('bigbedtobed')
+    return out or ['none']
+
+
+def _cli_table(tmp_path, bed_path, *extra, name='t.tsv'):
+    from fiberhmm.cli.motif_footprint import main
+    src = tmp_path / 'src.bam'
+    if not src.exists():
+        write_bam(src, [basic(nucs=[(500, 650)]),
+                        lambda h: make_read(h, 'r2', msps=[MSP], tfs=[CALL, (300, 330, 70, 0, 0)], reverse=True),
+                        lambda h: make_read(h, 'r4', msps=[MSP], tfs=[CALL], pos=POS + 5000)])
+    main(['--bam', str(src), '--bed', str(bed_path), '-o', str(tmp_path / name), '--max-width', '0', *extra])
+    return [l.split('\t') for l in (tmp_path / name).read_text().splitlines()[1:]]
+
+
+@pytest.mark.parametrize('backend', _backends())
+def test_bigbed_matches_bed(tmp_path, backend, monkeypatch):
+    if backend == 'none':
+        pytest.skip('no bigBed reader available')
+    from fiberhmm.io import bigbed_motifs
+    monkeypatch.setattr(bigbed_motifs.BigBedReader, '_choose', staticmethod(lambda: backend))
+    bb = _bigbed(tmp_path, JROWS)
+    assert bigbed_motifs.is_bigbed(bb) and not bigbed_motifs.is_bigbed(tmp_path / 'm.bed')
+    plain = bed(tmp_path, [(c, s, e, tf, sc, st) for c, s, e, _id, sc, st, tf in JROWS], 'plain.bed')
+    a = _cli_table(tmp_path, bb, name='a.tsv')
+    b = _cli_table(tmp_path, plain, name='b.tsv')
+    key = lambda rows: sorted(tuple(r[:4] + r[5:]) for r in rows)     # name column: matrix ID vs TF name
+    assert key(a) == key(b) and len(a) == 4
+    assert {r[5] for r in a} == {'fp_CTCF', 'fp_REST'}             # layers from the TFName field
+    # name filter: TF name, matrix ID with or without version, case-insensitive
+    for flt in ('ctcf', 'MA0139.2', 'ma0139'):
+        rows = _cli_table(tmp_path, bb, '--motif-name', flt, name='f.tsv')
+        assert len(rows) == 3 and {r[4] for r in rows} == {'MA0139.2'}
+    assert len(_cli_table(tmp_path, bb, '--min-score', '450', name='s.tsv')) == 3
+    # region-restricted query
+    rows = _cli_table(tmp_path, bb, '--region', f'chr1:{POS + 5000}-{POS + 6000}', name='r.tsv')
+    assert [int(r[1]) for r in rows] == [POS + 5196]
+    # annotated BAM equals the BED run's
+    _cli_table(tmp_path, bb, '--out-bam', str(tmp_path / 'bb.bam'), name='x.tsv')
+    _cli_table(tmp_path, plain, '--out-bam', str(tmp_path / 'bed.bam'), name='y.tsv')
+    assert _strings(tmp_path / 'bb.bam') == _strings(tmp_path / 'bed.bam')
+
+
+def test_many_layers_need_confirmation(tmp_path):
+    rows = [('chr1', POS + 100 + 20 * i, POS + 110 + 20 * i, f'TF{i}', 0, '+') for i in range(25)]
+    b = bed(tmp_path, rows, 'many.bed')
+    with pytest.raises(SystemExit):
+        _cli_table(tmp_path, b)
+    assert len(_cli_table(tmp_path, b, '--allow-many-layers', name='ok.tsv')) == 25
+    assert {r[5] for r in _cli_table(tmp_path, b, '--layer-name', 'all', name='one.tsv')} == {'fp_all'}
+
+
+def test_missing_bigbed_reader_message(tmp_path, monkeypatch):
+    from fiberhmm.io import bigbed_motifs
+    import builtins
+    real_import = builtins.__import__
+
+    def no_pybigwig(name, *a, **k):
+        if name == 'pyBigWig':
+            raise ImportError
+        return real_import(name, *a, **k)
+    monkeypatch.setattr(builtins, '__import__', no_pybigwig)
+    monkeypatch.setattr(bigbed_motifs.shutil, 'which', lambda name: None)
+    with pytest.raises(ValueError, match='pyBigWig'):
+        bigbed_motifs.BigBedReader._choose()

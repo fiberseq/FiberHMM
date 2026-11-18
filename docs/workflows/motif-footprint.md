@@ -17,6 +17,35 @@ fiberhmm-footprint --bam calls.bam --bed ctcf_motifs.bed -o ctcf.footprint.tsv \
     --per-molecule ctcf.molecules.tsv --out-bam calls.ctcf.bam --cores 8
 ```
 
+## Motif input
+
+`--bed` takes a BED (BED3+, BED6 strand honoured, `.gz` allowed) or a bigBed,
+recognised by its magic number whatever the extension. A bigBed, such as the
+JASPAR genome-wide TFBS tracks (hundreds of millions of sites), is never
+expanded: it is queried in 1 Mb pieces, only where the BAM has reads, or only
+in the `--region CHROM[:START-END]` given (repeatable). Results for a bigBed
+are written in genomic order.
+
+- `--motif-name NAME[,NAME...]` keeps motifs whose name, TF-name field (for
+  JASPAR, `TFName`) or matrix ID matches, case-insensitively; `MA0139`
+  matches `MA0139.2`.
+- `--min-score` filters on the score column. JASPAR's UCSC tracks encode the
+  motif p-value there (score = -log10(p) x 100, so `--min-score 400` keeps
+  p <= 1e-4). `--max-pvalue` applies when the file has its own p-value field.
+- For a bigBed, layers are named from the TF-name field when the file has one
+  (`fp_CTCF`), else from the name field (`fp_MA0139_2`).
+- More than 20 motif sets (layer pairs) in one run, e.g. a multi-TF bigBed with
+  no `--motif-name`, is refused unless `--layer-name` merges them or
+  `--allow-many-layers` is given.
+
+Reading bigBed needs pyBigWig (`pip install 'fiberhmm[bigbed]'`) or, as a
+fallback, the UCSC `bigBedToBed` binary on PATH; neither is a FiberHMM
+dependency.
+
+```bash
+fiberhmm-footprint --bam calls.bam --bed JASPAR2024.bb --motif-name CTCF --min-score 500 -o ctcf.tsv
+```
+
 ## Rule
 
 For each molecule and motif, in reference coordinates:

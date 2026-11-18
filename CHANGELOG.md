@@ -10,6 +10,10 @@
   optional per-molecule rows and optional per-motif MA layers. The
   `--max-width` default (74 bp) is a label-free 95th percentile of
   motif-overlapping footprint call widths.
+- `fiberhmm-footprint --bed` also takes a motif bigBed (e.g. JASPAR TFBS
+  tracks), streamed per region, with `--motif-name`, `--min-score`,
+  `--max-pvalue` and `--region`. Reading bigBed needs the new optional extra
+  `fiberhmm[bigbed]` (pyBigWig) or `bigBedToBed` on PATH.
 - `fiberhmm-utils ma-list` and `ma-drop`: list a BAM's MA layers, and remove
   layers (names or globs) while keeping all other tags byte-identical and
   the `@CO MA-TYPES` declaration current.

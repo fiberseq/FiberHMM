@@ -59,6 +59,7 @@ REASONS = {1: 'no_call', 2: 'partial_overlap', 3: 'too_wide', 4: 'modified'}
 REASON_CODE = {v: k for k, v in REASONS.items()}
 
 FP_PREFIX = 'fp_'
+MAX_LAYERS_WITHOUT_CONFIRMATION = 20
 FPNEG_PREFIX = 'fpneg_'
 CONTRACT = 'FIBERHMM-FOOTPRINT-MA:v1:'
 
@@ -78,6 +79,17 @@ def sanitize_label(name: str) -> str:
     if label.startswith(FP_PREFIX):
         label = label[len(FP_PREFIX):]
     return label or 'motif'
+
+
+def check_layer_count(labels, allow_many: bool, layer_name=None) -> None:
+    """Refuse a run that would write more than MAX_LAYERS_WITHOUT_CONFIRMATION
+    layer pairs (e.g. a multi-TF bigBed without --motif-name) unless allowed."""
+    if layer_name or allow_many or len(labels) <= MAX_LAYERS_WITHOUT_CONFIRMATION:
+        return
+    shown = ', '.join(sorted(labels)[:5])
+    raise ValueError(f'more than {MAX_LAYERS_WITHOUT_CONFIRMATION} motif sets ({shown}, ...): each becomes its own MA '
+                     'layer pair. Pick factors with --motif-name, merge them with --layer-name, or pass '
+                     '--allow-many-layers')
 
 
 def layer_names(label: str) -> Tuple[str, str]:
@@ -100,7 +112,7 @@ class Motif:
         return f'{self.chrom}:{self.start}-{self.end}:{self.strand}'
 
 
-def load_motif_bed(path, layer_name: Optional[str] = None) -> List[Motif]:
+def load_motif_bed(path, layer_name: Optional[str] = None, motif_filter=None) -> List[Motif]:
     """Motif BED (BED3+; BED6 strand honoured). Same input conventions as the
     consensus BED loader (gzip, ``#``/track/browser lines skipped, 0-based
     half-open), except that repeated names are expected: the name column is the
@@ -125,26 +137,147 @@ def load_motif_bed(path, layer_name: Optional[str] = None) -> List[Motif]:
             if len(f) >= 6 and f[5] not in ('+', '-', '.'):
                 raise ValueError(f'BED line {n}: strand must be +, - or .')
             strand = '-' if len(f) >= 6 and f[5] == '-' else '+'
+            if motif_filter is not None and not _bed_row_passes(motif_filter, name, f[4] if len(f) >= 5 else None):
+                continue
             label = sanitize_label(layer_name if layer_name else name)
             motifs.append(Motif(len(motifs), f[0], a, b, strand, name, label))
     if not motifs:
-        raise ValueError('BED contains no motifs')
+        raise ValueError('BED contains no motifs' + (' passing the filters' if motif_filter is not None else ''))
     return motifs
+
+
+def _bed_row_passes(filt, name, score) -> bool:
+    names = getattr(filt, '_names', None)
+    if names is not None and not ({name.lower(), name.split('.')[0].lower()} & names):
+        return False
+    if filt.min_score is not None:
+        try:
+            return float(score) >= filt.min_score
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
+class BigBedMotifs:
+    """Motifs streamed from a bigBed, region by region, in genomic order.
+
+    Only regions the BAM has reads in are queried (or the ``regions`` given),
+    in ``chunk_bp`` pieces; a motif belongs to the chunk holding its start, so
+    none is repeated. Labels come from a TF-name field when the file has one
+    (JASPAR's ``TFName``), else from the name field, unless ``layer_name``."""
+
+    def __init__(self, path, bam_path=None, regions=None, motif_filter=None, layer_name=None,
+                 chunk_bp: int = 1_000_000, backend=None):
+        from fiberhmm.io.bigbed_motifs import BigBedReader, MotifFilter, RowInterpreter
+        self.path, self.bam_path, self.layer_name, self.chunk_bp = str(path), bam_path, layer_name, chunk_bp
+        self.reader = BigBedReader(path, backend=backend)
+        self.filter = motif_filter or MotifFilter()
+        self.rows = RowInterpreter(self.reader.fields, self.reader.descriptions, self.filter)
+        self.regions = regions
+        self._cache = {}
+        self._next_index = 0
+        self.max_len = 0
+
+    def _query_regions(self):
+        import pysam
+        from fiberhmm.io.bigbed_motifs import parse_region
+        bb_chroms = self.reader.chroms()
+        if self.regions:
+            return [parse_region(r, bb_chroms) for r in self.regions]
+        with pysam.AlignmentFile(self.bam_path) as bam:
+            lengths = dict(zip(bam.references, bam.lengths))
+            try:
+                covered = [s.contig for s in bam.get_index_statistics() if s.mapped]
+            except (ValueError, AttributeError):
+                covered = list(bam.references)
+            out = []
+            for chrom in covered:
+                if bb_chroms is not None and chrom not in bb_chroms:
+                    continue
+                for a in range(0, lengths[chrom], self.chunk_bp):
+                    b = min(a + self.chunk_bp, lengths[chrom])
+                    if next(bam.fetch(chrom, a, b), None) is not None:
+                        out.append((chrom, a, b))
+        return out
+
+    def _chunk(self, chrom, a, b, index_from=None):
+        """Motifs whose start is in [a, b), sorted."""
+        out = []
+        for c, s, e, rest in self.reader.entries(chrom, a, b):
+            if not (a <= s < b) or e <= s:
+                continue
+            got = self.rows.interpret(rest)
+            if got is None:
+                continue
+            name, label_source, strand = got
+            out.append((s, e, strand, name, label_source))
+        out.sort()
+        motifs = []
+        for s, e, strand, name, label_source in out:
+            label = sanitize_label(self.layer_name if self.layer_name else label_source)
+            motifs.append(Motif(-1, chrom, s, e, strand, name, label))
+            self.max_len = max(self.max_len, e - s)
+        return motifs
+
+    def __iter__(self):
+        """All motifs in genomic order, numbered as they are produced."""
+        for chrom, a, b in self._query_regions():
+            for c0 in range(a, b, self.chunk_bp):
+                for m in self._chunk(chrom, c0, min(b, c0 + self.chunk_bp)):
+                    yield Motif(self._next_index, m.chrom, m.start, m.end, m.strand, m.name, m.label)
+                    self._next_index += 1
+
+    # --- lookups for the annotated-BAM pass ---
+    def _chunk_cached(self, chrom, k):
+        key = (chrom, k)
+        if key not in self._cache:
+            if len(self._cache) >= 16:
+                self._cache.pop(next(iter(self._cache)))
+            ms = self._chunk(chrom, k * self.chunk_bp, (k + 1) * self.chunk_bp)
+            self._cache[key] = [Motif(hash((chrom, m.start, m.end, m.strand, m.name)) & 0x7FFFFFFFFFFF, m.chrom,
+                                      m.start, m.end, m.strand, m.name, m.label) for m in ms]
+        return self._cache[key]
+
+    def overlapping(self, chrom, a, b):
+        if self.regions:
+            from fiberhmm.io.bigbed_motifs import parse_region
+            spans = [parse_region(r) for r in self.regions]
+        else:
+            spans = None
+        pad = max(self.max_len, 1000)
+        out = []
+        for k in range(max(0, a - pad) // self.chunk_bp, (b - 1) // self.chunk_bp + 1):
+            for m in self._chunk_cached(chrom, k):
+                if m.start < b and m.end > a and (spans is None or any(
+                        c == chrom and s <= m.start < e for c, s, e in spans)):
+                    out.append(m)
+        return out
+
+    def cluster_of(self, m):
+        k = m.start // self.chunk_bp
+        return (m.chrom, k), m.chrom, k * self.chunk_bp, (k + 1) * self.chunk_bp
+
+
+def iter_clusters(motifs: Iterable[Motif], max_gap: int = 2000, max_span: int = 200_000):
+    """Group nearby motifs (input in genomic order) so each group's reads are
+    fetched and parsed once; lazy, so a streamed motif source stays streamed."""
+    last: List[Motif] = []
+    c_end = -1
+    for m in motifs:
+        if last and last[0].chrom == m.chrom and m.start - c_end <= max_gap and m.end - last[0].start <= max_span:
+            last.append(m)
+            c_end = max(c_end, m.end)
+            continue
+        if last:
+            yield last
+        last, c_end = [m], m.end
+    if last:
+        yield last
 
 
 def motif_clusters(motifs: Sequence[Motif], max_gap: int = 2000, max_span: int = 200_000) -> List[List[Motif]]:
     """Group nearby motifs so each group's reads are fetched and parsed once."""
-    out: List[List[Motif]] = []
-    for m in sorted(motifs, key=lambda m: (m.chrom, m.start, m.end, m.index)):
-        if out:
-            last = out[-1]
-            c_start = last[0].start
-            c_end = max(x.end for x in last)
-            if last[0].chrom == m.chrom and m.start - c_end <= max_gap and m.end - c_start <= max_span:
-                last.append(m)
-                continue
-        out.append([m])
-    return out
+    return list(iter_clusters(sorted(motifs, key=lambda m: (m.chrom, m.start, m.end, m.index)), max_gap, max_span))
 
 
 # --------------------------------------------------------------------------- options
@@ -521,13 +654,19 @@ def _work(cluster):
     return [_compact(o) for o in score_cluster(w['bam'], w['frames'], cluster, w['options'], w['msp'], w['spans'])]
 
 
-def iter_footprint(bam_path, motifs: Sequence[Motif], options: FootprintOptions, *, cores: int = 1,
+def iter_footprint(bam_path, motifs, options: FootprintOptions, *, cores: int = 1,
                    msp_bam_path=None, want_spans=False, progress=None):
     """Yield ``(motif, observations)`` for every motif, cluster by cluster in
-    genomic order. Each cluster's observations are released once yielded, so a
-    caller that writes and drops them runs in memory bounded by one cluster
+    genomic order. ``motifs`` is a list (sorted here) or a stream already in
+    genomic order (e.g. :class:`BigBedMotifs`), consumed lazily with a bounded
+    look-ahead. Each cluster's observations are released once yielded, so a
+    caller that writes and drops them runs in memory bounded by a few clusters
     per worker. ``call`` is ``(x, y, ox, oy, tq)`` or None."""
-    clusters = motif_clusters(motifs)
+    from itertools import islice
+    if isinstance(motifs, (list, tuple)):
+        clusters = iter(motif_clusters(motifs))
+    else:
+        clusters = iter_clusters(motifs)
     init = (str(bam_path), asdict(options), str(msp_bam_path) if msp_bam_path else None, want_spans)
 
     def emit(cluster, obs):
@@ -537,23 +676,30 @@ def iter_footprint(bam_path, motifs: Sequence[Motif], options: FootprintOptions,
         for m in sorted(cluster, key=lambda m: m.index):
             yield m, grouped.get(m.index, [])
 
-    if cores <= 1 or len(clusters) == 1:
+    done = 0
+    if cores <= 1:
         _init_worker(*init)
         try:
-            for i, c in enumerate(clusters, 1):
+            for c in clusters:
                 yield from emit(c, _work(c))
+                done += 1
                 if progress:
-                    progress(i, len(clusters))
+                    progress(done, None)
         finally:
             _WORKER['bam'].close()
             _WORKER.clear()
         return
     from fiberhmm.inference.mp_context import _MP_CONTEXT
     with _MP_CONTEXT.Pool(cores, initializer=_init_worker, initargs=init) as pool:
-        for i, (c, obs) in enumerate(zip(clusters, pool.imap(_work, clusters, chunksize=1)), 1):
-            yield from emit(c, obs)
-            if progress:
-                progress(i, len(clusters))
+        while True:
+            batch = list(islice(clusters, cores * 16))   # bounded look-ahead: Pool.imap would drain a stream
+            if not batch:
+                break
+            for c, obs in zip(batch, pool.imap(_work, batch, chunksize=1)):
+                yield from emit(c, obs)
+                done += 1
+                if progress:
+                    progress(done, None)
 
 
 def run_footprint(bam_path, motifs: Sequence[Motif], options: FootprintOptions, *, cores: int = 1,
@@ -685,48 +831,63 @@ def annotation_rows(motifs: Sequence[Motif], by_motif: Dict[int, List[Observatio
     return rows
 
 
+class _ListProvider:
+    """Motif lookups for a motif list (see :class:`BigBedMotifs` for streamed motifs)."""
+
+    def __init__(self, motifs):
+        self.cluster = {}
+        by_chrom = defaultdict(list)
+        for ci, cluster in enumerate(motif_clusters(motifs)):
+            span = (ci, cluster[0].chrom, min(m.start for m in cluster), max(m.end for m in cluster))
+            for m in cluster:
+                self.cluster[m.index] = span
+                by_chrom[m.chrom].append(m)
+        self.index = {c: _MotifIndex(ms) for c, ms in by_chrom.items()}
+
+    def overlapping(self, chrom, a, b):
+        index = self.index.get(chrom)
+        return index.overlapping(a, b) if index else []
+
+    def cluster_of(self, m):
+        return self.cluster[m.index]
+
+
 class _StreamScorer:
     """Scores each alignment of a coordinate-ordered stream against the motifs it
-    overlaps, for the annotated-BAM pass: nothing but the current read and a few
-    clusters' MSP overrides (``msp_bam``) is held."""
+    overlaps, for the annotated-BAM pass: nothing but the current read, a few
+    motif chunks and a few clusters' MSP overrides (``msp_bam``) is held."""
 
-    def __init__(self, motifs, options, header, msp_bam_path=None):
+    def __init__(self, provider, options, header, msp_bam_path=None):
         from fiberhmm.io.annotation_frame import MAGroupFrame
         from fiberhmm.qc.states import tag_frames
         self.options, self.msp = options, msp_bam_path
         self.frames = (MAGroupFrame(header), tag_frames(header))
-        self.by_motif = {}
-        by_chrom = defaultdict(list)
-        for ci, cluster in enumerate(motif_clusters(motifs)):
-            for m in cluster:
-                self.by_motif[m.index] = (ci, cluster)
-                by_chrom[m.chrom].append(m)
-        self.index = {c: _MotifIndex(ms) for c, ms in by_chrom.items()}
+        self.provider = provider if hasattr(provider, 'overlapping') else _ListProvider(provider)
         self.cache = {}
 
-    def _override(self, ci, cluster):
+    def _override(self, span):
         if self.msp is None:
             return None
-        if ci not in self.cache:
+        key, chrom, a, b = span
+        if key not in self.cache:
             if len(self.cache) >= 8:
                 self.cache.pop(next(iter(self.cache)))
-            self.cache[ci] = _msp_index(self.msp, cluster[0].chrom, min(m.start for m in cluster),
-                                        max(m.end for m in cluster), self.options)
-        return self.cache[ci]
+            self.cache[key] = _msp_index(self.msp, chrom, a, b, self.options)
+        return self.cache[key]
 
     def rows(self, read):
-        index = self.index.get(read.reference_name) if not read.is_unmapped else None
-        if index is None:
+        if read.is_unmapped:
             return []
+        motifs = self.provider.overlapping(read.reference_name, int(read.reference_start),
+                                           int(read.reference_end or read.reference_start))
         groups = defaultdict(list)
-        for m in index.overlapping(int(read.reference_start), int(read.reference_end or read.reference_start)):
-            groups[self.by_motif[m.index][0]].append(m)
+        for m in motifs:
+            groups[self.provider.cluster_of(m)].append(m)
         out = []
-        for ci, ms in groups.items():
-            sub = _MotifIndex(ms)
-            for o in score_read(read, sub, self.frames, self.options, self._override(ci, self.by_motif[ms[0].index][1]),
-                                want_spans=True):
-                row = annotation_row(next(m for m in ms if m.index == o.motif_index), o)
+        for span, ms in groups.items():
+            by_index = {m.index: m for m in ms}
+            for o in score_read(read, _MotifIndex(ms), self.frames, self.options, self._override(span), want_spans=True):
+                row = annotation_row(by_index[o.motif_index], o)
                 if row:
                     out.append(row)
         return out
@@ -748,8 +909,8 @@ def contract_value(label: str, options: FootprintOptions, bed_path, msp_bam_path
                 annotation_names='AN = motif id chrom:start-end:strand')
 
 
-def write_annotated_bam(bam_path, out_path, motifs: Sequence[Motif], by_motif, options: FootprintOptions,
-                        bed_path, msp_bam_path=None, argv=None) -> dict:
+def write_annotated_bam(bam_path, out_path, motifs, by_motif, options: FootprintOptions,
+                        bed_path, msp_bam_path=None, argv=None, labels=None) -> dict:
     """Copy ``bam_path`` to ``out_path`` with this run's fp_/fpneg_ layers.
 
     ``by_motif`` = stored observations (with query spans), or None to score
@@ -769,7 +930,7 @@ def write_annotated_bam(bam_path, out_path, motifs: Sequence[Motif], by_motif, o
     out_path = Path(out_path)
     if out_path.resolve() == Path(bam_path).resolve():
         raise ValueError('--out-bam must differ from the input BAM')
-    labels = sorted({m.label for m in motifs})
+    labels = sorted(labels if labels is not None else {m.label for m in motifs})
     owned = [n for label in labels for n in layer_names(label)]
     rows = annotation_rows(motifs, by_motif) if by_motif is not None else None
     fd, tmp = mkstemp_shared(prefix='.fiberhmm-footprint-', suffix='.bam', dir=str(out_path.parent or '.'))

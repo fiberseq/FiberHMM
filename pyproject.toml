@@ -60,6 +60,7 @@ consensus = ["numba>=0.55", "scikit-learn>=1.1", "joblib>=1.4.2", "threadpoolctl
 cuda = ["torch>=2.0"]
 plots = ["matplotlib>=3.5"]
 posteriors = ["h5py>=3.0"]
+bigbed = ["pyBigWig>=0.3"]
 all = [
     "matplotlib>=3.5",
     "h5py>=3.0",
