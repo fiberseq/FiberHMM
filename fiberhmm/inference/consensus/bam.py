@@ -393,6 +393,14 @@ def _load_payload_once(state,request,options,progress):
                                     u['native_multi_interval_calls']=calls;u['native_multi_interval_tf_intervals']=[c['interval'] for c in calls]
                             found.add(key)
                 if len(found)!=len(lookup):raise ValueError(f'{ds.label}: could not identify every representative alignment for native replay')
+                if alignment_cache is not None:
+                    # A replayed alignment is never needed again: its replacement fields are in the
+                    # replay cache. Drop the whole SAM record (sequence, MM/ML, every tag) now, so a
+                    # sampled load holds only alignments still waiting for replay (e.g. DAF
+                    # duplicates that may become representatives in a later tranche).
+                    for cached_file in alignment_cache.values():
+                        for key in found:
+                            cached_file.pop(key,None)
                 units,diagnostics=_exclude_recall_failures(units,recall_excluded,ds.label,diagnostics)
                 if replayed is not None:
                     for unit in units:
