@@ -119,6 +119,8 @@ def _main(argv=None):
     p.add_argument('--flank',type=int,metavar='BP',help='Analysis evidence flank (sets compute.evidence_flank_bp; default 500, -1 = whole '
                    'molecule): each molecule\'s analysis copy keeps only calls, MSPs and nucleosomes overlapping the window '
                    'plus this flank. Memory only; evidence.json.gz and digests keep the whole molecule')
+    p.add_argument('--max-memory-gb',type=float,metavar='GB',help='--pool-loci runs: refuse to start, or lower --cores, when the '
+                   'pre-run peak-memory estimate (always logged) exceeds GB. The estimate is a planning figure (~30%%)')
     p.add_argument('--evidence-pad',metavar='BP|full',help='Keep each loaded read\'s calls, MSPs, nucleosomes and aligned blocks '
                    'that overlap the window plus BP (sets input.evidence_pad_bp; default 1000). Calls crossing the pad boundary '
                    'are kept whole. "full" keeps whole-read geometry (memory grows with read length)')
@@ -242,10 +244,13 @@ def _main(argv=None):
                 # CL-CR pools every window into one analysis, so all payloads are needed together.
                 # With molecule caps, only names under one global read-name hash threshold are decoded
                 # (pooled_sampling); otherwise every window is loaded in full.
-                from .pooled_sampling import load_pooled
+                from .pooled_sampling import load_pooled, planned_loader, scanned_molecules
                 def load_names(i,w,names):
                     return load_bam_payload(datasets,{k:w[k] for k in ('chrom','start','end')},options,progress,read_names=names)
-                pooled=load_pooled(datasets,windows,options,progress.report,load_names)
+                loader=planned_loader(datasets,windows,options,progress.report,load_names)
+                molecules=loader.planned_molecules() if loader is not None else scanned_molecules(datasets,windows,options)
+                _memory_plan(p,args,values,options,molecules,windows[0]['end']-windows[0]['start'],progress)
+                pooled=load_pooled(datasets,windows,options,progress.report,load_names,loader=loader)
                 if pooled is None: pooled=pool_payloads([load(i,w) for i,w in enumerate(windows)],windows)
                 count=1;jobs=iter([('pooled',pooled,out)])
             else:
@@ -270,6 +275,26 @@ def _main(argv=None):
             (out/'report.html').write_text('<!doctype html><meta charset="utf-8"><h1>Consensus windows</h1>'+''.join(
                 '<p><a href="'+str(Path(r['output']).relative_to(out))+'/report.html">'+html.escape(r['name'])+'</a></p>' for r in summary))
     print(json.dumps(dict(status='complete',output=str(out),regions=summary,bams=bam_outputs)))
+
+
+def _memory_plan(parser,args,values,options,molecules,window_bp,progress):
+    """Log the pre-run peak-memory estimate; with --max-memory-gb lower compute.cores to fit, or refuse."""
+    from .memory_estimate import estimate,fit_cores,describe
+    from .regions import machine_compute_defaults
+    from .bam import evidence_pad
+    cores=int(values.get('compute',{}).get('cores') or machine_compute_defaults()['cores'])
+    opt=options['recaller'];kw=dict(discovery_cap=opt.max_discovery_molecules,quantification_cap=opt.max_quantification_molecules,
+        pad=evidence_pad(options),read_kb=30)
+    e=estimate(molecules,window_bp,cores,**kw)
+    progress.report('memory',describe(e)+(f'; limit {args.max_memory_gb:g} GB' if args.max_memory_gb else ''))
+    if not args.max_memory_gb or e['total_gb']<=args.max_memory_gb: return
+    fitted=fit_cores(args.max_memory_gb,molecules,window_bp,cores,**kw)
+    if not fitted:
+        parser.exit(2,f'{parser.prog}: error: {describe(estimate(molecules,window_bp,1,**kw))} exceeds --max-memory-gb {args.max_memory_gb:g} even with one core; '
+                    'set --max-discovery-molecules/--max-quantification-molecules, fewer BED windows or a smaller --evidence-pad\n')
+    progress.report('memory_limit',f'--max-memory-gb {args.max_memory_gb:g}: compute.cores {cores} -> {fitted} '
+                    f'({describe(estimate(molecules,window_bp,fitted,**kw))})')
+    values.setdefault('compute',{})['cores']=fitted
 
 
 def _window_task(spec):

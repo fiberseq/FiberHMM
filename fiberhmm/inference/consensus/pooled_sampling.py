@@ -104,6 +104,11 @@ class PooledLoader:
             return True
         return False
 
+    def planned_molecules(self):
+        """Window views the first pass will decode (names under the threshold, per window they overlap)."""
+        selected = {ds: set(v[:self.prefix[ds]]) for ds, v in self.ranked.items()}
+        return sum(1 for (i, ds), rows in self.rows.items() for n, _, _ in rows if n in selected[ds])
+
     def exhausted(self, ds):
         return self.prefix[ds] >= len(self.ranked[ds])
 
@@ -188,18 +193,38 @@ class _Unsupported(Exception):
     pass
 
 
-def load_pooled(datasets, windows, options, progress, load_window):
-    """Pooled payload whose loads are limited by the run's molecule caps; None when caps are off/unsupported.
+def planned_loader(datasets, windows, options, progress, load_window):
+    """A scanned PooledLoader (nothing decoded yet), or None when caps are off/unsupported.
 
     load_window(i, window, read_names) -> one window's payload decoding only read_names {dataset: names}."""
     if not enabled(options):
         return None
     try:
-        loader = PooledLoader(datasets, windows, options, progress, load_window)
+        return PooledLoader(datasets, windows, options, progress, load_window)
     except _Unsupported as error:
         progress('loading', str(error))
         return None
+
+
+def load_pooled(datasets, windows, options, progress, load_window, loader=None):
+    """Pooled payload whose loads are limited by the run's molecule caps; None when caps are off/unsupported."""
+    loader = loader or planned_loader(datasets, windows, options, progress, load_window)
+    if loader is None:
+        return None
     return PooledSampledPayload(loader.load(), loader)
+
+
+def scanned_molecules(datasets, windows, options):
+    """Alignments overlapping each window, summed over windows and datasets (cheap scan, no tag decoding)."""
+    from .bam import _flatten_paths
+    from .loader_sampling import scan
+    total = 0
+    for w in windows:
+        for item in datasets:
+            _, rows = scan(_flatten_paths(item['paths']), dict(chrom=w['chrom'], start=w['start'], end=w['end']),
+                           options['input'].minimum_mapq)
+            total += sum(1 for _, s, e in rows if s < w['end'] and e > w['start'])
+    return total
 
 
 class PooledSampledPayload(dict):

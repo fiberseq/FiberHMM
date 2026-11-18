@@ -34,22 +34,34 @@ def _run_all(fn, tasks, cores, done=None):
     fails, the progress callback raises (a cancelled Browser job) or the run is interrupted, the queued tasks are
     dropped and the workers killed at once instead of every remaining task running to completion."""
     done = done or (lambda *_: None)
+    args = lambda t: t() if callable(t) else t
     if cores <= 1 or len(tasks) <= 1:
         out = []
         for t in tasks:
-            out.append(fn(*t)); done(len(out) - 1)
+            out.append(fn(*args(t))); done(len(out) - 1)
         return out
     import warnings
+    from concurrent.futures import FIRST_COMPLETED, wait
     from ..execution import stage_executor
-    executor, release = stage_executor(min(cores, len(tasks)))
+    workers = min(cores, len(tasks))
+    executor, release = stage_executor(workers)
     failed = True
     try:
         with warnings.catch_warnings():
             # loky recycles a worker whose memory grew and reruns its task; results are unaffected.
             warnings.filterwarnings('ignore', message='A worker stopped while some jobs were given to the executor')
-            futures = [executor.submit(fn, *t) for t in tasks]; out = []
-            for i, fut in enumerate(futures):
-                out.append(fut.result()); done(i)
+            # A task may be a zero-argument callable that builds its arguments: tasks are built (and pickled) only
+            # as workers free up, at most two per worker in flight, so the parent never holds every task's arrays.
+            results, pending, reported, nxt = {}, {}, 0, 0
+            while nxt < len(tasks) or pending:
+                while nxt < len(tasks) and len(pending) < 2 * workers:
+                    pending[executor.submit(fn, *args(tasks[nxt]))] = nxt; nxt += 1
+                finished, _ = wait(list(pending), return_when=FIRST_COMPLETED)
+                for fut in finished:
+                    results[pending.pop(fut)] = fut.result()
+                while reported in results:
+                    done(reported); reported += 1
+            out = [results[i] for i in range(len(tasks))]
         failed = False
         return out
     finally:
@@ -78,15 +90,17 @@ def discover(sources, region, opt, progress, cores=1, sampling=None):
     found, diagnostics, tasks, which = [], [], [], []
     for t, (w0, w1) in enumerate(tiles):
         counts = []
-        units = Un.tile_units(sources, w0, w1, opt.call_min_llr, opt.call_max_bp,
-                              cap=opt.max_discovery_molecules, seed=opt.sample_seed, counts=counts)
+        Un.tile_units(sources, w0, w1, opt.call_min_llr, opt.call_max_bp,
+                      cap=opt.max_discovery_molecules, seed=opt.sample_seed, counts=counts, select_only=True)
+        available, chosen = counts
         if sampling is not None:
-            available, chosen = counts
-            used = chosen if len(units) >= opt.minimum_channel_units else []
+            used = chosen if len(chosen) >= opt.minimum_channel_units else []
             sampling.append(Cap.record(available, used, None, opt, lambda pair: Un.channel_of(*pair),
                                        phase='discovery', window=[w0, w1]))
-        if len(units) >= opt.minimum_channel_units:
-            tasks.append((units, opt)); which.append((t, w0, w1, len(units)))
+        if len(chosen) >= opt.minimum_channel_units:
+            # Arrays are built when the task is submitted (_run_all), not for every tile up front.
+            tasks.append(lambda chosen=chosen, w0=w0, w1=w1: (Un.materialize(chosen, w0, w1, opt.call_min_llr, opt.call_max_bp), opt))
+            which.append((t, w0, w1, len(chosen)))
     done = lambda i: progress('recaller_discovery', f'tile {which[i][0] + 1}/{len(tiles)} {which[i][1]}-{which[i][2]}: {which[i][3]} molecules')
     for (t, w0, w1, _), (classes, diag) in zip(which, _run_all(D.discover_tile, tasks, cores, done)):
         for g in classes:
@@ -206,9 +220,9 @@ def quantify(sources, classes, tiles, opt, progress, cores=1, frozen=None, sampl
     tasks, meta = [], []; count_rows = {}
     for gi, grp, window, bounds in scoring_windows(sources, classes, tiles, opt, frozen, sampling):
         counts = []
-        units = Un.tile_units(sources, *window, opt.call_min_llr, opt.call_max_bp, efficiency,
-                              cap=opt.max_quantification_molecules, seed=opt.sample_seed, counts=counts,
-                              scoring_bounds=bounds if opt.max_quantification_molecules else None)
+        chosen_pairs = Un.tile_units(sources, *window, opt.call_min_llr, opt.call_max_bp, efficiency,
+                                     cap=opt.max_quantification_molecules, seed=opt.sample_seed, counts=counts,
+                                     scoring_bounds=bounds if opt.max_quantification_molecules else None, select_only=True)
         if sampling is not None:
             available, chosen = counts
             def eligible(pair):
@@ -225,19 +239,22 @@ def quantify(sources, classes, tiles, opt, progress, cores=1, frozen=None, sampl
                 count_rows[gi, row['stratum']] = row
                 row['quantification'] = 0
         for ch in channels:
-            us = [u for u in units if u['ch'] == ch]
-            if len(us) < opt.minimum_channel_units:
-                unscored += [_unscored_row(classes[x], gi, ch, f'too_few_molecules ({len(us)} < recaller.minimum_channel_units '
-                                           f'{opt.minimum_channel_units} overlapping the window)', len(us)) for x in grp]
+            pairs = [p for p in chosen_pairs if Un.channel_of(*p) == ch]
+            if len(pairs) < opt.minimum_channel_units:
+                unscored += [_unscored_row(classes[x], gi, ch, f'too_few_molecules ({len(pairs)} < recaller.minimum_channel_units '
+                                           f'{opt.minimum_channel_units} overlapping the window)', len(pairs)) for x in grp]
                 continue
             chemistry = chem[ch.split('::', 1)[0]]
             gs = [_jitter(classes[x], chemistry, opt) for x in grp]
-            f = Un.unknown_accessible_fraction(sources, ch, {u['uid'] for u in us})
-            tasks.append((us, gs, f, opt) if frozen is None else (us, gs, f, opt, frozen.fixed(classes, grp, ch, chemistry)))
-            meta.append((gi, grp, ch, len(us)))
+            f = Un.unknown_accessible_fraction(sources, ch, {u['unit_id'] for _, u in pairs})
+            fixed = () if frozen is None else (frozen.fixed(classes, grp, ch, chemistry),)
+            # The channel's arrays are built when the task is submitted (_run_all), not for every group up front.
+            tasks.append(lambda pairs=pairs, window=window, gs=gs, f=f, fixed=fixed:
+                         (Un.materialize(pairs, *window, opt.call_min_llr, opt.call_max_bp, efficiency), gs, f, opt, *fixed))
+            meta.append((gi, grp, ch, len(pairs), f))
     done = lambda i: progress('recaller_quantify', f'group {meta[i][0] + 1}/{len(groups)} ({len(meta[i][1])} classes), {meta[i][2]}: {meta[i][3]} molecules')
     fit = Mo.fit_channel if frozen is None else frozen.score
-    for (gi, grp, ch, n_units), (us, gs, f, _o, *_), res in zip(meta, tasks, _run_all(fit, tasks, cores, done)):
+    for (gi, grp, ch, n_units, f), res in zip(meta, _run_all(fit, tasks, cores, done)):
         if res is None:
             unscored += [_unscored_row(classes[x], gi, ch, f'no_spanning_molecules (none of {n_units} molecules has sites beyond '
                                        f'both ends of the scoring window, edge boxes +/- recaller.flank_bp {opt.flank_bp})', 0) for x in grp]
