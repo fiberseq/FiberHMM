@@ -323,3 +323,98 @@ def test_cli_writes_tables(tmp_path):
     assert m[0].split('\t') == mf.MOLECULE_COLUMNS and m[1].split('\t')[7:9] == ['footprinted', '3']
     with pytest.raises(SystemExit):
         main(['--bam', str(src), '--bed', str(b), '--max-width', '-1'])
+
+
+# ------------------------------------------------------------------ fiberhmm-utils ma-list / ma-drop
+
+def _stacked(tmp_path):
+    src = write_bam(tmp_path / 'src.bam', [
+        basic(nucs=[(500, 650)]),
+        lambda h: make_read(h, 'r2', nucs=[(500, 650)], msps=[MSP], tfs=[CALL], reverse=True),
+        lambda h: make_read(h, 'r3', annotate=False)])
+    footprint_bam(tmp_path, src, [('chr1', POS + 196, POS + 232, 'CTCF', 0, '+'),
+                                  ('chr1', POS + 340, POS + 360, 'CTCF', 0, '+')], 'one.bam')
+    footprint_bam(tmp_path, tmp_path / 'one.bam', [('chr1', POS + 202, POS + 228, 'REST', 0, '-')], 'two.bam')
+    return src, tmp_path / 'two.bam'
+
+
+def _declared(path):
+    from fiberhmm.io.bam_header import declared_ma_types
+    with pysam.AlignmentFile(str(path)) as bam:
+        return declared_ma_types(bam.header)
+
+
+def test_ma_list_counts_stacked_layers(tmp_path):
+    from fiberhmm.cli.utils import ma_layer_counts
+    _, stacked = _stacked(tmp_path)
+    counts, records, declared, exhaustive = ma_layer_counts(str(stacked), sample=0)
+    assert records == 3 and exhaustive
+    assert {k: tuple(v) for k, v in counts.items()} == {
+        'nuc.Q': ('nuc', 2, 2), 'msp.': ('msp', 2, 2), 'tf.QQQ': ('tf', 2, 2),
+        'fp_CTCF.QQQ': ('fp_CTCF', 2, 2), 'fpneg_CTCF.Q': ('fpneg_CTCF', 2, 2), 'fp_REST.QQQ': ('fp_REST', 2, 2)}
+    assert {'fp_CTCF', 'fpneg_CTCF', 'fp_REST', 'fpneg_REST'} <= set(declared)
+    counts, records, _, exhaustive = ma_layer_counts(str(stacked), sample=1)
+    assert records == 1 and not exhaustive
+
+
+def _strings(path):
+    with pysam.AlignmentFile(str(path)) as bam:
+        return {r.query_name: r.to_string() for r in bam.fetch(until_eof=True)}
+
+
+def test_ma_drop_one_layer_and_glob(tmp_path):
+    from fiberhmm.cli.utils import _resolve_drop_patterns, drop_ma_layers_bam
+    from fiberhmm.cli.utils import ma_layer_counts
+    src, stacked = _stacked(tmp_path)
+    _, m = _resolve_drop_patterns(['fp_REST'])
+    s = drop_ma_layers_bam(str(stacked), str(tmp_path / 'norest.bam'), m)
+    assert s['layers_dropped'] == {'fp_REST': 2}
+    names = {v[0] for v in ma_layer_counts(str(tmp_path / 'norest.bam'), sample=0)[0].values()}
+    assert names == {'nuc', 'msp', 'tf', 'fp_CTCF', 'fpneg_CTCF'}
+    assert 'fp_REST' not in _declared(tmp_path / 'norest.bam') and 'fp_CTCF' in _declared(tmp_path / 'norest.bam')
+    _, m = _resolve_drop_patterns(['fp_*,fpneg_*'])
+    drop_ma_layers_bam(str(stacked), str(tmp_path / 'nofp.bam'), m)
+    # all footprint layers gone: reads are byte-identical to the source, header declares only the core layers
+    assert _strings(tmp_path / 'nofp.bam') == _strings(src)
+    assert _declared(tmp_path / 'nofp.bam') == _declared(src)
+
+
+def test_ma_drop_refuses_core_layers(tmp_path):
+    from fiberhmm.cli.utils import _resolve_drop_patterns, drop_ma_layers_bam
+    src, _ = _stacked(tmp_path)
+    _, m = _resolve_drop_patterns(['tf'])
+    with pytest.raises(ValueError, match='core layer'):
+        drop_ma_layers_bam(str(src), str(tmp_path / 'x.bam'), m)
+    _, m = _resolve_drop_patterns(['*'])
+    with pytest.raises(ValueError, match='core layer'):
+        drop_ma_layers_bam(str(src), str(tmp_path / 'x.bam'), m)
+    drop_ma_layers_bam(str(src), str(tmp_path / 'x.bam'), _resolve_drop_patterns(['tf'])[1], force=True)
+    assert not any('tf.' in s for s in _strings(tmp_path / 'x.bam').values())
+    with pytest.raises(SystemExit):
+        _resolve_drop_patterns(['tf.QQQ'])
+
+
+def test_round_trip_add_then_drop_is_byte_identical(tmp_path):
+    from fiberhmm.cli.utils import _resolve_drop_patterns, drop_ma_layers_bam
+    src = write_bam(tmp_path / 'src.bam', [basic(nucs=[(500, 650)]),
+                                           lambda h: make_read(h, 'r2', msps=[MSP], tfs=[CALL], reverse=True)])
+    footprint_bam(tmp_path, src, [('chr1', POS + 196, POS + 232, 'CTCF', 0, '+')], 'fp.bam')
+    assert _strings(tmp_path / 'fp.bam') != _strings(src)
+    assert 'fp_CTCF' in _declared(tmp_path / 'fp.bam')
+    drop_ma_layers_bam(str(tmp_path / 'fp.bam'), str(tmp_path / 'back.bam'), _resolve_drop_patterns(['fp_CTCF', 'fpneg_CTCF'])[1])
+    assert _strings(tmp_path / 'back.bam') == _strings(src)
+    assert _declared(tmp_path / 'back.bam') == _declared(src)
+
+
+def test_ma_drop_in_place_cli(tmp_path, monkeypatch, capsys):
+    import sys
+    from fiberhmm.cli import utils
+    _, stacked = _stacked(tmp_path)
+    monkeypatch.setattr(sys, 'argv', ['fiberhmm-utils', 'ma-drop', str(stacked), '--layers', 'fp_*', '--in-place'])
+    utils.main()
+    capsys.readouterr()
+    assert pysam.AlignmentFile(str(stacked)).check_index()
+    monkeypatch.setattr(sys, 'argv', ['fiberhmm-utils', 'ma-list', str(stacked), '--scan'])
+    utils.main()
+    out = capsys.readouterr().out
+    assert '\nfp_CTCF' not in out and 'fpneg_CTCF.Q' in out

@@ -857,6 +857,27 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--scan` | off | Exhaustively scan every alignment and discover non-empty MA types |
 | `--io-threads` | `4` | BAM compression and index threads (default: 4) |
 
+### fiberhmm-utils ma-list
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `bam` | required | BAM to inspect |
+| `--sample` | `1000` | Alignments to read (default 1000; 0 = all) |
+| `--scan` | off | Read every alignment (exact counts) |
+| `--region` | — | Only alignments in CHROM or CHROM:START-END (0-based, needs an index) |
+| `--io-threads` | `2` | BAM decompression threads (default: 2) |
+
+### fiberhmm-utils ma-drop
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `bam` | required | Input BAM |
+| `--layers` | required | Logical layer names or globs, comma- or space-separated |
+| `-o` / `--output` | — | Output BAM (indexed) |
+| `--in-place` | off | Replace the input atomically (indexes rebuilt), like ma-types |
+| `--force` | off | Allow dropping core layers (nuc, msp, tf) |
+| `--io-threads` | `4` | BAM compression and index threads (default: 4) |
+
 ### fiberhmm-utils fix-bigbed
 
 | Flag | Default | Description |

@@ -9,6 +9,9 @@
   footprint calls containing the motif, width cap). Writes an ft-style table,
   optional per-molecule rows and optional per-motif MA layers. The
   `--max-width` default is provisional.
+- `fiberhmm-utils ma-list` and `ma-drop`: list a BAM's MA layers, and remove
+  layers (names or globs) while keeping all other tags byte-identical and
+  the `@CO MA-TYPES` declaration current.
 
 ## 3.0.6
 

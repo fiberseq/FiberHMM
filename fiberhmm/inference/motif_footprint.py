@@ -560,8 +560,9 @@ def molecule_row(motif: Motif, o: Observation) -> List[str]:
 
 def _clear_layers(read, layers):
     """Drop the named MA layers (with their AQ bytes and AN names) from a read."""
-    from fiberhmm.inference.consensus.bam_export import _clear_owned_layers
-    _clear_owned_layers(read, set(layers))
+    from fiberhmm.io.ma_tags import drop_ma_layers
+    layers = set(layers)
+    drop_ma_layers(read, layers.__contains__)
 
 
 def annotate_read(read, rows, group_frame) -> int:
@@ -603,9 +604,11 @@ def annotate_read(read, rows, group_frame) -> int:
     if not suffix:
         return 0
     import array
-    read.set_tag('MA', ';'.join([old, *suffix]), value_type='Z')
-    read.set_tag('AQ', array.array('B', aq) if aq else None)
-    read.set_tag('AN', format_an_tag(names), value_type='Z')
+    from fiberhmm.io.ma_tags import replace_read_tags
+    # Replace in place so the read's other tags keep their order and bytes.
+    replace_read_tags(read, {'MA': (';'.join([old, *suffix]), 'Z'),
+                             'AQ': (array.array('B', aq), None) if aq else None,
+                             'AN': (format_an_tag(names), 'Z')})
     return sum(len(v) for v in groups.values())
 
 

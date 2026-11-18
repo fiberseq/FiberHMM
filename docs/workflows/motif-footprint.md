@@ -101,6 +101,27 @@ existing one (`nuc`, `msp`, `tf`, consensus layers, earlier `fp_*` layers)
 byte for byte. A layer name that already exists is replaced in every read, not
 duplicated.
 
+### Listing and removing layers
+
+`fiberhmm-utils ma-list` shows a BAM's MA layers with their full type string
+(`fp_REST.QQQ`, `nuc.QQQ`, `msp.`), the molecules carrying each, the interval
+count and whether `@CO MA-TYPES` declares it. It reads the first 1000
+alignments by default; `--scan` reads all of them, `--region` limits the
+scan.
+
+`fiberhmm-utils ma-drop` removes layers by logical name or glob from every
+read, with their `AQ` bytes and `AN` names, and removes them from the
+`MA-TYPES` declaration. All other layers and tags stay byte-identical, so
+adding a layer with `fiberhmm-footprint` and dropping it again gives back the
+original records. Core layers (`nuc`, `msp`, `tf`) are refused unless
+`--force`.
+
+```bash
+fiberhmm-utils ma-list calls.ctcf.bam --scan
+fiberhmm-utils ma-drop calls.ctcf.bam --layers 'fp_*,fpneg_*' -o calls.clean.bam
+fiberhmm-utils ma-drop calls.ctcf.bam --layers fp_REST --in-place
+```
+
 ## Differences from `ft footprint`
 
 - **Eligibility** comes from FiberHMM's own MSPs (`ft footprint` also uses the
