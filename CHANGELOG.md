@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `fiberhmm-footprint`: motif-anchored footprint scoring from the calls in a
+  FiberHMM BAM, the analogue of fibertools `ft footprint` (MSP eligibility,
+  footprint calls containing the motif, width cap). Writes an ft-style table,
+  optional per-molecule rows and optional per-motif MA layers. The
+  `--max-width` default is provisional.
+
 ## 3.0.6
 
 ### Changed

@@ -98,6 +98,7 @@ nav:
       - Transferring classes: workflows/transfer.md
       - Strand rescue: workflows/strand-rescue.md
       - Tag consensus states: workflows/tag-consensus.md
+      - Motif footprints (ft footprint analogue): workflows/motif-footprint.md
       - Footprint population model: workflows/footprint-model.md
       - Training a model: workflows/training.md
   - Reference:

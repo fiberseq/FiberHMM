@@ -600,6 +600,27 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--json-progress` | off | Structured progress on stderr (JSON lines) |
 | `--output` | — | New or empty output directory |
 
+## fiberhmm-footprint
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--bam` | required | Indexed BAM with FiberHMM calls (MA tf/nuc/msp layers) |
+| `--bed` | required | Motif BED (BED6: chrom, start, end, name, score, strand; 0-based half-open; .gz ok). Each distinct name is one motif set and one MA layer pair (fp_NAME, fpneg_NAME) |
+| `-o` / `--out` | `-` | Per-motif table, ft footprint style (default: stdout) |
+| `--per-molecule` | — | Also write one row per molecule x motif (status, code, call bounds, LLR) |
+| `--out-bam` | — | Also write a copy of --bam with per-motif MA layers fp_NAME (footprinted) and fpneg_NAME (eligible, not footprinted). Existing layers are kept; layers of the same name are replaced |
+| `--layer-name` | — | Use one layer name for every BED row instead of the BED name column (sanitized to [A-Za-z0-9_]; written as fp_NAME / fpneg_NAME) |
+| `--min-llr` | `5.0` | Minimum LLR (nats) of a footprint call; tq &gt;= 10 x this (default 5) |
+| `--edges` | `outer` | Call bounds that must contain the motif: outer = conservative bounds extended through the edge ambiguity in the el/er bytes, up to the terminating informative position (default); conservative = the call as stored Choices: `outer`, `conservative`. |
+| `--outer-bound` | `exclusive` | With --edges outer: whether the outer bound stops just before the terminating informative position (exclusive, default) or includes it (inclusive, one more base per side) Choices: `exclusive`, `inclusive`. |
+| `--max-width` | `68` | Maximum conservative reference width (bp) of the footprint call; 0 = no cap (default 68, PROVISIONAL) |
+| `--require-unmodified` | off | Also require no m6A call (ML &gt;= --ml) inside the motif (MM/ML m6A only) |
+| `--ml` | `125` | ML threshold for --require-unmodified (default 125, as ft) |
+| `--msp-bam` | — | Advanced: take MSPs from this BAM instead (matched by read name), e.g. the BAM ft footprint read, for like-for-like comparisons |
+| `-F` / `--filter` | `2308` | Skip reads with any of these flag bits (default 0x904: unmapped, secondary, supplementary) |
+| `--min-mapq` | `0` | Skip reads below this MAPQ (default 0) |
+| `--cores` | `1` | Worker processes over motif clusters (default 1) |
+
 ## fiberhmm-footprint-model
 
 | Flag | Default | Description |

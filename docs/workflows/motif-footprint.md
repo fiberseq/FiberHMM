@@ -1,0 +1,119 @@
+# Motif footprints (`fiberhmm-footprint`)
+
+`fiberhmm-footprint` is the FiberHMM analogue of fibertools `ft footprint`.
+Given a BAM with FiberHMM calls and a BED of motif instances, it reports for
+every motif how many molecules span it, how many are eligible (the motif lies
+in an accessible patch) and how many are footprinted. It reads the calls
+already in the BAM; nothing is re-decoded.
+
+It is not the same command as `fiberhmm-footprint-model` (a population model
+of recurrent footprint geometries; see
+[Footprint population model](footprint-model.md)). For a posterior-based
+alternative that scores each molecule's own marks against footprint classes
+discovered in a window, use [`fiberhmm-consensus`](consensus.md).
+
+```bash
+fiberhmm-footprint --bam calls.bam --bed ctcf_motifs.bed -o ctcf.footprint.tsv \
+    --per-molecule ctcf.molecules.tsv --out-bam calls.ctcf.bam --cores 8
+```
+
+## Rule
+
+For each molecule and motif, in reference coordinates:
+
+| Step | Test |
+|---|---|
+| spanning | the alignment spans the motif: start < motif start and end >= motif end (ft's `spans` rule) |
+| eligible | an MSP of the molecule spans the motif by the same rule. MSPs are the BAM's FiberHMM accessibility calls (`MA` `msp`; else fibertools `Ma`; else legacy `as`/`al`) |
+| footprinted | one `tf` call with LLR >= `--min-llr` (default 5, i.e. `tq` >= 50) and conservative width <= `--max-width` whose bounds contain the whole motif (call start <= motif start and call end >= motif end) |
+
+Bounds (`--edges`):
+
+- `outer` (default): the conservative call extended by the edge ambiguity in
+  its `el`/`er` bytes, i.e. through the non-informative bases up to the next
+  informative position on each side. `--outer-bound exclusive` (default) stops
+  just before that terminating position; `--outer-bound inclusive` includes it
+  (one more base on each side). A saturated edge byte (ambiguity >= 30 bp) is
+  read as 30 bp, a lower bound.
+- `conservative`: the call exactly as stored, which ends at the last
+  informative unmethylated base. Motifs with G/C ends are then often missed by
+  one or two bases.
+
+The width cap applies to the conservative reference width of the call.
+`--max-width 0` disables it. **The default (68 bp) is provisional** and will be
+replaced by a label-free cap (95th percentile of motif-overlapping
+sub-nucleosomal call widths).
+
+`--require-unmodified` additionally requires no m6A call (ML >= `--ml`,
+default 125) inside the motif, which is ft's footprint criterion. It reads
+MM/ML m6A calls only.
+
+## Outputs
+
+**Per-motif table** (`-o`, default stdout), modelled on ft footprint's:
+
+| Column | Meaning |
+|---|---|
+| `#chrom start end strand name layer` | motif (BED) and its MA layer |
+| `n_spanning_fibers` | molecules spanning the motif |
+| `n_spanning_msps` | of those, eligible (an MSP spans the motif) |
+| `n_footprinted` | eligible and footprinted (code 3) |
+| `fraction_footprinted` | `n_footprinted / n_spanning_msps` |
+| `n_overlapping_nucs` | spanning molecules with a FiberHMM nucleosome overlapping the motif |
+| `n_not_spanning` | molecules that overlap but do not span the motif (not scored) |
+| `footprint_codes fiber_names haplotype` | per spanning molecule, comma-separated, in the same order |
+
+Codes follow ft's bit layout for a one-module motif: bit 0 = an MSP spans the
+motif, bit 1 = footprinted. `0` not eligible, `1` eligible and not
+footprinted, `2` footprint call but no MSP over the motif, `3` footprinted.
+
+**Per-molecule rows** (`--per-molecule`): motif, `motif_id`, `read_name`,
+`status` (`footprinted`, `not_footprinted`, `no_msp`, `unannotated` = no
+FiberHMM calls on the read, `not_spanning`), `code` (-1 when not spanning),
+`reason` for a negative (`no_call`, `partial_overlap`, `too_wide`,
+`modified`), the chosen call's conservative and outer reference bounds, width
+and LLR, which bounds contained the motif (`edge`), nucleosome overlap and
+haplotype. When several calls qualify, the narrowest is reported.
+
+**Annotated BAM** (`--out-bam`): a copy of the input with two MA layers per
+motif set, so several motif sets stack as separate FiberBrowser layers:
+
+| Layer | Bytes | Intervals |
+|---|---|---|
+| `fp_NAME.QQQ` | `tq` of the qualifying call, its conservative width (bp, max 255), edge flag (1 = conservative bounds contain the motif, 2 = only the outer bounds do) | footprinted molecules (code 3) |
+| `fpneg_NAME.Q` | reason: 1 no call, 2 partial overlap, 3 too wide, 4 m6A in motif | eligible, not footprinted (code 1) |
+
+Molecules that are not eligible get neither layer, so "not footprinted"
+(`fpneg_`) is distinct from "not observed" (no interval). Each interval covers
+the motif's aligned bases on the molecule, in the same frame as the read's own
+calls; `AN` names it by motif id (`chrom:start-end:strand`). Layers are
+declared in `@CO MA-TYPES:v1` and described in a
+`@CO FIBERHMM-FOOTPRINT-MA:v1:` JSON record with the run's parameters.
+
+`NAME` is the BED name column (one layer pair per distinct name) or
+`--layer-name`. It is reduced to the characters an MA type name allows,
+`[A-Za-z0-9_]`: the spec's type string is name + strand (`+`, `-` or `.`) +
+quality letters, so `.`, `+` and `-` cannot appear in a name. Other characters
+become `_` (`MA0139.1` becomes `MA0139_1`).
+
+Running the command again on the output BAM adds new layers and keeps every
+existing one (`nuc`, `msp`, `tf`, consensus layers, earlier `fp_*` layers)
+byte for byte. A layer name that already exists is replaced in every read, not
+duplicated.
+
+## Differences from `ft footprint`
+
+- **Eligibility** comes from FiberHMM's own MSPs (`ft footprint` also uses the
+  input BAM's MSPs; on a FiberHMM-called BAM these are the same calls).
+- **Footprinted** means a FiberHMM footprint call contains the motif, with
+  bounds from the HMM and a width cap, instead of "no m6A in the motif".
+  `--require-unmodified` adds ft's criterion on top.
+- `n_footprinted` counts eligible molecules only (code 3); ft's module column
+  also counts code 2.
+- One module per motif; ft's YAML modules and `motif_span`, FIRE columns and
+  `fire_quals` are not reproduced.
+- Secondary, supplementary and unmapped records are skipped by default
+  (`-F 0x904`; ft's default is 0).
+- Nucleosome overlap uses ordinary half-open overlap.
+- `--msp-bam` (advanced) takes MSPs from another BAM, matched by read name,
+  for like-for-like comparisons with an ft run on a different call set.
