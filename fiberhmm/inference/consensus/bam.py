@@ -412,7 +412,7 @@ def _load_payload_once(state,request,options,progress):
                     # Replay decoded whole alignments; keep its calls, recalled nucleosomes and MSPs that overlap the
                     # padded window (whole), as the loader did for the BAM's own calls.
                     from fiberhmm.inference.evidence_crop import crop_unit_intervals
-                    for read,unit in zip(representatives,units):
+                    for unit in units:
                         crop_unit_intervals(unit,start-pad,end+pad)
                 if alignment_cache is not None:
                     # A replayed alignment is never needed again: its replacement fields are in the
