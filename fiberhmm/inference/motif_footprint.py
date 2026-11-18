@@ -12,7 +12,7 @@ it reads the calls already in the BAM (no re-decoding) and decides:
 * **footprinted**: one FiberHMM TF/sub-nucleosomal call (MA ``tf`` layer) with
   ``tq >= 10 * min_llr`` whose bounds contain the complete motif
   (``start <= motif start`` and ``end >= motif end``), and whose conservative
-  reference width is ``<= max_width`` (0 = no cap). Bounds are the outer edges
+  reference width is within ``[min_width, max_width]`` (inclusive; 0 = no bound). Bounds are the outer edges
   by default: the conservative call extended by the edge ambiguity stored in its
   ``el``/``er`` bytes (``ma_tags.ambiguity_to_edge``), i.e. up to but excluding
   the terminating informative position on each side. ``outer_bound='inclusive'``
@@ -57,7 +57,7 @@ UNANNOTATED = 'unannotated'
 NOT_SPANNING = 'not_spanning'
 
 # Reasons a spanning molecule is not footprinted (also the fpneg_ quality byte)
-REASONS = {1: 'no_call', 2: 'partial_overlap', 3: 'too_wide', 4: 'modified'}
+REASONS = {1: 'no_call', 2: 'partial_overlap', 3: 'too_wide', 4: 'modified', 5: 'too_narrow'}
 REASON_CODE = {v: k for k, v in REASONS.items()}
 
 FP_PREFIX = 'fp_'
@@ -290,6 +290,7 @@ class FootprintOptions:
     edges: str = 'outer'               # outer | conservative
     outer_bound: str = 'exclusive'     # exclusive | inclusive (of the terminating informative position)
     max_width: int = DEFAULT_MAX_WIDTH  # conservative reference width cap, bp; 0 = off
+    min_width: int = 0                  # conservative reference width floor, bp (inclusive); 0 = off
     require_unmodified: bool = False
     min_ml: int = 125
     flag_filter: int = 0x904           # unmapped | secondary | supplementary
@@ -302,6 +303,10 @@ class FootprintOptions:
             raise ValueError('outer_bound must be exclusive or inclusive')
         if self.max_width < 0:
             raise ValueError('max_width must be >= 0 (0 disables the cap)')
+        if self.min_width < 0:
+            raise ValueError('min_width must be >= 0 (0 disables it)')
+        if self.max_width and self.min_width > self.max_width:
+            raise ValueError('min_width must not exceed max_width')
         if self.min_llr < 0:
             raise ValueError('min_llr must be >= 0')
 
@@ -542,7 +547,8 @@ def score(mol: Molecule, motif: Motif, options: FootprintOptions, want_span: boo
         return (c.ox, c.oy) if outer else (c.x, c.y)
 
     containing = [c for c in calls if bounds(c)[0] <= m0 and bounds(c)[1] >= m1]
-    narrow = [c for c in containing if options.max_width == 0 or c.width <= options.max_width]
+    narrow = [c for c in containing if (options.max_width == 0 or c.width <= options.max_width)
+              and c.width >= options.min_width]
     chosen, reason = None, ''
     if narrow:
         chosen = min(narrow, key=lambda c: (c.width, -c.tq, c.x))
@@ -550,7 +556,9 @@ def score(mol: Molecule, motif: Motif, options: FootprintOptions, want_span: boo
                 np.any((mol.m6a >= m0) & (mol.m6a < m1)):
             reason = 'modified'
     elif containing:
-        chosen, reason = min(containing, key=lambda c: (c.width, -c.tq, c.x)), 'too_wide'
+        # No containing call inside [min_width, max_width]: too narrow when every one is below the floor.
+        chosen = min(containing, key=lambda c: (c.width, -c.tq, c.x))
+        reason = 'too_narrow' if all(c.width < options.min_width for c in containing) else 'too_wide'
     elif any(bounds(c)[0] < m1 and bounds(c)[1] > m0 for c in calls):
         reason = 'partial_overlap'
     else:
@@ -915,7 +923,8 @@ def annotation_row(motif: Motif, o: Observation):
     reference width (bp, saturated 255), and the edge flag (1 = the
     conservative bounds contain the motif, 2 = only the outer bounds do).
     fpneg_<label>.Q (eligible, not footprinted): reason code (1 no call,
-    2 partial overlap, 3 containing call wider than the cap, 4 m6A in motif)."""
+    2 partial overlap, 3 containing call wider than the cap, 4 m6A in motif,
+    5 every containing call narrower than the floor)."""
     if o.code not in (1, 3) or o.query_span is None:
         return None
     fp_layer, neg_layer = layer_names(motif.label)
@@ -1012,7 +1021,8 @@ def contract_value(label: str, options: FootprintOptions, bed_path, msp_bam_path
                 cw='conservative reference width of that call, bp (saturated 255)',
                 ef='1 = conservative bounds contain the motif; 2 = only the outer bounds do',
                 reason='1 no qualifying call overlaps the motif; 2 a call overlaps but none contains it; '
-                       '3 containing call wider than max_width; 4 m6A in the motif (require_unmodified)',
+                       '3 containing call wider than max_width; 4 m6A in the motif (require_unmodified); '
+                       '5 every containing call narrower than min_width',
                 annotation_names='AN = motif id chrom:start-end:strand')
 
 

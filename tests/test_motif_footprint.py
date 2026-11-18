@@ -143,6 +143,19 @@ def test_width_cap(tmp_path):
     assert mf.FootprintOptions().max_width == mf.DEFAULT_MAX_WIDTH == 74
 
 
+def test_min_width(tmp_path):
+    bam = write_bam(tmp_path / 'a.bam', [basic(tfs=((200, 225, 90, 0, 0), (180, 260, 90, 0, 0)))])   # 25 and 80 bp
+    m = [motif(205, 220)]
+    assert one(run(bam, m, max_width=0, min_width=30)[0]).call[:2] == (POS + 180, POS + 260)
+    o = one(run(bam, m, max_width=74, min_width=30)[0])
+    assert (o.code, o.reason) == (1, 'too_wide')
+    o = one(run(bam, m, max_width=0, min_width=90)[0])
+    assert (o.code, o.reason) == (1, 'too_narrow') and mf.REASON_CODE['too_narrow'] == 5
+    assert one(run(bam, m, max_width=25, min_width=25)[0]).code == 3       # bounds are inclusive
+    with pytest.raises(ValueError):
+        mf.FootprintOptions(min_width=80, max_width=74)
+
+
 def test_narrowest_qualifying_call_is_reported(tmp_path):
     bam = write_bam(tmp_path / 'a.bam', [basic(tfs=((150, 300, 120, 0, 0), (195, 225, 60, 0, 0)))])
     o = one(run(bam, [motif(200, 220)], max_width=0)[0])

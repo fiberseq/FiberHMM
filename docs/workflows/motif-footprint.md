@@ -113,8 +113,9 @@ Bounds (`--edges`):
   informative unmethylated base. Motifs with G/C ends are then often missed by
   one or two bases.
 
-The width cap applies to the conservative reference width of the call.
-`--max-width 0` disables it. The default, 74 bp, was set without ChIP labels:
+The width bounds apply to the conservative reference width of the call:
+`--min-width` (default 0, off) and `--max-width`, both inclusive; 0 disables
+either. The default, 74 bp, was set without ChIP labels:
 it is the 95th percentile of the conservative widths of 168,943 FiberHMM TF
 calls (LLR >= 5) whose outer bounds overlap a motif in an MSP-eligible
 molecule, pooled over CTCF, NRF1, REST and USF1 motifs in five cell lines
@@ -149,7 +150,7 @@ footprinted, `2` footprint call but no MSP over the motif, `3` footprinted.
 `status` (`footprinted`, `not_footprinted`, `no_msp`, `unannotated` = no
 FiberHMM calls on the read, `not_spanning`), `code` (-1 when not spanning),
 `reason` for a negative (`no_call`, `partial_overlap`, `too_wide`,
-`modified`), the chosen call's conservative and outer reference bounds, width
+`too_narrow`, `modified`), the chosen call's conservative and outer reference bounds, width
 and LLR, which bounds contained the motif (`edge`), nucleosome overlap and
 haplotype. When several calls qualify, the narrowest is reported. Rows come in
 genomic order of the motifs (the table keeps BED order).
@@ -160,7 +161,7 @@ motif set, so several motif sets stack as separate FiberBrowser layers:
 | Layer | Bytes | Intervals |
 |---|---|---|
 | `fp_NAME.QQQ` | `tq` of the qualifying call, its conservative width (bp, max 255), edge flag (1 = conservative bounds contain the motif, 2 = only the outer bounds do) | footprinted molecules (code 3) |
-| `fpneg_NAME.Q` | reason: 1 no call, 2 partial overlap, 3 too wide, 4 m6A in motif | eligible, not footprinted (code 1) |
+| `fpneg_NAME.Q` | reason: 1 no call, 2 partial overlap, 3 too wide, 4 m6A in motif, 5 too narrow (every containing call below `--min-width`) | eligible, not footprinted (code 1) |
 
 Molecules that are not eligible get neither layer, so "not footprinted"
 (`fpneg_`) is distinct from "not observed" (no interval). Each interval covers

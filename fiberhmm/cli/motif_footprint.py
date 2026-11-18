@@ -87,6 +87,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help=f'Maximum conservative reference width (bp) of the footprint call; 0 = no cap '
                         f'(default {DEFAULT_MAX_WIDTH}: label-free 95th percentile of motif-overlapping footprint '
                         'call widths)')
+    p.add_argument('--min-width', type=int, default=0,
+                   help='Minimum conservative reference width (bp, inclusive) of the footprint call; 0 = no floor '
+                        '(default 0)')
     p.add_argument('--require-unmodified', action='store_true',
                    help='Also require no m6A call (ML >= --ml) inside the motif (MM/ML m6A only)')
     p.add_argument('--ml', type=int, default=125, help='ML threshold for --require-unmodified (default 125, as ft)')
@@ -120,7 +123,7 @@ def _main(p, argv):
         p.error('--cores must be >= 1')
     try:
         options = FootprintOptions(min_llr=args.min_llr, edges=args.edges, outer_bound=args.outer_bound,
-                                   max_width=args.max_width, require_unmodified=args.require_unmodified,
+                                   max_width=args.max_width, min_width=args.min_width, require_unmodified=args.require_unmodified,
                                    min_ml=args.ml, flag_filter=args.filter, min_mapq=args.min_mapq)
     except ValueError as error:
         p.error(str(error))

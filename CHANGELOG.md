@@ -9,7 +9,8 @@
   footprint calls containing the motif, width cap). Writes an ft-style table,
   optional per-molecule rows and optional per-motif MA layers. The
   `--max-width` default (74 bp) is a label-free 95th percentile of
-  motif-overlapping footprint call widths.
+  motif-overlapping footprint call widths. `--min-width` (default 0) adds an
+  inclusive floor; negatives below it are reported as `too_narrow`.
 - `fiberhmm-footprint` reads calls from `fiberhmm-extract` bigBeds
   (`--calls-bb PREFIX`, or `--tf-bb`/`--msp-bb`/`--nuc-bb`/`--m6a-bb`) as an
   alternative to the BAM, and `--out-bb` writes per-read bigBeds of
