@@ -8,7 +8,8 @@
   FiberHMM BAM, the analogue of fibertools `ft footprint` (MSP eligibility,
   footprint calls containing the motif, width cap). Writes an ft-style table,
   optional per-molecule rows and optional per-motif MA layers. The
-  `--max-width` default is provisional.
+  `--max-width` default (74 bp) is a label-free 95th percentile of
+  motif-overlapping footprint call widths.
 - `fiberhmm-utils ma-list` and `ma-drop`: list a BAM's MA layers, and remove
   layers (names or globs) while keeping all other tags byte-identical and
   the `@CO MA-TYPES` declaration current.

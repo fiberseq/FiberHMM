@@ -140,7 +140,7 @@ def test_width_cap(tmp_path):
     assert (o.code, o.reason) == (1, 'too_wide')
     assert one(run(bam, m, max_width=80)[0]).code == 3
     assert one(run(bam, m, max_width=0)[0]).code == 3
-    assert mf.FootprintOptions().max_width == mf.PROVISIONAL_MAX_WIDTH
+    assert mf.FootprintOptions().max_width == mf.DEFAULT_MAX_WIDTH == 74
 
 
 def test_narrowest_qualifying_call_is_reported(tmp_path):
@@ -418,3 +418,23 @@ def test_ma_drop_in_place_cli(tmp_path, monkeypatch, capsys):
     utils.main()
     out = capsys.readouterr().out
     assert '\nfp_CTCF' not in out and 'fpneg_CTCF.Q' in out
+
+
+def test_streamed_bam_pass_matches_stored_observations(tmp_path):
+    src = write_bam(tmp_path / 'src.bam', [
+        basic(nucs=[(500, 650)]),
+        lambda h: make_read(h, 'r2', msps=[MSP], tfs=[CALL, (300, 330, 70, 0, 0)], reverse=True),
+        lambda h: make_read(h, 'r3', msps=[(0, 900)], tfs=[(195, 240, 90, 2, 2)], pos=POS + 50)])
+    motifs = mf.load_motif_bed(bed(tmp_path, [('chr1', POS + 196, POS + 232, 'CTCF', 0, '+'),
+                                              ('chr1', POS + 302, POS + 328, 'REST', 0, '-'),
+                                              ('chr1', POS + 340, POS + 360, 'CTCF', 0, '+')]))
+    options = mf.FootprintOptions(max_width=0)
+    stored = mf.run_footprint(src, motifs, options, want_spans=True)
+    mf.write_annotated_bam(src, tmp_path / 'a.bam', motifs, stored, options, 'x.bed')
+    mf.write_annotated_bam(src, tmp_path / 'b.bam', motifs, None, options, 'x.bed', msp_bam_path=None)
+    assert _strings(tmp_path / 'a.bam') == _strings(tmp_path / 'b.bam')
+    # the same with MSPs from a second BAM
+    mf.write_annotated_bam(src, tmp_path / 'c.bam', motifs, mf.run_footprint(src, motifs, options, want_spans=True,
+                           msp_bam_path=src), options, 'x.bed', msp_bam_path=src)
+    mf.write_annotated_bam(src, tmp_path / 'd.bam', motifs, None, options, 'x.bed', msp_bam_path=src)
+    assert _strings(tmp_path / 'c.bam') == _strings(tmp_path / 'd.bam') == _strings(tmp_path / 'a.bam')

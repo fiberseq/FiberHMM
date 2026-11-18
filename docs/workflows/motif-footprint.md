@@ -33,16 +33,21 @@ Bounds (`--edges`):
   its `el`/`er` bytes, i.e. through the non-informative bases up to the next
   informative position on each side. `--outer-bound exclusive` (default) stops
   just before that terminating position; `--outer-bound inclusive` includes it
-  (one more base on each side). A saturated edge byte (ambiguity >= 30 bp) is
+  (one more base on each side). The stored outer edge never includes the
+  methylated terminating base, so exclusive is the faithful reading. A saturated edge byte (ambiguity >= 30 bp) is
   read as 30 bp, a lower bound.
 - `conservative`: the call exactly as stored, which ends at the last
   informative unmethylated base. Motifs with G/C ends are then often missed by
   one or two bases.
 
 The width cap applies to the conservative reference width of the call.
-`--max-width 0` disables it. **The default (68 bp) is provisional** and will be
-replaced by a label-free cap (95th percentile of motif-overlapping
-sub-nucleosomal call widths).
+`--max-width 0` disables it. The default, 74 bp, was set without ChIP labels:
+it is the 95th percentile of the conservative widths of 168,943 FiberHMM TF
+calls (LLR >= 5) whose outer bounds overlap a motif in an MSP-eligible
+molecule, pooled over CTCF, NRF1, REST and USF1 motifs in five cell lines
+(K562, GM12878, H1, H9, HepG2). The 90th and 99th percentiles are 61 and
+87 bp. Calls wider than this are mostly broad protections that are not
+motif-sized.
 
 `--require-unmodified` additionally requires no m6A call (ML >= `--ml`,
 default 125) inside the motif, which is ft's footprint criterion. It reads
@@ -73,7 +78,8 @@ FiberHMM calls on the read, `not_spanning`), `code` (-1 when not spanning),
 `reason` for a negative (`no_call`, `partial_overlap`, `too_wide`,
 `modified`), the chosen call's conservative and outer reference bounds, width
 and LLR, which bounds contained the motif (`edge`), nucleosome overlap and
-haplotype. When several calls qualify, the narrowest is reported.
+haplotype. When several calls qualify, the narrowest is reported. Rows come in
+genomic order of the motifs (the table keeps BED order).
 
 **Annotated BAM** (`--out-bam`): a copy of the input with two MA layers per
 motif set, so several motif sets stack as separate FiberBrowser layers:
@@ -121,6 +127,17 @@ fiberhmm-utils ma-list calls.ctcf.bam --scan
 fiberhmm-utils ma-drop calls.ctcf.bam --layers 'fp_*,fpneg_*' -o calls.clean.bam
 fiberhmm-utils ma-drop calls.ctcf.bam --layers fp_REST --in-place
 ```
+
+### Memory
+
+Each alignment is parsed, scored against the motifs it overlaps and released
+at once; only the per-motif results are kept, and the annotated BAM is written
+by scoring each alignment again as it is copied. Memory therefore does not grow
+with depth, read length or the number of motifs in a region: on 5,369 sites of
+a Hia5 PacBio library (4 cores, with `--per-molecule` and `--out-bam`) the
+peak was 414 MB in total, down from 967 MB when whole regions were buffered.
+No flank is needed: eligibility and footprint calls only use intervals that
+overlap the motif.
 
 ## Differences from `ft footprint`
 

@@ -24,7 +24,7 @@ from fiberhmm.inference.motif_footprint import (
     load_motif_bed,
     molecule_row,
     motif_row,
-    run_footprint,
+    iter_footprint,
     write_annotated_bam,
 )
 
@@ -39,7 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument('-o', '--out', default='-',
                    help='Per-motif table, ft footprint style (default: stdout)')
     p.add_argument('--per-molecule', metavar='TSV',
-                   help='Also write one row per molecule x motif (status, code, call bounds, LLR)')
+                   help='Also write one row per molecule x motif (status, code, call bounds, LLR), in genomic order of the motifs')
     p.add_argument('--out-bam', metavar='BAM',
                    help='Also write a copy of --bam with per-motif MA layers fp_NAME (footprinted) and fpneg_NAME '
                         '(eligible, not footprinted). Existing layers are kept; layers of the same name are replaced')
@@ -57,7 +57,8 @@ def build_parser() -> argparse.ArgumentParser:
                         'position (exclusive, default) or includes it (inclusive, one more base per side)')
     p.add_argument('--max-width', type=int, default=DEFAULT_MAX_WIDTH,
                    help=f'Maximum conservative reference width (bp) of the footprint call; 0 = no cap '
-                        f'(default {DEFAULT_MAX_WIDTH}, PROVISIONAL)')
+                        f'(default {DEFAULT_MAX_WIDTH}: label-free 95th percentile of motif-overlapping footprint '
+                        'call widths)')
     p.add_argument('--require-unmodified', action='store_true',
                    help='Also require no m6A call (ML >= --ml) inside the motif (MM/ML m6A only)')
     p.add_argument('--ml', type=int, default=125, help='ML threshold for --require-unmodified (default 125, as ft)')
@@ -89,25 +90,30 @@ def main(argv=None):
     except ValueError as error:
         p.error(str(error))
     motifs = load_motif_bed(args.bed, args.layer_name)
-    by_motif = run_footprint(args.bam, motifs, options, cores=args.cores, msp_bam_path=args.msp_bam,
-                             want_spans=bool(args.out_bam))
+    # Stream: each cluster's observations become table rows (kept, small) and
+    # per-molecule rows (written at once, in genomic order), then are dropped.
+    table = {}
+    mol = open(args.per_molecule, 'w') if args.per_molecule else None
+    try:
+        if mol:
+            mol.write('\t'.join(MOLECULE_COLUMNS) + '\n')
+        for m, obs in iter_footprint(args.bam, motifs, options, cores=args.cores, msp_bam_path=args.msp_bam):
+            table[m.index] = '\t'.join(motif_row(m, obs))
+            if mol:
+                mol.writelines('\t'.join(molecule_row(m, o)) + '\n' for o in obs)
+    finally:
+        if mol:
+            mol.close()
     out = _open(args.out)
     try:
         out.write('\t'.join(TABLE_COLUMNS) + '\n')
-        for m in motifs:
-            out.write('\t'.join(motif_row(m, by_motif.get(m.index, ()))) + '\n')
+        out.writelines(table[m.index] + '\n' for m in motifs)
     finally:
         if out is not sys.stdout:
             out.close()
-    if args.per_molecule:
-        with open(args.per_molecule, 'w') as fh:
-            fh.write('\t'.join(MOLECULE_COLUMNS) + '\n')
-            for m in motifs:
-                for o in by_motif.get(m.index, ()):
-                    fh.write('\t'.join(molecule_row(m, o)) + '\n')
     summary = dict(status='complete', motifs=len(motifs), parameters=options.__dict__)
     if args.out_bam:
-        summary['out_bam'] = write_annotated_bam(args.bam, args.out_bam, motifs, by_motif, options, args.bed,
+        summary['out_bam'] = write_annotated_bam(args.bam, args.out_bam, motifs, None, options, args.bed,
                                                  args.msp_bam, argv=['fiberhmm-footprint', *(argv or sys.argv[1:])])
     print(json.dumps(summary), file=sys.stderr)
 

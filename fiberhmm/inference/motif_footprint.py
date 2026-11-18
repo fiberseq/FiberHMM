@@ -38,13 +38,11 @@ import numpy as np
 
 from fiberhmm.io.ma_tags import EDGE_AMBIGUITY_SAT, flip_interval_frame, parse_aq_array, parse_ma_tag
 
-# TODO(coordinator): replace with the label-free cap from the diagnosis part 2
-# (95th percentile of motif-overlapping sub-nucleosomal TF-call widths,
-# ft_vs_fh_tf_diagnosis/12_labelfree_cap.py). PROVISIONAL: 68 bp is the
-# pre-specified CTCF-ChIP+ 95th percentile (tables/rescore_cap.tsv), which uses
-# ChIP labels and is only a placeholder until the label-free value is recorded.
-PROVISIONAL_MAX_WIDTH = 68
-DEFAULT_MAX_WIDTH = PROVISIONAL_MAX_WIDTH
+# Label-free width cap: the 95th percentile (74 bp) of the conservative widths
+# of 168,943 FiberHMM TF calls (LLR >= 5) whose outer bounds overlap a benchmark
+# motif in an MSP-eligible molecule, pooled over CTCF, NRF1, REST and USF1
+# motifs in five cell lines; no ChIP labels used (90th = 61 bp, 99th = 87 bp).
+DEFAULT_MAX_WIDTH = 74
 
 SPAN_NOT = -1          # overlaps the motif but does not span it
 M6A_CODES = ('a', 21839)
@@ -453,26 +451,52 @@ def _msp_index(path, chrom, start, end, options: FootprintOptions):
     return out
 
 
+class _MotifIndex:
+    """Motifs of one chromosome sorted by start, for 'which motifs does this read overlap'."""
+
+    def __init__(self, motifs: Sequence[Motif]):
+        self.motifs = sorted(motifs, key=lambda m: (m.start, m.index))
+        self.starts = [m.start for m in self.motifs]
+        self.max_len = max((m.end - m.start for m in self.motifs), default=0)
+
+    def overlapping(self, a: int, b: int) -> List[Motif]:
+        from bisect import bisect_left, bisect_right
+        lo = bisect_left(self.starts, a - self.max_len)
+        hi = bisect_right(self.starts, b - 1)
+        return [m for m in self.motifs[lo:hi] if m.start < b and m.end > a]
+
+
+def score_read(read, index: _MotifIndex, header_frames, options: FootprintOptions, override=None,
+               want_spans=False) -> List[Observation]:
+    """Observations of one alignment against the motifs it overlaps (none when filtered).
+
+    The read is parsed, scored and released here, so memory does not grow with
+    the depth or span of a region: only the small observations are kept."""
+    if read.flag & options.flag_filter or read.mapping_quality < options.min_mapq:
+        return []
+    motifs = index.overlapping(int(read.reference_start), int(read.reference_end or read.reference_start))
+    if not motifs:
+        return []
+    group_frame, frames = header_frames
+    mol = parse_molecule(read, group_frame, frames, options, override)
+    return [score(mol, m, options, want_span=want_spans) for m in motifs]
+
+
 def score_cluster(bam, header_frames, cluster: Sequence[Motif], options: FootprintOptions,
                   msp_bam_path=None, want_spans=False) -> List[Observation]:
-    group_frame, frames = header_frames
+    """All observations of one motif cluster, per motif in BED order then fetch order."""
     chrom = cluster[0].chrom
     c0 = min(m.start for m in cluster)
     c1 = max(m.end for m in cluster)
     if chrom not in bam.references:
         return []
     override = _msp_index(msp_bam_path, chrom, c0, c1, options) if msp_bam_path else None
-    mols = []
+    index = _MotifIndex(cluster)
+    per_motif = defaultdict(list)
     for read in bam.fetch(chrom, c0, c1):
-        if read.flag & options.flag_filter or read.mapping_quality < options.min_mapq:
-            continue
-        mols.append(parse_molecule(read, group_frame, frames, options, override))
-    out = []
-    for motif in sorted(cluster, key=lambda m: m.index):
-        for mol in mols:
-            if mol.ref_start < motif.end and mol.ref_end > motif.start:
-                out.append(score(mol, motif, options, want_span=want_spans))
-    return out
+        for o in score_read(read, index, header_frames, options, override, want_spans):
+            per_motif[o.motif_index].append(o)
+    return [o for i in sorted(per_motif) for o in per_motif[i]]
 
 
 _WORKER = {}
@@ -487,41 +511,60 @@ def _init_worker(bam_path, options_dict, msp_bam_path, want_spans):
                    options=FootprintOptions(**options_dict), msp=msp_bam_path, spans=want_spans)
 
 
+def _compact(o: Observation) -> Observation:
+    o.call = None if o.call is None or isinstance(o.call, tuple) else (o.call.x, o.call.y, o.call.ox, o.call.oy, o.call.tq)
+    return o
+
+
 def _work(cluster):
     w = _WORKER
-    obs = score_cluster(w['bam'], w['frames'], cluster, w['options'], w['msp'], w['spans'])
-    for o in obs:
-        o.call = None if o.call is None else (o.call.x, o.call.y, o.call.ox, o.call.oy, o.call.tq)
-    return obs
+    return [_compact(o) for o in score_cluster(w['bam'], w['frames'], cluster, w['options'], w['msp'], w['spans'])]
+
+
+def iter_footprint(bam_path, motifs: Sequence[Motif], options: FootprintOptions, *, cores: int = 1,
+                   msp_bam_path=None, want_spans=False, progress=None):
+    """Yield ``(motif, observations)`` for every motif, cluster by cluster in
+    genomic order. Each cluster's observations are released once yielded, so a
+    caller that writes and drops them runs in memory bounded by one cluster
+    per worker. ``call`` is ``(x, y, ox, oy, tq)`` or None."""
+    clusters = motif_clusters(motifs)
+    init = (str(bam_path), asdict(options), str(msp_bam_path) if msp_bam_path else None, want_spans)
+
+    def emit(cluster, obs):
+        grouped = defaultdict(list)
+        for o in obs:
+            grouped[o.motif_index].append(o)
+        for m in sorted(cluster, key=lambda m: m.index):
+            yield m, grouped.get(m.index, [])
+
+    if cores <= 1 or len(clusters) == 1:
+        _init_worker(*init)
+        try:
+            for i, c in enumerate(clusters, 1):
+                yield from emit(c, _work(c))
+                if progress:
+                    progress(i, len(clusters))
+        finally:
+            _WORKER['bam'].close()
+            _WORKER.clear()
+        return
+    from fiberhmm.inference.mp_context import _MP_CONTEXT
+    with _MP_CONTEXT.Pool(cores, initializer=_init_worker, initargs=init) as pool:
+        for i, (c, obs) in enumerate(zip(clusters, pool.imap(_work, clusters, chunksize=1)), 1):
+            yield from emit(c, obs)
+            if progress:
+                progress(i, len(clusters))
 
 
 def run_footprint(bam_path, motifs: Sequence[Motif], options: FootprintOptions, *, cores: int = 1,
                   msp_bam_path=None, want_spans=False, progress=None) -> Dict[int, List[Observation]]:
     """Score every motif; returns motif index -> observations (overlapping molecules).
 
-    ``call`` on each observation is ``(x, y, ox, oy, tq)`` (reference bounds) or None."""
-    clusters = motif_clusters(motifs)
+    Holds every observation; the CLI streams with :func:`iter_footprint` instead."""
     by_motif: Dict[int, List[Observation]] = defaultdict(list)
-    init = (str(bam_path), asdict(options), str(msp_bam_path) if msp_bam_path else None, want_spans)
-    if cores <= 1 or len(clusters) == 1:
-        _init_worker(*init)
-        try:
-            for i, c in enumerate(clusters, 1):
-                for o in _work(c):
-                    by_motif[o.motif_index].append(o)
-                if progress:
-                    progress(i, len(clusters))
-        finally:
-            _WORKER['bam'].close()
-            _WORKER.clear()
-        return by_motif
-    from fiberhmm.inference.mp_context import _MP_CONTEXT
-    with _MP_CONTEXT.Pool(cores, initializer=_init_worker, initargs=init) as pool:
-        for i, obs in enumerate(pool.imap_unordered(_work, clusters, chunksize=4), 1):
-            for o in obs:
-                by_motif[o.motif_index].append(o)
-            if progress:
-                progress(i, len(clusters))
+    for m, obs in iter_footprint(bam_path, motifs, options, cores=cores, msp_bam_path=msp_bam_path,
+                                 want_spans=want_spans, progress=progress):
+        by_motif[m.index].extend(obs)
     return by_motif
 
 
@@ -612,28 +655,81 @@ def annotate_read(read, rows, group_frame) -> int:
     return sum(len(v) for v in groups.values())
 
 
-def annotation_rows(motifs: Sequence[Motif], by_motif: Dict[int, List[Observation]]):
-    """read key -> [(layer, seq_start, seq_end, quals, motif_id)] for eligible observations.
+def annotation_row(motif: Motif, o: Observation):
+    """``(layer, seq_start, seq_end, quals, motif_id)`` for an eligible observation, else None.
 
     fp_<label>.QQQ (footprinted): tq of the qualifying call, its conservative
     reference width (bp, saturated 255), and the edge flag (1 = the
     conservative bounds contain the motif, 2 = only the outer bounds do).
     fpneg_<label>.Q (eligible, not footprinted): reason code (1 no call,
     2 partial overlap, 3 containing call wider than the cap, 4 m6A in motif)."""
+    if o.code not in (1, 3) or o.query_span is None:
+        return None
+    fp_layer, neg_layer = layer_names(motif.label)
+    s, e = o.query_span
+    if o.code == 3:
+        c = o.call if isinstance(o.call, tuple) else (o.call.x, o.call.y, o.call.ox, o.call.oy, o.call.tq)
+        x, y, _ox, _oy, tq = c
+        return fp_layer, s, e, [tq, min(255, y - x), 1 if o.edge == 'conservative' else 2], motif.motif_id
+    return neg_layer, s, e, [REASON_CODE.get(o.reason, 0)], motif.motif_id
+
+
+def annotation_rows(motifs: Sequence[Motif], by_motif: Dict[int, List[Observation]]):
+    """read key -> annotation rows (see :func:`annotation_row`) from stored observations."""
     rows = defaultdict(list)
     for motif in motifs:
-        fp_layer, neg_layer = layer_names(motif.label)
         for o in by_motif.get(motif.index, ()):
-            if o.code not in (1, 3) or o.query_span is None:
-                continue
-            s, e = o.query_span
-            if o.code == 3:
-                x, y, _ox, _oy, tq = o.call
-                q = [tq, min(255, y - x), 1 if o.edge == 'conservative' else 2]
-                rows[o.key].append((fp_layer, s, e, q, motif.motif_id))
-            else:
-                rows[o.key].append((neg_layer, s, e, [REASON_CODE.get(o.reason, 0)], motif.motif_id))
+            row = annotation_row(motif, o)
+            if row:
+                rows[o.key].append(row)
     return rows
+
+
+class _StreamScorer:
+    """Scores each alignment of a coordinate-ordered stream against the motifs it
+    overlaps, for the annotated-BAM pass: nothing but the current read and a few
+    clusters' MSP overrides (``msp_bam``) is held."""
+
+    def __init__(self, motifs, options, header, msp_bam_path=None):
+        from fiberhmm.io.annotation_frame import MAGroupFrame
+        from fiberhmm.qc.states import tag_frames
+        self.options, self.msp = options, msp_bam_path
+        self.frames = (MAGroupFrame(header), tag_frames(header))
+        self.by_motif = {}
+        by_chrom = defaultdict(list)
+        for ci, cluster in enumerate(motif_clusters(motifs)):
+            for m in cluster:
+                self.by_motif[m.index] = (ci, cluster)
+                by_chrom[m.chrom].append(m)
+        self.index = {c: _MotifIndex(ms) for c, ms in by_chrom.items()}
+        self.cache = {}
+
+    def _override(self, ci, cluster):
+        if self.msp is None:
+            return None
+        if ci not in self.cache:
+            if len(self.cache) >= 8:
+                self.cache.pop(next(iter(self.cache)))
+            self.cache[ci] = _msp_index(self.msp, cluster[0].chrom, min(m.start for m in cluster),
+                                        max(m.end for m in cluster), self.options)
+        return self.cache[ci]
+
+    def rows(self, read):
+        index = self.index.get(read.reference_name) if not read.is_unmapped else None
+        if index is None:
+            return []
+        groups = defaultdict(list)
+        for m in index.overlapping(int(read.reference_start), int(read.reference_end or read.reference_start)):
+            groups[self.by_motif[m.index][0]].append(m)
+        out = []
+        for ci, ms in groups.items():
+            sub = _MotifIndex(ms)
+            for o in score_read(read, sub, self.frames, self.options, self._override(ci, self.by_motif[ms[0].index][1]),
+                                want_spans=True):
+                row = annotation_row(next(m for m in ms if m.index == o.motif_index), o)
+                if row:
+                    out.append(row)
+        return out
 
 
 def contract_value(label: str, options: FootprintOptions, bed_path, msp_bam_path) -> dict:
@@ -656,6 +752,10 @@ def write_annotated_bam(bam_path, out_path, motifs: Sequence[Motif], by_motif, o
                         bed_path, msp_bam_path=None, argv=None) -> dict:
     """Copy ``bam_path`` to ``out_path`` with this run's fp_/fpneg_ layers.
 
+    ``by_motif`` = stored observations (with query spans), or None to score
+    each alignment again as it is copied (constant memory; same rule, same
+    result).
+
     Existing layers (nuc/msp/tf, consensus layers, earlier fp_* layers) are kept
     byte-for-byte; layers with the names written here are replaced in every read."""
     import os
@@ -671,7 +771,7 @@ def write_annotated_bam(bam_path, out_path, motifs: Sequence[Motif], by_motif, o
         raise ValueError('--out-bam must differ from the input BAM')
     labels = sorted({m.label for m in motifs})
     owned = [n for label in labels for n in layer_names(label)]
-    rows = annotation_rows(motifs, by_motif)
+    rows = annotation_rows(motifs, by_motif) if by_motif is not None else None
     fd, tmp = mkstemp_shared(prefix='.fiberhmm-footprint-', suffix='.bam', dir=str(out_path.parent or '.'))
     os.close(fd)
     annotated = written = 0
@@ -697,13 +797,17 @@ def write_annotated_bam(bam_path, out_path, motifs: Sequence[Motif], by_motif, o
             header = append_pg_record(header, dict(PN='fiberhmm-footprint', VN=__version__, DS=ds,
                                                    CL=' '.join(argv) if argv else 'fiberhmm-footprint'))
             group_frame = MAGroupFrame(header)
+            scorer = _StreamScorer(motifs, options, bam.header, msp_bam_path) if rows is None else None
             with pysam.AlignmentFile(tmp, 'wb', header=header) as dest:
                 for read in bam.fetch(until_eof=True):
                     if read.has_tag('MA'):
                         present = {t[0] for t in parse_ma_tag(str(read.get_tag('MA')))['raw_types']}
                         if present & set(owned):
                             _clear_layers(read, owned)
-                    r = rows.get(read_key(read)) if not read.is_unmapped else None
+                    if scorer is not None:
+                        r = scorer.rows(read)
+                    else:
+                        r = rows.get(read_key(read)) if not read.is_unmapped else None
                     if r:
                         annotated += annotate_read(read, r, group_frame)
                     dest.write(read)
