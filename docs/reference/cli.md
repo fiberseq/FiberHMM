@@ -604,7 +604,12 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--bam` | required | Indexed BAM with FiberHMM calls (MA tf/nuc/msp layers) |
+| `--bam` | — | Indexed BAM with FiberHMM calls (MA tf/nuc/msp layers) |
+| `--calls-bb` | — | FiberHMM call bigBeds from fiberhmm-extract: PREFIX_tf.bb, PREFIX_msp.bb and, when present, PREFIX_nucleosome.bb and PREFIX_m6a.bb (extract with --block-scores for per-call tq, outer edges and m6A ML) |
+| `--tf-bb` | — | Explicit TF call bigBed (overrides --calls-bb) |
+| `--msp-bb` | — | Explicit MSP bigBed |
+| `--nuc-bb` | — | Explicit nucleosome bigBed (optional; nucleosome overlap column) |
+| `--m6a-bb` | — | Explicit m6A bigBed (optional; needed for --require-unmodified) |
 | `--bed` | required | Motifs: BED (BED6: chrom, start, end, name, score, strand; 0-based half-open; .gz ok) or bigBed (detected by its magic number; e.g. JASPAR genome-wide TFBS tracks; queried only where the BAM has reads, or in --region). Each distinct name (bigBed: TF-name field when present) is one motif set and one MA layer pair (fp_NAME, fpneg_NAME) |
 | `--motif-name` | — | Keep motifs whose name, TF name or matrix ID matches (case-insensitive; MA0139 matches MA0139.2) |
 | `--min-score` | — | Keep motifs with score column &gt;= this |
@@ -614,6 +619,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `-o` / `--out` | `-` | Per-motif table, ft footprint style (default: stdout) |
 | `--per-molecule` | — | Also write one row per molecule x motif (status, code, call bounds, LLR), in genomic order of the motifs |
 | `--out-bam` | — | Also write a copy of --bam with per-motif MA layers fp_NAME (footprinted) and fpneg_NAME (eligible, not footprinted). Existing layers are kept; layers of the same name are replaced |
+| `--out-bb` | — | Also write per-read BED12 bigBeds of footprinted motif instances, PREFIX_fp_NAME.bb, one per motif set (needs bedToBigBed on PATH) |
 | `--layer-name` | — | Use one layer name for every BED row instead of the BED name column (sanitized to [A-Za-z0-9_]; written as fp_NAME / fpneg_NAME) |
 | `--min-llr` | `5.0` | Minimum LLR (nats) of a footprint call; tq &gt;= 10 x this (default 5) |
 | `--edges` | `outer` | Call bounds that must contain the motif: outer = conservative bounds extended through the edge ambiguity in the el/er bytes, up to the terminating informative position (default); conservative = the call as stored Choices: `outer`, `conservative`. |

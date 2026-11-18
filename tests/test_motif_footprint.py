@@ -551,3 +551,80 @@ def test_missing_bigbed_reader_message(tmp_path, monkeypatch):
     monkeypatch.setattr(bigbed_motifs.shutil, 'which', lambda name: None)
     with pytest.raises(ValueError, match='pyBigWig'):
         bigbed_motifs.BigBedReader._choose()
+
+
+# ------------------------------------------------------------------ FiberHMM call bigBeds as input
+
+def _extract(tmp_path, bam, monkeypatch, *flags):
+    import sys
+    if not shutil.which('bedToBigBed'):
+        pytest.skip('bedToBigBed not on PATH')
+    from fiberhmm.cli import extract_tags
+    out = tmp_path / 'bb'
+    out.mkdir(exist_ok=True)
+    monkeypatch.setattr(sys, 'argv', ['fiberhmm-extract', '-i', str(bam), '-o', str(out), '--tf', '--msp',
+                                      '--nucleosome', '--m6a', '-p', '125', *flags])
+    extract_tags.main()
+    return out / bam.stem
+
+
+def _bb_fixture(tmp_path):
+    return write_bam(tmp_path / 'src.bam', [
+        basic(nucs=[(500, 650)], m6a=(210, 700)),
+        lambda h: make_read(h, 'r2', nucs=[(500, 650)], msps=[MSP], tfs=[CALL, (300, 330, 70, 0, 0)], reverse=True),
+        lambda h: make_read(h, 'r3', msps=[(0, 900)], tfs=[(195, 240, 90, 2, 2), (600, 700, 60, 3, 3)],
+                            pos=POS + 50)])
+
+
+BB_MOTIFS = [('chr1', POS + 196, POS + 232, 'CTCF', 0, '+'), ('chr1', POS + 302, POS + 328, 'REST', 0, '-'),
+             ('chr1', POS + 340, POS + 360, 'CTCF', 0, '+'), ('chr1', POS + 520, POS + 540, 'CTCF', 0, '+')]
+
+
+def _mol_rows(path):
+    rows = [l.split('\t') for l in path.read_text().splitlines()[1:]]
+    cols = mf.MOLECULE_COLUMNS
+    keep = [cols.index(c) for c in ('motif_id', 'read_name', 'status', 'code', 'reason', 'call_start', 'call_end',
+                                    'outer_start', 'outer_end', 'llr', 'edge', 'nuc_overlap')]
+    return sorted(tuple(r[i] for i in keep) for r in rows)
+
+
+@pytest.mark.parametrize('extra', [[], ['--edges', 'conservative'], ['--require-unmodified']])
+def test_call_bigbeds_match_bam(tmp_path, monkeypatch, extra):
+    from fiberhmm.cli.motif_footprint import main
+    src = _bb_fixture(tmp_path)
+    prefix = _extract(tmp_path, src, monkeypatch, '--block-scores')
+    b = bed(tmp_path, BB_MOTIFS)
+    common = ['--bed', str(b), '--max-width', '0', *extra]
+    main(['--bam', str(src), *common, '-o', str(tmp_path / 'a.tsv'), '--per-molecule', str(tmp_path / 'a.mol')])
+    main(['--calls-bb', str(prefix), *common, '-o', str(tmp_path / 'b.tsv'), '--per-molecule', str(tmp_path / 'b.mol'),
+          '--out-bb', str(tmp_path / 'out' )])
+    assert _mol_rows(tmp_path / 'a.mol') == _mol_rows(tmp_path / 'b.mol')
+    ta = [l.split('\t') for l in (tmp_path / 'a.tsv').read_text().splitlines()]
+    tb = [l.split('\t') for l in (tmp_path / 'b.tsv').read_text().splitlines()]
+    assert [r[:12] for r in ta] == [r[:12] for r in tb]
+    # footprinted instances as a per-read BED12 bigBed
+    pyBigWig = pytest.importorskip('pyBigWig')
+    written = sorted(tmp_path.glob('out_fp_*.bb'))
+    assert written
+    bb = pyBigWig.open(str(written[0]))
+    rows = bb.entries('chr1', 0, 10000)
+    assert rows and all(len(r[2].split('\t')) == 13 for r in rows)
+    sql = bb.SQL().decode() if isinstance(bb.SQL(), bytes) else bb.SQL()
+    assert 'fiberhmm_fp' in sql and 'blockTq' in sql and 'Sample: out' in sql
+
+
+def test_call_bigbeds_without_block_scores_warn_and_use_conservative(tmp_path, monkeypatch, capsys):
+    from fiberhmm.cli.motif_footprint import main
+    src = _bb_fixture(tmp_path)
+    prefix = _extract(tmp_path, src, monkeypatch)
+    b = bed(tmp_path, BB_MOTIFS)
+    capsys.readouterr()
+    main(['--calls-bb', str(prefix), '--bed', str(b), '--max-width', '0', '-o', str(tmp_path / 'b.tsv'),
+          '--per-molecule', str(tmp_path / 'b.mol')])
+    err = capsys.readouterr().err
+    assert 'outer edges are unavailable' in err and 'blockTq' in err
+    main(['--bam', str(src), '--bed', str(b), '--max-width', '0', '--edges', 'conservative',
+          '-o', str(tmp_path / 'a.tsv'), '--per-molecule', str(tmp_path / 'a.mol')])
+    # outer bounds and LLR are unknown without block scores
+    strip = lambda rows: [r[:7] + r[10:] for r in rows]
+    assert strip(_mol_rows(tmp_path / 'a.mol')) == strip(_mol_rows(tmp_path / 'b.mol'))

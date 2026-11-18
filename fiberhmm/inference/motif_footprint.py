@@ -28,6 +28,8 @@ Molecules that overlap but do not span the motif get code -1.
 from __future__ import annotations
 
 import gzip
+import os
+import sys
 import json
 import re
 from collections import defaultdict
@@ -464,8 +466,9 @@ class Molecule:
     calls: Optional[List[TFCall]]
     nucs: List[Tuple[int, int]]
     msps: Optional[List[Tuple[int, int]]]
-    refmap: _RefMap
+    refmap: Optional[_RefMap]
     m6a: Optional[np.ndarray] = None
+    duplicate: bool = False
 
 
 def read_key(read) -> tuple:
@@ -494,7 +497,7 @@ def parse_molecule(read, group_frame, frames, options: FootprintOptions, msp_ove
     return Molecule(read_key(read), read.query_name, int(read.reference_start), int(read.reference_end),
                     bool(read.is_reverse), int(read.query_length or len(refmap.refs)),
                     str(read.get_tag('HP')) if read.has_tag('HP') else 'UNK',
-                    None if calls is None else proj_calls, nucs, msps, refmap, m6a)
+                    None if calls is None else proj_calls, nucs, msps, refmap, m6a, bool(read.is_duplicate))
 
 
 # --------------------------------------------------------------------------- scoring
@@ -519,17 +522,20 @@ class Observation:
     query_span: Optional[Tuple[int, int]] = None   # SEQ-frame query span of the motif (for --out-bam)
     is_reverse: bool = False
     read_length: int = 0
+    read_end: int = 0
+    duplicate: bool = False
 
 
 def score(mol: Molecule, motif: Motif, options: FootprintOptions, want_span: bool = False) -> Observation:
     m0, m1 = motif.start, motif.end
     nuc = any(a < m1 and b > m0 for a, b in mol.nucs)
     base = dict(motif_index=motif.index, read_name=mol.name, key=mol.key, nuc_overlap=nuc, hp=mol.hp,
-                is_reverse=mol.is_reverse, read_length=mol.read_length)
+                is_reverse=mol.is_reverse, read_length=mol.read_length, read_end=mol.ref_end,
+                duplicate=mol.duplicate)
     if not ft_spans(mol.ref_start, mol.ref_end, m0, m1):
         return Observation(code=SPAN_NOT, status=NOT_SPANNING, **base)
     eligible = mol.msps is not None and any(ft_spans(a, b, m0, m1) for a, b in mol.msps)
-    calls = [c for c in (mol.calls or ()) if c.tq >= options.min_tq]
+    calls = [c for c in (mol.calls or ()) if c.tq >= options.min_tq or c.tq < 0]   # tq < 0: unknown (bigBed)
     outer = options.edges == 'outer'
 
     def bounds(c):
@@ -635,13 +641,29 @@ def score_cluster(bam, header_frames, cluster: Sequence[Motif], options: Footpri
 _WORKER = {}
 
 
-def _init_worker(bam_path, options_dict, msp_bam_path, want_spans):
+def _init_worker(source, options_dict, msp_bam_path, want_spans):
+    options = FootprintOptions(**options_dict)
+    if isinstance(source, dict):                 # FiberHMM call bigBeds
+        from fiberhmm.io.call_bigbeds import CallBigBeds
+        _WORKER.update(bb=CallBigBeds(**source), bam=None, options=options, spans=False, msp=None)
+        return
     import pysam
     from fiberhmm.io.annotation_frame import MAGroupFrame
     from fiberhmm.qc.states import tag_frames
-    bam = pysam.AlignmentFile(bam_path)
-    _WORKER.update(bam=bam, frames=(MAGroupFrame(bam.header), tag_frames(bam.header)),
-                   options=FootprintOptions(**options_dict), msp=msp_bam_path, spans=want_spans)
+    bam = pysam.AlignmentFile(source)
+    _WORKER.update(bam=bam, bb=None, frames=(MAGroupFrame(bam.header), tag_frames(bam.header)),
+                   options=options, msp=msp_bam_path, spans=want_spans)
+
+
+def score_cluster_bigbed(calls, cluster: Sequence[Motif], options: FootprintOptions) -> List[Observation]:
+    """:func:`score_cluster` for molecules read from FiberHMM call bigBeds."""
+    index = _MotifIndex(cluster)
+    per_motif = defaultdict(list)
+    c0, c1 = min(m.start for m in cluster), max(m.end for m in cluster)
+    for mol in calls.molecules(cluster[0].chrom, c0, c1, options):
+        for m in index.overlapping(mol.ref_start, mol.ref_end):
+            per_motif[m.index].append(score(mol, m, options))
+    return [o for i in sorted(per_motif) for o in per_motif[i]]
 
 
 def _compact(o: Observation) -> Observation:
@@ -651,6 +673,8 @@ def _compact(o: Observation) -> Observation:
 
 def _work(cluster):
     w = _WORKER
+    if w.get('bb') is not None:
+        return [_compact(o) for o in score_cluster_bigbed(w['bb'], cluster, w['options'])]
     return [_compact(o) for o in score_cluster(w['bam'], w['frames'], cluster, w['options'], w['msp'], w['spans'])]
 
 
@@ -667,7 +691,8 @@ def iter_footprint(bam_path, motifs, options: FootprintOptions, *, cores: int = 
         clusters = iter(motif_clusters(motifs))
     else:
         clusters = iter_clusters(motifs)
-    init = (str(bam_path), asdict(options), str(msp_bam_path) if msp_bam_path else None, want_spans)
+    source = bam_path if isinstance(bam_path, dict) else str(bam_path)
+    init = (source, asdict(options), str(msp_bam_path) if msp_bam_path else None, want_spans)
 
     def emit(cluster, obs):
         grouped = defaultdict(list)
@@ -686,7 +711,8 @@ def iter_footprint(bam_path, motifs, options: FootprintOptions, *, cores: int = 
                 if progress:
                     progress(done, None)
         finally:
-            _WORKER['bam'].close()
+            if _WORKER.get('bam') is not None:
+                _WORKER['bam'].close()
             _WORKER.clear()
         return
     from fiberhmm.inference.mp_context import _MP_CONTEXT
@@ -740,9 +766,90 @@ def molecule_row(motif: Motif, o: Observation) -> List[str]:
     c = o.call
     if c is not None and not isinstance(c, tuple):
         c = (c.x, c.y, c.ox, c.oy, c.tq)
-    cells = [str(v) for v in c[:4]] + [str(c[1] - c[0]), f'{c[4] / 10:g}'] if c else ['.'] * 6
+    cells = [str(v) for v in c[:4]] + [str(c[1] - c[0]), f'{c[4] / 10:g}' if c[4] >= 0 else '.'] if c else ['.'] * 6
     return [motif.chrom, str(motif.start), str(motif.end), motif.strand, motif.name, motif.motif_id, o.read_name,
             o.status, str(o.code), o.reason or '.', *cells, o.edge or '.', str(int(o.nuc_overlap)), o.hp]
+
+
+# --------------------------------------------------------------------------- bigBed output
+
+class FootprintBigBedWriter:
+    """Per-read BED12 tracks of footprinted motif instances, one bigBed per motif
+    set: ``{prefix}_fp_{label}.bb``, with the ``fiberhmm_fp`` autoSQL (blockTq,
+    blockCw, blockEf, isDuplicate) and a ``Sample:`` marker so viewers group it
+    with the dataset's other FiberHMM tracks. Rows are streamed to temporary BED
+    files as reads leave the current region, then sorted and converted."""
+
+    def __init__(self, prefix, chrom_sizes: Dict[str, int], sample_name: Optional[str] = None):
+        import tempfile
+        self.prefix = str(prefix)
+        self.sizes = chrom_sizes
+        self.sample = sample_name or os.path.basename(self.prefix)
+        out_dir = os.path.dirname(os.path.abspath(self.prefix))
+        os.makedirs(out_dir, exist_ok=True)
+        self.tmp = tempfile.mkdtemp(prefix='.fp_bb_', dir=out_dir)
+        self.handles = {}
+        self.open_rows = {}   # (label, read) -> dict(chrom, strand, dup, end, blocks)
+        self.chrom = None
+
+    def add(self, motif: Motif, observations):
+        if motif.chrom != self.chrom:
+            self.flush(); self.chrom = motif.chrom
+        else:
+            self.flush(before=motif.start)
+        for o in observations:
+            if o.code != 3:
+                continue
+            c = o.call if isinstance(o.call, tuple) else (o.call.x, o.call.y, o.call.ox, o.call.oy, o.call.tq)
+            row = self.open_rows.setdefault((motif.label, o.read_name), dict(
+                chrom=motif.chrom, strand='-' if o.is_reverse else '+', dup=int(o.duplicate), end=o.read_end, blocks=[]))
+            row['blocks'].append((motif.start, motif.end, max(0, c[4]), min(255, c[1] - c[0]),
+                                  1 if o.edge == 'conservative' else 2))
+
+    def flush(self, before=None):
+        done = [k for k, r in self.open_rows.items() if before is None or r['end'] <= before]
+        for key in done:
+            label, read = key
+            r = self.open_rows.pop(key)
+            blocks = sorted(set(r['blocks']))
+            s0, e0 = blocks[0][0], max(b[1] for b in blocks)
+            fh = self.handles.get(label)
+            if fh is None:
+                fh = self.handles[label] = open(os.path.join(self.tmp, f'{label}.bed'), 'w')
+            fh.write('\t'.join(map(str, [
+                r['chrom'], s0, e0, read, int(sum(b[2] for b in blocks) / len(blocks)), r['strand'], s0, e0, 0,
+                len(blocks), ','.join(str(b[1] - b[0]) for b in blocks), ','.join(str(b[0] - s0) for b in blocks),
+                ','.join(str(b[2]) for b in blocks), ','.join(str(b[3]) for b in blocks),
+                ','.join(str(b[4]) for b in blocks), r['dup']])) + '\n')
+
+    def close(self, labels=()) -> List[str]:
+        import shutil
+        import subprocess
+        from fiberhmm.cli.extract_tags import bed_to_bigbed
+        self.flush()
+        for fh in self.handles.values():
+            fh.close()
+        outputs = []
+        try:
+            for label in sorted(set(labels) | set(self.handles)):
+                bed = os.path.join(self.tmp, f'{label}.bed')
+                if not os.path.exists(bed):
+                    open(bed, 'w').close()
+                srt = bed + '.sorted'
+                subprocess.run(['sort', '-k1,1', '-k2,2n', '-o', srt, bed], check=True,
+                               env=dict(os.environ, LC_ALL='C'))
+                target = f'{self.prefix}_fp_{label}.bb'
+                if os.path.getsize(srt) == 0:
+                    print(f'fiberhmm-footprint: no footprinted molecules for {label}; {target} not written',
+                          file=sys.stderr)
+                    continue
+                if not bed_to_bigbed(srt, target, self.sizes, extract_type='fp', block_scores=True,
+                                     sample_name=self.sample):
+                    raise ValueError(f'bedToBigBed failed for {target}')
+                outputs.append(target)
+        finally:
+            shutil.rmtree(self.tmp, ignore_errors=True)
+        return outputs
 
 
 # --------------------------------------------------------------------------- MA annotation output

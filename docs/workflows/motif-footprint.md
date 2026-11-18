@@ -17,6 +17,50 @@ fiberhmm-footprint --bam calls.bam --bed ctcf_motifs.bed -o ctcf.footprint.tsv \
     --per-molecule ctcf.molecules.tsv --out-bam calls.ctcf.bam --cores 8
 ```
 
+## Call input: BAM or call bigBeds
+
+Calls come from `--bam`, or from the per-read call bigBeds that
+`fiberhmm-extract` writes (`--calls-bb PREFIX` for `PREFIX_tf.bb`,
+`PREFIX_msp.bb`, `PREFIX_nucleosome.bb`, `PREFIX_m6a.bb`, or explicit
+`--tf-bb`/`--msp-bb`/`--nuc-bb`/`--m6a-bb`). The bigBeds are queried per region,
+never loaded whole. Extract them with `--block-scores` so they carry what the
+rule needs:
+
+```bash
+fiberhmm-extract -i calls.bam -o bb/ --tf --msp --nucleosome --m6a --block-scores -p 125
+fiberhmm-footprint --calls-bb bb/calls --bed ctcf.bed -o ctcf.tsv --out-bb bb/calls
+```
+
+| Needed | In the bigBed | Without `--block-scores` |
+|---|---|---|
+| per-call LLR (`--min-llr`) | `blockTq` | only the floor `fiberhmm-extract --min-tq` applied (default 50); LLR reported as `.` |
+| outer edges | `blockEl`/`blockEr` (genomic left/right) | unavailable: conservative edges are used, with a warning |
+| m6A ML (`--require-unmodified`) | `blockMl` | every extracted position, i.e. those above `--prob-threshold` |
+
+What the format cannot carry, whatever the options:
+
+- A row spans its first to last call, not the alignment, so a read's extent is
+  the union of its rows. Reads with no FiberHMM calls are absent. Eligibility
+  and footprint calls are unaffected; `n_spanning_fibers` counts only
+  annotated reads.
+- Outer edges are applied on the reference rather than in read coordinates,
+  so they differ when an insertion or deletion lies inside the ambiguity zone.
+
+On 5,369 sites of a Hia5 PacBio library (`--require-unmodified`, default
+width cap), bigBed input matched BAM input for every motif's eligible count
+(90,232) and for 11,031 of 11,036 footprinted molecules. The five that differ
+have an indel inside the edge-ambiguity zone. The 15,365 molecules missing from
+the bigBed run are reads without FiberHMM calls (`unannotated` in the BAM
+run).
+
+`--out-bb PREFIX` (either input) writes `PREFIX_fp_NAME.bb` per motif set:
+one BED12 row per read, one block per footprinted motif instance, with
+`blockTq`, `blockCw`, `blockEf` and `isDuplicate` (autoSQL `fiberhmm_fp`) and
+a `Sample:` marker so viewers group it with the dataset's other tracks.
+`fiberhmm-consensus` still needs a BAM: its native replay re-decodes each
+molecule's MSPs from the m6A calls and sequence, which the bigBeds do not
+carry.
+
 ## Motif input
 
 `--bed` takes a BED (BED3+, BED6 strand honoured, `.gz` allowed) or a bigBed,

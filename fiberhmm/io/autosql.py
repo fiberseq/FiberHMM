@@ -109,6 +109,14 @@ _BLOCK_SCORE_FIELDS = {
         '"Native per-position ML probability, 0-255; 0 for DddA-inferred '
         'ddda_mcg interval spans"\n'
     ),
+    'fp': (
+        '    int[blockCount] blockTq; '
+        '"Per-block tq (LLR x 10) of the FiberHMM call that footprints the motif, 0-255"\n'
+        '    int[blockCount] blockCw; '
+        '"Per-block conservative width of that call, bp (saturated 255)"\n'
+        '    int[blockCount] blockEf; '
+        '"Per-block edge flag: 1 = conservative call bounds contain the motif, 2 = only the outer bounds do"\n'
+    ),
     'deam': (
         '    int[blockCount] blockMod; '
         '"0 = R (G->A, GA-strand deamination), 1 = Y (C->T, CT-strand deamination)"\n'
@@ -215,6 +223,11 @@ _DESCRIPTIONS = {
         'strand). BED score = 255 (deamination calls are deterministic, '
         'not probabilistic). Use --block-scores to carry the R/Y '
         'disambiguation in a blockMod per-block column.'
+    ),
+    'fp': (
+        'FiberHMM motif footprints (fiberhmm-footprint --out-bb). One BED12 row per read and motif set; '
+        'each block is a motif instance footprinted on that read: an MSP spans it and one FiberHMM TF '
+        'call contains it. BED score = mean tq of those calls.'
     ),
     'bothstrand': (
         'FiberHMM paired-duplex DAF coverage. Each BED12 block marks a span '

@@ -35,7 +35,16 @@ from fiberhmm.inference.motif_footprint import (
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog='fiberhmm-footprint', description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument('--bam', required=True, help='Indexed BAM with FiberHMM calls (MA tf/nuc/msp layers)')
+    src = p.add_argument_group('call input (one of)')
+    src.add_argument('--bam', help='Indexed BAM with FiberHMM calls (MA tf/nuc/msp layers)')
+    src.add_argument('--calls-bb', metavar='PREFIX',
+                     help='FiberHMM call bigBeds from fiberhmm-extract: PREFIX_tf.bb, PREFIX_msp.bb and, when '
+                          'present, PREFIX_nucleosome.bb and PREFIX_m6a.bb (extract with --block-scores for per-call '
+                          'tq, outer edges and m6A ML)')
+    src.add_argument('--tf-bb', metavar='BB', help='Explicit TF call bigBed (overrides --calls-bb)')
+    src.add_argument('--msp-bb', metavar='BB', help='Explicit MSP bigBed')
+    src.add_argument('--nuc-bb', metavar='BB', help='Explicit nucleosome bigBed (optional; nucleosome overlap column)')
+    src.add_argument('--m6a-bb', metavar='BB', help='Explicit m6A bigBed (optional; needed for --require-unmodified)')
     p.add_argument('--bed', required=True,
                    help='Motifs: BED (BED6: chrom, start, end, name, score, strand; 0-based half-open; .gz ok) or '
                         'bigBed (detected by its magic number; e.g. JASPAR genome-wide TFBS tracks; queried only '
@@ -59,6 +68,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument('--out-bam', metavar='BAM',
                    help='Also write a copy of --bam with per-motif MA layers fp_NAME (footprinted) and fpneg_NAME '
                         '(eligible, not footprinted). Existing layers are kept; layers of the same name are replaced')
+    p.add_argument('--out-bb', metavar='PREFIX',
+                   help='Also write per-read BED12 bigBeds of footprinted motif instances, PREFIX_fp_NAME.bb, one per '
+                        'motif set (needs bedToBigBed on PATH)')
     p.add_argument('--layer-name', metavar='NAME',
                    help='Use one layer name for every BED row instead of the BED name column '
                         '(sanitized to [A-Za-z0-9_]; written as fp_NAME / fpneg_NAME)')
@@ -113,6 +125,22 @@ def _main(p, argv):
     except ValueError as error:
         p.error(str(error))
     from fiberhmm.io.bigbed_motifs import MotifFilter, is_bigbed
+    bb_input = any((args.calls_bb, args.tf_bb, args.msp_bb, args.nuc_bb, args.m6a_bb))
+    if bool(args.bam) == bb_input:
+        p.error('give the calls as --bam or as call bigBeds (--calls-bb / --tf-bb --msp-bb ...), not both')
+    source = args.bam
+    chrom_sizes = None
+    if bb_input:
+        if args.out_bam or args.msp_bam:
+            p.error('--out-bam and --msp-bam need --bam input')
+        from fiberhmm.io.call_bigbeds import CallBigBeds, resolve_call_bigbeds
+        paths = resolve_call_bigbeds(args.calls_bb, tf=args.tf_bb, msp=args.msp_bb, nucleosome=args.nuc_bb,
+                                     m6a=args.m6a_bb)
+        if options.require_unmodified and 'm6a' not in paths:
+            p.error('--require-unmodified with bigBed input needs the m6A bigBed (--m6a-bb or PREFIX_m6a.bb)')
+        calls = CallBigBeds(**paths)                      # prints format-limit warnings once
+        source = calls.spec()
+        chrom_sizes = calls.tracks['tf'].reader.chroms()
     names = [n for n in (args.motif_name or '').split(',') if n.strip()] or None
     filt = MotifFilter(names=names, min_score=args.min_score, max_pvalue=args.max_pvalue) \
         if (names or args.min_score is not None or args.max_pvalue is not None) else None
@@ -120,6 +148,8 @@ def _main(p, argv):
     if not bigbed and (args.region or args.max_pvalue is not None):
         p.error('--region and --max-pvalue apply to bigBed motif input')
     if bigbed:
+        if bb_input and not args.region:
+            p.error('a motif bigBed with call-bigBed input needs --region (the extent is taken from the BAM otherwise)')
         motifs = BigBedMotifs(args.bed, bam_path=args.bam, regions=args.region, motif_filter=filt,
                               layer_name=args.layer_name)
     else:
@@ -134,12 +164,22 @@ def _main(p, argv):
     labels = set()
     count = 0
     mol = open(args.per_molecule, 'w') if args.per_molecule else None
+    fp_bb = None
+    if args.out_bb:
+        from fiberhmm.inference.motif_footprint import FootprintBigBedWriter
+        if chrom_sizes is None:
+            import pysam
+            with pysam.AlignmentFile(args.bam) as bam:
+                chrom_sizes = dict(zip(bam.references, bam.lengths))
+        fp_bb = FootprintBigBedWriter(args.out_bb, chrom_sizes)
     try:
         out.write('\t'.join(TABLE_COLUMNS) + '\n')
         if mol:
             mol.write('\t'.join(MOLECULE_COLUMNS) + '\n')
-        for m, obs in iter_footprint(args.bam, motifs, options, cores=args.cores, msp_bam_path=args.msp_bam):
+        for m, obs in iter_footprint(source, motifs, options, cores=args.cores, msp_bam_path=args.msp_bam):
             count += 1
+            if fp_bb is not None:
+                fp_bb.add(m, obs)
             if m.label not in labels:
                 labels.add(m.label)
                 check_layer_count(labels, args.allow_many_layers, args.layer_name)
@@ -158,6 +198,8 @@ def _main(p, argv):
         if out is not sys.stdout:
             out.close()
     summary = dict(status='complete', motifs=count, motif_sets=len(labels), parameters=options.__dict__)
+    if fp_bb is not None:
+        summary['out_bb'] = fp_bb.close(labels)
     if args.out_bam:
         summary['out_bam'] = write_annotated_bam(args.bam, args.out_bam, motifs, None, options, args.bed,
                                                  args.msp_bam, argv=['fiberhmm-footprint', *(argv or sys.argv[1:])],

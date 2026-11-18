@@ -10,6 +10,10 @@
   optional per-molecule rows and optional per-motif MA layers. The
   `--max-width` default (74 bp) is a label-free 95th percentile of
   motif-overlapping footprint call widths.
+- `fiberhmm-footprint` reads calls from `fiberhmm-extract` bigBeds
+  (`--calls-bb PREFIX`, or `--tf-bb`/`--msp-bb`/`--nuc-bb`/`--m6a-bb`) as an
+  alternative to the BAM, and `--out-bb` writes per-read bigBeds of
+  footprinted motif instances (`fiberhmm_fp` autoSQL).
 - `fiberhmm-footprint --bed` also takes a motif bigBed (e.g. JASPAR TFBS
   tracks), streamed per region, with `--motif-name`, `--min-score`,
   `--max-pvalue` and `--region`. Reading bigBed needs the new optional extra
