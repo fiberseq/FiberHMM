@@ -116,6 +116,9 @@ def _main(argv=None):
     p.add_argument('--stop-after',choices=['native','parents','consolidated','resolved'],help='staged_native_families only: last stage to compute (the lattice recaller runs in one pass)')
     p.add_argument('--start-at',choices=['native','consolidation'],default='native',help='staged_native_families only: consolidation restarts from saved native fits')
     p.add_argument('--cores',type=int,help='Worker processes (sets compute.cores; default 4)')
+    p.add_argument('--flank',type=int,metavar='BP',help='Analysis evidence flank (sets compute.evidence_flank_bp; default 500, -1 = whole '
+                   'molecule): each molecule\'s analysis copy keeps only calls, MSPs and nucleosomes overlapping the window '
+                   'plus this flank. Memory only; evidence.json.gz and digests keep the whole molecule')
     p.add_argument('--robust',type=int,metavar='N',help='lattice_recaller only, optional and slower: also rerun discovery under N other read orders '
                    'and mark which classes are robust to read order (supported in every one of the N+1 orders, or the share set by '
                    'recaller.order_robust_fraction; classes.tsv columns '
@@ -193,7 +196,7 @@ def _main(argv=None):
                               '(every run saves evidence.json.gz for replay with --evidence or --resume)')
     values.setdefault('cr',{})['engine']=engine
     for group,name,value in [('families','physical_radius_bp',args.consolidation_bp),('families','stop_after',args.stop_after),
-                             ('compute','cores',args.cores),('compute','fit_cache_dir',args.cache),('recaller','order_replicates',args.robust)]:
+                             ('compute','cores',args.cores),('compute','evidence_flank_bp',args.flank),('compute','fit_cache_dir',args.cache),('recaller','order_replicates',args.robust)]:
         if value is not None: values.setdefault(group,{})[name]=value
     if resume and not args.cache and engine=='staged_native_families':
         previous=read_json(resume/'manifest.json')

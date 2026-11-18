@@ -38,8 +38,9 @@ def _pool(payload, options):
                 groups[ds].get('model_manifest') != source.get('model_manifest')):
             raise ValueError(f'Cannot pool different native models inside dataset {ds}')
         target=groups.setdefault(ds,{**source,'stratum_id':ds+':consensus','units':[]})
+        from .evidence_flank import crop_unit
         for original in source['units']:
-            u=deepcopy(original)
+            u=deepcopy(crop_unit(original,start,end,getattr(options['compute'],'evidence_flank_bp',-1)))
             if u['unit_id'] in ids: raise ValueError('Duplicate evidence-unit ID across input strata')
             ids.add(u['unit_id']);u['_region']=[start,end]
             u['original_bam_tf_intervals']=deepcopy(u.get('original_bam_tf_intervals',u['representative_raw_tf_intervals']))

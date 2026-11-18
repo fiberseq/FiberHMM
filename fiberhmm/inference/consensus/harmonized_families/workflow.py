@@ -52,7 +52,14 @@ def implementation_hashes():
 def prepare_sources(payload, options):
     """Preserve baseline/replay identity and reject duplicate physical evidence."""
     grouped = {}; physical = {}; identities = set()
+    from ..evidence_flank import crop_unit
+    region = payload.get('region') or {}
+    flank = getattr(options['compute'], 'evidence_flank_bp', -1)
     for original in payload['strata']:
+        # Crop each molecule's whole-read interval lists before the deep copy (the payload keeps them).
+        if region and flank is not None and flank >= 0:
+            original = dict(original, units=[crop_unit(u, int(region['start']), int(region['end']), flank)
+                                             for u in original['units']])
         source = deepcopy(original); ds = source['dataset_id']
         if source['chemistry'] not in ('ddda', 'dddb', 'hia5-pacbio', 'hia5-nanopore'):
             raise ValueError('Explicit native chemistry required')
