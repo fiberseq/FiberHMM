@@ -71,8 +71,40 @@ def test_crop_unit_intervals_and_span():
     assert effective_span(1000, 1500, [(900, 1047), (1047, 3000), (5, 10)]) == (900, 3000)
 
 
+def test_api_default_is_uncropped():
+    """FiberBrowser and other library callers keep whole-read evidence unless they ask for a pad."""
+    from fiberhmm.inference.consensus.bam import evidence_pad
+    from fiberhmm.inference.consensus.harmonized_families.workflow import prepare_sources
+    from test_consensus_lattice_recaller import planted_payload
+    options = parse_options({'cr': {'engine': 'lattice_recaller'}})
+    assert options['input'].evidence_pad_bp == -1 and evidence_pad(options) is None
+    payload = planted_payload(20)
+    for u in payload['strata'][0]['units']:
+        u['msp_intervals'] = [[0, 100], [880, 1520], [5000, 6000]]
+    source = prepare_sources(payload, options)[0]
+    assert all(u['msp_intervals'] == [[0, 100], [880, 1520], [5000, 6000]] for u in source['units'])
+    # an explicit pad crops the analysis copy only; the payload keeps what was loaded
+    padded = parse_options({'cr': {'engine': 'lattice_recaller'}, 'input': {'evidence_pad_bp': 250}})
+    source = prepare_sources(payload, padded)[0]
+    assert all(u['msp_intervals'] == [[880, 1520]] for u in source['units'])
+    assert payload['strata'][0]['units'][0]['msp_intervals'] == [[0, 100], [880, 1520], [5000, 6000]]
+
+
+def test_cli_default_pad_is_250(tmp_path):
+    import json
+    from fiberhmm.inference.consensus import cli
+    from fiberhmm.inference.consensus.artifacts import write_json
+    from test_consensus_lattice_recaller import planted_payload
+    write_json(tmp_path/'evidence.json.gz', planted_payload(40))
+    for extra, expected in (([], 250), (['--evidence-pad', 'full'], -1), (['--evidence-pad', '500'], 500)):
+        out = tmp_path/f'out{expected}'
+        cli.main(['--evidence', str(tmp_path/'evidence.json.gz'), '--cores', '1', '--no-bam', '--output', str(out), *extra])
+        manifest = json.loads((out/'manifest.json').read_text())
+        assert manifest['parameters']['input']['evidence_pad_bp'] == expected
+    assert cli.CLI_EVIDENCE_PAD_BP == 250
+
+
 def test_option_and_cli_values():
-    assert parse_options({})['input'].evidence_pad_bp == 1000
     assert parse_pad('full') is None and parse_pad(-1) is None and parse_pad('250') == 250
     with pytest.raises(ValueError):
         parse_pad('wide')

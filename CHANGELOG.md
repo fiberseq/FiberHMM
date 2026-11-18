@@ -4,11 +4,13 @@
 
 ### Changed
 
-- `fiberhmm-consensus` memory: loaded reads are cropped to the window plus
-  `--evidence-pad` bp (default 1000; `full` keeps whole reads). Calls crossing
-  the pad boundary are kept whole. On PacBio Hia5 promoter windows (30 kb
-  reads) classes and per-molecule results are identical to whole-read loading
-  at pads 0-2000, with about 30-50% less peak memory.
+- `fiberhmm-consensus` memory: loaded reads (and the analysis copy of replayed
+  evidence) are cropped to the window plus `--evidence-pad` bp (default 250 on
+  the command line; `full` keeps whole reads). Calls crossing the pad boundary
+  are kept whole. On PacBio Hia5 promoter windows (30 kb reads) classes and
+  per-molecule results are identical to whole-read loading at pads 0-2000,
+  with about 30-50% less peak memory. The Python API and FiberBrowser are
+  unchanged: `input.evidence_pad_bp` defaults to -1 (whole reads) there.
 - Pooled runs (`--pool-loci`) with both molecule caps decode only the molecules
   the caps can select (one global read-name hash threshold), instead of every
   molecule of every window; the selection and classes are unchanged.

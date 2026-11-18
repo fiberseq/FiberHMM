@@ -85,6 +85,24 @@ def crop_positions(positions: Optional[np.ndarray], lo: int, hi: int):
     return np.ascontiguousarray(positions[(positions >= lo) & (positions < hi)])
 
 
+def cropped_unit(unit: dict, lo: int, hi: int) -> dict:
+    """A shallow copy of ``unit`` cropped like ``crop_unit_intervals``; ``unit`` itself is untouched.
+
+    For the analysis copy of saved (possibly whole-read) evidence: the payload, its digest and
+    evidence.json.gz keep what was loaded."""
+    u = dict(unit)
+    if u.get('upstream_nuc_tf_recall'):
+        u['upstream_nuc_tf_recall'] = dict(u['upstream_nuc_tf_recall'])
+    return crop_unit_intervals(u, lo, hi)
+
+
+def analysis_units(units, start: int, end: int, pad: Optional[int]):
+    """Units for analysis: cropped copies to [start - pad, end + pad), or the units themselves when pad is None."""
+    if pad is None:
+        return units
+    return [cropped_unit(u, int(start) - int(pad), int(end) + int(pad)) for u in units]
+
+
 def crop_unit_intervals(unit: dict, lo: int, hi: int) -> dict:
     """In place: keep only intervals of a consensus evidence unit that overlap [lo, hi), whole.
 

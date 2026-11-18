@@ -12,6 +12,11 @@ from .workflow import run_analysis
 from .regions import load_bed, pool_payloads, automatic_parameters
 
 
+# fiberhmm-consensus crops loaded reads to the window +/- this many bp unless --evidence-pad (or a parameters
+# file) says otherwise; the Python API and FiberBrowser keep whole reads (input.evidence_pad_bp = -1).
+CLI_EVIDENCE_PAD_BP=250
+
+
 class Progress:
     def __init__(self, json_output=False):
         self.json_output=json_output;self.last_stage=None;self.last_time=0.
@@ -116,14 +121,12 @@ def _main(argv=None):
     p.add_argument('--stop-after',choices=['native','parents','consolidated','resolved'],help='staged_native_families only: last stage to compute (the lattice recaller runs in one pass)')
     p.add_argument('--start-at',choices=['native','consolidation'],default='native',help='staged_native_families only: consolidation restarts from saved native fits')
     p.add_argument('--cores',type=int,help='Worker processes (sets compute.cores; default 4)')
-    p.add_argument('--flank',type=int,metavar='BP',help='Analysis evidence flank (sets compute.evidence_flank_bp; default 500, -1 = whole '
-                   'molecule): each molecule\'s analysis copy keeps only calls, MSPs and nucleosomes overlapping the window '
-                   'plus this flank. Memory only; evidence.json.gz and digests keep the whole molecule')
     p.add_argument('--max-memory-gb',type=float,metavar='GB',help='--pool-loci runs: refuse to start, or lower --cores, when the '
                    'pre-run peak-memory estimate (always logged) exceeds GB. The estimate is a planning figure (~30%%)')
     p.add_argument('--evidence-pad',metavar='BP|full',help='Keep each loaded read\'s calls, MSPs, nucleosomes and aligned blocks '
-                   'that overlap the window plus BP (sets input.evidence_pad_bp; default 1000). Calls crossing the pad boundary '
-                   'are kept whole. "full" keeps whole-read geometry (memory grows with read length)')
+                   f'that overlap the window plus BP (sets input.evidence_pad_bp; default {CLI_EVIDENCE_PAD_BP} here, whole reads in '
+                   'the Python API and FiberBrowser). Calls crossing the pad boundary are kept whole. "full" keeps whole-read '
+                   'geometry (memory grows with read length)')
     p.add_argument('--robust',type=int,metavar='N',help='lattice_recaller only, optional and slower: also rerun discovery under N other read orders '
                    'and mark which classes are robust to read order (supported in every one of the N+1 orders, or the share set by '
                    'recaller.order_robust_fraction; classes.tsv columns '
@@ -205,8 +208,11 @@ def _main(argv=None):
         try: pad=parse_pad(args.evidence_pad)
         except ValueError: p.error('--evidence-pad takes a number of bp or "full"')
         values.setdefault('input',{})['evidence_pad_bp']=-1 if pad is None else pad
+    else:
+        # The command is meant for motif-scale windows: crop by default (the library default keeps whole reads).
+        values.setdefault('input',{}).setdefault('evidence_pad_bp',CLI_EVIDENCE_PAD_BP)
     for group,name,value in [('families','physical_radius_bp',args.consolidation_bp),('families','stop_after',args.stop_after),
-                             ('compute','cores',args.cores),('compute','evidence_flank_bp',args.flank),('compute','fit_cache_dir',args.cache),('recaller','order_replicates',args.robust)]:
+                             ('compute','cores',args.cores),('compute','fit_cache_dir',args.cache),('recaller','order_replicates',args.robust)]:
         if value is not None: values.setdefault(group,{})[name]=value
     if resume and not args.cache and engine=='staged_native_families':
         previous=read_json(resume/'manifest.json')
