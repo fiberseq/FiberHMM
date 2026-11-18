@@ -9,7 +9,11 @@ figure (typically within ~30%), not a guarantee:
   molecule's window lattice: payload, pooled view, analysis copy);
 * each worker process: its own interpreter and libraries plus one task's
   matrices, which scale with the molecules a tile or scoring group uses
-  (at most the discovery / quantification cap).
+  (at most the discovery / quantification cap); measured peaks overlap in
+  about two workers at a time.
+
+Calibration (6 cores): 1,500 molecules estimated 2.6 GB, measured 2.5 GB;
+30,910 molecules with 20,000-molecule caps estimated 16.9 GB, measured 16.3 GB.
 """
 from __future__ import annotations
 
@@ -17,9 +21,10 @@ import math
 
 MAIN_BASE_GB = 0.30           # interpreter, numpy/scipy/sklearn/numba, FiberHMM
 WORKER_BASE_GB = 0.25         # each loky worker's own interpreter and libraries
-EVIDENCE_BYTES_PER_BP = 350.  # per molecule and window bp, all copies (pad <= 2 kb)
-WHOLE_READ_BYTES_PER_KB = 9e3 # extra per molecule and kb of read when --evidence-pad full
-TASK_BYTES_PER_MOLECULE = 2.5e5  # one discovery/quantification task, per molecule it uses
+EVIDENCE_BYTES_PER_BP = 600.  # per molecule and window bp: all copies and per-molecule results (pad <= 2 kb)
+WHOLE_READ_BYTES_PER_KB = 13e3 # extra per molecule and kb of read when --evidence-pad full
+TASK_BYTES_PER_MOLECULE = 1e5  # one discovery/quantification task, per molecule it uses
+HEAVY_TASKS = 2               # worker tasks at their peak at the same time (measured)
 
 
 def estimate(molecules, window_bp, cores, discovery_cap=0, quantification_cap=0, read_kb=None, pad=1000):
@@ -34,7 +39,7 @@ def estimate(molecules, window_bp, cores, discovery_cap=0, quantification_cap=0,
     task = used * TASK_BYTES_PER_MOLECULE / 1e9
     workers = 0 if cores <= 1 else cores
     main = MAIN_BASE_GB + evidence + (task if cores <= 1 else 0.)
-    worker_total = workers * (WORKER_BASE_GB + task)
+    worker_total = workers * WORKER_BASE_GB + min(workers, HEAVY_TASKS) * task
     return dict(total_gb=round(main + worker_total, 2), main_gb=round(main, 2), workers=workers,
                 per_worker_gb=round(WORKER_BASE_GB + task, 2) if workers else 0., evidence_gb=round(evidence, 2),
                 molecules=molecules, task_molecules=used)
