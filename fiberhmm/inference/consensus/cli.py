@@ -240,7 +240,14 @@ def _main(argv=None):
                 return load_bam_payload(datasets,{k:w[k] for k in ('chrom','start','end')},options,progress)
             if args.pool_loci:
                 # CL-CR pools every window into one analysis, so all payloads are needed together.
-                count=1;jobs=iter([('pooled',pool_payloads([load(i,w) for i,w in enumerate(windows)],windows),out)])
+                # With molecule caps, only names under one global read-name hash threshold are decoded
+                # (pooled_sampling); otherwise every window is loaded in full.
+                from .pooled_sampling import load_pooled
+                def load_names(i,w,names):
+                    return load_bam_payload(datasets,{k:w[k] for k in ('chrom','start','end')},options,progress,read_names=names)
+                pooled=load_pooled(datasets,windows,options,progress.report,load_names)
+                if pooled is None: pooled=pool_payloads([load(i,w) for i,w in enumerate(windows)],windows)
+                count=1;jobs=iter([('pooled',pooled,out)])
             else:
                 # Independent windows are restartable work units (batch.py): each loads, analyses and marks its own
                 # directory, then drops its payload, so memory grows with --window-jobs, not with the BED rows.

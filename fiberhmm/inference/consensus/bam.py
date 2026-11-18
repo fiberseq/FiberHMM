@@ -129,7 +129,7 @@ def check_dataset_chemistries(datasets):
             _dataset_chemistry(item,paths)
 
 
-def load_bam_payload(datasets, region, options=None, progress=None, *, loader_sampling=None):
+def load_bam_payload(datasets, region, options=None, progress=None, *, loader_sampling=None, read_names=None):
     """datasets: [{dataset_id, paths, chemistry?}]; metadata conflicts are errors.
 
     loader_sampling is an internal phase-policy override (cap, seed, mode,
@@ -150,8 +150,13 @@ def load_bam_payload(datasets, region, options=None, progress=None, *, loader_sa
         rows[dsid]=SimpleNamespace(paths=paths,path=paths[0],label=dsid,data_type='bam',
             family_scan_chemistry=chemistry,available_layers={})
     state=SimpleNamespace(get_dataset=rows.get)
-    result=_load_payload(state,dict(region,dataset_ids=list(rows)),options,progress or (lambda *a:None),
-                         loader_sampling=loader_sampling)
+    if read_names is not None:
+        # Caller-chosen names {dataset: names} (pooled_sampling): decode only those, no per-window sampling.
+        result=_load_payload_once(state,dict(region,dataset_ids=list(rows),_read_names={k:set(read_names.get(k,()))
+                                  for k in rows}),options,progress or (lambda *a:None))
+    else:
+        result=_load_payload(state,dict(region,dataset_ids=list(rows)),options,progress or (lambda *a:None),
+                             loader_sampling=loader_sampling)
     result['input_files']=[dict(dataset_id=k,path=str(Path(p).resolve()),size=Path(p).stat().st_size,
         mtime_ns=Path(p).stat().st_mtime_ns) for k,ds in rows.items() for p in ds.paths]
     for source in result['strata']: source['model_manifest']['chemistry_resolution']=chemistry_records[source['dataset_id']]
