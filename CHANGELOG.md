@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.0.6
+
+### Changed
+
+- Updated the bundled DddB emission table (`dddb_nanopore.json`): it now
+  keeps the sequence-context dependence of the naked-DNA table, with the
+  accessible-state level set against matched PacBio Hia5 Fiber-seq.
+  Nucleosome calls and accessibility are essentially unchanged; DddB footprint
+  calls near the LLR threshold can differ slightly. Re-call DddB data to use
+  the new table.
+
 ## 3.0.5
 
 ### Changed
