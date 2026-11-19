@@ -11,6 +11,14 @@ FiberBrowser runs the same engine through the same entry point, so a class
 found from the command line and one found in the browser are the same
 computation.
 
+To ask only whether known motifs are occupied on each molecule, across many
+sites, the rule-based [`fiberhmm-footprint`](motif-footprint.md#choosing-footprint-or-consensus)
+is simpler and runs in constant memory. Consensus is the modelling tool: it
+learns each locus's classes. From the command line it keeps each read's
+geometry within `--evidence-pad` bp of the window (default 250); the Python
+API and FiberBrowser keep whole reads unless a pad is passed (see Memory
+below).
+
 ## Quick start
 
 ```bash

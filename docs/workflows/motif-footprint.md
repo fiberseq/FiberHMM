@@ -12,6 +12,23 @@ of recurrent footprint geometries; see
 alternative that scores each molecule's own marks against footprint classes
 discovered in a window, use [`fiberhmm-consensus`](consensus.md).
 
+## Choosing footprint or consensus
+
+| | `fiberhmm-footprint` | `fiberhmm-consensus` |
+|---|---|---|
+| Question | Is this known motif occupied on this molecule? | Which footprint classes recur at this locus, and which molecules carry each? |
+| Method | A fixed rule on existing calls: MSP eligibility, a call containing the motif, a width window | Learned per-locus classes, scored on each molecule's own marks |
+| Scale | Thousands to millions of motif sites, constant memory | Windows of interest (up to 50 kb each) |
+| Needs | Motif positions; optional ChIP-seq peaks to calibrate the width window | No motifs; discovers the classes |
+
+Use footprint to compare occupancy of a factor's motifs across many sites or
+samples, and consensus to discover and quantify footprint classes where you
+need them.
+
+The width window is what makes the rule work. Without it, FiberHMM's calls
+score about the same as ft. Most false positives are broad protections that
+are not motif-sized, and the window removes them.
+
 ```bash
 fiberhmm-footprint --bam calls.bam --bed ctcf_motifs.bed -o ctcf.footprint.tsv \
     --per-molecule ctcf.molecules.tsv --out-bam calls.ctcf.bam --cores 8
@@ -156,6 +173,31 @@ fiberhmm-footprint calibrate --bed ctcf_motifs.bed \
     --bam k562.bam --chip k562_ctcf_peaks.bed --cell K562 \
     --require-unmodified -o ctcf_window
 ```
+
+### Walkthrough: calibrate on one cell type, apply to another
+
+1. **Collect labels.** You need ChIP-seq peaks (BED) for the factor in at
+   least one cell type, plus that cell type's called BAM(s). Use the motif BED
+   you will score later (for example JASPAR sites for the factor, filtered by
+   score).
+2. **Calibrate.** Give one `--bam`/`--chip` pair per cell type. With one pair
+   the held-out check splits odd against even chromosomes; with several it
+   leaves one cell type out at a time.
+   ```bash
+   fiberhmm-footprint calibrate --bed ctcf_motifs.bed \
+       --bam A.calls.bam --chip A_ctcf_peaks.bed --cell A --require-unmodified -o ctcf_A
+   ```
+3. **Read the report.** Check the held-out AUROC against the in-sample one and
+   against the label-free 0-74 bp window (both are printed). Look at the
+   robust range. If the held-out gain is small, as for USF1 in the benchmark,
+   the default window is as good.
+4. **Choose bounds.** Paste the printed `use:` line as it is, or take bounds
+   from inside the robust range (for example a slightly wider window).
+5. **Apply.** Score other cell types with the saved settings. Flags given on
+   the command line override the file:
+   ```bash
+   fiberhmm-footprint --bam B.calls.bam --bed ctcf_motifs.bed --settings ctcf_A.settings.json -o B_ctcf.tsv
+   ```
 
 It prints the optimal window, a robust range (the bounds of every window
 within 0.005 AUROC of the optimum, for choosing conservative bounds), the

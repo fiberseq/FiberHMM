@@ -12,6 +12,9 @@ tags, readable by `ft`, FIRE and FiberBrowser.
 **Documentation: [fiberseq.github.io/FiberHMM](https://fiberseq.github.io/FiberHMM/)**
 (source in [`docs/`](https://github.com/fiberseq/FiberHMM/tree/main/docs)).
 
+> **FiberHMM 3.1** adds `fiberhmm-footprint` (below) and lowers
+> `fiberhmm-consensus` memory use.
+>
 > **FiberHMM 3.0** is the third generation of the FiberHMM family, released
 > with FiberBrowser 3.0.0. The emission tables have been updated, so re-run
 > calls made with earlier versions. `fiberhmm-check <your outputs>` lists which
@@ -48,6 +51,53 @@ tags, readable by `ft`, FIRE and FiberBrowser.
   `fiberhmm-transfer` measures frozen classes in new data.
 - **Python 3.10 to 3.14.**
 
+## Motif footprints: `fiberhmm-footprint`
+
+`fiberhmm-footprint` asks, for every motif instance and every molecule that
+spans it, "is this motif occupied on this molecule?". It is the FiberHMM
+analogue of fibertools `ft footprint`, but it scores FiberHMM's own calls. A
+molecule counts as footprinted at a motif when:
+
+1. the motif lies inside an MSP on that molecule (the molecule is eligible),
+2. one FiberHMM footprint call's outer edges (from the `MA` edge bytes)
+   contain the whole motif,
+3. the call's width is within `[--min-width, --max-width]`, and
+4. optionally, with `--require-unmodified`, no m6A falls inside the motif.
+
+The width window is where the gain over ft comes from. Without it,
+FiberHMM's calls score about the same as ft. Broad protections that are not
+motif-sized make up most of the false positives, and the window removes them.
+The default window, 0-74 bp, needs no labels: 74 bp is the 95th percentile of
+footprint calls that overlap motifs. Where ChIP-seq peaks exist,
+`fiberhmm-footprint calibrate` learns a window per factor. The learned window
+usually scores better and carried over to cell types it was not learned on.
+Calibrate prints a ready-to-paste `--min-width/--max-width` line and writes a
+settings file for other cell types.
+
+Input is a called BAM, or the call bigBeds from `fiberhmm-extract`. Motifs
+come from a BED or a motif bigBed such as JASPAR's TFBS tracks (filter with
+`--motif-name` and `--min-score`). Output is an ft-style per-motif table and,
+optionally, per-molecule rows. It can also add `fp_<name>` / `fpneg_<name>`
+MA layers to a BAM copy, which FiberBrowser shows as one layer per motif set,
+or write per-read bigBed tracks. `fiberhmm-utils ma-list` and `ma-drop`
+list and remove such layers.
+
+```bash
+# learn the width window on cell type A (ChIP-seq peaks as labels) ...
+fiberhmm-footprint calibrate --bed ctcf_motifs.bed --bam A.calls.bam --chip A_ctcf_peaks.bed \
+    --require-unmodified -o ctcf_A
+#   use: fiberhmm-footprint --min-width 25 --max-width 55 --require-unmodified
+# ... and apply it to cell type B, which has no ChIP-seq
+fiberhmm-footprint --bam B.calls.bam --bed ctcf_motifs.bed --settings ctcf_A.settings.json \
+    -o B_ctcf.tsv --out-bam B.ctcf.bam
+```
+
+`fiberhmm-footprint` is the simple, rule-based tool. `fiberhmm-consensus` is
+the modelling one: it learns each locus's footprint classes and scores
+molecules against them. Use footprint to measure occupancy of known motifs
+across many sites, and consensus to discover and quantify the footprint
+classes at loci of interest.
+
 ## Install
 
 ```bash
@@ -79,8 +129,8 @@ A synthetic demo data set and a walk-through of every chemistry are in the
   how FiberHMM works, chemistries and platforms, coordinate frames, tags and scores
 - [Workflows](https://fiberseq.github.io/FiberHMM/workflows/calling/):
   calling, re-calling, DAF-seq, plasmids, duplex pairing, tracks, posteriors,
-  QC, footprint classes (`fiberhmm-consensus`), transfer, strand rescue,
-  training
+  QC, motif footprints (`fiberhmm-footprint`), footprint classes
+  (`fiberhmm-consensus`), transfer, strand rescue, training
 - [Reference](https://fiberseq.github.io/FiberHMM/reference/cli/):
   every command and option, BAM tags, header declarations, footprint-tag
   frames, checking outputs for re-runs (`fiberhmm-check`), bundled models,

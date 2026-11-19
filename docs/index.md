@@ -49,6 +49,17 @@ locus and measures how often each molecule carries each one.
   `fiberhmm-transfer` measures frozen classes in new data.
 - **Python 3.10 to 3.14.**
 
+New in 3.1:
+
+- **Motif footprints.** `fiberhmm-footprint` scores occupancy of known motifs
+  on each molecule, the analogue of `ft footprint` on FiberHMM calls, with a
+  ChIP-calibratable width window (`fiberhmm-footprint calibrate`). See
+  [Motif footprints](workflows/motif-footprint.md).
+- **Lower consensus memory.** `fiberhmm-consensus` keeps only each read's
+  geometry within `--evidence-pad` bp of the window (default 250 on the
+  command line). The Python API and FiberBrowser keep whole reads unless a pad
+  is passed. See [Footprint classes](workflows/consensus.md).
+
 ## What it does
 
 | Stage | Command | Page |
@@ -59,11 +70,13 @@ locus and measures how often each molecule carries each one.
 | Pair the two strands of one scDAF molecule and call them jointly | `fiberhmm-pair` | [Duplex](workflows/duplex.md) |
 | Check a run against reference data sets | `fiberhmm-qc` (also automatic after `fiberhmm-call`) | [Quality control](workflows/qc.md) |
 | Export calls as BED12 / bigBed tracks | `fiberhmm-extract` | [Extracting tracks](workflows/extracting.md) |
+| Is a motif occupied on each molecule? Per-motif occupancy, `ft footprint` style | `fiberhmm-footprint` | [Motif footprints](workflows/motif-footprint.md) |
 | Find footprint classes across molecules and measure them per molecule | `fiberhmm-consensus` | [Footprint classes](workflows/consensus.md) |
 | Measure frozen classes in new data or at other loci | `fiberhmm-transfer` | [Transferring classes](workflows/transfer.md) |
 | Rescue footprints missed on one strand, using the other strand | `fiberhmm-strand-rescue` | [Strand rescue](workflows/strand-rescue.md) |
 | Footprint population model from per-read TF calls | `fiberhmm-footprint-model` | [Footprint population model](workflows/footprint-model.md) |
 | Per-position HMM posteriors | `fiberhmm-posteriors` | [Posteriors](workflows/posteriors.md) |
+| List or remove MA annotation layers in a BAM | `fiberhmm-utils ma-list`, `ma-drop` | [Motif footprints](workflows/motif-footprint.md#listing-and-removing-layers) |
 | Build a model for a new chemistry or condition | `fiberhmm-probs`, `fiberhmm-train`, `fiberhmm-utils` | [Training a model](workflows/training.md) |
 
 ## Supported data
