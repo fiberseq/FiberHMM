@@ -481,7 +481,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--unlifted` | — | native: write the records that could not be lifted here (source coordinates, Yu:Z:&lt;reason&gt;; with --bed the rows, after a #reason line, bgzip-compressed for a .gz name); they are always counted |
 | `--min-match` | `0.0` | native --bed: lift a BED interval (or BED12 block) only if a fraction F of its bases project (liftOver's -minMatch; default 0: any projected base, the interval shrinks to them, so a mostly unprojected block can lift as a remnant of a few bp, as with vg; 0.5 drops those) |
 | `--bed-format` | `auto` | --bed: how to read the input. bed12: blocks lifted one by one; narrowPeak: the summit (column 10) lifted with the peak (-1 when it does not lift); bed: row by row. thickStart/thickEnd (columns 7-8) are lifted for bed and bed12 when they hold coordinates. auto (default): bed12 when every row has 12+ columns, narrowPeak for a .narrowPeak[.gz] input or a 'track type=narrowPeak' line, else bed Choices: `auto`, `bed`, `bed12`, `narrowPeak`. |
-| `--bed12-partial` | `drop` | --bed: a BED12 row some of whose blocks do not lift. drop (default): drop the row; keep: keep the blocks that lift (blockCount, sizes, starts and bounds recomputed) when at least one does, and list the dropped blocks in --unlifted Choices: `drop`, `keep`. |
+| `--bed12-partial` | — | --bed: a BED12 row some of whose blocks do not lift. keep (default): keep the blocks that lift (blockCount, sizes, starts and bounds recomputed) when at least one does, and list the dropped blocks in --unlifted with their reasons; drop: drop the whole row Choices: `drop`, `keep`. |
 | `-g` / `--graph` | — | Pangenome graph (GBZ) with source and target paths |
 | `-p` / `--prefix` | — | panSN prefix of the source assembly's paths in the graph, e.g. 'HG002#1#' (vg engine) |
 | `--target` | — | vg engine: target sample to surject onto, e.g. GRCh38 |
@@ -491,7 +491,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--vg` | — | vg binary or wrapper script (default: vg on PATH) |
 | `--ft` | — | vg engine, BAM: fibertools-rs ft binary for its pg-pansn stages (default: ft on PATH) |
 | `-t` / `--threads` | `4` | Threads for vg, sorting and BAM I/O (default: 4) |
-| `--repair-only` | off | Only repair -i, a BAM already lifted by a vg-based tool (vg inject/surject); needs --source unless fiberhmm-lift stashed it |
+| `--repair-only` | off | Only repair -i, a BAM already lifted by a vg-based tool (vg inject/surject); needs --source unless fiberhmm-lift stashed it. Orphan supplementaries are kept with Yo:i:1 and 0x800 |
 | `--bed` | off | -i is a BED file: BED12(+N) rows (fiberhmm-extract) are lifted block by block and reassembled, other BED files row by row |
 | `--source` | — | --repair-only: the BAM that was lifted |
 | `--source-fasta` | — | --bed --engine vg: FASTA of the source assembly (each interval's sequence is surjected) |
@@ -679,6 +679,106 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `-F` / `--filter` | `2308` | Skip reads with any of these flag bits (default 0x904: unmapped, secondary, supplementary) |
 | `--min-mapq` | `0` | Skip reads below this MAPQ (default 0) |
 | `--cores` | `1` | Worker processes over motif clusters (default 1) |
+
+## fiberhmm-scan
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--bam` | — | Input BAM (repeat for separate datasets); FiberHMM-called (MA tags from fiberhmm-call/apply). Chemistry from @CO metadata |
+| `--datasets` | — | JSON list of {dataset_id, paths: [BAMs], chemistry?} |
+| `--genome` | off | Scan whole contigs on the fixed grid (see --contigs and --zones) |
+| `--region` | — | Scan a window (0-based, half-open; repeatable). A window longer than --unit-bp is grid-planned restricted to it |
+| `--bed` | — | BED units (overlapping or touching intervals are merged; longer than --unit-bp: grid-planned inside) |
+| `--contigs` | — | With --genome: comma-separated contigs (default: every contig in the header) |
+| `--zones` | — | Scan only the genome-grid units whose owned zones meet this window (0-based, half-open; repeatable; implies --genome). Units keep their genome-grid spans (not clipped to the window), so their results are the genome scan's (the Python API's run_units(..., extend=True) reuses them across plans; --continue needs the same plan). FiberBrowser's view scans print this form |
+| `--modules` | `fp,nfr,peaks` | Comma-separated modules (default fp,nfr,peaks; nfr is an EXPERIMENTAL preview) |
+| `--parameters` | — | JSON {"fp": {...}, "nfr": {...}, "peaks": {...}, "read_policy": {...}}; see --schema |
+| `--nucreg-window` | — | Regularity window (default 2000) |
+| `--nucreg-step` | — | Window step = tile width (default 250) |
+| `--nucreg-signal` | — | Signal: raw m6A calls (default) or nucleosome-call occupancy Choices: `m6a`, `occupancy`. |
+| `--nucreg-band` | — | Period band of the peak in bp (default 140-260) |
+| `--nucreg-mask-open` | — | Mask open stretches (gaps between nucleosome calls) of at least BP (default off; 0 = off) |
+| `--nucreg-thin` | — | Thin m6A calls to PER_KB per kb before scoring (default off; 0 = off) |
+| `--nucreg-min-calls` | — | An m6A window needs at least N calls (default 15) |
+| `--nucreg-ends` | — | Read ends: blank (full windows only; default), extend (paint the outer tiles to the read ends) or truncated (score cut windows at the ends) Choices: `blank`, `extend`, `truncated`. |
+| `--nucreg-end-min` | — | --nucreg-ends truncated: narrowest cut window at a read end (default 1000) |
+| `--nucreg-short-min` | — | --nucreg-ends truncated: narrowest window on reads shorter than the window (default 1000) |
+| `--no-nucreg` | off | Do not compute or write nucreg |
+| `--nucpatch` | off | Call regularity patches (MA nucpatch); any --nucpatch-* flag implies it |
+| `--nucpatch-enter` | — | A patch needs a tile this far above the reference median (default 2.0) |
+| `--nucpatch-extend` | — | and extends over tiles this far above it (default 1.25) |
+| `--nucpatch-min-tiles` | — | Minimum tiles per patch (default 2) |
+| `--nucpatch-snap` | — | Snap closed edges to the nucleosome boundary at the nearest open linker (default), at the nearest linker off the patch period, or keep the tile-grid edges Choices: `open`, `period`, `off`. |
+| `--nucpatch-open-bp` | — | Open linker for --nucpatch-snap open (default 300) |
+| `--nucpatch-search-bp` | — | Snap window: break linkers are searched within BP of the grid edge (default 1000) |
+| `--nucpatch-nuc-min-bp` | — | Snapping: nucleosome-sized footprints are at least BP long (default 90) |
+| `--nucpatch-tol-frac` | — | Snap rule period: a linker breaks when the dyad spacing is off the patch period by more than FRACTION (default 0.25) |
+| `--nucpatch-ref` | — | Reference median for every dataset (default: the random-packing reference of each dataset's calibration population) |
+| `--nucpatch-low` | off | Also call low-regularity patches (below the reference median; MA nucpatch flag bit 4) and their own shared geometries (L1, L2, ...); any --nucpatch-low-* flag implies it |
+| `--nucpatch-low-enter` | — | A low-regularity patch needs a tile at most this far relative to the reference median (default -1.5) |
+| `--nucpatch-low-extend` | — | and extends over tiles at most this far (default -0.75; below --nucpatch-extend) |
+| `--nucpatch-low-min-tiles` | — | Minimum tiles per low-regularity patch (default 2) |
+| `--nucpatch-low-snap` | — | Edges of low-regularity patches, as --nucpatch-snap (default open) Choices: `open`, `period`, `off`. |
+| `--nucpatch-low-open-bp` | — | Open linker for --nucpatch-low-snap open (default 300) |
+| `--nucgeo-tol` | — | Shared geometries: both ends within BP of the consensus (default 500) |
+| `--nucgeo-min-share` | — | Shared geometries: at least this share of the molecules (default 0.03) |
+| `--nucgeo-cohort` | — | Molecules pooled per BED unit: overlapping it (default, as the browser panel) or spanning it Choices: `overlapping`, `spanning`. |
+| `--nucgeo-edges` | — | Group patches by their snapped (default) or tile-grid edges Choices: `snapped`, `grid`. |
+| `--nucgeo-fold` | — | Fold nested geometries into their longest parent: none, near (other end moved at most --nucgeo-near-max-bp; default) or all Choices: `none`, `near`, `all`. |
+| `--nucgeo-near-max-bp` | — | Largest move of the other end for --nucgeo-fold near (default 1250) |
+| `--nucgeo-edge-min-bp` | — | A patch cut by the BED-unit edge joins the grouping only with at least BP inside the unit (default 500; 0 = keep every patch) |
+| `--no-nucgeo` | off | Call patches but no shared geometries |
+| `--input-type` | `called-bam` | --bam input type; signal-bam filters producer-scored schema 5 records before all modules Choices: `called-bam`, `signal-bam`. |
+| `--signal-filters` | — | JSON file of boolean hideBackground, excludeUnscored, requireDetectable, requireStructure predicates (with --input-type signal-bam) |
+| `--chemistry` | — | Chemistry for --bam inputs whose header does not declare one Choices: `ddda`, `dddb`, `hia5-pacbio`, `hia5-nanopore`. |
+| `--unit-bp` | `50000` | Grid unit span (default 50000; at most the engines' 50 kb budget) |
+| `--stride-bp` | `25000` | Grid stride = owned zone (default 25000) |
+| `--grid-offset` | `0` | Shift of the grid's zone boundaries (default 0) |
+| `--max-discovery-molecules` | — | Molecules per dataset and chemical channel for discovery; 0 = all molecules; 2000 is a good cap for deep data (thousands of reads per site) (default 0) |
+| `--max-quantification-molecules` | — | Molecules per dataset and chemical channel for quantification; 0 = all molecules; 2000 is a good cap for deep data (thousands of reads per site) (default 0) |
+| `--sample-seed` | — | Stable molecule hash seed (default 1) |
+| `--cores` | `4` | Worker budget (default 4) |
+| `--window-jobs` | `0` | Units computed at the same time (default 0 = automatic: up to --cores); each gets an equal share of --cores |
+| `--continue` | off | Finish an interrupted scan in its output directory: finished units are kept, the rest are run, and the tables, annotated BAMs and manifest are rebuilt. Refused if inputs, plan, read policy or module settings differ |
+| `--json-progress` | off | Structured progress on stderr (JSON lines) |
+| `--annotate` | auto | Write per-molecule results as MA tags in annotated BAMs (default for --genome and long --region scans) |
+| `--no-annotate` | auto | Write per-molecule results as tables (states, marks, molecules) instead (default for --bed and short --region scans) |
+| `-o` / `--output` | — | New or empty scan directory (with --continue: the interrupted scan's) |
+| `--schema` | off | Print every module's parameters with defaults as JSON |
+| `--inspect` | — | Print a scan directory's summary and validate its tables, indexes and annotated BAMs (exit 1 on problems) |
+
+### fiberhmm-scan assoc
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `scan_dir` | required | A finished fiberhmm-scan directory |
+| `--mode` | required | cooccur (M1), condition (M2), rate (M3), overlap (M4) Choices: `cooccur`, `condition`, `rate`, `overlap`. |
+| `--a` | required | Feature type A (e.g. nfr.region, fp.class, nuc.seg.regular, peaks.peak) |
+| `--b` | — | Feature type B (cooccur, overlap); rate: tf (TF footprint centres from nuc marks) or a state type whose member calls are the points (fp.class) |
+| `--response` | — | condition: per-molecule response MODULE:SCALAR (e.g. nuc:nrl, nfr:openness) |
+| `--bed` | — | condition: anchors are the --a hits whose anchor lies in these intervals (e.g. an enhancer BED); other --a hits are their matched backgrounds. Without it every hit is an anchor and only Delta_anchor and per-anchor rows are reported |
+| `--backgrounds` | `hits` | condition: other hits outside --bed (default), random loci with a transferable state rule (currently nfr.region), or none Choices: `hits`, `random`, `none`. |
+| `--background-k` | `5` | condition: backgrounds per anchor (default 5) |
+| `--background-step` | `500` | condition: random candidate grid step in bp |
+| `--background-min-sep` | `3000` | condition: minimum separation in bp |
+| `--background-width` | — | condition: random interval width in bp; default median anchor hit width; the scan state rule is evaluated over this interval |
+| `--fasta` | — | Indexed reference FASTA: condition matching covariate or overlap density strata |
+| `--site-bases` | `AT` | Opportunity bases counted in FASTA (default AT; C/G for strand-specific deaminase contexts); density excludes ambiguous bases |
+| `--site-window` | `1000` | condition: site-density window in bp |
+| `--site-bin-bp` | `10000` | overlap: site-density stratum window in bp |
+| `--region` | — | Restrict to windows (repeatable) |
+| `--group` | — | Group contrast: dataset or haplotype (haplotype from the input BAMs' HP tags; unphased molecules are reported apart) Choices: `dataset`, `haplotype`. |
+| `--haplotype-tag` | `HP` | BAM tag holding the haplotype (default HP) |
+| `--labels` | — | TSV with a molecule column and label columns (other groups, replicates) |
+| `--group-label` | — | With --labels: the label column to contrast |
+| `--density` | `rho_read` | nuc molecule scalar used as the mark-density covariate (default rho_read) Choices: `rho_read`, `lambda_acc`. |
+| `--max-distance` | `5000` | cooccur: maximum anchor distance (default 5000) |
+| `--test` | `adjusted` | cooccur: pooled test Choices: `adjusted`, `strata`. |
+| `--strata` | — | overlap: BED of strata (chrom start end label); default one stratum per contig |
+| `--n-perm` | `1000` | Permutations / shifts / relocations (default 1000) |
+| `--n-boot` | `1000` | Bootstrap draws (default 1000) |
+| `--seed` | `0` |  |
+| `-o` / `--output` | required | Output directory |
 
 ## fiberhmm-footprint-model
 

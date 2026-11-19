@@ -1565,3 +1565,66 @@ def test_m5c_footprint_ma_follows_each_group_strand_without_header_evidence(with
     assert m5c._nucleosome_intervals_seq(chained_read, chained) == [(100, 150)]
     assert m5c._initial_msp_intervals_seq(chained_read, chained) == [(300, 500)]
     assert m5c.ma_intervals(chained_read, "ddda_mcg", chained) == [(600, 650)]
+
+
+def test_call_m5c_main_writes_domains_tagged_bam_and_island_catalog(tmp_path):
+    """A real fiberhmm-call-m5c main() run (coverage audit item 29; before this only the guards and
+    --help ran): region parsing, chunked collection, the domain HMM and the island-mode BAM tagging,
+    checked by output content."""
+    import pysam
+    from fiberhmm.cli.call_m5c import main
+
+    reference_sequence = "A" * 250 + "CACG" * 100 + "A" * 250
+    reference = tmp_path / "reference.fa"
+    reference.write_text(">chrM5\n" + reference_sequence + "\n")
+    pysam.faidx(str(reference))
+    sequence = list(reference_sequence)
+    for index, base in enumerate(reference_sequence[:-1]):
+        if base == "C" and reference_sequence[index + 1] != "G":
+            sequence[index] = "Y"  # non-CpG C deaminated; CpG C protected (methylated)
+    input_bam = tmp_path / "input.bam"
+    header = {
+        "HD": {"VN": "1.6", "SO": "coordinate"},
+        "SQ": [{"SN": "chrM5", "LN": len(reference_sequence)}],
+        "PG": [{"ID": "fiberhmm-call", "PN": "fiberhmm-call", "DS": "mode=daf enzyme=ddda"}],
+    }
+    with pysam.AlignmentFile(str(input_bam), "wb", header=header) as sink:
+        for i in range(12):
+            read = pysam.AlignedSegment(sink.header)
+            read.query_name = f"mol{i}"
+            read.query_sequence = "".join(sequence)
+            read.reference_id = 0
+            read.reference_start = 0
+            read.mapping_quality = 60
+            read.cigartuples = [(0, len(sequence))]
+            read.query_qualities = pysam.qualitystring_to_array("I" * len(sequence))
+            read.set_tag("MA", f"{len(sequence)};msp.:1-{len(sequence)}", value_type="Z")
+            sink.write(read)
+    pysam.index(str(input_bam))
+
+    bed = tmp_path / "domains.bed"
+    tagged = tmp_path / "tagged.bam"
+    islands = tmp_path / "islands.used.bed"
+    assert main(["-i", str(input_bam), "-r", str(reference), "-o", str(bed),
+                 "--region", "chrM5", "--enzyme", "ddda", "--window", "100", "--chunk-bp", "500",
+                 "--min-other", "1", "--min-cpg", "1", "--io-threads", "1",
+                 "--tag-bam", str(input_bam), "--tag-output", str(tagged),
+                 "--write-cpg-islands", str(islands)]) == 0
+
+    rows = [line.split("\t") for line in bed.read_text().splitlines() if line.strip()]
+    assert rows, "no m5C domain in the BED"
+    assert all(r[0] == "chrM5" for r in rows)
+    methylated = [r for r in rows if r[3] == "m5c_methylated"]
+    assert methylated, rows
+    assert int(methylated[0][1]) < 650 and int(methylated[0][2]) > 250  # overlaps the island
+    island_fields = islands.read_text().strip().split("\t")
+    island = (int(island_fields[1]), int(island_fields[2]))
+    with pysam.AlignmentFile(str(tagged), "rb", check_sq=False) as source:
+        reads = list(source)
+        pgs = source.header.to_dict().get("PG", [])
+    assert len(reads) == 12
+    spans = {tuple(parse_ma_tag(r.get_tag("MA"))["ddda_mcg"][0]) for r in reads}
+    assert len(spans) == 1
+    start, length = spans.pop()
+    assert (start, start + length) == island
+    assert any(pg.get("PN") == "fiberhmm-call-m5c" for pg in pgs)

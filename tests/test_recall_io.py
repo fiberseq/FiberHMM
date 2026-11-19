@@ -200,3 +200,32 @@ def test_recall_warns_on_ddda_radial_call_output():
         stream = io.StringIO()
         assert warn_ddda_call_recall(_header_with_call_ds(ds), stream=stream) is False
         assert stream.getvalue() == ""
+
+
+def test_recall_nucs_entry_point_runs_a_real_nucleosome_recall(called_bams, monkeypatch):
+    """The fiberhmm-recall-nucs entry point itself (coverage audit item 29; the CLI test replaces
+    ``main``): a real in-process run turns nucleosome recall on by default, matches
+    ``fiberhmm-recall-tfs --recall-nucs`` read for read, and records itself in @PG."""
+    from fiberhmm.cli import recall_tfs
+
+    tmp, legacy, _ma_only = called_bams
+    output = str(tmp / "entry.recall_nucs.bam")
+    monkeypatch.setenv("FIBERHMM_NO_UPDATE_CHECK", "1")
+    # An in-process run initialises the module's worker state (nuc config, tables); keep that
+    # from leaking into later tests in this process.
+    monkeypatch.setattr(recall_tfs, "_WORKER", dict(recall_tfs._WORKER))
+    monkeypatch.setattr(sys, "argv", ["fiberhmm-recall-nucs", "-i", legacy, "-o", output,
+                                      "--enzyme", "hia5", "--seq", "pacbio", "-c", "1"])
+    recall_tfs.main_recall_nucs()
+    annotations = _annotations(output)
+    assert _counts(annotations)["nuc"] > 0
+    reference = str(tmp / "legacy.recall1.bam")
+    if not Path(reference).exists():
+        proc = _run_cli("fiberhmm.cli.recall_tfs", "-i", legacy, "-o", reference,
+                        "--enzyme", "hia5", "--seq", "pacbio", "-c", "1", "--recall-nucs")
+        assert proc.returncode == 0, proc.stderr
+    assert annotations == _annotations(reference)
+    with pysam.AlignmentFile(output, check_sq=False) as bam:
+        pgs = bam.header.to_dict().get("PG", [])
+    ours = [pg for pg in pgs if pg.get("PN") == "fiberhmm-recall-nucs"]
+    assert ours and "recall_nucs=True" in ours[-1].get("DS", "")

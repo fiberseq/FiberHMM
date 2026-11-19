@@ -765,10 +765,10 @@ def write_autosql_schema(filepath: str, with_scores: bool = False):
     char[1] strand;      "Strand"
     uint thickStart;     "Start position (same as chromStart)"
     uint thickEnd;       "End position (same as chromEnd)"
-    string itemRgb;      "Color"
+    uint itemRgb;        "Color"
     int blockCount;      "Number of footprints"
     int[blockCount] blockSizes;   "Footprint sizes"
-    int[blockCount] blockStarts;  "Footprint start positions"
+    int[blockCount] chromStarts;  "Footprint start positions"
 '''
     if with_scores:
         schema += '''    int[blockCount] blockScores;  "Per-footprint confidence scores (0-1000)"

@@ -1,0 +1,447 @@
+"""fiberhmm-scan: pooled feature scans (footprint classes, NFRs, accessibility peaks) over fixed units.
+
+Scans FiberHMM-called BAMs genome-wide (half-overlapping 50 kb units, each owning
+its central 25 kb), over --region windows or over BED units, and writes one
+versioned scan directory: manifest.json, bgzip + tabix tables of pooled hits and
+values per module, and per-molecule results as MA tags in annotated BAMs
+(genome scans; BED-scoped scans write them as tables). Units are resumable
+(--continue), and a rerun gives byte-identical outputs.
+
+Association statistics from a scan directory: `fiberhmm-scan assoc SCAN_DIR --mode ...` (see
+`fiberhmm-scan assoc --help`).
+
+Format reference: docs/reference/scan-format.md.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+DEFAULT_MODULES = 'fp,nfr,peaks'
+
+
+def _parser():
+    p = argparse.ArgumentParser(prog='fiberhmm-scan', description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    src = p.add_mutually_exclusive_group()
+    src.add_argument('--bam', action='append', help='Input BAM (repeat for separate datasets); FiberHMM-called '
+                                                    '(MA tags from fiberhmm-call/apply). Chemistry from @CO metadata')
+    src.add_argument('--datasets', help='JSON list of {dataset_id, paths: [BAMs], chemistry?}')
+    where = p.add_mutually_exclusive_group()
+    where.add_argument('--genome', action='store_true', help='Scan whole contigs on the fixed grid (see --contigs '
+                                                             'and --zones)')
+    where.add_argument('--region', action='append', metavar='CHROM:START-END',
+                       help='Scan a window (0-based, half-open; repeatable). A window longer than --unit-bp is '
+                            'grid-planned restricted to it')
+    where.add_argument('--bed', help='BED units (overlapping or touching intervals are merged; longer than '
+                                     '--unit-bp: grid-planned inside)')
+    p.add_argument('--contigs', help='With --genome: comma-separated contigs (default: every contig in the header)')
+    p.add_argument('--zones', action='append', metavar='CHROM:START-END',
+                   help='Scan only the genome-grid units whose owned zones meet this window (0-based, half-open; '
+                        'repeatable; implies --genome). Units keep their genome-grid spans (not clipped to the '
+                        'window), so their results are the genome scan\'s (the Python API\'s run_units(..., '
+                        'extend=True) reuses them across plans; --continue needs the same plan). '
+                        'FiberBrowser\'s view scans print this form')
+    p.add_argument('--modules', default=DEFAULT_MODULES,
+                   help=f'Comma-separated modules (default {DEFAULT_MODULES}; nfr is an EXPERIMENTAL preview)')
+    p.add_argument('--parameters', help='JSON {"fp": {...}, "nfr": {...}, "peaks": {...}, "read_policy": {...}}; '
+                                        'see --schema')
+    reg = p.add_argument_group('nuc regularity (MA nucreg; --modules nuc writes it by default)')
+    reg.add_argument('--nucreg-window', type=int, metavar='BP', help='Regularity window (default 2000)')
+    reg.add_argument('--nucreg-step', type=int, metavar='BP', help='Window step = tile width (default 250)')
+    reg.add_argument('--nucreg-signal', choices=['m6a', 'occupancy'],
+                     help='Signal: raw m6A calls (default) or nucleosome-call occupancy')
+    reg.add_argument('--nucreg-band', metavar='LO-HI', help='Period band of the peak in bp (default 140-260)')
+    reg.add_argument('--nucreg-mask-open', type=int, metavar='BP',
+                     help='Mask open stretches (gaps between nucleosome calls) of at least BP (default off; 0 = off)')
+    reg.add_argument('--nucreg-thin', type=float, metavar='PER_KB',
+                     help='Thin m6A calls to PER_KB per kb before scoring (default off; 0 = off)')
+    reg.add_argument('--nucreg-min-calls', type=int, metavar='N',
+                     help='An m6A window needs at least N calls (default 15)')
+    reg.add_argument('--nucreg-ends', choices=['blank', 'extend', 'truncated'],
+                     help='Read ends: blank (full windows only; default), extend (paint the outer tiles to the '
+                          'read ends) or truncated (score cut windows at the ends)')
+    reg.add_argument('--nucreg-end-min', type=int, metavar='BP',
+                     help='--nucreg-ends truncated: narrowest cut window at a read end (default 1000)')
+    reg.add_argument('--nucreg-short-min', type=int, metavar='BP',
+                     help='--nucreg-ends truncated: narrowest window on reads shorter than the window (default 1000)')
+    reg.add_argument('--no-nucreg', action='store_true', help='Do not compute or write nucreg')
+    pat = p.add_argument_group('nuc regularity patches and shared geometries (MA nucpatch, nuc.geometry hits; '
+                               'off by default)')
+    pat.add_argument('--nucpatch', action='store_true',
+                     help='Call regularity patches (MA nucpatch); any --nucpatch-* flag implies it')
+    pat.add_argument('--nucpatch-enter', type=float, metavar='LOG2',
+                     help='A patch needs a tile this far above the reference median (default 2.0)')
+    pat.add_argument('--nucpatch-extend', type=float, metavar='LOG2',
+                     help='and extends over tiles this far above it (default 1.25)')
+    pat.add_argument('--nucpatch-min-tiles', type=int, metavar='N', help='Minimum tiles per patch (default 2)')
+    pat.add_argument('--nucpatch-snap', choices=['open', 'period', 'off'],
+                     help='Snap closed edges to the nucleosome boundary at the nearest open linker (default), '
+                          'at the nearest linker off the patch period, or keep the tile-grid edges')
+    pat.add_argument('--nucpatch-open-bp', type=int, metavar='BP', help='Open linker for --nucpatch-snap open '
+                                                                         '(default 300)')
+    pat.add_argument('--nucpatch-search-bp', type=int, metavar='BP',
+                     help='Snap window: break linkers are searched within BP of the grid edge (default 1000)')
+    pat.add_argument('--nucpatch-nuc-min-bp', type=int, metavar='BP',
+                     help='Snapping: nucleosome-sized footprints are at least BP long (default 90)')
+    pat.add_argument('--nucpatch-tol-frac', type=float, metavar='FRACTION',
+                     help='Snap rule period: a linker breaks when the dyad spacing is off the patch period by '
+                          'more than FRACTION (default 0.25)')
+    pat.add_argument('--nucpatch-ref', type=float, metavar='LOG2',
+                     help='Reference median for every dataset (default: the random-packing reference of each '
+                          "dataset's calibration population)")
+    pat.add_argument('--nucpatch-low', action='store_true',
+                     help='Also call low-regularity patches (below the reference median; MA nucpatch flag bit 4) '
+                          'and their own shared geometries (L1, L2, ...); any --nucpatch-low-* flag implies it')
+    pat.add_argument('--nucpatch-low-enter', type=float, metavar='LOG2',
+                     help='A low-regularity patch needs a tile at most this far relative to the reference median '
+                          '(default -1.5)')
+    pat.add_argument('--nucpatch-low-extend', type=float, metavar='LOG2',
+                     help='and extends over tiles at most this far (default -0.75; below --nucpatch-extend)')
+    pat.add_argument('--nucpatch-low-min-tiles', type=int, metavar='N',
+                     help='Minimum tiles per low-regularity patch (default 2)')
+    pat.add_argument('--nucpatch-low-snap', choices=['open', 'period', 'off'],
+                     help='Edges of low-regularity patches, as --nucpatch-snap (default open)')
+    pat.add_argument('--nucpatch-low-open-bp', type=int, metavar='BP',
+                     help='Open linker for --nucpatch-low-snap open (default 300)')
+    pat.add_argument('--nucgeo-tol', type=int, metavar='BP',
+                     help='Shared geometries: both ends within BP of the consensus (default 500)')
+    pat.add_argument('--nucgeo-min-share', type=float, metavar='FRACTION',
+                     help='Shared geometries: at least this share of the molecules (default 0.03)')
+    pat.add_argument('--nucgeo-cohort', choices=['overlapping', 'spanning'],
+                     help='Molecules pooled per BED unit: overlapping it (default, as the browser panel) or spanning it')
+    pat.add_argument('--nucgeo-edges', choices=['snapped', 'grid'],
+                     help='Group patches by their snapped (default) or tile-grid edges')
+    pat.add_argument('--nucgeo-fold', choices=['none', 'near', 'all'],
+                     help='Fold nested geometries into their longest parent: none, near (other end moved at most '
+                          '--nucgeo-near-max-bp; default) or all')
+    pat.add_argument('--nucgeo-near-max-bp', type=int, metavar='BP',
+                     help='Largest move of the other end for --nucgeo-fold near (default 1250)')
+    pat.add_argument('--nucgeo-edge-min-bp', type=int, metavar='BP',
+                     help='A patch cut by the BED-unit edge joins the grouping only with at least BP inside the unit '
+                          '(default 500; 0 = keep every patch)')
+    pat.add_argument('--no-nucgeo', action='store_true', help='Call patches but no shared geometries')
+    p.add_argument('--input-type', choices=['called-bam', 'signal-bam'], default='called-bam',
+                   help='--bam input type; signal-bam filters producer-scored schema 5 records before all modules')
+    p.add_argument('--signal-filters', help='JSON file of boolean hideBackground, excludeUnscored, '
+                   'requireDetectable, requireStructure predicates (with --input-type signal-bam)')
+    p.add_argument('--chemistry', choices=['ddda', 'dddb', 'hia5-pacbio', 'hia5-nanopore'],
+                   help='Chemistry for --bam inputs whose header does not declare one')
+    p.add_argument('--unit-bp', type=int, default=50_000, help='Grid unit span (default 50000; at most the engines\' '
+                                                               '50 kb budget)')
+    p.add_argument('--stride-bp', type=int, default=25_000, help='Grid stride = owned zone (default 25000)')
+    p.add_argument('--grid-offset', type=int, default=0, help='Shift of the grid\'s zone boundaries (default 0)')
+    from fiberhmm.inference.depth_cap import add_arguments
+    add_arguments(p)
+    p.add_argument('--cores', type=int, default=4, help='Worker budget (default 4)')
+    p.add_argument('--window-jobs', type=int, default=0, metavar='N',
+                   help='Units computed at the same time (default 0 = automatic: up to --cores); each gets an '
+                        'equal share of --cores')
+    p.add_argument('--continue', dest='continue_run', action='store_true',
+                   help='Finish an interrupted scan in its output directory: finished units are kept, the rest are '
+                        'run, and the tables, annotated BAMs and manifest are rebuilt. Refused if inputs, plan, read '
+                        'policy or module settings differ')
+    p.add_argument('--json-progress', action='store_true', help='Structured progress on stderr (JSON lines)')
+    ann = p.add_mutually_exclusive_group()
+    ann.add_argument('--annotate', dest='annotate', action='store_true', default=None,
+                     help='Write per-molecule results as MA tags in annotated BAMs (default for --genome and long '
+                          '--region scans)')
+    ann.add_argument('--no-annotate', dest='annotate', action='store_false',
+                     help='Write per-molecule results as tables (states, marks, molecules) instead (default for --bed '
+                          'and short --region scans)')
+    p.add_argument('-o', '--output', help='New or empty scan directory (with --continue: the interrupted scan\'s)')
+    p.add_argument('--schema', action='store_true', help='Print every module\'s parameters with defaults as JSON')
+    p.add_argument('--inspect', metavar='SCAN_DIR', help='Print a scan directory\'s summary and validate its tables, '
+                                                         'indexes and annotated BAMs (exit 1 on problems)')
+    from fiberhmm.cli.common import add_version_args
+    add_version_args(p)
+    return p
+
+
+def main(argv=None):
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args[:1] == ['assoc']:
+        # `fiberhmm-scan assoc SCAN_DIR ...`: association statistics from a scan directory (fiberhmm.assoc)
+        from fiberhmm.assoc.cli import main as assoc_main
+        return assoc_main(args[1:])
+    from fiberhmm.cli.common import run_reporting_input_errors
+    return run_reporting_input_errors('fiberhmm-scan', lambda: _main(argv))
+
+
+def _parse_region(parser, value, flag='--region'):
+    chrom, sep, span = value.rpartition(':')
+    a, dash, b = span.replace(',', '').partition('-')
+    try:
+        a, b = int(a), int(b)
+    except ValueError:
+        parser.error(f'{flag} {value!r}: expected CHROM:START-END (0-based, half-open)')
+    if not (sep and chrom and dash) or a < 0 or b <= a:
+        parser.error(f'{flag} {value!r}: expected CHROM:START-END with 0 <= START < END')
+    return chrom, a, b
+
+
+# Left out of the command line recorded in annotated BAM headers: execution-only controls and the output
+# directory, so a rerun, a continued run or a differently parallelised run writes the same bytes.
+EXECUTION_FLAGS = {'--continue': 0, '--json-progress': 0, '--cores': 1, '--window-jobs': 1, '-o': 1, '--output': 1}
+
+
+def _recorded_command(argv, bam_rank=None):
+    """The command line recorded in annotated BAM headers, without execution-only flags (a continued or
+    differently parallelised run writes the same bytes). With ``bam_rank`` (``--bam`` value -> canonical
+    ordinal), every ``--bam`` comes first, in canonical order, so listing the BAMs in another order (or in
+    other places on the line) records the same command."""
+    out, skip, bams = [], 0, []
+    pending_bam = False
+    for arg in argv:
+        if skip:
+            skip -= 1
+            continue
+        flag = arg.split('=', 1)[0]
+        if flag in EXECUTION_FLAGS:
+            skip = 0 if '=' in arg else EXECUTION_FLAGS[flag]
+            continue
+        if pending_bam:
+            bams.append(arg)
+            pending_bam = False
+        elif arg == '--bam':
+            pending_bam = True
+        elif arg.startswith('--bam='):
+            bams.append(arg[len('--bam='):])
+        else:
+            out.append(arg)
+    if bam_rank:
+        bams = sorted(bams, key=lambda v: (bam_rank.get(v, len(bam_rank)), v))
+    return ['fiberhmm-scan'] + [x for v in bams for x in ('--bam', v)] + out
+
+
+NUCREG_FLAGS = (('nucreg_window', 'window_bp'), ('nucreg_step', 'step_bp'), ('nucreg_signal', 'signal'),
+                ('nucreg_band', 'band_bp'), ('nucreg_mask_open', 'mask_open_bp'), ('nucreg_thin', 'thin_per_kb'),
+                ('nucreg_min_calls', 'min_calls'), ('nucreg_ends', 'ends'), ('nucreg_end_min', 'end_min_bp'),
+                ('nucreg_short_min', 'short_min_bp'))
+
+
+def _nucreg_params(parser, args, modules, params):
+    """Fold the --nucreg-* flags into ``params['nuc']['nucreg']`` (flags win over --parameters)."""
+    given = {key: getattr(args, flag) for flag, key in NUCREG_FLAGS if getattr(args, flag) is not None}
+    if not given and not args.no_nucreg:
+        return
+    if 'nuc' not in modules:
+        parser.error('--nucreg-* and --no-nucreg apply to --modules nuc')
+    nuc = params.setdefault('nuc', {})
+    if not isinstance(nuc, dict):
+        parser.error('--parameters: "nuc" must be a JSON object')
+    if args.no_nucreg:
+        if given:
+            parser.error('--no-nucreg cannot be combined with other --nucreg-* flags')
+        nuc['nucreg'] = None
+        return
+    if 'band_bp' in given:
+        lo, sep, hi = str(given['band_bp']).replace(',', '-').partition('-')
+        try:
+            given['band_bp'] = [int(lo), int(hi)]
+        except ValueError:
+            parser.error(f'--nucreg-band {given["band_bp"]!r}: expected LO-HI in bp')
+    for key in ('mask_open_bp', 'thin_per_kb'):
+        if key in given and not given[key] > 0:
+            given[key] = None
+    reg = dict(nuc.get('nucreg') or {})
+    reg.update(given)
+    from fiberhmm.nuc.regularity import RegularityParams
+    try:
+        nuc['nucreg'] = RegularityParams.from_dict(reg).to_dict()
+    except (TypeError, ValueError) as error:
+        parser.error(str(error))
+
+
+NUCPATCH_FLAGS = (('nucpatch_enter', 'enter'), ('nucpatch_extend', 'extend'), ('nucpatch_min_tiles', 'min_tiles'),
+                  ('nucpatch_open_bp', 'open_bp'), ('nucpatch_ref', 'ref_median'),
+                  ('nucpatch_search_bp', 'search_bp'), ('nucpatch_nuc_min_bp', 'nuc_min_bp'),
+                  ('nucpatch_tol_frac', 'tol_frac'))
+NUCPATCH_LOW_FLAGS = (('nucpatch_low_enter', 'enter'), ('nucpatch_low_extend', 'extend'),
+                      ('nucpatch_low_min_tiles', 'min_tiles'), ('nucpatch_low_open_bp', 'open_bp'))
+NUCGEO_FLAGS = (('nucgeo_tol', 'tol_bp'), ('nucgeo_min_share', 'min_share'), ('nucgeo_cohort', 'cohort'),
+                ('nucgeo_fold', 'fold'), ('nucgeo_near_max_bp', 'near_max_bp'),
+                ('nucgeo_edge_min_bp', 'edge_min_bp'))
+
+
+def tiled_bed_geometry_note(planned, modules, params) -> str:
+    """Shared geometries (nuc.geometry) are found per BED interval, over its whole span. A BED interval longer
+    than one unit is scanned as grid units and gets none: the note naming them, or '' when none is affected."""
+    units, info = planned
+    nuc = (params or {}).get('nuc') or {}
+    if 'nuc' not in modules or info.get('mode') != 'bed' or nuc.get('nucpatch') is None \
+            or ('nucgeo' in nuc and nuc['nucgeo'] is None):
+        return ''
+    spans = []                          # each tiled interval: its grid units' zones are contiguous
+    for u in sorted((u for u in units if u.mode == 'grid'), key=lambda u: (u.chrom, u.zone_start)):
+        if spans and spans[-1][0] == u.chrom and spans[-1][2] == u.zone_start:
+            spans[-1][2] = u.zone_end
+        else:
+            spans.append([u.chrom, u.zone_start, u.zone_end])
+    if not spans:
+        return ''
+    shown = ', '.join(f'{c}:{a}-{b}' for c, a, b in spans[:5])
+    more = f' and {len(spans) - 5} more' if len(spans) > 5 else ''
+    width = max(u.end - u.start for u in units)
+    return (f'{len(spans)} BED interval(s) longer than one unit ({shown}{more}) are scanned as grid units and get '
+            f'no nuc.geometry hits or nucgeo states; split them into intervals of at most {width} bp')
+
+
+def _nucpatch_params(parser, args, modules, params):
+    """Fold the --nucpatch* / --nucgeo-* flags into ``params['nuc']['nucpatch']`` / ``['nucgeo']``."""
+    pgiven = {key: getattr(args, flag) for flag, key in NUCPATCH_FLAGS if getattr(args, flag) is not None}
+    if args.nucpatch_snap is not None:
+        if args.nucpatch_snap == 'off':
+            pgiven['snap'] = False
+        else:
+            pgiven.update(snap=True, snap_rule=args.nucpatch_snap)
+    lgiven = {key: getattr(args, flag) for flag, key in NUCPATCH_LOW_FLAGS if getattr(args, flag) is not None}
+    if args.nucpatch_low_snap is not None:
+        if args.nucpatch_low_snap == 'off':
+            lgiven['snap'] = False
+        else:
+            lgiven.update(snap=True, snap_rule=args.nucpatch_low_snap)
+    if args.nucpatch_low or lgiven:
+        pgiven['low'] = lgiven
+    ggiven = {key: getattr(args, flag) for flag, key in NUCGEO_FLAGS if getattr(args, flag) is not None}
+    if args.nucgeo_edges is not None:
+        ggiven['snapped'] = args.nucgeo_edges == 'snapped'
+    if not (args.nucpatch or pgiven or ggiven or args.no_nucgeo):
+        return
+    if 'nuc' not in modules:
+        parser.error('--nucpatch*, --nucgeo-* and --no-nucgeo apply to --modules nuc')
+    nuc = params.setdefault('nuc', {})
+    if not isinstance(nuc, dict):
+        parser.error('--parameters: "nuc" must be a JSON object')
+    if args.no_nucreg:
+        parser.error('--nucpatch needs nucreg (drop --no-nucreg)')
+    if args.no_nucgeo and ggiven:
+        parser.error('--no-nucgeo cannot be combined with other --nucgeo-* flags')
+    if args.nucpatch or pgiven:
+        base = dict(nuc.get('nucpatch') or {})
+        if 'low' in pgiven and isinstance(base.get('low'), dict):
+            # --nucpatch-low* flags add to (never replace) --parameters' low settings
+            pgiven['low'] = dict(base['low'], **pgiven['low'])
+        nuc['nucpatch'] = dict(base, **pgiven)
+    elif nuc.get('nucpatch') is None:
+        parser.error('--nucgeo-* and --no-nucgeo need --nucpatch')
+    if args.no_nucgeo:
+        nuc['nucgeo'] = None
+    elif ggiven:
+        nuc['nucgeo'] = dict(nuc.get('nucgeo') or {}, **ggiven)
+    from fiberhmm.scan.modules.nuc import _resolve_geo_settings, _resolve_patch_settings
+    try:
+        nuc['nucpatch'] = _resolve_patch_settings(nuc['nucpatch'])
+        if nuc.get('nucgeo') is not None:
+            nuc['nucgeo'] = _resolve_geo_settings(nuc['nucgeo'])
+    except (TypeError, ValueError) as error:
+        parser.error(str(error))
+
+
+def _schema(modules):
+    from fiberhmm.scan.modules import load_module
+    from fiberhmm.scan.reads import DEFAULT_READ_POLICY
+    out = {'read_policy': DEFAULT_READ_POLICY}
+    for name in modules:
+        mod = load_module(name)
+        out[name] = dict(version=mod.version, experimental=mod.experimental, reconcile=mod.reconcile,
+                         parameters=mod.parameter_schema(),
+                         feature_types=[t.to_json() for t in mod.feature_types()],
+                         ma_groups=[g.to_json() for g in mod.ma_groups()])
+    return out
+
+
+def _main(argv=None):
+    p = _parser()
+    args = p.parse_args(argv)
+    modules = [m.strip() for m in args.modules.split(',') if m.strip()]
+    if args.schema:
+        print(json.dumps(_schema(modules), indent=2, sort_keys=True, default=str))
+        return 0
+    if args.inspect:
+        from fiberhmm.scan.reader import ScanDir
+        scan = ScanDir(args.inspect)
+        problems = scan.validate()
+        print(json.dumps(dict(summary=scan.summary(), problems=problems), indent=2, sort_keys=True))
+        return 1 if problems else 0
+    if not args.output or not (args.bam or args.datasets):
+        p.error('give --bam or --datasets, a territory (--genome, --region or --bed) and -o/--output')
+    if args.zones and (args.region or args.bed or args.contigs):
+        p.error('--zones selects genome-grid units: use it alone or with --genome, not with --region, --bed or '
+                '--contigs')
+    if not (args.genome or args.region or args.bed or args.zones):
+        p.error('choose the territory: --genome, --zones, --region or --bed')
+    if args.contigs and not args.genome:
+        p.error('--contigs applies to --genome')
+    if args.window_jobs < 0 or args.cores < 1:
+        p.error('--window-jobs must be >= 0 and --cores >= 1')
+    out = Path(args.output).expanduser().resolve()
+    if not args.continue_run and out.exists() and any(e.name != '.scan.lock' for e in out.iterdir()):
+        p.error('Output directory must be empty; existing results are never overwritten (to finish an '
+                'interrupted scan there, add --continue)')
+    params = {}
+    if args.parameters:
+        params = json.loads(Path(args.parameters).read_text())
+        if not isinstance(params, dict):
+            p.error('--parameters must hold a JSON object of module groups')
+    if args.datasets and (args.input_type != 'called-bam' or args.signal_filters):
+        p.error('with --datasets put input_type and signal_filters in each dataset specification')
+    if args.datasets:
+        datasets = json.loads(Path(args.datasets).read_text())
+    else:
+        # labelled by canonical order (dataset_<ordinal + 1>, ordinal = rank by content id), not by --bam
+        # position, so a scan with the BAMs listed in another order has the same keys and rows
+        datasets = [dict(paths=[str(Path(b).expanduser().resolve())], chemistry=args.chemistry, input_type=args.input_type,
+                              signal_filters=json.loads(Path(args.signal_filters).read_text())
+                              if args.signal_filters else {}) for b in args.bam]
+    _nucreg_params(p, args, modules, params)
+    _nucpatch_params(p, args, modules, params)
+    read_policy = dict(params.pop('read_policy', {}) or {})
+    from fiberhmm.inference.depth_cap import NAMES
+    caps = dict(read_policy.get('caps', {}))
+    for name in NAMES:
+        if getattr(args, name) is not None:
+            caps[name] = getattr(args, name)
+    if caps:
+        read_policy['caps'] = caps
+    if any(m in ('fp', 'nfr') for m in modules):
+        from fiberhmm.inference.consensus.cli import check_chemistry
+        check_chemistry(p, [dict(d, dataset_id=d.get('dataset_id') or Path(d['paths'][0]).name) for d in datasets])
+    from fiberhmm.scan.runner import ScanRefused, resolve_datasets
+    from fiberhmm.scan.units import PlanError, plan
+    try:
+        _resolved, reference = resolve_datasets(datasets)
+        bam_rank = {}
+        if args.bam:
+            ordinal = {p: d.ordinal for d in _resolved for p in d.paths}
+            bam_rank = {b: ordinal.get(str(Path(b).expanduser().resolve()), len(args.bam)) for b in args.bam}
+        units = plan(reference, genome=args.genome or bool(args.zones),
+                     contigs=[c.strip() for c in args.contigs.split(',')] if args.contigs else None,
+                     regions=[_parse_region(p, r) for r in args.region] if args.region else None, bed=args.bed,
+                     unit_bp=args.unit_bp, stride_bp=args.stride_bp, grid_offset=args.grid_offset,
+                     zones=[_parse_region(p, z, '--zones') for z in args.zones] if args.zones else None)
+    except (PlanError, ScanRefused) as error:
+        p.exit(2, f'fiberhmm-scan: error: {error}\n')
+    note = tiled_bed_geometry_note(units, modules, params)
+    if note:
+        print(f'fiberhmm-scan: warning: {note}', file=sys.stderr)
+    from fiberhmm.inference.consensus.cli import Progress
+    from fiberhmm.scan.runner import run_units
+    progress = Progress(args.json_progress)
+    try:
+        from fiberhmm.inference.consensus.execution import single_threaded_blas
+        with single_threaded_blas():
+            summary = run_units(datasets, units, modules=modules, params=params, read_policy=read_policy, out=out,
+                                annotate=args.annotate, progress=progress, cores=args.cores,
+                                window_jobs=args.window_jobs, continue_run=args.continue_run,
+                                command=_recorded_command(argv if argv is not None else sys.argv[1:], bam_rank))
+    except ScanRefused as error:
+        p.exit(2, f'fiberhmm-scan: error: {error}\n')
+    print(json.dumps(summary, sort_keys=True))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

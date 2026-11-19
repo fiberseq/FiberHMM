@@ -87,7 +87,11 @@ def _pg_id_base(ident: str) -> str:
 
 
 def _cl_tokens(cl) -> List[str]:
-    return [token for token in str(cl or '').lower().split() if token]
+    import shlex
+    try:
+        return shlex.split(str(cl or '').lower())
+    except ValueError:
+        return str(cl or '').lower().split()
 
 
 def _basename(token: str) -> str:
@@ -102,6 +106,8 @@ def pg_family(pg: dict) -> Optional[str]:
     overridden by an ID or CL that happens to mention a producer."""
     pn = str(pg.get('PN', '') or '').strip().lower()
     if pn:
+        if pn in _FIBERTOOLS_PROGRAMS:
+            return 'fibertools'
         if 'fibertools' in pn:
             return 'fibertools'
         return 'fiberhmm' if _FIBERHMM_NAME_RE.match(pn) else None
@@ -429,14 +435,18 @@ M5C_GROUPS = frozenset({'ddda_mcg', 'ddda_ucg', 'ddda_mcg_hemi'})
 
 
 class MAGroupFrame:
-    """Frame of each MA group of a BAM, by the rules above: m5C groups and
-    consensus family layers molecular; otherwise the header rule, except that
-    without header evidence a '.' group is molecular. Picklable."""
+    """Frame of each MA group of a BAM, by the rules above: m5C groups,
+    consensus family layers and fiberhmm-scan groups (declared by a
+    FIBERHMM-SCAN-MA contract) molecular; otherwise the header rule, except
+    that without header evidence a '.' group is molecular. Picklable."""
 
     def __init__(self, header):
+        from fiberhmm.io.scan_ma import scan_molecular_groups
         self.header_frame = ma_annotation_frame(header)
         self.evidence = header_has_frame_evidence(header)
-        self.molecular_layers = frozenset(consensus_molecular_layers(header) | M5C_GROUPS)
+        hdr = _header_dict(header) or {}
+        self.molecular_layers = frozenset(consensus_molecular_layers(header) | M5C_GROUPS
+                                          | scan_molecular_groups(hdr))
 
     def is_molecular(self, name: str, strand: str) -> bool:
         return (name in self.molecular_layers

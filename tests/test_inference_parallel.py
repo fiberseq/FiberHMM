@@ -230,6 +230,7 @@ def test_payload_worker_counts_per_read_failures(monkeypatch):
 
 
 def test_fused_payload_worker_counts_per_read_failures(monkeypatch):
+    """Wiring test: the stages it names are faked; it checks only how they are connected. The real path is covered end to end by test_call_cli.py and test_call_pipeline.py."""
     def fake_extract(payload, mode, prob_threshold):
         if payload == "extract-bad":
             raise RuntimeError("bad payload")
@@ -279,6 +280,7 @@ def test_fused_payload_worker_counts_per_read_failures(monkeypatch):
 
 
 def test_fused_payload_worker_runs_integrated_ddda_mcg_and_forwards_mask(monkeypatch):
+    """Wiring test: the stages it names are faked; it checks only how they are connected. The real path is covered end to end by test_call_cli.py and test_call_pipeline.py."""
     captured = {}
     mask = np.array([False, True, True, False])
 

@@ -1,0 +1,426 @@
+"""Reading association inputs from a ``fiberhmm-scan`` directory (scan contracts v1.9, sections 1, 4 and 7).
+
+- **States** (M1, M2 anchors): ``<module>/states.tsv.bgz`` rows (``hit_id dataset_id input_index qname record
+  molecule state``), folded to one state per (hit, physical molecule) by the HUB 3.4 rule.
+- **Molecule covariates**: ``nfr/molecules.tsv.bgz`` (``openness``), ``nuc/molecules.tsv.bgz`` (``rho_read``,
+  ``lambda_acc`` and the other nucleosome scalars), each folded per molecule (median over records).
+- **Marks** (M3): ``nuc/marks.tsv.bgz`` (``nucseg`` segments and events, ``nucsz`` footprints with the TF bit).
+- **Hits and territory** (M4): ``<module>/hits.tsv.bgz`` and ``callable.tsv.bgz`` within the computed zones.
+
+Table-mode scans retain exact scalars. Annotated scans are read from the manifest's annotated BAMs;
+scalars use their declared byte codecs, and intervals are projected from molecular coordinates.
+"""
+from __future__ import annotations
+
+from collections import defaultdict
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+
+import numpy as np
+
+STATE_CODES = {'1': 1, '0': 0}
+
+
+class ScanInputError(ValueError):
+    pass
+
+
+def open_scan(path):
+    from fiberhmm.scan.reader import ScanDir
+    return ScanDir(path)
+
+
+def _rows(scan, rel: str, regions=None) -> Iterable[dict]:
+    if not scan.has(rel):
+        if _annotated_has(scan, rel):
+            from .annotated import rows
+            module, table = rel.split('/')
+            return rows(scan, module, {'states.tsv.bgz': 'state', 'marks.tsv.bgz': 'mark',
+                                       'molecules.tsv.bgz': 'scalar'}[table], regions)
+        return []
+    t = scan.table(rel)
+    if regions is None:
+        return t.rows()
+    return (r for chrom, s, e in regions for r in t.fetch(chrom, s, e))
+
+
+def _annotated_has(scan, rel):
+    parts = rel.split('/')
+    kinds = {'states.tsv.bgz': 'state', 'marks.tsv.bgz': 'mark', 'molecules.tsv.bgz': 'scalar'}
+    if len(parts) != 2 or parts[1] not in kinds or not scan.manifest.get('outputs', {}).get('annotated'):
+        return False
+    return any(g.get('kind') == kinds[parts[1]] for g in
+               scan.manifest.get('modules', {}).get(parts[0], {}).get('ma_groups', []))
+
+
+def require_tables(scan, rels: Sequence[str], mode: str):
+    missing = [r for r in rels if not scan.has(r) and not _annotated_has(scan, r)]
+    if missing:
+        hint = ' Rerun with --no-annotate if annotated BAMs are unavailable.'
+        raise ScanInputError(f'{mode} needs {", ".join(missing)} (tables or declared annotated BAM groups).{hint}')
+
+
+def module_of(type_id: str) -> str:
+    return type_id.split('.', 1)[0]
+
+
+class MoleculeIndex:
+    """Physical molecules seen in a scan, keyed by (dataset_id, molecule): the identity is defined within a dataset
+    (HUB 3.4), so one token in two datasets is two molecules. Keeps each molecule's dataset and QNAMEs."""
+
+    def __init__(self):
+        self.index: Dict[Tuple[str, str], int] = {}
+        self.dataset: List[str] = []
+        self.qnames: List[set] = []
+
+    def add(self, molecule: str, dataset: str, qname: str) -> int:
+        key = (dataset, molecule)
+        i = self.index.get(key)
+        if i is None:
+            i = self.index[key] = len(self.dataset)
+            self.dataset.append(dataset)
+            self.qnames.append(set())
+        if qname:
+            self.qnames[i].add(qname)
+        return i
+
+    def get(self, molecule: str, dataset: str) -> Optional[int]:
+        return self.index.get((dataset, molecule))
+
+    @property
+    def n(self) -> int:
+        return len(self.dataset)
+
+    @property
+    def ids(self) -> np.ndarray:
+        out = np.empty(self.n, dtype=object)
+        for (ds, m), i in self.index.items():
+            out[i] = f'{ds}|{m}'
+        return out
+
+
+def read_states(scan, type_id: str, mi: MoleculeIndex, regions=None, footprint_like: Optional[bool] = None):
+    """FeatureStates of one hit type from its module's states table (records folded per physical molecule)."""
+    from fiberhmm.assoc.cooccur import FeatureStates
+    mod = module_of(type_id)
+    require_tables(scan, [f'{mod}/states.tsv.bgz', f'{mod}/hits.tsv.bgz'], 'this mode')
+    hits = [h for h in _rows(scan, f'{mod}/hits.tsv.bgz', regions) if h['type'] == type_id]
+    if not hits:
+        raise ScanInputError(f'no {type_id} hits in {mod}/hits.tsv.bgz')
+    hidx = {h['hit_id']: i for i, h in enumerate(hits)}
+    H, M, S = [], [], []
+    channel: Dict[int, str] = {}
+    for r in _rows(scan, f'{mod}/states.tsv.bgz', regions):
+        i = hidx.get(r['hit_id'])
+        if i is None or r['state'] not in STATE_CODES:
+            continue
+        m = mi.add(r['molecule'], r['dataset_id'], r['qname'])
+        H.append(i)
+        M.append(m)
+        S.append(STATE_CODES[r['state']])
+        if r.get('channel'):
+            channel[m] = r['channel']
+    if footprint_like is None:
+        footprint_like = mod in ('fp', 'nuc')
+    fs = FeatureStates(type_id, [h['hit_id'] for h in hits], [h['chrom'] for h in hits],
+                       [int(h['start']) for h in hits], [int(h['end']) for h in hits],
+                       [int(h['anchor']) for h in hits], H, M, S, footprint_like=footprint_like)
+    fs.channel_of = channel
+    fs.hits_rows = hits
+    return fs
+
+
+def molecule_scalars(scan, module: str, columns: Sequence[str], mi: MoleculeIndex, regions=None) -> Dict[str, np.ndarray]:
+    """Per-molecule scalars (median over a molecule's records; NaN when missing) for molecules in ``mi``."""
+    rel = f'{module}/molecules.tsv.bgz'
+    out = {c: np.full(mi.n, np.nan) for c in columns}
+    if not scan.has(rel) and not _annotated_has(scan, rel):
+        return out
+    acc = defaultdict(list)
+    for r in _rows(scan, rel, regions):
+        i = mi.get(r['molecule'], r['dataset_id'])
+        if i is None:
+            continue
+        for c in columns:
+            v = r.get(c, '')
+            if v not in ('', None):
+                acc[(c, i)].append(float(v))
+    for (c, i), vals in acc.items():
+        out[c][i] = float(np.median(vals))
+    return out
+
+
+def haplotypes_from_bams(scan, mi: MoleculeIndex, tag: str = 'HP', regions=None) -> np.ndarray:
+    """Per-molecule haplotype from each dataset's input BAMs' ``tag`` (0 = unphased; molecules whose records disagree
+    are unphased). Records are matched by QNAME within the molecule's own dataset."""
+    import pysam
+    want = defaultdict(lambda: defaultdict(set))          # dataset -> qname -> molecules
+    for i, qs in enumerate(mi.qnames):
+        for q in qs:
+            want[mi.dataset[i]][q].add(i)
+    val: Dict[int, set] = defaultdict(set)
+    for ds in scan.manifest.get('datasets', []):
+        wq = want.get(ds['dataset_id'])
+        if not wq:
+            continue
+        annotated = [dict(path=str(scan.path / f['path'])) for f in
+                     scan.manifest.get('outputs', {}).get('annotated', []) if f['dataset_id'] == ds['dataset_id']]
+        for f in annotated or ds.get('files', []):
+            with pysam.AlignmentFile(f['path']) as bam:
+                it = (bam.fetch(c, s, e) for c, s, e in regions) if regions is not None else [bam.fetch(until_eof=True)]
+                for chunk in it:
+                    for r in chunk:
+                        for i in wq.get(r.query_name, ()):
+                            val[i].add(r.get_tag(tag) if r.has_tag(tag) else 0)
+    out = np.zeros(mi.n, dtype=object)
+    for i in range(mi.n):
+        v = val.get(i, {0})
+        out[i] = next(iter(v)) if len(v) == 1 else 0
+    return out
+
+
+def molecule_table(scan, mi: MoleculeIndex, *, density: str = 'rho_read', haplotype_tag: Optional[str] = None,
+                   channel_of: Optional[Dict[int, str]] = None, regions=None, labels_tsv: Optional[str] = None):
+    """MoleculeTable with openness (nfr), density (nuc ``rho_read`` or ``lambda_acc``), channel, dataset and
+    optional haplotype labels. ``labels_tsv``: extra labels, a TSV with a ``molecule`` column (and optionally
+    ``dataset_id``)."""
+    from fiberhmm.assoc.cooccur import MoleculeTable
+    op = molecule_scalars(scan, 'nfr', ['openness'], mi, regions)['openness']
+    dens = molecule_scalars(scan, 'nuc', [density], mi, regions)[density]
+    labels = {'dataset': np.array(mi.dataset, dtype=object)}
+    if haplotype_tag:
+        labels['haplotype'] = haplotypes_from_bams(scan, mi, haplotype_tag, regions)
+    if labels_tsv:
+        import csv
+        with open(labels_tsv) as fh:
+            rows = list(csv.DictReader(fh, delimiter='\t'))
+        for col in (rows[0].keys() if rows else []):
+            if col in ('molecule', 'dataset_id'):
+                continue
+            v = np.empty(mi.n, dtype=object)
+            by_mol = defaultdict(list)
+            for (ds, m), i in mi.index.items():
+                by_mol[m].append((ds, i))
+            for r in rows:
+                for ds, i in by_mol.get(r['molecule'], ()):
+                    if not r.get('dataset_id') or r['dataset_id'] == ds:
+                        v[i] = r[col]
+            labels[col] = v
+    ch = None
+    if channel_of:
+        ch = np.array([channel_of.get(i, 'pooled') for i in range(mi.n)], dtype=object)
+    return MoleculeTable(mi.ids, channel=ch,
+                         openness=op if np.isfinite(op).any() else None,
+                         density=dens if np.isfinite(dens).any() else None, labels=labels)
+
+
+def territory(scan, datasets: Optional[Sequence[str]] = None, regions=None) -> List[Tuple[str, int, int]]:
+    """Callable runs (``callable.tsv.bgz``) of the given datasets (intersection across them; default every dataset
+    in the manifest, so a dataset with no callable run empties the territory), within the zones of computed units
+    and, with ``regions``, within those windows."""
+    from fiberhmm.assoc.overlap import intersect_territories
+    zones = [(u['chrom'], int(u['zone_start']), int(u['zone_end'])) for u in _rows(scan, 'units.tsv.bgz')
+             if u.get('status') == 'done']
+    by_ds = defaultdict(list)
+    for r in _rows(scan, 'callable.tsv.bgz'):
+        by_ds[r['dataset_id']].append((r['chrom'], int(r['start']), int(r['end'])))
+    names = list(datasets) if datasets is not None else [d['dataset_id'] for d in scan.manifest.get('datasets', [])] or \
+        sorted(by_ds)
+    if not names or any(not by_ds.get(d) for d in names):
+        return []
+    terr = [by_ds[d] for d in names]
+    if regions is not None:
+        terr.append([(c, int(a), int(b)) for c, a, b in regions])
+    return intersect_territories(zones, *terr)
+
+
+def read_hits(scan, type_id: str, regions=None):
+    from fiberhmm.assoc.overlap import HitSet
+    rows = [h for h in _rows(scan, f'{module_of(type_id)}/hits.tsv.bgz', regions) if h['type'] == type_id]
+    if not rows:
+        raise ScanInputError(f'no {type_id} hits')
+    return HitSet.from_rows(rows)
+
+
+NUCSEG_KIND = {'nuc.seg.regular': 1, 'nuc.seg.disordered': 2, 'nuc.seg.low_information': 3,
+               'nuc.seg.undetermined': 4, 'nuc.event.undersized': 16, 'nuc.event.missing': 17}
+
+
+def rate_data_from_marks(scan, a_type: str, b_type: str, regions=None, min_tf_bp: int = 0, mi=None,
+                         point_tolerance: int = 5, *, b_scan=None):
+    """RateData for M3 from ``nuc/marks.tsv.bgz`` (reference coordinates): A = ``nuc.seg.*``/``nuc.event.*`` rows;
+    B = TF footprint centres (``nucsz`` rows with the TF bit, ``b_type='tf'``) or member call centres of a state
+    type (``fp.class``: states rows with state 1, ``call_start``/``call_end``). Exposure is admissible reference bp
+    (HUB 7.5): the ``nucseg`` partition minus low-information segments. Scan tables carry no per-site
+    informativeness, so this is not NUC 3.9's informative-site exposure (``association_stats`` on decoded
+    molecules uses informative sites).
+
+    Every physical molecule is one unit per contig: the records of a molecule (overlapping or not) are merged,
+    their admissible stretches and A intervals united and their B points de-duplicated (points within
+    ``point_tolerance`` bp are one point). With ``regions`` the windows are united, rows fetched twice are read
+    once, and geometry and points are clipped to the windows. ``labels['qname']`` holds every contributing QNAME
+    of the molecule (for haplotype lookup)."""
+    from fiberhmm.assoc.rate import RateData, compress
+    require_tables(scan, ['nuc/marks.tsv.bgz'], 'rate')
+    code = NUCSEG_KIND.get(a_type)
+    if code is None:
+        raise ScanInputError(f'A must be one of {sorted(NUCSEG_KIND)}')
+    win = None
+    fetch = None
+    if regions is not None:
+        win = defaultdict(list)
+        for c, a, b in regions:
+            win[c].append((int(a), int(b)))
+        win = {c: _union(v) for c, v in win.items()}
+        fetch = [(c, a, b) for c, ivs in sorted(win.items()) for a, b in ivs]
+    mol = {}
+    seen = set()
+
+    def unit(r):
+        return mol.setdefault((r['dataset_id'], r['molecule'], r['chrom']),
+                              {'seg': [], 'low': [], 'a': [], 'b': [], 'qnames': set()})
+    for r in _rows(scan, 'nuc/marks.tsv.bgz', fetch):
+        rk = (r['dataset_id'], r.get('input_index', '0'), r['record'], r['group'], r['start'], r['end'], r['q'])
+        if rk in seen:
+            continue
+        seen.add(rk)
+        d = unit(r)
+        d['qnames'].add(r['qname'])
+        q = [int(x) for x in r['q'].split(',')] if r['q'] else []
+        s_, e_ = int(r['start']), int(r['end'])
+        if r['group'] == 'nucseg' and q:
+            if q[0] < 16:
+                d['seg'].append((s_, e_))
+            if q[0] == 3:
+                d['low'].append((s_, e_))
+            if q[0] == code:
+                d['a'].append((s_, e_))
+        elif r['group'] == 'nucsz' and q and b_type == 'tf' and (q[0] & 16) and (e_ - s_) >= min_tf_bp:
+            d['b'].append((s_ + e_) // 2)
+    if b_type != 'tf':
+        source_b = b_scan if b_scan is not None else scan
+        if source_b.manifest.get('reference') != scan.manifest.get('reference') or source_b.manifest.get('frame') != scan.manifest.get('frame'):
+            raise ScanInputError('A and B scans must share a reference and coordinate frame')
+        mod = module_of(b_type)
+        require_tables(source_b, [f'{mod}/states.tsv.bgz'], 'rate')
+        hit_type = {h['hit_id']: h['type'] for h in _rows(source_b, f'{mod}/hits.tsv.bgz', fetch)}
+        seen_states = set()
+        for r in _rows(source_b, f'{mod}/states.tsv.bgz', fetch):
+            if r['state'] != '1' or hit_type.get(r['hit_id']) != b_type:
+                continue
+            sk = (r['dataset_id'], r.get('input_index', '0'), r['record'], r['hit_id'])
+            if sk in seen_states:
+                continue
+            seen_states.add(sk)
+            key = (r['dataset_id'], r['molecule'], r['chrom'])
+            if key in mol:
+                cs, ce = r.get('call_start') or r['start'], r.get('call_end') or r['end']
+                mol[key]['b'].append(int((float(cs) + float(ce)) / 2))
+    L, IV, PT, CH, MID, MOL, DS, JN, QN = [], [], [], [], [], [], [], [], []
+    for key in sorted(mol):
+        ds, m, chrom = key
+        d = mol[key]
+        if not d['seg']:
+            continue
+        adm = _subtract(_union(d['seg']), _union(d['low']))
+        if win is not None:
+            adm = _intersect(adm, win.get(chrom, []))
+        if not adm:
+            continue
+        pts = []
+        for p_ in sorted(d['b']):
+            if not pts or p_ - pts[-1] > point_tolerance:
+                pts.append(p_)
+        n, iv, pp, junc = compress(adm, _union(d['a']), pts)
+        if n <= 0:
+            continue
+        L.append(n); IV.append(iv); PT.append(pp); JN.append(junc)
+        CH.append(chrom); MID.append((adm[0][0] + adm[-1][1]) // 2); MOL.append(m)
+        DS.append(ds); QN.append(tuple(sorted(d['qnames'])))
+    return RateData(np.array(L, np.int64), IV, PT, np.array(CH, dtype=object), np.array(MID, np.int64),
+                    np.array([f'{ds}|{m}' for ds, m in zip(DS, MOL)], dtype=object),
+                    labels={'dataset': np.array(DS, dtype=object), 'qname': np.array(QN, dtype=object),
+                            'molecule': np.array(MOL, dtype=object)}, junctions=JN)
+
+
+def _intersect(a_iv, b_iv):
+    out = []
+    for a, b in a_iv:
+        for c, d in b_iv:
+            lo, hi = max(a, c), min(b, d)
+            if hi > lo:
+                out.append((lo, hi))
+    return _union(out)
+
+
+def _union(iv):
+    out = []
+    for a, b in sorted(iv):
+        if out and a <= out[-1][1]:
+            out[-1][1] = max(out[-1][1], b)
+        else:
+            out.append([a, b])
+    return [tuple(x) for x in out]
+
+
+def _subtract(iv, cut):
+    out = []
+    for a, b in iv:
+        pieces = [(a, b)]
+        for c, d in cut:
+            nxt = []
+            for x, y in pieces:
+                if d <= x or c >= y:
+                    nxt.append((x, y))
+                    continue
+                if c > x:
+                    nxt.append((x, c))
+                if d < y:
+                    nxt.append((d, y))
+            pieces = nxt
+        out.extend(p for p in pieces if p[1] > p[0])
+    return out
+
+
+def transferable_states(scan, type_id, positions, width, mi, regions=None):
+    """Evaluate the scan's transferable rule at random loci on original evidence.
+
+    Returns FeatureStates; record disagreement is folded by the same rule as hit
+    states. Sampling caps are not applied again to background positions.
+    """
+    import pysam
+    from fiberhmm.scan.states import StateReader, TRANSFERABLE, nfr_region_state
+    from fiberhmm.scan.reads import passes
+    from fiberhmm.scan.identity import molecule_id
+    from .cooccur import FeatureStates
+    if type_id not in TRANSFERABLE:
+        raise ScanInputError(f'{type_id} has no transferable state rule; use --backgrounds hits')
+    chrom = np.array([c for c, p in positions], dtype=object)
+    pos = np.array([p for c, p in positions], dtype=np.int64)
+    start, end = pos - width // 2, pos + (width + 1) // 2
+    h, m, st = [], [], []
+    for ds in scan.manifest['datasets']:
+        for f in ds['files']:
+            with pysam.AlignmentFile(f['path'], 'rb') as bam:
+                reader = StateReader(bam.header, settings=scan.manifest['modules']['nfr']['settings'],
+                                     chemistry=ds.get('chemistry'), cache_size=1)
+                by_chrom = {c: np.flatnonzero(chrom == c) for c in set(chrom)}
+                for c, ix in by_chrom.items():
+                    ix = ix[np.argsort(start[ix], kind='stable')]
+                    starts = start[ix]
+                    for read in bam.fetch(c, max(0, int(start[ix].min())), int(end[ix].max())):
+                        if not passes(read, scan.manifest['read_policy']['filters']):
+                            continue
+                        nucs = reader.nucleosomes(read) if type_id == 'nfr.region' else None
+                        if type_id == 'nfr.region' and nucs is None:
+                            continue
+                        lo = np.searchsorted(starts, read.reference_start - width, 'left')
+                        hi = np.searchsorted(starts, read.reference_end, 'left')
+                        for j in ix[lo:hi]:
+                            state = (nfr_region_state(nucs, int(start[j]), int(end[j]), reader.options.min_gap_bp)
+                                     if type_id == 'nfr.region' else
+                                     reader.state_at(read, type_id, c, int(start[j]), int(end[j])))
+                            if state not in STATE_CODES:
+                                continue
+                            h.append(int(j)); st.append(STATE_CODES[state])
+                            m.append(mi.add(molecule_id([read.query_name]), ds['dataset_id'], read.query_name))
+    return FeatureStates(type_id, [f'random:{i}' for i in range(len(pos))], chrom, start, end, pos, h, m, st)

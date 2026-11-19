@@ -509,3 +509,106 @@ def test_sort_and_index_bam_uses_pysam_sort_when_samtools_sort_fails(monkeypatch
 
     assert pysam_sorts == [("-o", str(sorted_bam), str(output_bam))]
     assert replacements == [(str(sorted_bam), str(output_bam))]
+
+
+# --- Real samtools runs (coverage audit item 31). The tests above patch subprocess.run; these run
+# the real samtools on two tiny synthetic BAMs so a changed command line or output shape is caught.
+
+def _write_region_bam(path, header, reads):
+    import pysam
+    with pysam.AlignmentFile(str(path), "wb", header=header) as out:
+        for name, start in reads:
+            seg = pysam.AlignedSegment(out.header)
+            seg.query_name = name
+            seg.reference_id = 0
+            seg.reference_start = start
+            seg.mapping_quality = 60
+            seg.query_sequence = "ACGT" * 5
+            seg.query_qualities = pysam.qualitystring_to_array("I" * 20)
+            seg.cigarstring = "20M"
+            seg.set_tag("ns", __import__("array").array("I", [2]))
+            out.write(seg)
+    return str(path)
+
+
+_SAMTOOLS = pytest.mark.skipif(
+    __import__("shutil").which("samtools") is None,
+    reason="samtools is not on PATH; the real concat/merge/sort run needs it",
+)
+_HEADER = {"HD": {"VN": "1.6", "SO": "coordinate"}, "SQ": [{"SN": "chrS", "LN": 1000}],
+           "PG": [{"ID": "fiberhmm-test", "PN": "fiberhmm-test"}]}
+
+
+def _names(path):
+    import pysam
+    with pysam.AlignmentFile(str(path), "rb", check_sq=False) as bam:
+        return [(r.query_name, r.reference_start, r.get_tag("ns").tolist()) for r in bam]
+
+
+@_SAMTOOLS
+def test_real_samtools_cat_then_index_keeps_every_read_and_one_header(tmp_path):
+    a = _write_region_bam(tmp_path / "region_0.bam", _HEADER, [("r1", 10), ("r2", 50)])
+    b = _write_region_bam(tmp_path / "region_1.bam", _HEADER, [("r3", 400), ("r4", 700)])
+    out = str(tmp_path / "out" / "calls.bam")
+    import os
+    os.makedirs(os.path.dirname(out))
+    bam_output._concatenate_region_bams(str(a), out, [a, b], str(tmp_path), verbose=False)
+    assert _names(out) == [("r1", 10, [2]), ("r2", 50, [2]), ("r3", 400, [2]), ("r4", 700, [2])]
+    assert not (tmp_path / "bam_list.txt").exists()
+    bam_output._sort_and_index_bam(out, verbose=False, threads=1)
+    assert os.path.exists(out + ".bai") or os.path.exists(out + ".csi")
+    import pysam
+    with pysam.AlignmentFile(out, "rb") as bam:
+        pg_ids = [pg["ID"] for pg in bam.header.to_dict().get("PG", [])]
+        assert pg_ids == ["fiberhmm-test"]  # --no-PG: samtools adds no @PG of its own
+        assert [r.query_name for r in bam.fetch("chrS", 300, 800)] == ["r3", "r4"]
+
+
+@_SAMTOOLS
+def test_real_samtools_sort_runs_when_concatenated_regions_are_out_of_order(tmp_path):
+    a = _write_region_bam(tmp_path / "region_0.bam", _HEADER, [("r1", 10), ("r2", 50)])
+    b = _write_region_bam(tmp_path / "region_1.bam", _HEADER, [("r3", 400), ("r4", 700)])
+    out = str(tmp_path / "calls.bam")
+    bam_output._concatenate_region_bams(a, out, [b, a], str(tmp_path), verbose=False)
+    assert [n for n, _, _ in _names(out)] == ["r3", "r4", "r1", "r2"]
+    bam_output._sort_and_index_bam(out, verbose=False, threads=1)
+    assert [n for n, _, _ in _names(out)] == ["r1", "r2", "r3", "r4"]
+    import pysam
+    with pysam.AlignmentFile(out, "rb") as bam:
+        assert [r.query_name for r in bam.fetch("chrS", 0, 100)] == ["r1", "r2"]
+
+
+@_SAMTOOLS
+def test_real_samtools_merge_combines_two_bams_in_coordinate_order(tmp_path):
+    a = _write_region_bam(tmp_path / "a.bam", _HEADER, [("r1", 10), ("r3", 400)])
+    b = _write_region_bam(tmp_path / "b.bam", _HEADER, [("r2", 50), ("r4", 700)])
+    out = str(tmp_path / "merged.bam")
+    bam_output._samtools_merge_bams([a, b], out, str(tmp_path / "list.txt"))
+    assert [n for n, _, _ in _names(out)] == ["r1", "r2", "r3", "r4"]
+    assert not (tmp_path / "list.txt").exists()
+
+
+@pytest.mark.skipif(__import__("shutil").which("bedToBigBed") is None,
+                    reason="bedToBigBed is not on PATH; the real BigBed conversion needs it")
+@pytest.mark.parametrize("with_scores", [False, True])
+def test_real_bedtobigbed_accepts_the_autosql_schema(tmp_path, capsys, with_scores):
+    """The autoSql written by write_autosql_schema is accepted by the real bedToBigBed, so the
+    extended BED12(+1) BigBed is built from it rather than through the plain-BED12 fallback."""
+    bed = tmp_path / "calls.bed"
+    row = ["chrS", "100", "400", "read_a", "500", "+", "100", "400", "0", "2", "50,60", "0,240"]
+    row2 = ["chrS", "10", "90", "read_b", "800", "-", "10", "90", "0", "2", "30,1", "0,79"]
+    if with_scores:
+        row.append("700,900")
+        row2.append("650,0")
+    bed.write_text("\t".join(row) + "\n" + "\t".join(row2) + "\n")
+    sizes = tmp_path / "chrom.sizes"
+    sizes.write_text("chrS\t1000\n")
+    autosql = tmp_path / "schema.as"
+    bam_output.write_autosql_schema(str(autosql), with_scores=with_scores)
+    out = tmp_path / "calls.bb"
+    assert bam_output.convert_to_bigbed_with_schema(
+        str(bed), str(sizes), str(autosql), str(out), with_scores=with_scores) is True
+    printed = capsys.readouterr().out
+    assert "bedToBigBed error" not in printed, printed
+    assert "Fallback" not in printed, printed
+    assert out.read_bytes()[:4] in (b"\xeb\xf2\x89\x87", b"\x87\x89\xf2\xeb")  # bigBed magic

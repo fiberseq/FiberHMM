@@ -250,9 +250,10 @@ report chimeras alongside PCR duplication.
 Without the sidecar, standalone QC with the default auto assay mode reports
 the DAF policy from the BAM header and the fraction of marked sampled reads.
 
-Extract, consensus/recall inputs and posterior export exclude `0x200` +
+Extract, scan, nucleosome decoding, consensus/recall inputs and posterior export exclude `0x200` +
 `xc:Z:strand_swap` records by default. `fiberhmm-footprint-model` takes
-`--include-chimeras`, next to its duplicate option. Other QC-fail records
+`--include-chimeras`, next to its duplicate option. Scan takes
+`read_policy.filters.chimeras=include` or peaks `include_chimeras`. Other QC-fail records
 keep each tool's existing policy.
 
 ## Adjacent-target thinning

@@ -283,6 +283,45 @@ def append_ma_types(header, annotation_names):
     return pysam.AlignmentHeader.from_dict(d)
 
 
+SCAN_MA_CONTRACT_PREFIX = "FIBERHMM-SCAN-MA:v1:"
+
+
+def drop_derived_ma_contracts(header):
+    """Header without the ``FIBERHMM-SCAN-MA`` contract lines (and MA-TYPES
+    names) of groups derived from the calls (``ma_tags.derived_ma_groups``).
+
+    Writers that regenerate nuc/msp/tf drop those groups from every read, so
+    their declarations go too. Other comments are kept in order."""
+    from fiberhmm.io.ma_tags import derived_ma_groups
+    from fiberhmm.io.scan_ma import strip_scan_contracts
+    derived = derived_ma_groups()
+    d0 = _header_to_dict(header)
+    d = strip_scan_contracts(d0, derived)          # the scan contract lines
+    changed = len(d.get("CO", [])) != len(d0.get("CO", []))
+    kept = []
+    for raw in d.get("CO", []):
+        comment = str(raw)
+        if comment.startswith(MA_TYPES_PREFIX):
+            fields = comment[len(MA_TYPES_PREFIX):].split(",")
+            keep_fields = [f for f in fields if f not in derived]
+            if len(keep_fields) != len(fields):
+                changed = True
+                if not keep_fields:
+                    continue
+                comment = MA_TYPES_PREFIX + ",".join(keep_fields)
+        kept.append(comment)
+    if not changed:
+        return header
+    d["CO"] = kept
+    return pysam.AlignmentHeader.from_dict(d)
+
+
+def call_writer_header(header):
+    """Header for a writer that regenerates footprint calls: the
+    molecular-frame marker, without declarations of call-derived groups."""
+    return drop_derived_ma_contracts(append_coord_marker(header))
+
+
 # Stable, version-independent token marking that ns/nl/as/al (and MA) are written
 # in molecular (original-fiber) coordinates. Downstream consumers (FiberBrowser)
 # key off the exact token `coord=molecular`. fiberhmm-call carries it in its @PG

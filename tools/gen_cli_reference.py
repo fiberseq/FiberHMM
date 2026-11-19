@@ -54,6 +54,7 @@ COMMANDS: list[tuple[str, str, str]] = [
     ("fiberhmm-transfer", "fiberhmm.inference.consensus.transfer_cli", "main"),
     ("fiberhmm-nfr", "fiberhmm.inference.accessibility.cli", "main"),
     ("fiberhmm-footprint", "fiberhmm.cli.motif_footprint", "main"),
+    ("fiberhmm-scan", "fiberhmm.scan.cli", "main"),
     ("fiberhmm-footprint-model", "fiberhmm.cli.footprint_model", "main"),
     ("fiberhmm-strand-rescue", "fiberhmm.cli.strand_rescue", "main"),
     ("fiberhmm-strand-rescue-annotate", "fiberhmm.cli.strand_rescue_annotate", "main"),
@@ -195,6 +196,9 @@ def render_command(name: str, module: str, function: str) -> list[str]:
         else:
             lines.append("No options.")
         lines.append("")
+    if name == 'fiberhmm-scan':
+        assoc = capture_parser('fiberhmm.assoc.cli', 'main')
+        lines.extend(['### fiberhmm-scan assoc', '', *_table(assoc), ''])
     return lines
 
 

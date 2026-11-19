@@ -398,3 +398,35 @@ def test_all_snvs_reports_bidirectional_non_conversion_snvs(tmp_path):
     # without the flag the VCF is byte-identical to before (no new header lines)
     plain_vcf = Path(write_snp_outputs(plain, str(tmp_path / "p" / "x"))["outputs"]["vcf"]).read_text()
     assert "SCREEN" not in plain_vcf
+
+
+def test_daf_snps_main_writes_mask_vcf_and_report(tmp_path):
+    """A real fiberhmm-daf-snps main() run (coverage audit item 29): argument wiring through to
+    every output file, checked by content."""
+    import json
+    from fiberhmm.cli.daf_snps import main
+
+    bam_path = tmp_path / "snps.bam"
+    _write_snp_bam(bam_path)
+    prefix = tmp_path / "out" / "sample"
+    prefix.parent.mkdir()
+    assert main(["-i", str(bam_path), "-o", str(prefix), "--min-fraction", "0.3",
+                 "--min-depth", "10", "--min-alt-fibers", "3"]) == 0
+    outputs = sorted(p.name for p in prefix.parent.iterdir())
+    assert outputs, "main() wrote nothing"
+    bed = [p for p in prefix.parent.iterdir() if p.suffix == ".bed"]
+    vcf = [p for p in prefix.parent.iterdir() if p.suffix == ".vcf"]
+    assert len(bed) == 1 and len(vcf) == 1, outputs
+    bed_sites = {(f[0], int(f[1]), int(f[2])) for f in
+                 (line.split("\t") for line in bed[0].read_text().splitlines())
+                 if f and not f[0].startswith(("#", "track"))}
+    assert ("chr1", 110, 111) in bed_sites and ("chr1", 170, 171) in bed_sites
+    assert ("chr1", 111, 112) not in bed_sites
+    vcf_rows = [line.split("\t")[:5] for line in vcf[0].read_text().splitlines()
+                if line and not line.startswith("#")]
+    assert ["chr1", "111", ".", "C", "T"] in vcf_rows and ["chr1", "171", ".", "G", "A"] in vcf_rows
+    jsons = [p for p in prefix.parent.iterdir() if p.suffix == ".json"]
+    assert len(jsons) == 1
+    payload = json.loads(jsons[0].read_text())
+    assert payload["n_called_snps"] == 2
+    assert payload["threshold_policy"]["name"] == "custom"

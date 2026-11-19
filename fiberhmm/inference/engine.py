@@ -545,6 +545,20 @@ def _daf_reference_mask(read):
 # spawned workers inherit an opt-out.
 _DAF_UNALIGNED_MASK_ENV = 'FIBERHMM_DAF_MASK_UNALIGNED'
 _DAF_UNALIGNED_MASK = None
+_DAF_UNALIGNED_MASK_SCOPE = _ContextVar('fiberhmm_daf_unaligned_mask_scope', default=None)
+
+
+def daf_unaligned_mask_scope(enabled):
+    from contextlib import contextmanager
+
+    @contextmanager
+    def scope():
+        token = _DAF_UNALIGNED_MASK_SCOPE.set(bool(enabled))
+        try:
+            yield
+        finally:
+            _DAF_UNALIGNED_MASK_SCOPE.reset(token)
+    return scope()
 
 
 def configure_daf_unaligned_mask(enabled: bool = True) -> None:
@@ -556,6 +570,9 @@ def configure_daf_unaligned_mask(enabled: bool = True) -> None:
 
 def daf_unaligned_mask_enabled() -> bool:
     global _DAF_UNALIGNED_MASK
+    scoped = _DAF_UNALIGNED_MASK_SCOPE.get()
+    if scoped is not None:
+        return scoped
     if _DAF_UNALIGNED_MASK is None:
         _DAF_UNALIGNED_MASK = os.environ.get(_DAF_UNALIGNED_MASK_ENV, '1') != '0'
     return _DAF_UNALIGNED_MASK
@@ -598,6 +615,20 @@ def _daf_snp_masked_query_positions(read):
 # carriers, keyed by insert_consensus.record_key. Empty unless a consensus
 # pre-pass configured it.
 _DAF_INSERT_EVIDENCE: dict = {}
+_DAF_INSERT_EVIDENCE_SCOPE = _ContextVar('fiberhmm_daf_insert_evidence_scope', default=None)
+
+
+def daf_insert_evidence_scope(evidence):
+    from contextlib import contextmanager
+
+    @contextmanager
+    def scope():
+        token = _DAF_INSERT_EVIDENCE_SCOPE.set(dict(evidence or {}))
+        try:
+            yield
+        finally:
+            _DAF_INSERT_EVIDENCE_SCOPE.reset(token)
+    return scope()
 
 
 def configure_daf_insert_evidence(evidence=None) -> None:
@@ -615,14 +646,16 @@ def configure_daf_insert_evidence(evidence=None) -> None:
 
 def daf_insert_evidence(read):
     """The record's insert evidence, or None."""
-    if not _DAF_INSERT_EVIDENCE or not daf_unaligned_mask_enabled():
+    scoped = _DAF_INSERT_EVIDENCE_SCOPE.get()
+    active = _DAF_INSERT_EVIDENCE if scoped is None else scoped
+    if not active or not daf_unaligned_mask_enabled():
         return None
     try:
         from fiberhmm.daf.insert_consensus import record_key
         key = record_key(read)
     except (AttributeError, TypeError, ValueError):
         return None
-    return _DAF_INSERT_EVIDENCE.get(key)
+    return active.get(key)
 
 
 def _daf_excluded_query_positions(read):
@@ -1059,16 +1092,20 @@ def _with_unknown(fiber_read: dict, unknown_positions, read=None) -> dict:
 
 
 def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
-                                    ref_fasta=None) -> Optional[dict]:
+                                    ref_fasta=None, *, filter_chimeras=None) -> Optional[dict]:
     """Extract minimal data needed for HMM processing from a pysam read.
 
     Returns a fiber_read dict, None (no usable evidence), or
     :data:`CHIMERA_SKIP` (DAF strand-swap chimera, when the filter is on).
+    Replay readers may disable fresh detection with ``filter_chimeras=False``;
+    exact existing FiberHMM marks are always respected.
     """
     if mode == 'daf':
         from .chimeras import is_marked_chimera
         if is_marked_chimera(read):
             return CHIMERA_SKIP
+    if filter_chimeras is None:
+        filter_chimeras = _DAF_CHIMERA_CFG['filter']
     query_sequence = read.query_sequence
     if not query_sequence:
         return None
@@ -1081,7 +1118,7 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
         strand = daf_iupac_strand(read, query_sequence, st_tag, strand,
                                   excluded_query_positions)
         # Strand-swap chimera filter, same policy as the MD path below.
-        if _DAF_CHIMERA_CFG['filter'] and _is_iupac_daf_chimera(
+        if filter_chimeras and _is_iupac_daf_chimera(
                 read, query_sequence, excluded_query_positions, ref_fasta):
             return CHIMERA_SKIP
         mod_positions.difference_update(excluded_query_positions)
@@ -1123,7 +1160,7 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
             # Strand-swap chimera filter (DAF only): a read deaminated CT in one
             # segment and GA in another corrupts the single-strand assignment.
             # Drop it (returns a distinct sentinel so callers can report counts).
-            if _DAF_CHIMERA_CFG['filter']:
+            if filter_chimeras:
                 from fiberhmm.daf.encoder import is_daf_chimera
                 if is_daf_chimera(ct_pos, ga_pos,
                                   min_seg_events=_DAF_CHIMERA_CFG['min_seg'],

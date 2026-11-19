@@ -97,7 +97,8 @@ from fiberhmm.io.annotation_frame import (
     ma_group_is_molecular,
     read_has_dot_footprint_group,
 )
-from fiberhmm.io.bam_header import append_coord_marker
+from fiberhmm.io.bam_header import call_writer_header
+from fiberhmm.io.ma_tags import drop_derived_groups
 from fiberhmm.io.ma_tags import (
     fibertools_ma_intervals,
     flip_intervals_to_seq,
@@ -784,6 +785,7 @@ def _single_thread_loop(bam_in, bam_out, _header_text,
         _carry_to_output_frame(read, input_molecular_frame)
         if result is not None:
             _apply_result(read, result, also_write_legacy, downstream_compat)
+        drop_derived_groups(read)   # the header no longer declares them
         bam_out.write(read)
         n_reads += 1
         n_v2 += stats['v2']
@@ -835,6 +837,7 @@ def _parallel_loop(bam_in, bam_out, _header_text,
             _carry_to_output_frame(read, input_molecular_frame)
             if result is not None:
                 _apply_result(read, result, also_write_legacy, downstream_compat)
+            drop_derived_groups(read)   # the header no longer declares them
             bam_out.write(read)
         n_reads += len(reads_chunk)
         n_v2 += stats['v2']
@@ -1647,7 +1650,7 @@ def _recall(args, bam_in, model_path, using_bundled_model, n_cores):
         bam_out = None
         try:
             from fiberhmm.io.bam_header import append_ma_types
-            output_header = append_coord_marker(bam_in.header)
+            output_header = call_writer_header(bam_in.header)
             if not args.downstream_compat:
                 output_header = append_ma_types(output_header, ("nuc", "msp", "tf"))
             # Reconciles the run's chemistry with the input's declaration: a

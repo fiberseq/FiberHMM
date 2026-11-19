@@ -136,3 +136,9 @@ See [Posteriors](../workflows/posteriors.md).
 `fiberhmm.cli.tag_families.load_family_assignments(path)` validates an
 assignment TSV, and `tag_tf_families(input_bam, output_bam, assignment_tsv, *, force=False)`
 runs [`fiberhmm-tag-consensus`](../workflows/tag-consensus.md).
+
+
+The [v1.11 contracts](../../CONTRACTS.md) describe record-backed
+`fiberhmm.scan.run_units(evidence=...)`, `fiberhmm.nuc.record_outputs`,
+`fiberhmm.nuc.measured_track`, cached `read_nuc_groups` arguments, and the
+association callback and dataset-calibration APIs.

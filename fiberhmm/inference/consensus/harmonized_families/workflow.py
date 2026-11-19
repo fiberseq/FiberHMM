@@ -51,7 +51,7 @@ def implementation_hashes():
 
 def prepare_sources(payload, options):
     """Preserve baseline/replay identity and reject duplicate physical evidence."""
-    grouped = {}; physical = {}; identities = set()
+    grouped = {}; physical = {}; identities = set(); repeats = {}
     from ...evidence_crop import analysis_units
     from ..bam import evidence_pad
     region = payload.get('region') or {}
@@ -84,7 +84,11 @@ def prepare_sources(payload, options):
             keys=list(set(keys))
             if u.get('physical_molecule_id'): keys.append(('physical', str(u['physical_molecule_id'])))
             for key in keys:
-                if key in physical: raise ValueError('Repeated physical molecule needs joint-view grouping, not independent fitting')
+                if key in physical:
+                    # Collect every repeat so the message can say where they are.
+                    # One entry per pair of evidence units, however many keys they share.
+                    repeats[(physical[key], identity)] = {physical[key][0], ds}
+                    continue
                 physical[key] = identity
             baseline = deepcopy(u.get('raw_tf_intervals', u['representative_raw_tf_intervals']))
             u['original_bam_tf_intervals'] = deepcopy(u.get('original_bam_tf_intervals', baseline))
@@ -99,7 +103,28 @@ def prepare_sources(payload, options):
             u['representative_raw_tf_intervals'] = deepcopy(u['raw_tf_intervals'])
             if source['chemistry'].startswith('hia5'): u['strand'] = 'pooled'
             target['units'].append(u)
+    if repeats:
+        raise ValueError(repeated_molecule_message(repeats))
     return list(grouped.values())
+
+
+def repeated_molecule_message(repeats):
+    """One error for every repeated physical molecule: how many, and in which datasets.
+
+    ``repeats`` maps each repeated pair of evidence units to the dataset IDs holding them. No read names:
+    the message reaches the browser panel."""
+    across = {}; within = set()
+    for datasets in repeats.values():
+        if len(datasets) > 1: across[tuple(sorted(datasets))] = across.get(tuple(sorted(datasets)), 0) + 1
+        else: within |= datasets
+    parts = []
+    for datasets, n in sorted(across.items()):
+        parts.append(f"{n} molecule{'s' if n != 1 else ''} in more than one dataset ({', '.join(datasets)})")
+    if within:
+        parts.append('molecules repeated within ' + ', '.join(sorted(within)))
+    return ('Repeated physical molecule needs joint-view grouping, not independent fitting: ' + '; '.join(parts) +
+            '. Each dataset must hold distinct molecules (PacBio movie/ZMW or read name). Remove the shared reads '
+            'from one dataset, or deduplicate them by molecule before running, so no molecule is counted twice.')
 
 
 def fit_source(source, region, channel, folder, options, progress, seed_catalog=None):

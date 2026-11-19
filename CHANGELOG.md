@@ -8,8 +8,78 @@
   `fiberhmm_sv` rows) is no longer treated as a per-block list when its comma
   count happens to equal blockCount.
 
+
 ### Added
 
+- Scan contracts v1.12: association M1–M3 reads annotated BAMs, including
+  decoded scalar codecs, molecular mark projection and annotated haplotypes.
+- Association CLI M2 random transferable backgrounds (`nfr.region`), and
+  indexed FASTA site density for M2 matching or M4 relocation strata.
+- Explicit schema 5 signal-BAM scan inputs, with producer-evidence predicates
+  applied once before every module, calibration, sampling and callable survey.
+- Reproducible scan and association scaling benchmarks
+  (`tools/benchmark_scan.py`, `tools/benchmark_assoc.py`).
+- Background matching consumes candidate pools once and checks separation in
+  spatial bins, preserving selected sets and eliminating quadratic rescans.
+  M2 permutation batches and conditional-logistic DP workspace are bounded.
+- Scan workers load shared plans once; repeated deterministic discovery fits
+  and nuc record outputs are cached, and MA projection intersects CIGAR blocks.
+  Execution timings are recorded in run.json, outside byte-identity outputs.
+- Scan table sorting spills bounded batches with stable merge order; nuc stitch
+  tracks expand on demand, with patch summaries reading only their slices.
+
+- Scan API contracts v1.11 (`CONTRACTS.md`): iterable/callback record evidence
+  for `run_units`, sharing every module's BAM loaders and calibrations.
+- Public `fiberhmm.nuc.record_outputs` and `measured_track` helpers;
+  cached contracts/header/context in `read_nuc_groups`, with one MA parse.
+- Cooperative association cancellation/progress callbacks, dataset-specific
+  phasing calibration, M1 pooled 2×2 counts, and cross-scan M3 state inputs.
+  Explicit empty scanio windows now select nothing.
+- Fibertools-called BAMs can receive scan annotations without a FiberHMM
+  molecular declaration; the last footprint caller on every PG chain decides.
+- Lift repair retains orphan supplementaries with `Yo:i:1` and 0x800;
+  `fiberhmm-scan --inspect` now reports `units.zones`.
+
+- **`fiberhmm.assoc`** (feature hub association statistics) and
+  **`fiberhmm-scan assoc`**: per-molecule co-occurrence of two feature types
+  (M1), state-conditioned response at anchors against matched backgrounds
+  (M2), within-molecule rate inside versus outside interval features (M3)
+  and pooled overlap and distance enrichment (M4), from scan directories or
+  plain arrays. Variances are clustered by physical molecule, intervals come
+  from a bootstrap over locus groups, group contrasts are interaction tests,
+  and unphased molecules are left out of haplotype contrasts. Every mode was
+  calibrated on simulated confounded nulls. `fiberhmm.nuc.condition_stats`
+  and `fiberhmm.nuc.association_stats` run the nucleosome analyses (phasing
+  conditioned on the anchor state in the anchor and molecule frames; arrays
+  against TF footprints). `fiberhmm.inference.accessibility.coaccess` moved
+  to `fiberhmm.assoc.coaccess`; the old import path still works and
+  `fiberhmm-nfr` output is unchanged. See `docs/workflows/association.md`.
+- **`fiberhmm-scan`** scans called BAMs genome-wide (50 kb units at a 25 kb
+  stride, each owning its central 25 kb), over `--region` windows or over
+  BED units, with three modules: `fp` (footprint classes, the lattice
+  recaller as `fiberhmm-consensus` runs it), `nfr` (NFRs and NFR variants,
+  EXPERIMENTAL, as `fiberhmm-nfr`) and `peaks` (FiberBrowser's accessibility
+  peaks, ported with identical per-position scores). It writes one scan
+  directory: `manifest.json` and bgzip + tabix tables of pooled hits and
+  values. Per-molecule results go into annotated BAMs as `MA` groups
+  (`fpcls`, `nfrvar`, `nfrmol`) that survive `fiberhmm-lift`; BED-scoped
+  scans and `--no-annotate` write them as tables instead. Seams between
+  units are reconciled so each feature is reported once, `--continue`
+  resumes an interrupted scan, and reruns are byte-identical. `--zones`
+  scans the genome grid's units that meet a window, unchanged, so their
+  results are the genome scan's (FiberBrowser's view scans print this
+  form). A unit's result does not depend on the plan, so a scan extended
+  with more units reuses every unit it shares. `--bam` datasets are labelled
+  in a fixed order (by file content), so the order of `--bam` changes
+  nothing. Per-molecule tables name each record's input file
+  (`input_index`). Peaks use the local rare tier and count every record by
+  default, in BED scans too (FiberBrowser's earlier view rules stay
+  available for BED units). `fiberhmm.scan.state_at` gives a record's
+  NFR state (open, closed, not callable) at any position, equal to a scan's
+  states. `--schema`
+  lists every parameter; `--inspect` validates a scan directory. See
+  [Scanning features genome-wide](https://fiberseq.github.io/FiberHMM/workflows/scanning/)
+  and the [scan format](https://fiberseq.github.io/FiberHMM/reference/scan-format/).
 - **`fiberhmm-lift`** lifts a called BAM, or a BED file, to another assembly
   through a pangenome graph, with footprints in molecular coordinates. The
   primary route is native: graphlift's `liftbam` and `liftbed`
@@ -22,8 +92,9 @@
   kept and recorded in `Yq`, the source locus in `Yp`; `--unlifted` writes the
   records that did not lift with their reason in `Yu`. `--repair-only
   --source` repairs a BAM lifted by another vg-based tool. `--bed` lifts
-  BED12 rows block by block (`--bed12-partial keep` keeps a row without its
-  unliftable blocks), narrowPeak summits and thickStart/thickEnd with their
+  BED12 rows block by block (by default a row keeps the blocks that lift and
+  its lost blocks go to `--unlifted` with their reasons; `--bed12-partial
+  drop` drops the whole row instead), narrowPeak summits and thickStart/thickEnd with their
   rows (`--bed-format`), and reads gzip, bgzip or stdin and writes `.gz`. See
   [Lifting to another assembly](https://fiberseq.github.io/FiberHMM/workflows/lifting/).
 - `fiberhmm-check` reports BAMs lifted through a graph without that repair
@@ -31,15 +102,60 @@
 - `fiberhmm-lift` lifts a soft-clipped supplementary whose primary is not in
   the input (a region slice, say): it carries its own `SEQ`, calls and `MM`.
   Only hard-clipped ones, which have no `SEQ` to fill, are left out.
+- **`fiberhmm.nuc`** (experimental): nucleosome sizes, spacing and array
+  segments per molecule, in molecular coordinates. Each footprint gets a
+  density-matched deviation z and a coarse call (short, mono, long, multi(2),
+  multi(3+), can't tell); named classes need an absolute control. Each
+  molecule gets its repeat length, regularity, gap CV and mark densities, and
+  segments: regular (posterior P(regular) >= 0.7 or a model-free spacing
+  rule), disordered (positive spacing evidence only), undetermined and
+  low-information. Disrupted nucleosomes are called on each molecule:
+  undersized footprint runs (against the dataset's density-matched
+  background) and missing nucleosomes inside arrays. Window metrics and
+  phasing (anchor and molecule frames) run per observation, with fuzzy /
+  dephased loci tested against matched background anchors. A dataset
+  calibration thins dense molecules and re-calls them with the dataset's
+  caller to set edge noise, the supported density range and the
+  low-information floor. As the `nuc` module of `fiberhmm-scan` it writes MA
+  groups `nucsz`, `nucseg` and `nucmol` and finds patches where arrays,
+  disordered spacing, undersized runs or missing nucleosomes recur across
+  molecules (a shift-within-read test with Benjamini-Hochberg control over
+  every window the scan tests), plus phased and fuzzy patches. Molecules
+  are decoded with the DAF run mask and DddA CpG policy that `fiberhmm-call`
+  recorded. Scan calibration samples windows that hold each dataset's
+  records across the reference, so it does not depend on what is scanned: a
+  window scan, its extensions and a genome scan agree, and a genome scan of
+  targeted data calibrates on the target. See
+  [Nucleosome sizes and arrays](https://fiberseq.github.io/FiberHMM/workflows/nucleosomes/).
 
 ### Changed
 
+- Writers that re-call footprints (`fiberhmm-call`, `-apply`,
+  `-recall-tfs`, `-recall-nucs`) drop the MA groups derived from the old calls
+  (`nucsz`, `nucseg`, `nucmol`, `fpcls`, `nfrvar`, `nfrmol`) and their header
+  declarations, on every read they write. Other tools' groups are still kept,
+  and `fiberhmm-merge`/`-pair` keep scan groups on the reads they pass
+  through unmerged.
+- `fiberhmm-footprint-model` reads BAMs annotated by `fiberhmm-scan` (every
+  interval named in `AN`); it still refuses tf/msp pieces linked by a shared
+  AN name.
 - MAPQ filtering is off by default everywhere: `--min-mapq`, `--qc-min-mapq`,
   `-q` and the consensus `input.minimum_mapq` default to 0 (was 20). Pass
   `--min-mapq 20` to restore the old filter. A `fiberhmm-pipeline` run started
   with the old default resumes only with `--min-mapq 20`.
 
 ### Fixed
+
+- `fiberhmm-pipeline` records the DAF chimera mode in `outputs.json`
+  `call_args` once: a re-call that passes those `call_args` back no longer
+  adds another `--chimeras <mode>` each generation.
+
+- M2 group contrasts use the joint two-way bootstrap covariance for chained
+  loci, resample whole matched-set × molecule intersections in its subtraction
+  term, and count contributing clusters separately per group. Two-group
+  contrasts use group-specific CR1 factors and a capped Welch reference.
+  The former molecule-only variance made sparse confounded-null contrasts
+  conservative. Contrast results now include their bootstrap support counts.
 
 - **fibertools-rs ≥ 0.13 `Ma`/`Aq` input is read everywhere.** `fiberhmm-recall-tfs`
   carries fibertools' `fire.Q` (and other non-footprint) groups into the `MA`

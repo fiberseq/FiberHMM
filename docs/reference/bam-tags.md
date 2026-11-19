@@ -50,6 +50,34 @@ DddA island groups are kept.
 | `tf_cross_consensus.QQQQQQ` | as `tf_consensus` | `fiberhmm-consensus --engine staged_native_families` (XCR) | deprecated staged engine |
 | `fp_NAME.QQQ` | `tq`, `cw`, `ef` | `fiberhmm-footprint --out-bam` | motif footprinted by a FiberHMM call: call `tq`, conservative width, edge flag ([Motif footprints](../workflows/motif-footprint.md#outputs)) |
 | `fpneg_NAME.Q` | `reason` | `fiberhmm-footprint --out-bam` | motif eligible (in an MSP) but not footprinted |
+| `fpcls.QQQ` | `state`, `p`, `tier` | `fiberhmm-scan` (`fp`) | per (footprint class, molecule): membership state, class posterior ×255, tier; `AN` = hit id ([Scanning](../workflows/scanning.md)) |
+| `nfrvar.QQ` | `state`, `p` | `fiberhmm-scan` (`nfr`) | per (NFR or NFR variant, molecule): open/closed and P(variant) ×255; `AN` = hit id |
+| `nfrmol.QQQQ` | `openness`, `n_nfr`, `longest_linker` (2 bytes) | `fiberhmm-scan` (`nfr`) | one whole-molecule interval with per-molecule scalars ([scan format](scan-format.md#ma-groups)) |
+
+### Nucleosome groups
+
+Written by the `nuc` module of `fiberhmm-scan` (and `fiberhmm.nuc.tags`), in
+molecular coordinates ([Nucleosomes](../workflows/nucleosomes.md)). Each is
+declared in `MA-TYPES:v1` and in a `@CO FIBERHMM-SCAN-MA:v1:` contract line.
+
+| Group | `AQ` bytes | One interval per | Meaning |
+|---|---|---|---|
+| `nucsz.QQQQ` | coarse, named, posterior, z | footprint (nucleosome and TF calls) | coarse code in bits 0–3 (0 can't tell, 1 short, 2 mono, 3 long, 4 multi2, 5 multi3+, 6 edge-truncated), +16 for a TF call or a footprint overlapping one; named code (0 none, 1 small, 2 hexasome, 3 octasome, 4 chromatosome; absolute calibration only); posterior ×255; `20 z + 128` (255 = missing) |
+| `nucseg.QQQ` (version 2) | code, posterior or 10 × LLR, q̂ − 100 or count | segment, or event | segment rows (partition): 1 regular, 2 disordered, 3 low-information, 4 undetermined; event rows (overlay): 16 undersized run, 17 missing nucleosome |
+| `nucreg.QQ` (version 1) | score, period − 100 | regularity tile (step-wide, centred on a window centre; tiles never overlap) | `1 + round(clip((score + 2) / 10, 0, 1) × 254)` (0 = no score) with score = log2 FFT peak power at 140–260 bp over the median power at 50–1000 bp; local repeat length − 100 (0 = none). Parameters in the contract line |
+| `nucpatch.QQQ` (version 1, `--nucpatch`) | mean score, period − 100, flags | regularity patch (snapped edges) | mean tile score in the `nucreg` score byte; median tile period − 100 (0 = none); flags bit 0/1 open at the molecular start/end, bit 2/3 start/end snapped to a nucleosome boundary, bit 4 a low-regularity patch. Parameters and the reference median's source in the contract line |
+| `nucgeo` (state group, `--nucpatch`, BED units) | state, reason | (shared geometry, record) | state 1 carries, 2 absent, 3 no call or not spanned; reason 1 carries, 2 absent, 3 no call, 4 not spanned, 5 partial (carries only a geometry folded into this one; state 2); `AN` is the `nuc.geometry` hit id |
+| `nucmol` (version 2, 27 `Q` bytes) | the molecule scalars | record (`1-L`) | `nrl`, `regularity`, `spectral_snr`, `gap_cv`, `lambda_acc`, `rho_read`, `n_dyads`, `n_short`, `n_mono`, `n_long`, `n_multi`, `n_cant_tell`, `reg_fraction`, `disordered_fraction`, `undetermined_fraction`, `undersized_fraction`, `n_missing`, `flags`, and the calls digest (`calls_digest_hi`/`_lo`); codecs in the contract line |
+
+`nucsz` and `nucseg` AN names are `<group>@<digest>_<index>` (`nucmol` holds
+the digest in its last four bytes; `nucreg` names are
+`nucreg@<digest>.<params8>_<index>`, with the first 8 hex of the regularity
+parameters' digest, so a reader can tell rows made with other settings; `nucpatch` names are
+`nucpatch@<digest>.<params8>_<index>`, the 8 hex covering the patch and regularity parameters and the
+reference median): the digest is over the call lengths and
+the gaps between consecutive calls, so it survives `fiberhmm-lift`. A reader
+ignores the groups when the digest no longer matches the record's calls. Every writer that regenerates `nuc`/`msp`/`tf` drops
+them.
 
 The strand field of every FiberHMM group is `.`, except the duplex
 coverage groups of `fiberhmm-pair`, whose strand is `+` (`deam+`, CT source)
@@ -118,7 +146,8 @@ Written by [`fiberhmm-lift`](../workflows/lifting.md) (SAM user space).
 |---|---|---|
 | `Yq` | `i` | `MAPQ` of the source alignment (kept as the record's `MAPQ`) |
 | `Yp` | `Z` | source locus, `<contig>:<1-based POS>:<+/->`; marks a lifted record |
-| `Yf`, `Yh`, `Yo` | `i`, `Z`, `i` | source `FLAG`, hard clips, and a mark on soft-clipped supplementaries whose primary is not in the input; between the stash and the repair only, never in a repaired BAM |
+| `Yf`, `Yh` | `i`, `Z` | source `FLAG` and hard clips; between stash and repair only |
+| `Yo` | `i` | 1 on a repaired supplementary with no lifted primary; 0x800 is kept |
 | `Yu` | `Z` | why a record could not be lifted (`no_projection`, `contig_not_in_map`, ...); only in the `--unlifted` BAM, whose records keep their source coordinates |
 
 ## Tags FiberHMM reads
@@ -131,3 +160,9 @@ Written by [`fiberhmm-lift`](../workflows/lifting.md) (SAM user space).
 | `st` | DAF flavour of R/Y-encoded reads |
 | `HP`, `PS` | copied by `fiberhmm-extract --haplotype-fields` |
 | `ns`/`nl`/`as`/`al`, `MA`/`AQ`/`AN` | input footprints for recall, extraction, QC and every downstream command |
+
+
+`Yo:i:1` in a repaired `fiberhmm-lift` BAM marks a supplementary retained
+without a lifted primary. Its 0x800 flag is preserved; `Yp:Z` still records
+the source locus. Ordinary supplementaries have no `Yo` tag. Unrecoverable
+hard-clipped input orphans are excluded before lifting.

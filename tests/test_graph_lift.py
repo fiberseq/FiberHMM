@@ -301,7 +301,7 @@ def test_hard_clipped_supplementary_without_primary_is_excluded_and_recorded(tmp
     assert "calmd=no" in pg["DS"] and "MD/NM/SA dropped" in pg["DS"]
 
 
-def test_orphan_supplementary_is_dropped_when_its_primary_does_not_lift(tmp_path):
+def test_orphan_supplementary_is_marked_when_its_primary_does_not_lift(tmp_path):
     header = _source_header()
     src = _write(tmp_path / "o.bam", header, [
         lambda h: _read(h, "q", seq=_seq(50)),
@@ -318,9 +318,12 @@ def test_orphan_supplementary_is_dropped_when_its_primary_does_not_lift(tmp_path
                 out.write(rec)
     stats = gl.repair_bam(str(tmp_path / "o.lifted2.bam"), str(tmp_path / "o.out.bam"),
                           work_dir=str(tmp_path / "o.work"), pg_args={"mode": "lift"})
-    assert stats.orphan_supplementary_dropped == 1 and stats.records_out == 0
-    # 0x800 restored on a record that was then dropped is not reported.
-    assert stats.supplementary_restored == 0
+    assert stats.orphan_supplementary_dropped == 0 and stats.records_out == 1
+    assert stats.orphan_supplementary_kept == 1
+    assert stats.supplementary_restored == 1
+    records, _ = _records(tmp_path / "o.out.bam")
+    assert records[0].is_supplementary
+    assert records[0].get_tag("Yo") == 1
 
 
 def test_supplementaries_without_a_primary_in_the_input_are_counted_at_stash(tmp_path):
@@ -347,7 +350,7 @@ def test_supplementaries_without_a_primary_in_the_input_are_counted_at_stash(tmp
     assert repair.supplementary_restored == 2 and repair.orphan_supplementary_dropped == 0
     out, hdr = _records(tmp_path / "np.out.bam")
     soft = [r for r in out if r.query_name == "soft"]
-    assert len(soft) == 1 and soft[0].is_supplementary and not soft[0].has_tag("Yo")
+    assert len(soft) == 1 and soft[0].is_supplementary and soft[0].get_tag("Yo") == 1
     assert soft[0].query_sequence == _seq(50) and soft[0].cigarstring == "20S30M"
     ds = next(pg for pg in hdr["PG"] if pg["ID"] == "fiberhmm-lift")["DS"]
     assert "orphan_supplementary_no_primary_in_input=1" in ds
@@ -1238,7 +1241,8 @@ def test_cli_bed_native_lifts_bed12_blocks_and_writes_dropped_rows(tmp_path, cap
                    "srcA\t500\t700\tr1\t0\t+\t500\t700\t0\t2\t50,50\t0,150\t1,2\n")
     out, unl = tmp_path / "out.bed", tmp_path / "unl.bed"
     code = lift.main(["--bed", "-i", str(bed), "-o", str(out), "--map", _lift_map(tmp_path),
-                      "--liftbed", _stub_liftbed(tmp_path / "bin"), "--unlifted", str(unl)])
+                      "--liftbed", _stub_liftbed(tmp_path / "bin"), "--unlifted", str(unl),
+                      "--bed12-partial", "drop"])
     err = capsys.readouterr().err
     assert code == 0, err
     assert "1 of 2 BED12 rows lifted (1 lost a block" in err and "3 of 4 blocks lifted" in err
@@ -1345,7 +1349,8 @@ def test_cli_bed_reads_gzip_bgzip_and_stdin_and_writes_gz(tmp_path, capsys, monk
         with open(out, "rb") as handle:
             assert handle.read(4) == b"\x1f\x8b\x08\x04"        # BGZF (gzip + extra field)
         assert gzip.open(out, "rt").read() == ref
-        assert gzip.open(unl, "rt").read().startswith("#block_no_projection\n")
+        # keep (the default): r1 loses its unliftable block, listed with its reason
+        assert gzip.open(unl, "rt").read().startswith("#partial_no_projection\n")
     monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(gz.read_bytes())))
     assert lift.main(base + ["-i", "-", "-o", str(tmp_path / "stdin.bed")]) == 0
     assert (tmp_path / "stdin.bed").read_text() == ref
@@ -1355,7 +1360,7 @@ def test_cli_bed_reads_gzip_bgzip_and_stdin_and_writes_gz(tmp_path, capsys, monk
     assert "stdin) is for --bed" in capsys.readouterr().err
 
 
-def test_cli_bed12_partial_keep_keeps_lifted_blocks(tmp_path, capsys):
+def test_cli_bed12_partial_keep_is_the_default_and_keeps_lifted_blocks(tmp_path, capsys):
     from fiberhmm.cli import lift
 
     bed = tmp_path / "in.bed"
@@ -1365,7 +1370,11 @@ def test_cli_bed12_partial_keep_keeps_lifted_blocks(tmp_path, capsys):
     out, unl = tmp_path / "out.bed", tmp_path / "unl.bed"
     argv = ["--bed", "-i", str(bed), "-o", str(out), "--map", _lift_map(tmp_path),
             "--liftbed", _stub_liftbed(tmp_path / "bin"), "--unlifted", str(unl)]
+    assert lift.main(argv) == 0                         # keep is the default (owner, 27 Oct)
+    default_out, default_unl = out.read_text(), unl.read_text()
+    capsys.readouterr()
     assert lift.main(argv + ["--bed12-partial", "keep"]) == 0
+    assert (out.read_text(), unl.read_text()) == (default_out, default_unl)
     err = capsys.readouterr().err
     assert "2 of 3 BED12 rows lifted (1 lost a block" in err
     assert "1 rows kept without 1 unliftable blocks" in err
@@ -1378,15 +1387,19 @@ def test_cli_bed12_partial_keep_keeps_lifted_blocks(tmp_path, capsys):
     assert unl.read_text() == ("#block_no_projection\n"
                                "srcB\t1\t50\tr2\t0\t+\t1\t50\t0\t1\t49\t0\t1\n"
                                "#partial_no_projection\nsrcA\t650\t700\tr1|1\t0\t+\n")
-    # The default still drops r1, and keep is for BED12 only.
-    assert lift.main(argv) == 0
+    # drop stays available: it drops r1 whole, listed as a lost block.
+    assert lift.main(argv + ["--bed12-partial", "drop"]) == 0
     assert [l.split("\t")[3] for l in out.read_text().splitlines()] == ["r0"]
+    assert unl.read_text().startswith("#block_no_projection\n") and "#block_no_projection\nsrcA\t500" in unl.read_text()
+    # An explicit keep is for BED12 only; the default leaves plain BED alone.
     peaks = tmp_path / "p.bed"
     peaks.write_text("srcA\t1\t20\n")
+    plain = ["--bed", "-i", str(peaks), "-o", str(out), "--map", _lift_map(tmp_path),
+             "--liftbed", _stub_liftbed(tmp_path / "bin")]
     capsys.readouterr()
-    assert lift.main(["--bed", "-i", str(peaks), "-o", str(out), "--map", _lift_map(tmp_path),
-                      "--liftbed", _stub_liftbed(tmp_path / "bin"), "--bed12-partial", "keep"]) == 2
+    assert lift.main(plain + ["--bed12-partial", "keep"]) == 2
     assert "--bed12-partial keep is for BED12" in capsys.readouterr().err
+    assert lift.main(plain) == 0
 
 
 def test_cli_bed_lifts_narrowpeak_summits_and_thick(tmp_path, capsys):
@@ -1563,7 +1576,7 @@ def test_repair_only_keeps_soft_clipped_supplementary_without_primary_in_source(
         lambda h: _read(h, "gone", flag=0x800, pos=900, cigar="20S30M", seq=_seq(50, 2)),
     ])
     projected = _fake_lift(source, tmp_path / "lifted.bam", flip=True)
-    # The lift lost gone's primary: its supplementary must still be dropped.
+    # The remaining record named gone is ambiguous against the source and is still excluded.
     records, hdr = _records(projected)
     with pysam.AlignmentFile(str(tmp_path / "lifted2.bam"), "wb",
                              header=pysam.AlignmentHeader.from_dict(hdr)) as out:
@@ -1575,7 +1588,27 @@ def test_repair_only_keeps_soft_clipped_supplementary_without_primary_in_source(
                       "-o", str(out), "--tmp-dir", str(tmp_path)]) == 0
     kept, _ = _records(out)
     assert [(r.query_name, r.is_supplementary, r.has_tag("Yo")) for r in kept] == [
-        ("orphan", True, False)]
+        ("orphan", True, True)]
+
+
+def test_native_split_supplementary_without_lifted_primary_is_marked(tmp_path):
+    src = _write(tmp_path / 'src.bam', _source_header(), [
+        lambda h: _read(h, 'split', cigar='50M', seq=_seq(50))])
+    stashed = tmp_path / 'stash.bam'
+    gl.stash_bam(src, str(stashed))
+    lifted = _liftbam_like(stashed, tmp_path / 'lifted.bam', split_at=15)
+    records, hdr = _records(lifted)
+    partial = tmp_path / 'partial.bam'
+    with pysam.AlignmentFile(str(partial), 'wb', header=hdr) as bam:
+        for r in records:
+            if r.is_supplementary:
+                bam.write(r)
+    out = tmp_path / 'out.bam'
+    stats = gl.repair_bam(str(partial), str(out), work_dir=str(tmp_path / 'work'))
+    kept, hdr = _records(out)
+    assert stats.orphan_supplementary_kept == 1 and stats.records_out == 1
+    assert kept[0].is_supplementary and kept[0].get_tag('Yo') == 1
+    assert 'orphan_supplementary_marked=1' in hdr['PG'][-1]['DS']
 
 
 def test_reassemble_bed12_leaves_sa_tag_column_alone():

@@ -26,7 +26,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from . import coaccess as C
+from fiberhmm.assoc import coaccess as C
 from . import gaps as G
 from . import variants as V
 from .workflow import COMPATIBLE_SCHEMAS, SCHEMA, decode_element_states

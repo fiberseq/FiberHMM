@@ -261,6 +261,9 @@ def test_pipeline_qc_contains_chimeras(tmp_path, monkeypatch):
 
 
 def test_downstream_boundaries(tmp_path):
+    from fiberhmm.scan.reads import passes
+    from fiberhmm.scan.peaks_reads import _anchors
+    from fiberhmm.nuc.records import decode_record, iter_molecules
     from fiberhmm.cli.export_posteriors import extract_posteriors_from_read
     from fiberhmm.io.footprint_bam import load_footprint_molecules_from_bam
     source = fixture_bam(tmp_path / 'source.bam')
@@ -268,9 +271,18 @@ def test_downstream_boundaries(tmp_path):
     prepare_chimeras(str(source), str(target))
     pysam.index(str(target))
     read = next(r for r in records(target) if r.query_name == 'swap' and r.flag == 512)
+    assert not passes(read, {})
+    assert passes(read, {'chimeras': 'include'})
+    assert decode_record(read, None) == (None, 'chimera')
     stats = {}
     assert extract_posteriors_from_read(read, None, 'daf', 3, 10, stats=stats) is None
     assert stats['chimera'] == 1
+    stats = {}
+    from fiberhmm.nuc.params import NucParams
+    list(iter_molecules(str(target), params=NucParams(mode='daf'), stats=stats))
+    assert stats['chimera'] >= 1
+    with pysam.AlignmentFile(target, 'rb') as bam:
+        assert [r.query_name for r in _anchors(bam, 'chr1', 0, 1000)] == ['clean']
     loaded = load_footprint_molecules_from_bam(str(target))
     assert loaded.diagnostics.skipped_chimera == 1
 
@@ -454,3 +466,49 @@ def test_owned_marks_do_not_change_insert_evidence_identity(tmp_path):
     assert engine.daf_insert_evidence(read) == {'evidence': 'retained'}
     clear_chimera_mark(read)
     assert engine.daf_insert_evidence(read) == {'evidence': 'retained'}
+
+
+def test_scan_unnamed_records_do_not_share_chimera_decisions(tmp_path):
+    from fiberhmm.scan.peaks_reads import _anchors
+    from fiberhmm.scan.reads import iter_records
+    source = fixture_bam(tmp_path / 'source.bam')
+    reads = records(source)[-2:]
+    for read in reads:
+        read.query_name = '*'
+    mark_chimera(reads[0])
+    reads[1].is_supplementary = True
+    with pysam.AlignmentFile(source, 'wb', header=reads[0].header) as out:
+        # Identical unnamed records must also remain independent.
+        for read in reads * 2:
+            out.write(read)
+    pysam.index(str(source))
+    with pysam.AlignmentFile(source, 'rb') as bam:
+        anchors = list(_anchors(bam, 'chr1', 0, 1000))
+        assert len(anchors) == 2
+        assert all(r.is_supplementary and not is_marked_chimera(r) for r in anchors)
+        selected = list(iter_records(bam, 'chr1', 0, 1000, {}))
+        assert len(selected) == 2
+        assert [occ for _read, _sha, occ in selected] == [0, 1]
+
+
+@pytest.mark.parametrize('xc,qcfail,excluded', [
+    ('strand_swap', True, True), ('strand_swap', False, False),
+    ('foreign', True, False), (None, True, False),
+])
+def test_scan_consumers_use_exact_owned_mark(tmp_path, xc, qcfail, excluded):
+    from fiberhmm.scan.peaks_reads import _anchors
+    from fiberhmm.scan.reads import passes
+    source = fixture_bam(tmp_path / 'source.bam')
+    read = records(source)[-1]
+    read.is_qcfail = qcfail
+    if xc is not None:
+        read.set_tag('xc', xc)
+    with pysam.AlignmentFile(source, 'wb', header=read.header) as out:
+        out.write(read)
+    pysam.index(str(source))
+    assert passes(read, {}) == (not excluded)
+    with pysam.AlignmentFile(source, 'rb') as bam:
+        assert len(list(_anchors(bam, 'chr1', 0, 1000))) == int(not excluded)
+    clear_chimera_mark(read)
+    assert read.is_qcfail == qcfail  # without xq:0, the QC failure is preserved
+    assert passes(read, {})

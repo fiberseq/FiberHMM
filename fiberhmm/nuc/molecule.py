@@ -1,0 +1,275 @@
+"""Molecule-wide outputs (NUC 5.1 ``molecule_outputs``).
+
+Everything here is a pure function of one :class:`NucMolecule`, the
+parameters and a :class:`NucCalibration`; no window, tile or neighbour enters,
+so a live call and a scan give the same rows.
+
+Footprints are the molecule's nucleosome calls and TF calls (the small end
+must read TF calls: recall moves TF-sized footprints to MA ``tf``). Each gets
+lambda_i, z, a coarse call and, with an absolute calibration, a named call.
+Eligible dyads, spacing scalars and segments use nucleosome calls only.
+Segments partition the measurable stretches into regular (decoder OR the
+model-free rule), disordered, undetermined and low-information; disruption
+events (undersized runs, missing nucleosomes; :mod:`fiberhmm.nuc.disrupted`)
+overlay them.
+A molecule with fewer than the mark-ACF criterion's 0.015 marks per bp is
+flagged, gets one low-information segment and is left out of window and
+patch aggregates (counted there as excluded). The size-resolution floor
+(D8) does not determine this molecule-wide spacing eligibility.
+With ``regularity`` (RegularityParams), the result also carries the
+molecule's sliding-window regularity track (MA ``nucreg``;
+:mod:`fiberhmm.nuc.regularity`).
+"""
+from __future__ import annotations
+
+import hashlib
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
+
+import numpy as np
+
+from fiberhmm.nuc.calibration import NucCalibration
+from fiberhmm.nuc.density import (accessible_counts, edge_informativeness, edge_truncated,
+                                  footprint_lambdas, rho_read)
+from fiberhmm.nuc.params import DEFAULT_PARAMS, NucParams
+from fiberhmm.nuc.records import NucMolecule
+from fiberhmm.nuc.regularity import (RegularityParams, RegularityTrack, encode_period, encode_score,
+                                     sliding_regularity)
+from fiberhmm.nuc.disrupted import (EVENT_NAMES, Event, missing_nucleosomes, overlay_rule, rule_runs,
+                                    undersized_runs)
+from fiberhmm.nuc.segment import (DISORDERED, REGULAR, UNDETERMINED, Segment, lowinfo_segment,
+                                  segment_molecule)
+from fiberhmm.nuc.sizes import (CANT_TELL, LONG, MONO, MULTI2, MULTI3, SHORT, call_coarse,
+                                call_named)
+from fiberhmm.nuc.spacing import molecule_spacing
+
+#: per-molecule scalar names, in their storage order
+SCALARS = ('nrl', 'regularity', 'spectral_snr', 'gap_cv', 'lambda_acc', 'rho_read',
+           'n_dyads', 'n_short', 'n_mono', 'n_long', 'n_multi', 'n_cant_tell',
+           'reg_fraction', 'disordered_fraction', 'undetermined_fraction', 'undersized_fraction',
+           'n_missing')
+
+
+def calls_digest(mol) -> str:
+    """Provenance digest of the calls the nuc outputs were computed from.
+
+    Shift-invariant (lengths and gaps in molecular order, per group), so a
+    lift that rebases a hard-clipped record's annotations keeps it. ``mol``
+    needs ``nucs``, ``tfs`` and ``msps`` arrays in molecular coordinates."""
+    parts = []
+    for name, iv in (('nuc', mol.nucs), ('tf', mol.tfs), ('msp', mol.msps)):
+        if len(iv):
+            iv = iv[np.lexsort((iv[:, 1], iv[:, 0]))]
+            lens = (iv[:, 1] - iv[:, 0]).tolist()
+            gaps = np.diff(iv[:, 0]).tolist()
+        else:
+            lens, gaps = [], []
+        parts.append(f"{name}:{','.join(map(str, lens))}|{','.join(map(str, gaps))}")
+    # relative placement of the groups
+    allstarts = [int(iv[0, 0]) for iv in (mol.nucs, mol.tfs, mol.msps) if len(iv)]
+    base = min(allstarts) if allstarts else 0
+    parts.append('rel:' + ','.join(str(int(iv[0, 0]) - base) if len(iv) else '-'
+                                    for iv in (mol.nucs, mol.tfs, mol.msps)))
+    return hashlib.sha256(';'.join(parts).encode()).hexdigest()[:8]
+
+
+def footprint_calls(mol: NucMolecule, params: NucParams = DEFAULT_PARAMS,
+                    cal: Optional[NucCalibration] = None) -> Optional[Dict[str, np.ndarray]]:
+    """Per-footprint arrays for nucleosome + TF calls, sorted by start."""
+    if cal is None or cal.curve is None:
+        raise ValueError('footprint calls need a calibration with a reference curve')
+    nuc = mol.nucs
+    tf = mol.tfs
+    if len(nuc) + len(tf) == 0:
+        return None
+    iv = np.concatenate([nuc, tf]) if len(tf) else nuc.copy()
+    is_tf = np.concatenate([np.zeros(len(nuc), bool), np.ones(len(tf), bool)])
+    order = np.lexsort((iv[:, 1], iv[:, 0]))
+    iv, is_tf = iv[order], is_tf[order]
+    src_index = np.concatenate([np.arange(len(nuc)), np.arange(len(tf))])[order]
+    k, n = accessible_counts(mol, params)
+    lam_acc = float(cal.prior.shrink(k, n))
+    lam = footprint_lambdas(mol, iv, lam_acc, params, cal.prior)
+    nl, nr = edge_informativeness(mol, iv, params)
+    trunc = edge_truncated(mol, iv)
+    L = iv[:, 1] - iv[:, 0]
+    cc = call_coarse(L, lam, cal.curve, cal.nrl_pooled, cal.sigma_gap, cal.sigma_loc_at,
+                     nl, nr, trunc, params, lambda_supported=cal.is_supported)
+    named, named_post = call_named(L, lam, cal.absolute if cal.named_available else None, nl, nr, params)
+    # names only for footprints with a single-particle coarse call inside the
+    # supported range (no tails, multimers, truncated or can't-tell)
+    ok_named = np.isin(cc.code, (SHORT, MONO)) & ~trunc & cal.is_supported(lam)
+    named = np.where(ok_named, named, 0)
+    named_post = np.where(ok_named, named_post, 0.0)
+    # TF calls coinciding with a short nucleosome call, or short calls that are TF calls
+    tf_overlap = is_tf.copy()
+    if len(tf):
+        for i in np.flatnonzero(~is_tf & (cc.code == SHORT)):
+            s, e = iv[i]
+            tf_overlap[i] = bool(((tf[:, 0] < e) & (tf[:, 1] > s)).any())
+    return {'start': iv[:, 0].astype(np.int64), 'end': iv[:, 1].astype(np.int64),
+            'length': L.astype(np.int64), 'is_tf': is_tf, 'src_index': src_index,
+            'lambda': lam, 'z': cc.z, 'coarse': cc.code, 'posterior': cc.posterior,
+            'named': named, 'named_posterior': named_post, 'n_left': nl, 'n_right': nr,
+            'truncated': trunc, 'tf_overlap': tf_overlap, 'lambda_acc': lam_acc}
+
+
+@dataclass
+class MoleculeResult:
+    name: str
+    length: int
+    footprints: Optional[Dict[str, np.ndarray]]
+    segments: List[Segment]
+    scalars: Dict[str, float]
+    flags: Dict[str, bool]
+    digest: str
+    calibration_digest: str = ''
+    record: tuple = field(default_factory=tuple)
+    events: List[Event] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+    #: sliding-window regularity (``nucreg``); None when not requested
+    regularity: Optional[RegularityTrack] = None
+    #: regularity patches (``nucpatch``; :class:`fiberhmm.nuc.patches.MoleculePatches`); None when not requested
+    patches: Optional[object] = None
+
+    def scalar_vector(self) -> List[float]:
+        return [self.scalars.get(k, float('nan')) for k in SCALARS]
+
+    def marks_rows(self) -> List[dict]:
+        """Marks-table rows (molecular coordinates): one per footprint, one
+        per segment or event and one per scored regularity tile."""
+        rows = []
+        fp = self.footprints
+        if fp is not None:
+            for i in range(len(fp['start'])):
+                rows.append({'type': 'nuc.size.coarse', 'start': int(fp['start'][i]), 'end': int(fp['end'][i]),
+                             'q1': int(fp['coarse'][i]), 'q2': int(round(255 * float(fp['posterior'][i]))),
+                             'L_mol': int(fp['length'][i]), 'z': float(fp['z'][i]),
+                             'n_edge': int(min(fp['n_left'][i], fp['n_right'][i])),
+                             'lambda': float(fp['lambda'][i]), 'tf_overlap': int(fp['tf_overlap'][i]),
+                             'source': 'tf' if fp['is_tf'][i] else 'nuc'})
+                if int(fp['named'][i]):
+                    rows.append({'type': 'nuc.size.named', 'start': int(fp['start'][i]), 'end': int(fp['end'][i]),
+                                 'q1': int(fp['named'][i]),
+                                 'q2': int(round(255 * float(fp['named_posterior'][i])))})
+        for s in self.segments:
+            rows.append({'type': 'nuc.seg', 'start': s.start, 'end': s.end, 'q1': s.code,
+                         'q2': _pbyte(s.posterior), 'q_hat': s.q_hat, 'S': s.regularity,
+                         'n_dyads': s.n_dyads, 'boundary_ci': list(s.boundary_ci), 'source': s.source})
+        for e in self.events:
+            rows.append({'type': f'nuc.event.{EVENT_NAMES[e.kind]}', 'start': e.start, 'end': e.end,
+                         'q1': e.kind, 'q2': _llr_byte(e.score), 'score': e.score, 'count': e.count})
+        tr = self.regularity
+        if tr is not None:
+            for i in np.flatnonzero(np.isfinite(tr.score)):
+                score, period = float(tr.score[i]), int(tr.period[i])
+                rows.append({'type': 'nuc.reg', 'start': int(tr.tile_starts[i]), 'end': int(tr.tile_ends[i]),
+                             'q1': encode_score(score), 'q2': encode_period(period), 'score': score,
+                             'period': period, 'n_calls': int(tr.n_calls[i])})
+        return rows
+
+
+def _pbyte(p: float) -> int:
+    return int(round(255 * float(p))) if p is not None and np.isfinite(p) else 0
+
+
+def _llr_byte(llr: float) -> int:
+    return int(max(0, min(255, round(10.0 * float(llr))))) if np.isfinite(llr) else 0
+
+
+def molecule_outputs(mol: NucMolecule, params: NucParams = DEFAULT_PARAMS,
+                     cal: Optional[NucCalibration] = None, *, segments: bool = True,
+                     regularity: Optional[RegularityParams] = None, patches=None,
+                     ref_median: Optional[float] = None,
+                     calibration_digest: Optional[str] = None,
+                     ref_widths: Optional[dict] = None) -> MoleculeResult:
+    """Coarse (and named) calls, segments and scalars for one molecule; with
+    ``regularity``, also its sliding-window regularity track (``nucreg``) and,
+    with ``patches`` (PatchParams) and ``ref_median`` (the dataset's
+    random-packing reference median; ``ref_widths`` its per-width deltas for
+    cut windows, :func:`fiberhmm.nuc.regularity.reference_widths`), its
+    regularity patches (``nucpatch``).
+    ``calibration_digest`` is ``cal.digest()`` when the caller already has it
+    (a caller looping over many molecules with one record computes it once)."""
+    if patches is not None and (regularity is None or ref_median is None):
+        raise ValueError('nucpatch needs the regularity track (regularity=) and a reference median (ref_median=)')
+    if cal is None:
+        raise ValueError('molecule_outputs needs a calibration record (calibrate first)')
+    fp = footprint_calls(mol, params, cal)
+    flags = {'too_short_nrl': True, 'too_short_regularity': True, 'too_short_snr': True,
+             'too_short_segments': mol.length < params.seg_min_molecule_bp,
+             'low_information': False}
+    scal = {k: float('nan') for k in SCALARS}
+    scal['rho_read'] = rho_read(mol)
+    k, n = accessible_counts(mol, params)
+    lam_acc = float(cal.prior.shrink(k, n))
+    scal['lambda_acc'] = lam_acc
+    from fiberhmm.nuc.markacf import spacing_low_information
+    flags['low_information'] = spacing_low_information(mol)
+    segs: List[Segment] = []
+    events: List[Event] = []
+    if fp is not None:
+        sp, dy = molecule_spacing(mol, cal.nrl_pooled, params)
+        scal.update({'nrl': sp.nrl, 'regularity': sp.regularity, 'spectral_snr': sp.spectral_snr,
+                     'gap_cv': sp.gap_cv, 'n_dyads': float(sp.n_dyads)})
+        flags.update({'too_short_nrl': sp.too_short_nrl, 'too_short_regularity': sp.too_short_regularity,
+                      'too_short_snr': sp.too_short_snr})
+        # class counts over every footprint, TF calls included (the small end
+        # of the size readout lives in the TF calls); spacing uses nucleosomes only
+        c = fp['coarse']
+        scal['n_short'] = float((c == SHORT).sum())
+        scal['n_mono'] = float((c == MONO).sum())
+        scal['n_long'] = float((c == LONG).sum())
+        scal['n_multi'] = float(((c == MULTI2) | (c == MULTI3)).sum())
+        scal['n_cant_tell'] = float((c == CANT_TELL).sum())
+        if segments and flags['low_information'] and not flags['too_short_segments']:
+            # Sparse marks cannot supply spacing evidence. Size-class
+            # resolvability (the calibration's floor) does not veto a molecule.
+            nuc_sel = ~fp['is_tf']
+            if nuc_sel.any():
+                segs = [lowinfo_segment(int(fp['start'][nuc_sel].min()), int(fp['end'][nuc_sel].max()))]
+        elif segments:
+            track: list = []
+            segs, too_short = segment_molecule(mol.length, mol.msps, fp, cal, params, step_track=track)
+            flags['too_short_segments'] = too_short
+            dyads = dy.centres
+            if segs and not too_short and params.seg_rule:
+                dyads, runs = rule_runs(mol, fp, cal.nrl_pooled, params)
+                segs = overlay_rule(segs, runs, dyads, track, params.seg_disorder_llr)
+            for s in segs:
+                if s.state == REGULAR:
+                    ssp, _ = molecule_spacing(mol, cal.nrl_pooled, params,
+                                              window=(s.start - 1, s.end + 1))
+                    s.regularity = ssp.regularity
+            if segs and not too_short:
+                events = undersized_runs(mol, fp, cal, params) + \
+                    missing_nucleosomes(mol, fp, segs, dyads, sp.nrl, cal, params)
+                cov = sum(s.end - s.start for s in segs)
+                if cov > 0:
+                    def frac(state):
+                        return sum(s.end - s.start for s in segs if s.state == state) / cov
+                    scal['reg_fraction'] = frac(REGULAR)
+                    scal['disordered_fraction'] = frac(DISORDERED)
+                    scal['undetermined_fraction'] = frac(UNDETERMINED)
+                    und = _union_iv([(e.start, e.end) for e in events if e.kind == 16])
+                    scal['undersized_fraction'] = min(1.0, sum(
+                        max(0, min(b, s.end) - max(a, s.start)) for a, b in und for s in segs) / cov)
+                scal['n_missing'] = float(sum(1 for e in events if e.kind == 17))
+    track = sliding_regularity(mol, regularity) if regularity is not None else None
+    mp = None
+    if patches is not None:
+        from fiberhmm.nuc.patches import call_patches
+        mp = call_patches(track, mol.nucs, ref_median=float(ref_median), params=patches, ref_widths=ref_widths)
+    return MoleculeResult(mol.name, mol.length, fp, segs, scal, flags, calls_digest(mol),
+                          calibration_digest or cal.digest(), mol.record_key(), sorted(events, key=lambda e: (e.start, e.end, e.kind)),
+                          list(mol.meta.get('evidence_warnings', [])), track, mp)
+
+
+def _union_iv(iv):
+    out = []
+    for a, b in sorted(iv):
+        if out and a <= out[-1][1]:
+            out[-1][1] = max(out[-1][1], b)
+        else:
+            out.append([a, b])
+    return out

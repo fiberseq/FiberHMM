@@ -6,6 +6,7 @@ lattice_ps09.py). Channels are labels, never features: calls from every channel 
 from __future__ import annotations
 
 import hashlib
+from functools import lru_cache
 
 import numpy as np
 from sklearn.cluster import KMeans
@@ -42,8 +43,17 @@ def features(units, censor_bp):
     return np.asarray(X, float).reshape(-1, 2), meta
 
 
+@lru_cache(maxsize=8192)
+def _fit_cached(shape, dtype, data, k, seed):
+    # Discovery revisits identical edge matrices (overlapping tiles and split
+    # halves). Cache the deterministic fit without modifying source evidence.
+    X = np.frombuffer(data, dtype=np.dtype(dtype)).reshape(shape)
+    return KMeans(k, n_init=10, random_state=seed).fit(X)
+
+
 def _fit(X, k, seed):
-    km = KMeans(k, n_init=10, random_state=seed).fit(X)
+    X = np.asarray(X)
+    km = _fit_cached(X.shape, X.dtype.str, X.tobytes(), k, seed)
     return km, km.predict
 
 
