@@ -214,9 +214,11 @@ def add_filter_args(parser: argparse.ArgumentParser,
     )
     parser.add_argument(
         '--min-read-length', type=non_negative_int, default=min_read_length,
-        help=f"Minimum aligned read length in bp; shorter reads are written to "
-             f"output unchanged without footprint/nucleosome tags. Set to 0 to "
-             f"attempt calling on all reads regardless of length (default: {min_read_length})"
+        help=f"Minimum read length in bp, as the HMM models it: the full SEQ length, "
+             f"soft clips included (DAF with the default --daf-mask-unaligned: the aligned "
+             f"length, since soft-clipped bases carry no evidence). Shorter reads are written "
+             f"to output unchanged without footprint/nucleosome tags. Set to 0 to attempt "
+             f"calling on all reads regardless of length (default: {min_read_length})"
     )
 
 

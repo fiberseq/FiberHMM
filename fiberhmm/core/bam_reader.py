@@ -1637,7 +1637,8 @@ def read_bam(bam_path: str,
         region: Optional region string (e.g., "chr2L:1000-5000")
         min_mapq: Minimum mapping quality
         prob_threshold: Minimum ML probability (0-255) to call modification
-        min_read_length: Minimum aligned read length
+        min_read_length: Minimum read length as the HMM models it (SEQ length, soft clips included;
+            DAF with the unaligned-base mask: aligned length); see read_filters.modeled_read_length
         mode: 'pacbio-fiber' for fiber-seq, 'daf' for DAF-seq
 
     Yields:
@@ -1657,8 +1658,9 @@ def read_bam(bam_path: str,
             if read.query_sequence is None:
                 continue
 
-            aligned_length = read.reference_end - read.reference_start
-            if aligned_length < min_read_length:
+            from fiberhmm.inference.read_filters import modeled_read_length
+            read_length = modeled_read_length(read, mode)
+            if read_length is None or read_length < min_read_length:
                 continue
 
             # Get MM/ML tags

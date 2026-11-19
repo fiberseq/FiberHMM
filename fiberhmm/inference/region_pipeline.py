@@ -230,12 +230,16 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
                 f"With footprints: {aggregation.reads_with_footprints:,}"
             )
             _note("  Skip reasons:")
+            from fiberhmm.inference.read_filters import printable_skip_reasons, too_short_hint
             for reason, count in sorted(
-                aggregation.skip_reasons.items(), key=lambda x: -x[1]
+                printable_skip_reasons(aggregation.skip_reasons), key=lambda x: -x[1]
             ):
                 if count > 0:
                     pct = 100 * count / total_encountered
                     _note(f"    {reason}: {count:,} ({pct:.1f}%)")
+            hint = too_short_hint(aggregation.skip_reasons, total_encountered, mode, min_read_length)
+            if hint:
+                _note(hint)
 
         # Sort temp BAMs by region order and filter to non-empty
         aggregation.temp_bams.sort(key=lambda x: x[0])
@@ -670,11 +674,15 @@ def _process_bam_region_parallel_fused(
                 f"With FP: {aggregation.reads_with_footprints:,}"
             )
             _note("  Skip reasons:")
+            from fiberhmm.inference.read_filters import printable_skip_reasons, too_short_hint
             for reason, count in sorted(
-                aggregation.skip_reasons.items(), key=lambda x: -x[1]
+                printable_skip_reasons(aggregation.skip_reasons), key=lambda x: -x[1]
             ):
                 if count > 0:
                     _note(f"    {reason}: {count:,} ({100*count/total_enc:.1f}%)")
+            hint = too_short_hint(aggregation.skip_reasons, total_enc, mode, min_read_length)
+            if hint:
+                _note(hint)
 
         if ddda_mcg:
             _note(

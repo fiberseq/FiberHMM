@@ -30,7 +30,13 @@ SKIP_REASONS = (
     # Region-parallel only: record on a contig excluded by --chroms or
     # --skip-scaffolds, copied through unannotated.
     "contig_not_selected",
+    # Not a skip reason of its own: the subset of ``too_short`` records that
+    # are mostly soft-clipped (counted alongside, for the run-summary hint).
+    "too_short_soft_clipped",
 )
+
+# Tally keys that annotate another reason instead of counting skips.
+NOTE_ONLY_SKIP_KEYS = frozenset({"too_short_soft_clipped"})
 
 # Legacy footprint tags written by FiberHMM (and fibertools) call passes.
 LEGACY_CALL_TAGS = ("ns", "nl", "as", "al", "nq", "aq")
@@ -180,6 +186,79 @@ def hard_clipped_mm_unreliable(read, mode: Optional[str] = None,
     return True
 
 
+_SOFT_CLIP = 4
+
+
+def soft_clipped_bases(read) -> int:
+    """Bases in the record's soft clips (CIGAR S)."""
+    return sum(n for op, n in (getattr(read, 'cigartuples', None) or ()) if op == _SOFT_CLIP)
+
+
+def modeled_read_length(read, mode: Optional[str] = None) -> Optional[int]:
+    """The read length ``--min-read-length`` is compared with: what the HMM models.
+
+    The HMM runs over the whole stored SEQ. For Hia5 (and other m6A) data the
+    soft-clipped bases carry MM/ML marks like any other, so the length is the
+    SEQ (query) length, soft clips included: a 20 kb molecule with a 300 bp
+    alignment is still a 20 kb read to call. DAF marks come from comparing the
+    read with the reference, so with the default unaligned-base mask
+    (``--daf-mask-unaligned``) soft-clipped bases carry no evidence and the
+    length is the aligned query length (``query_alignment_length``). Unmapped
+    records use their SEQ length. Hard-clipped bases are not in SEQ and never
+    count (such records are also screened by the hard-clip MM guard).
+    """
+    if read.is_unmapped:
+        return read.query_length or 0
+    if mode == 'daf':
+        from fiberhmm.inference.engine import daf_unaligned_mask_enabled
+        if daf_unaligned_mask_enabled():
+            return read.query_alignment_length
+    length = read.query_length
+    if not length:
+        try:
+            length = read.infer_query_length()
+        except (AttributeError, TypeError, ValueError):
+            length = None
+    return length if length else read.query_alignment_length
+
+
+def is_mostly_soft_clipped(read) -> bool:
+    """Soft clips longer than the aligned part: the reads the too-short hint is about."""
+    clipped = soft_clipped_bases(read)
+    aligned = read.query_alignment_length or 0
+    return clipped > 0 and clipped >= aligned
+
+
+def count_skip(skip_reasons: dict, reason: str, read=None) -> None:
+    """Tally ``reason``; a too-short read that is mostly soft-clipped is also
+    counted under ``too_short_soft_clipped`` (for :func:`too_short_hint`)."""
+    skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
+    if reason == "too_short" and read is not None and not read.is_unmapped and is_mostly_soft_clipped(read):
+        skip_reasons["too_short_soft_clipped"] = skip_reasons.get("too_short_soft_clipped", 0) + 1
+
+
+def too_short_hint(skip_reasons: Mapping, total: int, mode: Optional[str] = None,
+                   min_read_length: Optional[int] = None) -> Optional[str]:
+    """One line for the run summary when many too-short skips are mostly soft-clipped reads."""
+    n = int(skip_reasons.get("too_short_soft_clipped", 0) or 0)
+    if not total or n < 10 or n < 0.05 * total:
+        return None
+    if mode == 'daf':
+        why = ('their soft-clipped bases carry no DAF evidence (--daf-mask-unaligned), so their length is the '
+               'aligned part')
+    else:
+        why = 'their SEQ is short even with the soft clips included'
+    limit = f' (--min-read-length {min_read_length})' if min_read_length is not None else ''
+    return (f'  Note: {n:,} reads ({100 * n / total:.1f}%) were skipped as too short{limit} although most of each '
+            f'is soft-clipped: {why}. Check the alignment (e.g. adapters or a missing reference contig), or lower '
+            '--min-read-length to call them.')
+
+
+def printable_skip_reasons(skip_reasons: Mapping):
+    """``(reason, count)`` pairs to list in a run summary (annotations excluded)."""
+    return [(r, c) for r, c in skip_reasons.items() if r not in NOTE_ONLY_SKIP_KEYS]
+
+
 def streaming_skip_reason(read, config: ReadFilterConfig) -> Optional[str]:
     """Return the skip reason for a streaming read, or None if processable."""
     if config.honor_chimera_marks:
@@ -197,10 +276,7 @@ def streaming_skip_reason(read, config: ReadFilterConfig) -> Optional[str]:
     if not read.is_unmapped and read.mapping_quality < config.min_mapq:
         return "low_mapq"
 
-    if read.is_unmapped:
-        read_len = read.query_length or 0
-    else:
-        read_len = read.query_alignment_length
+    read_len = modeled_read_length(read, config.mode)
     if read_len is None or read_len < config.min_read_length:
         return "too_short"
 

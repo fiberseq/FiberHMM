@@ -29,6 +29,14 @@ usable observations, and records that are skipped for another reason are
 written to the output unchanged (without call tags), so the output always
 holds every input record.
 
+`--min-read-length` measures the read as the HMM models it: the full SEQ,
+soft clips included, because soft-clipped bases carry m6A calls like any
+other. A long molecule with a short alignment (large soft clips) is still
+called. For DAF with `--daf-mask-unaligned` (the default), soft-clipped bases
+carry no evidence, so the aligned length counts instead. When many reads are
+skipped as too short although most of each is soft-clipped, the run summary
+says so.
+
 ## Two execution strategies
 
 **Region-parallel** (`--region-parallel`) splits the genome into

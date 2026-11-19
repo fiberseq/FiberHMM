@@ -504,7 +504,8 @@ def _process_target_bam(bam_path, mode, max_context, args):
                 continue
             if read.reference_end is None or read.reference_start is None:
                 continue
-            if read.reference_end - read.reference_start < args.min_read_length:
+            from fiberhmm.inference.read_filters import modeled_read_length
+            if (modeled_read_length(read, args.mode) or 0) < args.min_read_length:
                 continue
 
             # Same evidence extraction as fiberhmm-call (DAF: R/Y -> MD -> MM/ML)
@@ -1556,7 +1557,7 @@ Examples:
     p_transfer.add_argument('-p', '--prob-threshold', type=int, default=128,
                            help='Min ML probability for modification call')
     p_transfer.add_argument('--min-read-length', type=int, default=1000,
-                           help='Min aligned read length')
+                           help='Minimum read length as the HMM models it (SEQ length with soft clips; DAF with the unaligned-base mask: aligned length)')
     p_transfer.add_argument('-e', '--edge-trim', type=int, default=10,
                            help='Bases to exclude at read edges')
     p_transfer.add_argument('--min-observations', type=int, default=100,

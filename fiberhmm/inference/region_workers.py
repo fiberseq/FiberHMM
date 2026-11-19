@@ -30,6 +30,8 @@ from fiberhmm.inference.fused_stages import (
 from fiberhmm.inference.read_filters import (
     ReadFilterConfig,
     new_skip_counts,
+    count_skip,
+    modeled_read_length,
     streaming_skip_reason,
 )
 from fiberhmm.inference.region_types import (
@@ -69,7 +71,7 @@ def _region_nuc_profile(path):
 def _write_skipped_region_read(outbam, read, skip_reasons: dict, reason: str) -> int:
     """Pass through a skipped BAM read and count its reason."""
     outbam.write(read)
-    skip_reasons[reason] += 1
+    count_skip(skip_reasons, reason, read)
     return 1
 
 
@@ -410,7 +412,8 @@ def _process_region_to_bed(args: RegionBedWorkItem) -> RegionBedResult:
                     if read.mapping_quality < min_mapq:
                         continue
 
-                    if read.query_alignment_length is None or read.query_alignment_length < min_read_length:
+                    read_len = modeled_read_length(read, mode)
+                    if read_len is None or read_len < min_read_length:
                         continue
 
                     read_id = read.query_name
@@ -702,7 +705,7 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
             written += 1
             if reason is not None:
                 skipped += 1
-                skip_reasons[reason] += 1
+                count_skip(skip_reasons, reason, read)
 
         with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
             ma_types = [] if downstream_compat else ["nuc", "msp", "tf"]

@@ -52,6 +52,14 @@ Includes the unreleased 3.0.6 changes.
 - A pre-run peak-memory estimate is logged for pooled runs; `--max-memory-gb`
   lowers `--cores` to fit or refuses to start.
 
+### Fixed
+
+- `--min-read-length` now measures the read as the HMM models it: the full SEQ
+  including soft clips (DAF with the default unaligned-base mask: the aligned
+  length). Long molecules with a short, heavily soft-clipped alignment were
+  skipped as too short before. The run summary notes when many too-short
+  skips are mostly soft-clipped.
+
 ## 3.0.5
 
 ### Changed

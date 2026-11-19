@@ -185,7 +185,7 @@ starts changing the directory and written again when it finishes.
 | `--seq pacbio` | PacBio reads (minimap2 `map-hifi`); DAF reads that record no platform are taken as Nanopore |
 | `--topology circular` | treat every FASTA contig as circular (a plasmid FASTA) |
 | `--region chr:start-end` | keep only reads overlapping the region (repeatable); the first is the one to open |
-| `--min-read-length N` | shortest aligned read to call (default 1000; short amplicons may want 500) |
+| `--min-read-length N` | shortest read to call; for DAF with the default unaligned-base mask, the aligned length (default 1000; short amplicons may want 500) |
 | `--dedup auto/on/off`, `--dedup-mode flag/collapse` | PCR-duplicate marking, and whether duplicates are kept (flagged) or collapsed |
 | `--snp-screen auto/on/off`, `--snp-mask BED` | the recurrent-SNP screen, and your own sites to mask |
 | `--no-chimera-filter` | call strand-swap chimeric reads |
