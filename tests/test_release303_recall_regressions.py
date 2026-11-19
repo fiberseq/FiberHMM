@@ -167,4 +167,8 @@ def test_standalone_auto_qc_keeps_sampled_daf_chimera_policy(tmp_path):
     assert chim['min_seg'] == 7 and chim['purity'] == 0.9
     tsv = next(csv.DictReader(io.StringIO(prefix.with_suffix('.qc.tsv').read_text()), delimiter='\t'))
     assert tsv['chimeras_mode'] == 'flag' and float(tsv['chimeras_fraction']) == 0.5
+    try:  # the QC figure needs the optional plots extra (matplotlib)
+        import matplotlib  # noqa: F401
+    except ImportError:
+        return
     assert prefix.with_suffix('.qc.pdf').stat().st_size > 0
