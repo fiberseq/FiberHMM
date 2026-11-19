@@ -9,7 +9,7 @@ function takes beyond those shown here.
 
 ```python
 import fiberhmm
-fiberhmm.__version__          # "3.0.3"
+fiberhmm.__version__          # "3.0.4"
 ```
 
 | Name | Signature | Purpose |
