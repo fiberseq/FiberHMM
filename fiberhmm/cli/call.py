@@ -248,10 +248,10 @@ def parse_args():
     p.add_argument('--chimera-min-seg', type=int, default=DEFAULT_MIN_SEG,
                    help='DAF chimera: min same-strand deamination events per '
                         f'segment to call a swap (default {DEFAULT_MIN_SEG}; '
-                        f'{LEGACY_MIN_SEG} before 3.0.4).')
+                        f'{LEGACY_MIN_SEG} before 3.1.0).')
     p.add_argument('--chimera-purity', type=float, default=DEFAULT_PURITY,
                    help='DAF chimera: min same-strand purity per segment '
-                        f'(default {DEFAULT_PURITY:g}; {LEGACY_PURITY:g} before 3.0.4).')
+                        f'(default {DEFAULT_PURITY:g}; {LEGACY_PURITY:g} before 3.1.0).')
     p.add_argument('--chimera-min-baseq', type=int, default=DEFAULT_MIN_BASEQ,
                    help='DAF chimera: deamination events count for the chimera test '
                         f'only with base quality >= this (default {DEFAULT_MIN_BASEQ}; '

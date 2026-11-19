@@ -41,7 +41,7 @@ FiberHMM fused apply+recall; coord=molecular (ns/nl/as/al/MA in molecular origin
 `daf_insert_consensus=off|on/<used>of<clusters>/min<N>` (`n/a` outside DAF).
 `chimeras=flag|remove|keep|split` records the selected mode once. The legacy
 `chimera_filter` key stays `on` for flag/remove and `off` for keep. These
-settings only enable detection in DAF mode. Since 3.0.4 the detector
+settings only enable detection in DAF mode. Since 3.1.0 the detector
 settings follow: `chimera_min_baseq`, `chimera_min_span`,
 `chimera_multi_switch=on|off`, `chimera_error_mask=on/<N>sites|off|unavailable|n/a`
 (`unavailable`: requested, but no SNP screen ran) and

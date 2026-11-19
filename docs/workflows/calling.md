@@ -241,7 +241,7 @@ automatically; each has its own section in [DAF-seq](daf-seq.md):
    `--chimera-purity` 0.9, `--chimera-min-baseq` 15, `--chimera-min-span`
    200, `--chimera-multi-switch` and the chimera-only error mask from the
    SNP screen (`--no-chimera-error-mask` turns it off) tune it; before
-   3.0.4: 5, 0.8, no base-quality or span limit, one switch, no mask) and
+   3.1.0: 5, 0.8, no base-quality or span limit, one switch, no mask) and
    [adjacent-target thinning](daf-seq.md#adjacent-target-thinning)
    (`--daf-mask-runs`, default 2 with `--daf-run-policy keep-one` for DddA,
    off for DddB).

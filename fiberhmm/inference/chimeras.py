@@ -14,7 +14,7 @@ CHIMERA_TAG = 'xc'
 CHIMERA_REASON = 'strand_swap'
 CHIMERA_QC_TAG = 'xq'  # original QC-fail state before our mark (0 or 1)
 
-# The DAF strand-swap detector defaults (3.0.4): one strict decision drives
+# The DAF strand-swap detector defaults (3.1.0): one strict decision drives
 # flag/remove/split, the count and the grade. Every default reads these
 # constants (CLI options, prepare_chimeras, the engine, QC, workers).
 DEFAULT_MIN_SEG = 10        # dominant events per segment
@@ -357,7 +357,7 @@ def chimera_warning(stats):
 
 
 def detector_details(stats):
-    """One line on the 3.0.4 detector settings of a statistics block ('' if absent)."""
+    """One line on the 3.1.0 detector settings of a statistics block ('' if absent)."""
     if not stats or stats.get('min_baseq') is None:
         return ''
     parts = [f"min_baseq={stats['min_baseq']}",
@@ -455,7 +455,7 @@ def error_mask_summary(enabled=DEFAULT_ERROR_MASK, bed=None, n_sites=0,
 def _new_stats_fields(mode, n_checked=0, n_chimeric=None, cfg=None,
                       regions=None, split=None, error_mask=None,
                       n_duplicates=0):
-    """3.0.4 fields, appended after the 3.0.3 ones (key order is kept)."""
+    """3.1.0 fields, appended after the 3.0.3 ones (key order is kept)."""
     detected = mode not in ('keep', 'n/a')
     cfg = cfg or {}
     return dict(

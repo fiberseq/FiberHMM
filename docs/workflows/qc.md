@@ -122,7 +122,7 @@ with `plot: not written (install matplotlib)`.
   context. Marked chimeras are excluded from rate and footprint panels. TSV columns
   and the PDF/PNG chimera row report the same counts.
   Detection is DAF-specific; m6A runs report mode `n/a`.
-- **DAF chimera row** (3.0.4). The `chimeras` section also has a `grade` of
+- **DAF chimera row** (3.1.0). The `chimeras` section also has a `grade` of
   the chimera fraction (`status` PASS below 10%, WARN from 10%, with
   `severity` `moderate` or, from 20%, `high`; INSUFFICIENT below 100
   checked reads), a `regions` table (per-region counts and fractions; also
@@ -142,7 +142,7 @@ with `plot: not written (install matplotlib)`.
   without the sidecar grades the flagged fraction of its sample. Remove and
   split BAMs without their sidecar are not graded. The grade records the
   detector that made the count (`min_seg`, `purity`) and its `basis`:
-  `default` for the 3.0.4 detector, `lenient` for a looser one such as a
+  `default` for the 3.1.0 detector, `lenient` for a looser one such as a
   FiberHMM 3.0.3 sidecar or BAM (5 and 0.8, no base-quality or span limit),
   which is graded on its recorded count with a `basis_note` saying the
   default detector marks fewer reads. A chimera WARN turns an overall PASS

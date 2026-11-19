@@ -15,7 +15,7 @@ to right, with ``xc:Z:split``, ``xi:i`` (piece index), ``xn:Z`` (original
 name) and ``xb:B:i`` (every breakpoint gap of the original record on its
 reference as 0-based half-open ``[start, end)`` pairs, left to right; piece
 ``xi`` lies between gap ``xi-1`` and gap ``xi``; a one-switch split has one
-pair, as before 3.0.4). CIGAR, SEQ, QUAL and MD are cut together and NM is
+pair, as before 3.1.0). CIGAR, SEQ, QUAL and MD are cut together and NM is
 recomputed. Read-level tags that a cut cannot invalidate are copied
 (:data:`KEPT_TAGS`). Base modifications are kept: ``MM``/``ML`` (and the
 legacy ``Mm``/``Ml``) are re-indexed to the piece (:func:`cut_modifications`)

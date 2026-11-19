@@ -1012,7 +1012,7 @@ def analyze_sample(
     read_examples: list[dict] = []
     duplicate_flagged = 0
     chimera_names = set()
-    chimera_duplicates = set()   # duplicate-flagged: not counted (3.0.4)
+    chimera_duplicates = set()   # duplicate-flagged: not counted (3.1.0)
     chimera_bins: dict = {}
     chimera_spans: dict = {}
     def sample_key(read, record_index):
@@ -2912,7 +2912,7 @@ def _call_chimera_detector(settings, snp_report_path, sidecar_dir, input_stem,
     """``(detector, error_mask_state)``: the call's strand-swap detector.
 
     ``detector`` holds the keys of ``engine._DAF_CHIMERA_CFG`` restored from
-    the call's @PG DS (None without one). A call recorded without the 3.0.4
+    the call's @PG DS (None without one). A call recorded without the 3.1.0
     settings used the 3.0.3 detector (no base-quality or span limit, one
     switch, no error mask). The error mask of a call that applied one is
     ``recorded_mask`` (the BED named by the call's validated chimeras
