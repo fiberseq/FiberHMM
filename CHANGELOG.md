@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 3.1.0
+
+Includes the unreleased 3.0.6 changes.
 
 ### Added
 
@@ -29,6 +31,12 @@
 
 ### Changed
 
+- Updated the bundled DddB emission table (`dddb_nanopore.json`): it now
+  keeps the sequence-context dependence of the naked-DNA table, with the
+  accessible-state level set against matched PacBio Hia5 Fiber-seq.
+  Nucleosome calls and accessibility are essentially unchanged; DddB footprint
+  calls near the LLR threshold can differ slightly. Re-call DddB data to use
+  the new table.
 - `fiberhmm-consensus` memory: loaded reads (and the analysis copy of replayed
   evidence) are cropped to the window plus `--evidence-pad` bp (default 250 on
   the command line; `full` keeps whole reads). Calls crossing the pad boundary
@@ -43,17 +51,6 @@
   (bit-identical results), and its worker tasks are built as workers free up.
 - A pre-run peak-memory estimate is logged for pooled runs; `--max-memory-gb`
   lowers `--cores` to fit or refuses to start.
-
-## 3.0.6
-
-### Changed
-
-- Updated the bundled DddB emission table (`dddb_nanopore.json`): it now
-  keeps the sequence-context dependence of the naked-DNA table, with the
-  accessible-state level set against matched PacBio Hia5 Fiber-seq.
-  Nucleosome calls and accessibility are essentially unchanged; DddB footprint
-  calls near the LLR threshold can differ slightly. Re-call DddB data to use
-  the new table.
 
 ## 3.0.5
 
