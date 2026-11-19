@@ -72,7 +72,7 @@ def parse_args():
     parser.add_argument('-p', '--prob-threshold', type=int, default=128,
                         help='Minimum ML probability for modification call (0-255)')
     parser.add_argument('--min-read-length', type=int, default=1000,
-                        help='Minimum aligned read length')
+                        help='Minimum read length as the HMM models it (SEQ length with soft clips; DAF with the unaligned-base mask: aligned length)')
     parser.add_argument('-e', '--edge-trim', type=int, default=10,
                         help='Bases to exclude at read edges')
 
@@ -159,7 +159,8 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
             if read.reference_end is None or read.reference_start is None:
                 filter_stats['no_sequence'] += 1
                 continue
-            if read.reference_end - read.reference_start < args.min_read_length:
+            from fiberhmm.inference.read_filters import modeled_read_length
+            if (modeled_read_length(read, mode) or 0) < args.min_read_length:
                 filter_stats['short_read'] += 1
                 continue
 

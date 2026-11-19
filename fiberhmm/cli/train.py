@@ -75,7 +75,7 @@ def parse_args():
     parser.add_argument('--prob-threshold', type=int, default=125,
                         help='Min ML probability (default matches ft-extract)')
     parser.add_argument('--min-read-length', type=int, default=1000,
-                        help='Min aligned length')
+                        help='Minimum read length as the HMM models it (SEQ length with soft clips; DAF with the unaligned-base mask: aligned length)')
     parser.add_argument('-a', '--prob-adjust', type=float, default=1.0,
                         help='Accessible probability adjustment factor')
     parser.add_argument('--use-hmmlearn', action='store_true',
@@ -275,8 +275,9 @@ def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
                             continue
                         if read.query_sequence is None:
                             continue
-                        aligned_length = read.reference_end - read.reference_start
-                        if aligned_length < min_read_length:
+                        from fiberhmm.inference.read_filters import modeled_read_length
+                        read_length = modeled_read_length(read, mode)
+                        if read_length is None or read_length < min_read_length:
                             continue
 
                         # Skip if we've already sampled this read

@@ -24,6 +24,9 @@ from fiberhmm.inference.mp_context import _MP_CONTEXT
 from fiberhmm.inference.read_filters import (
     ReadFilterConfig,
     new_skip_counts,
+    count_skip,
+    printable_skip_reasons,
+    too_short_hint,
     streaming_skip_reason,
 )
 from fiberhmm.inference.streaming_drain import strip_for_apply
@@ -253,7 +256,7 @@ def _process_bam_legacy_pipeline(
                         strip_for_apply(read, write_msps)
                         outbam.write(read)
                         skipped += 1
-                        skip_reasons[skip_reason] += 1
+                        count_skip(skip_reasons, skip_reason, read)
                         continue
 
                     # Extract data needed for processing
@@ -358,10 +361,13 @@ def _process_bam_legacy_pipeline(
         # Print skip reasons summary
         if skipped > 0:
             print("  Skip reasons:")
-            for reason, count in sorted(skip_reasons.items(), key=lambda x: -x[1]):
+            for reason, count in sorted(printable_skip_reasons(skip_reasons), key=lambda x: -x[1]):
                 if count > 0:
                     pct = 100 * count / (total_reads + skipped)
                     print(f"    {reason}: {count:,} ({pct:.1f}%)")
+            hint = too_short_hint(skip_reasons, total_reads + skipped, mode, min_read_length)
+            if hint:
+                print(hint)
         # Inside the atomic context: raising discards the temporary BAM.
         enforce_worker_failure_policy(
             worker_failures,

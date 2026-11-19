@@ -194,7 +194,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--chunk-size` | `500` | Reads per compute chunk in streaming mode (default: 500) |
 | `--min-mapq` / `-q` | `0` | Minimum mapping quality; reads below this are written to output unchanged without footprint/nucleosome tags. Default 0 (call on all mapped reads). Pass a positive value to filter. |
 | `--prob-threshold` | — | Minimum MM/ML probability (0-255) to call a modification. Default: chemistry preset -- 248 for Hia5 Nanopore (--seq nanopore, given or detected), 128 otherwise. R/Y- and MD-encoded DAF input is binary and ignores it. |
-| `--min-read-length` | `1000` | Minimum aligned read length in bp; shorter reads are written to output unchanged without footprint/nucleosome tags. Set to 0 to attempt calling on all reads regardless of length (default: 1000) |
+| `--min-read-length` | `1000` | Minimum read length in bp, as the HMM models it: the full SEQ length, soft clips included (DAF with the default --daf-mask-unaligned: the aligned length, since soft-clipped bases carry no evidence). Shorter reads are written to output unchanged without footprint/nucleosome tags. Set to 0 to attempt calling on all reads regardless of length (default: 1000) |
 | `-t` / `--train-reads` | — | TSV file of read IDs used in training (to exclude) |
 | `--alignments` | `primary-supplementary` | Alignment records to call (default primary-supplementary): primary and supplementary records, the parts of a split read (e.g. both sides of a structural variant); secondary records, alternative placements of the same bases, pass through uncalled. On a supplementary record only its aligned bases are called. "primary" calls primary records only; "all" also calls secondary records. Hard-clipped records whose MM/ML cannot match SEQ are always skipped (hard_clipped_mm). Choices: `primary`, `primary-supplementary`, `all`. |
 | `--primary` | — | Same as --alignments primary. |
@@ -790,7 +790,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `-s` / `--seed` | `42` | Random seed for sampling (default: 42) |
 | `-q` / `--min-mapq` | `20` | Minimum mapping quality (default: 20) |
 | `-p` / `--prob-threshold` | `128` | Minimum ML probability for modification call (0-255) (default: 128) |
-| `--min-read-length` | `1000` | Minimum aligned read length (default: 1000) |
+| `--min-read-length` | `1000` | Minimum read length as the HMM models it (SEQ length with soft clips; DAF with the unaligned-base mask: aligned length) (default: 1000) |
 | `-e` / `--edge-trim` | `10` | Bases to exclude at read edges (default: 10) |
 | `--save-interval` | `10000` | Save intermediate results every N reads (default: 10000) |
 | `--stats` | off | Generate summary statistics and QC plots |
@@ -812,7 +812,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `-e` / `--edge-trim` | `10` | Edge masking (default: 10) |
 | `-q` / `--min-mapq` | `20` | Min mapping quality (default: 20) |
 | `--prob-threshold` | `125` | Min ML probability (default matches ft-extract) (default: 125) |
-| `--min-read-length` | `1000` | Min aligned length (default: 1000) |
+| `--min-read-length` | `1000` | Minimum read length as the HMM models it (SEQ length with soft clips; DAF with the unaligned-base mask: aligned length) (default: 1000) |
 | `-a` / `--prob-adjust` | `1.0` | Accessible probability adjustment factor (default: 1.0) |
 | `--use-hmmlearn` | off | Use hmmlearn instead of native implementation (for legacy compatibility) |
 | `--stats` | off | Generate training statistics and example plots |
@@ -849,7 +849,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `-n` / `--max-reads` | `100000` | Max reads to process (0 = all) (default: 100000) |
 | `-q` / `--min-mapq` | `20` | Min mapping quality (default: 20) |
 | `-p` / `--prob-threshold` | `128` | Min ML probability for modification call (default: 128) |
-| `--min-read-length` | `1000` | Min aligned read length (default: 1000) |
+| `--min-read-length` | `1000` | Minimum read length as the HMM models it (SEQ length with soft clips; DAF with the unaligned-base mask: aligned length) (default: 1000) |
 | `-e` / `--edge-trim` | `10` | Bases to exclude at read edges (default: 10) |
 | `--min-observations` | `100` | Min observations per context for regression (default: 100) |
 | `--stats` | off | Generate diagnostic plots |

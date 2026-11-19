@@ -28,6 +28,9 @@ from fiberhmm.inference.read_filters import (
     mostly_unmapped_message,
     new_skip_counts,
     streaming_skip_reason,
+    count_skip,
+    printable_skip_reasons,
+    too_short_hint,
 )
 from fiberhmm.inference.streaming_drain import (
     _drain_oldest_chunk,
@@ -59,14 +62,17 @@ def _output_target(output_path):
     return output_path
 
 
-def _print_skip_reasons(skip_reasons, total_reads, skipped, log) -> None:
+def _print_skip_reasons(skip_reasons, total_reads, skipped, log, mode=None, min_read_length=None) -> None:
     if skipped <= 0:
         return
     print("  Skip reasons:", file=log)
-    for reason, count in sorted(skip_reasons.items(), key=lambda x: -x[1]):
+    for reason, count in sorted(printable_skip_reasons(skip_reasons), key=lambda x: -x[1]):
         if count > 0:
             pct = 100 * count / (total_reads + skipped)
             print(f"    {reason}: {count:,} ({pct:.1f}%)", file=log)
+    hint = too_short_hint(skip_reasons, total_reads + skipped, mode, min_read_length)
+    if hint:
+        print(hint, file=log)
 
 
 def _check_run_outcome(counters, total_reads, skip_reasons, skipped,
@@ -222,7 +228,7 @@ def _process_bam_streaming_pipeline_fused(
                     chunk_read_objs.append(rd)
                     chunk_skip_flags.append(True)
                     skipped += 1
-                    skip_reasons[reason] += 1
+                    count_skip(skip_reasons, reason, rd)
                     _flush_chunk_if_full()
 
                 def _drain():
@@ -335,7 +341,7 @@ def _process_bam_streaming_pipeline_fused(
                  file=_log, final=True)
         skip_reasons['chimera'] += counters.get('chimera', 0)
         skipped += counters.get('chimera', 0)
-        _print_skip_reasons(skip_reasons, total_reads, skipped, _log)
+        _print_skip_reasons(skip_reasons, total_reads, skipped, _log, mode, min_read_length)
         if counters.get('chimera'):
             print(f"  DAF strand-swap chimeras filtered: {counters['chimera']:,}",
                   file=_log)
@@ -475,7 +481,7 @@ def _process_bam_streaming_pipeline(
                     chunk_read_objs.append(rd)
                     chunk_skip_flags.append(True)
                     skipped += 1
-                    skip_reasons[reason] += 1
+                    count_skip(skip_reasons, reason, rd)
 
                 def _drain():
                     _drain_oldest_chunk(
@@ -563,7 +569,7 @@ def _process_bam_streaming_pipeline(
         progress(f"  Processed: {total_reads:,} | Skipped: {skipped:,} | "
                  f"With footprints: {reads_with_footprints:,} | {rate:.1f} reads/s",
                  file=_log, final=True)
-        _print_skip_reasons(skip_reasons, total_reads, skipped, _log)
+        _print_skip_reasons(skip_reasons, total_reads, skipped, _log, mode, min_read_length)
         # Inside the atomic context: raising here discards the temporary BAM.
         _check_run_outcome(counters, total_reads, skip_reasons, skipped,
                            fail_on_mostly_unmapped, _log)
