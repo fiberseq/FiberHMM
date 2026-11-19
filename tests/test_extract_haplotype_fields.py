@@ -50,6 +50,9 @@ def test_parallel_extractor_preserves_legacy_positional_parameter_order():
         'sort_parallel',
         'haplotype_fields',
         'input_frame',
+        'variants',
+        'sv_min_len',
+        'sv_min_clip',
     ]
 
 

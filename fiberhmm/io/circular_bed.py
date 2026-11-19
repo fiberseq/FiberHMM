@@ -139,7 +139,12 @@ def fold_circular_bed(path: str, circular_sizes: dict[str, int],
 
 
 def block_column_count(extract_type: Optional[str], block_scores: bool) -> int:
-    if not block_scores or not extract_type:
+    """Per-block (``int[blockCount]``) columns after ``chromStarts``."""
+    if not extract_type:
         return 0
-    from fiberhmm.io.autosql import EXTRA_FIELD_COUNTS
+    from fiberhmm.io.autosql import EXTRA_FIELD_COUNTS, LAYER_BLOCK_COLUMN_COUNTS
+    if extract_type in LAYER_BLOCK_COLUMN_COUNTS:  # var/sv: always on
+        return LAYER_BLOCK_COLUMN_COUNTS[extract_type]
+    if not block_scores:
+        return 0
     return EXTRA_FIELD_COUNTS.get(extract_type, 0)
