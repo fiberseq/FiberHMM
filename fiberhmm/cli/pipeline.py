@@ -3,8 +3,9 @@
 
 One command from a sequencing run to footprints: aligns the reads with
 minimap2 (DAF-seq on Nanopore: -ax map-ont --MD -Y), keeps primary and
-supplementary alignments at MAPQ >= 20 (both sides of a split read), joins
-reads that run through the origin of a circular plasmid and trims DAF
+supplementary alignments (both sides of a split read; --min-mapq filters
+them, off by default), joins reads that run through the origin of a
+circular plasmid and trims DAF
 concatemer arms there, calls footprints with fiberhmm-call (duplicate
 marking, chimera filter and SNP screen as in fiberhmm-call) and runs
 fiberhmm-qc. BAMs already aligned to the reference (e.g. Fiber-seq aligned
@@ -103,9 +104,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "outputs.json asks FiberBrowser to open.")
 
     align = p.add_argument_group("alignment")
-    align.add_argument("--min-mapq", type=int, default=20,
+    align.add_argument("--min-mapq", type=int, default=0,
                        help="Keep primary alignments with at least this MAPQ "
-                            "(default 20); also passed to fiberhmm-call and "
+                            "(default: 0, no filtering); also passed to fiberhmm-call and "
                             "fiberhmm-qc.")
     clips = align.add_mutually_exclusive_group()
     clips.add_argument("--keep-soft-clips", action="store_true",

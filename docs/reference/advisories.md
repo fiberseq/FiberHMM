@@ -153,6 +153,7 @@ of its region files is recognised and does not count.)
 | `ddda-cpg-mask-default` | info | calls | DddA recall with CpG observations (2.x default) |
 | `ddda-hmm-cpg-mask` | rerun-recommended | calls | DddA calls whose first-pass HMM (call, apply, or the pair/merge joint HMM, which records a `fiberhmm-merge` `@PG`) decoded CpG observations, before 3.0; a run without `hmm_cpg_mask=` in its `@PG DS` and no indexed commit predates the mask. DddA posteriors files without `cpg_mask_policy` in their metadata likewise (reported with artifact `posteriors`) |
 | `daf-chimeras-unmarked` | info | calls | DAF calls by `fiberhmm-call` before 3.0.3 (no `chimeras=` in the `@PG DS`, run without `--keep-chimeras`): chimeric reads were left uncalled but unmarked |
+| `graph-lift-unrepaired` | rerun-recommended | lifted BAM | a BAM lifted through a pangenome graph (vg / `ft pg-pansn` / `ft pg-lift` `@PG`) with no `fiberhmm-lift` `@PG`: run `fiberhmm-lift --repair-only` ([Lifting](../workflows/lifting.md)) |
 | `untracked-calls` | unverifiable | calls | calls without any FiberHMM `@PG` (cannot be checked) |
 
 QC reports, posteriors files and `fiberhmm-dedup`/`fiberhmm-merge` BAMs record

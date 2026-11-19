@@ -385,7 +385,7 @@ def process_bam_daf_encode(
     input_bam,
     output_bam,
     reference=None,
-    min_mapq=20,
+    min_mapq=0,
     min_read_length=1000,
     io_threads=4,
     force_strand=None,
@@ -401,7 +401,7 @@ def process_bam_daf_encode(
     reference : str or None
         Path to reference FASTA (fallback when MD tag is missing).
     min_mapq : int
-        Minimum mapping quality.
+        Minimum mapping quality (default 0, no filtering).
     min_read_length : int
         Minimum aligned read length (bp).
     io_threads : int

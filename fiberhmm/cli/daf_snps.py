@@ -49,7 +49,7 @@ def parse_args(argv=None):
     )
     parser.add_argument("--min-dominant-events", type=int, default=5, help="Minimum dominant conversions per classifiable fiber (default 5)")
     parser.add_argument("--min-dominant-purity", type=float, default=0.80, help="Minimum dominant-direction purity (default 0.80)")
-    parser.add_argument("--min-mapq", type=int, default=20, help="Minimum mapping quality (default 20)")
+    parser.add_argument("--min-mapq", type=int, default=0, help="Minimum mapping quality (default: 0, no filtering)")
     parser.add_argument("--min-amplicon-reads", type=int, default=20, help="Minimum aligned reads required for an amplicon consensus (default 20)")
     parser.add_argument("--reference", default=None, help="Indexed FASTA fallback for BAMs lacking MD")
     from fiberhmm.cli.common import add_version_args

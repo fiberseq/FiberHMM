@@ -148,8 +148,9 @@ it and shows the run's QC verdicts with the dataset.
    used as it is. Contig MD5s are computed.
 2. **Index.** minimap2 indexes the reference (cached).
 3. **Align.** `minimap2 -a -x map-ont --MD -Y`, the lab's DAF-seq standard.
-   Primary and supplementary alignments with MAPQ ≥ 20 are kept
-   (`--min-mapq`; `--alignments primary` keeps the primary only). Unaligned
+   Primary and supplementary alignments are kept (`--min-mapq N` drops
+   those below MAPQ N, default 0; `--alignments primary` keeps the primary
+   only). Unaligned
    read arms stay as soft clips on linear contigs (calling treats them as no
    evidence) and are hard-clipped on circular ones, where they are concatemer
    sequence (`--hard-clip` clips everywhere, `--keep-soft-clips` nowhere).

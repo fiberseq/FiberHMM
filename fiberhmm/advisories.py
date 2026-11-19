@@ -971,8 +971,11 @@ def scan_reads(bam, max_records: int = DEFAULT_SCAN_RECORDS) -> ReadScan:
             scan.pair_tags += 1
             if read.is_duplicate and read.has_tag("mp"):
                 scan.paired_duplicates += 1
+        # FiberHMM MA, else fibertools (>= 0.13) Ma (it writes no ns/as).
+        ma = read.get_tag("MA") if read.has_tag("MA") else (
+            read.get_tag("Ma") if read.has_tag("Ma") else None)
         if read.has_tag("ns") or read.has_tag("as") or (
-                read.has_tag("MA") and re.search(r";(nuc|msp|tf)[.+-]", str(read.get_tag("MA")))):
+                ma is not None and re.search(r";(nuc|msp|tf)[.+-]", str(ma))):
             scan.call_tags += 1
         if scan.records >= max_records:
             break
@@ -1022,6 +1025,8 @@ def _check_reading(idx, data, reading: _Reading, scan, path, platform) -> list[A
             found.extend(_check_pair(idx, rule, runs, scan, path))
         elif detector == "untracked_calls":
             found.extend(_check_untracked(rule, data, runs, scan, path))
+        elif detector == "graph_lift":
+            found.extend(_check_graph_lift(rule, data, path))
     notes = {run.id: run.note for run in current if run.note}
     if notes:
         from dataclasses import replace
@@ -1218,6 +1223,18 @@ def _check_untracked(rule, data, runs, scan, path):
     if trace:
         evidence.append(f"the header shows a FiberHMM run that recorded no @PG of its own: {trace}")
     return [_make(rule, _Finding(POSSIBLY, confidence, evidence), path=path)]
+
+
+def _check_graph_lift(rule, data, path):
+    """A vg / ft pg-pansn lift with no fiberhmm-lift repair after it."""
+    from fiberhmm.io.graph_lift import header_lift_state
+
+    state = header_lift_state(data)
+    if not state["lift"] or state["repaired"]:
+        return []
+    evidence = [f"@PG {', '.join(state['lift'])} lifted the reads through a pangenome graph; "
+                "no fiberhmm-lift @PG follows"]
+    return [_make(rule, _Finding(AFFECTED, "high", evidence), path=path)]
 
 
 # Work paths FiberHMM 1.x/2.x left in the @PG of the samtools/pysam steps it ran

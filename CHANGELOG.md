@@ -1,5 +1,54 @@
 # Changelog
 
+## 3.2.0 (unreleased)
+
+### Fixed
+
+- BED12 lift: a column containing `;` (a verbatim SAM `SA` tag, as in
+  `fiberhmm_sv` rows) is no longer treated as a per-block list when its comma
+  count happens to equal blockCount.
+
+### Added
+
+- **`fiberhmm-lift`** lifts a called BAM, or a BED file, to another assembly
+  through a pangenome graph, with footprints in molecular coordinates. The
+  primary route is native: graphlift's `liftbam` and `liftbed`
+  (<https://github.com/mtcicero26/graphlift>; `liftbam` needs its `bam`
+  feature) through a chain map derived from the graph, with no vg. vg
+  (`vg inject`/`vg surject`) is an optional fallback. The lift repairs what
+  it leaves stale: supplementary flags, hard clips (filled from the primary),
+  `st` on reads that change strand, `MD`/`NM`/`SA` (recomputed with
+  `--target-fasta`, else removed) and the `@PG` history. The source `MAPQ` is
+  kept and recorded in `Yq`, the source locus in `Yp`; `--unlifted` writes the
+  records that did not lift with their reason in `Yu`. `--repair-only
+  --source` repairs a BAM lifted by another vg-based tool. `--bed` lifts
+  BED12 rows block by block (`--bed12-partial keep` keeps a row without its
+  unliftable blocks), narrowPeak summits and thickStart/thickEnd with their
+  rows (`--bed-format`), and reads gzip, bgzip or stdin and writes `.gz`. See
+  [Lifting to another assembly](https://fiberseq.github.io/FiberHMM/workflows/lifting/).
+- `fiberhmm-check` reports BAMs lifted through a graph without that repair
+  (`graph-lift-unrepaired`).
+- `fiberhmm-lift` lifts a soft-clipped supplementary whose primary is not in
+  the input (a region slice, say): it carries its own `SEQ`, calls and `MM`.
+  Only hard-clipped ones, which have no `SEQ` to fill, are left out.
+
+### Changed
+
+- MAPQ filtering is off by default everywhere: `--min-mapq`, `--qc-min-mapq`,
+  `-q` and the consensus `input.minimum_mapq` default to 0 (was 20). Pass
+  `--min-mapq 20` to restore the old filter. A `fiberhmm-pipeline` run started
+  with the old default resumes only with `--min-mapq 20`.
+
+### Fixed
+
+- **fibertools-rs ≥ 0.13 `Ma`/`Aq` input is read everywhere.** `fiberhmm-recall-tfs`
+  carries fibertools' `fire.Q` (and other non-footprint) groups into the `MA`
+  it writes, and `fiberhmm-call`/`-recall-tfs` drop the superseded `Ma`/`Aq`/`An`
+  instead of leaving them beside the new `MA`. `fiberhmm-qc` counts
+  nucleosomes and TF footprints from `Ma`, `fiberhmm-footprint-model` loads
+  `Ma` molecules, and the `fiberhmm-extract` tag sniff, `fiberhmm-utils
+  ma-types --scan` and `fiberhmm-check` see `Ma` calls.
+
 ## 3.1.0
 
 Includes the unreleased 3.0.6 changes.

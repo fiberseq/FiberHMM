@@ -67,8 +67,8 @@ def parse_args():
                         help='Random seed for sampling')
 
     # Filtering
-    parser.add_argument('-q', '--min-mapq', type=int, default=20,
-                        help='Minimum mapping quality')
+    parser.add_argument('-q', '--min-mapq', type=int, default=0,
+                        help='Minimum mapping quality (default: 0, no filtering)')
     parser.add_argument('-p', '--prob-threshold', type=int, default=128,
                         help='Minimum ML probability for modification call (0-255)')
     parser.add_argument('--min-read-length', type=int, default=1000,

@@ -62,7 +62,7 @@ fiberhmm-daf-encode summary
 ```
 
 Records that are unmapped, secondary, supplementary, below `-q/--min-mapq`
-(20) or `--min-read-length` (1000), or without detectable conversions are
+(0, no filter) or `--min-read-length` (1000), or without detectable conversions are
 written through unchanged and counted as skipped. `--strand CT|GA` forces the
 flavour; `auto` (default) decides per read.
 

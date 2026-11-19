@@ -1201,7 +1201,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--prob-threshold", type=int)
     parser.add_argument("--control-flank", type=int, default=2000)
-    parser.add_argument("--min-mapq", type=int, default=20)
+    parser.add_argument("--min-mapq", type=int, default=0,
+                        help="Minimum mapping quality (default: 0, no filtering)")
     parser.add_argument("--min-support", type=int, default=10)
     parser.add_argument("--minimum-geometry-support", type=int, default=3)
     parser.add_argument("--source-boundary-margin", type=int, default=10)

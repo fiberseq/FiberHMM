@@ -47,6 +47,7 @@ COMMANDS: list[tuple[str, str, str]] = [
     ("fiberhmm-daf-snps", "fiberhmm.cli.daf_snps", "main"),
     ("fiberhmm-pair", "fiberhmm.cli.pair", "main"),
     ("fiberhmm-merge", "fiberhmm.cli.merge", "main"),
+    ("fiberhmm-lift", "fiberhmm.cli.lift", "main"),
     ("fiberhmm-tag-m5c", "fiberhmm.cli.tag_m5c", "main"),
     ("fiberhmm-call-m5c", "fiberhmm.cli.call_m5c", "main"),
     ("fiberhmm-consensus", "fiberhmm.inference.consensus.cli", "main"),

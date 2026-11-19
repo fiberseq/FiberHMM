@@ -98,7 +98,7 @@ class PipelineConfig:
     seq: Optional[str] = None
     topology: str = "auto"
     regions: list[str] = field(default_factory=list)
-    min_mapq: int = 20
+    min_mapq: int = 0
     min_read_length: Optional[int] = None
     # None: DAF reads on circular contigs only (concatemer arms beyond one
     # full circle); linear-contig soft clips are kept (DAF calling treats them

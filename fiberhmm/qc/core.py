@@ -25,7 +25,7 @@ from fiberhmm.core.bam_reader import (
     parse_mm_tag_query_calls,
     parse_mm_tag_query_positions,
 )
-from fiberhmm.io.ma_tags import parse_ma_tag
+from fiberhmm.io.ma_tags import annotation_tags, parse_ma_tag
 from fiberhmm.qc.states import (
     DEFAULT_LIGHT_CALL_READS,
     DEFAULT_LIGHT_CALL_SECONDS,
@@ -157,7 +157,7 @@ def sample_bam_reads(
     path: str,
     sample_reads: int = DEFAULT_SAMPLE_READS,
     seed: int = DEFAULT_SEED,
-    min_mapq: int = 20,
+    min_mapq: int = 0,
     scan_limit: Optional[int] = None,
 ) -> SampledReads:
     """Take a deterministic, bounded read sample without a whole-file pass."""
@@ -724,9 +724,11 @@ def _signal_profile(
 
 
 def _footprint_lengths(read) -> tuple[list[int], list[int], bool]:
-    if read.has_tag("MA"):
+    # FiberHMM MA, else fibertools (>= 0.13) Ma; either wins over legacy nl.
+    tags = annotation_tags(read)
+    if tags is not None:
         try:
-            parsed = parse_ma_tag(read.get_tag("MA"))
+            parsed = parse_ma_tag(tags[0])
             return (
                 [int(length) for _start, length in parsed.get("nuc", [])],
                 [int(length) for _start, length in parsed.get("tf", [])],
@@ -2685,7 +2687,7 @@ def run_qc(
     reference_fasta: Optional[str] = None,
     sample_reads: int = DEFAULT_SAMPLE_READS,
     seed: int = DEFAULT_SEED,
-    min_mapq: int = 20,
+    min_mapq: int = 0,
     prob_threshold: Optional[int] = None,
     min_opportunities: int = 200,
     snp_report_path: Optional[str] = None,
@@ -3517,7 +3519,7 @@ def run_multi_qc(
     reference_fasta: Optional[str] = None,
     sample_reads: int = DEFAULT_SAMPLE_READS,
     seed: int = DEFAULT_SEED,
-    min_mapq: int = 20,
+    min_mapq: int = 0,
     prob_threshold: Optional[int] = None,
     min_opportunities: int = 200,
     stream: Optional[TextIO] = sys.stderr,

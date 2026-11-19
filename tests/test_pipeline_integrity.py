@@ -1190,7 +1190,7 @@ def test_tracks_forward_filters_and_record_them(tmp_path, monkeypatch):
     p.close()
     p, seen = _tracks_pipeline(tmp_path / "b", monkeypatch, lambda: ["tf"])
     p.step_tracks()
-    assert "-p" not in seen[0] and seen[0][seen[0].index("-q") + 1] == "20"
+    assert "-p" not in seen[0] and seen[0][seen[0].index("-q") + 1] == "0"
     p.close()
 
 
