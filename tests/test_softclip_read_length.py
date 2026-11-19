@@ -161,3 +161,18 @@ def test_read_bam_keeps_softclipped_hia5_reads(tmp_path):
     src = _softclipped_bam(tmp_path / 'clip.bam', n_reads=2)
     assert len(list(read_bam(src, min_mapq=0, min_read_length=1000, mode='pacbio-fiber'))) == 2
     assert len(list(read_bam(src, min_mapq=0, min_read_length=5000, mode='pacbio-fiber'))) == 0
+
+
+def test_modeled_length_tolerates_minimal_records():
+    """Stand-ins without query_length (or without a CIGAR) still get a length."""
+    from types import SimpleNamespace
+    seq_only = SimpleNamespace(is_unmapped=False, query_sequence='A' * 1500, query_alignment_length=300)
+    assert modeled_read_length(seq_only, 'pacbio-fiber') == 1500
+    span_only = SimpleNamespace(is_unmapped=False, reference_start=100, reference_end=1300)
+    assert modeled_read_length(span_only, 'pacbio-fiber') == 1200
+    assert modeled_read_length(span_only, 'daf') == 1200
+    unmapped = SimpleNamespace(is_unmapped=True, query_sequence='ACGT')
+    assert modeled_read_length(unmapped) == 4
+    counts = new_skip_counts()
+    count_skip(counts, 'too_short', span_only)              # no CIGAR: not counted as soft-clipped
+    assert counts['too_short'] == 1 and counts['too_short_soft_clipped'] == 0

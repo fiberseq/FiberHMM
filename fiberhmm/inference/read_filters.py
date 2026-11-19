@@ -190,8 +190,37 @@ _SOFT_CLIP = 4
 
 
 def soft_clipped_bases(read) -> int:
-    """Bases in the record's soft clips (CIGAR S)."""
-    return sum(n for op, n in (getattr(read, 'cigartuples', None) or ()) if op == _SOFT_CLIP)
+    """Bases in the record's soft clips (CIGAR S); 0 when the record has no CIGAR."""
+    try:
+        cigar = getattr(read, 'cigartuples', None) or ()
+    except (ValueError, TypeError):
+        return 0
+    return sum(n for op, n in cigar if op == _SOFT_CLIP)
+
+
+def _seq_length(read) -> Optional[int]:
+    """Length of the stored SEQ, from whatever the record offers."""
+    for get in (lambda: getattr(read, 'query_length', None),
+                lambda: len(read.query_sequence) if getattr(read, 'query_sequence', None) else None,
+                lambda: read.infer_query_length() if callable(getattr(read, 'infer_query_length', None)) else None):
+        try:
+            value = get()
+        except (AttributeError, TypeError, ValueError):
+            value = None
+        if value:
+            return int(value)
+    return None
+
+
+def _aligned_length(read) -> Optional[int]:
+    """Aligned query length, else the reference span (records without a CIGAR)."""
+    value = getattr(read, 'query_alignment_length', None)
+    if value is not None:
+        return int(value)
+    start, end = getattr(read, 'reference_start', None), getattr(read, 'reference_end', None)
+    if start is not None and end is not None:
+        return int(end) - int(start)
+    return None
 
 
 def modeled_read_length(read, mode: Optional[str] = None) -> Optional[int]:
@@ -206,26 +235,24 @@ def modeled_read_length(read, mode: Optional[str] = None) -> Optional[int]:
     length is the aligned query length (``query_alignment_length``). Unmapped
     records use their SEQ length. Hard-clipped bases are not in SEQ and never
     count (such records are also screened by the hard-clip MM guard).
+    Records that lack an attribute (lightweight stand-ins) fall back to the
+    SEQ, then the aligned length, then the reference span.
     """
-    if read.is_unmapped:
-        return read.query_length or 0
+    if getattr(read, 'is_unmapped', False):
+        return _seq_length(read) or 0
     if mode == 'daf':
         from fiberhmm.inference.engine import daf_unaligned_mask_enabled
         if daf_unaligned_mask_enabled():
-            return read.query_alignment_length
-    length = read.query_length
-    if not length:
-        try:
-            length = read.infer_query_length()
-        except (AttributeError, TypeError, ValueError):
-            length = None
-    return length if length else read.query_alignment_length
+            aligned = _aligned_length(read)
+            return aligned if aligned is not None else _seq_length(read)
+    seq = _seq_length(read)
+    return seq if seq else _aligned_length(read)
 
 
 def is_mostly_soft_clipped(read) -> bool:
     """Soft clips longer than the aligned part: the reads the too-short hint is about."""
     clipped = soft_clipped_bases(read)
-    aligned = read.query_alignment_length or 0
+    aligned = _aligned_length(read) or 0
     return clipped > 0 and clipped >= aligned
 
 
@@ -233,7 +260,8 @@ def count_skip(skip_reasons: dict, reason: str, read=None) -> None:
     """Tally ``reason``; a too-short read that is mostly soft-clipped is also
     counted under ``too_short_soft_clipped`` (for :func:`too_short_hint`)."""
     skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
-    if reason == "too_short" and read is not None and not read.is_unmapped and is_mostly_soft_clipped(read):
+    if reason == "too_short" and read is not None and not getattr(read, 'is_unmapped', False) \
+            and is_mostly_soft_clipped(read):
         skip_reasons["too_short_soft_clipped"] = skip_reasons.get("too_short_soft_clipped", 0) + 1
 
 

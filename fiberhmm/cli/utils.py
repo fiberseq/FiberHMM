@@ -505,7 +505,7 @@ def _process_target_bam(bam_path, mode, max_context, args):
             if read.reference_end is None or read.reference_start is None:
                 continue
             from fiberhmm.inference.read_filters import modeled_read_length
-            if (modeled_read_length(read, args.mode) or 0) < args.min_read_length:
+            if (modeled_read_length(read, getattr(args, 'mode', None)) or 0) < args.min_read_length:
                 continue
 
             # Same evidence extraction as fiberhmm-call (DAF: R/Y -> MD -> MM/ML)

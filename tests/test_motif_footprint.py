@@ -568,10 +568,22 @@ def test_missing_bigbed_reader_message(tmp_path, monkeypatch):
 
 # ------------------------------------------------------------------ FiberHMM call bigBeds as input
 
+def _require_bigbed_reader():
+    """bigBed input needs pyBigWig or bigBedToBed (optional); skip cleanly without either."""
+    try:
+        import pyBigWig  # noqa: F401
+        return
+    except ImportError:
+        pass
+    if not shutil.which('bigBedToBed'):
+        pytest.skip('no bigBed reader (pyBigWig or bigBedToBed)')
+
+
 def _extract(tmp_path, bam, monkeypatch, *flags):
     import sys
     if not shutil.which('bedToBigBed'):
         pytest.skip('bedToBigBed not on PATH')
+    _require_bigbed_reader()
     from fiberhmm.cli import extract_tags
     out = tmp_path / 'bb'
     out.mkdir(exist_ok=True)
@@ -616,9 +628,9 @@ def test_call_bigbeds_match_bam(tmp_path, monkeypatch, extra):
     tb = [l.split('\t') for l in (tmp_path / 'b.tsv').read_text().splitlines()]
     assert [r[:12] for r in ta] == [r[:12] for r in tb]
     # footprinted instances as a per-read BED12 bigBed
-    pyBigWig = pytest.importorskip('pyBigWig')
     written = sorted(tmp_path.glob('out_fp_*.bb'))
     assert written
+    pyBigWig = pytest.importorskip('pyBigWig')
     bb = pyBigWig.open(str(written[0]))
     rows = bb.entries('chr1', 0, 10000)
     assert rows and all(len(r[2].split('\t')) == 13 for r in rows)
