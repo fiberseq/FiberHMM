@@ -25,7 +25,9 @@ written instead. `-o` defaults to the BAM's directory.
 ## Feature types
 
 With no type flag, every type is extracted (`--all`); `deam` is skipped on
-Fiber-seq BAMs.
+Fiber-seq BAMs. `--all` includes `sv`, and includes `var` when a VCF is
+available: `--variants VCF`, or the DAF SNP screen VCF found next to a DAF
+BAM (logged). Without a VCF, `--all` skips `var` with a one-line note.
 
 | Flag | File suffix | Source | Block score |
 |---|---|---|---|
@@ -36,6 +38,8 @@ Fiber-seq BAMs.
 | `--m5c` | `_m5c` | DddA `ddda_mcg` spans, or native `MM`/`ML` 5mC | ML (0 for `ddda_mcg`) |
 | `--deam` | `_deam` | DAF deaminations: MM/ML dU, else R/Y, else `MD` mismatches (first non-empty source per read) | |
 | `--both-strand` | `_bothstrand` | the `deam+` ∩ `deam-` region of joint duplex molecules | |
+| `--variants VCF` | `_var` | the allele each read carries at the sites of a VCF/BCF ([below](#variant-alleles-var)) | `blockAllele`, `blockBq` (always written) |
+| `--sv` | `_sv` | CIGAR deletions/insertions, long clips and the `SA` tag ([below](#structural-events-sv)) | `blockType`, `blockLen` (always written) |
 
 `-p/--prob-threshold` defaults to 248 for BAMs that declare Hia5 Nanopore
 and 125 otherwise; it does not apply to `ddda_mcg` spans or to R/Y/`MD`
@@ -87,6 +91,145 @@ crosses the origin is cut in two, and per-block columns follow their blocks.
 Each bigBed embeds its autoSQL schema, whose description starts with
 `Sample: <name>.` (the BAM stem, or `--sample-name`, with dots and spaces
 replaced). FiberBrowser uses it to group a sample's layers.
+
+## Variant alleles (`var`)
+
+`--variants VCF` writes, for every primary alignment, the allele the read
+carries at each site of a VCF or BCF it covers. Any standard file works:
+DeepVariant or Clair3 calls, `vg deconstruct` output, the DAF SNP screen
+VCF. An unindexed or plain-text VCF is indexed into a temporary copy.
+
+- **Sites.** SNVs, MNVs and indels whose REF and ALT are at most
+  `--variants-max-len` (50) bp plus the VCF anchor base. Symbolic and
+  breakend alleles, `*`, and longer alleles are never matched, and a record
+  without a usable ALT is skipped. `--variants-pass-only` (on by default)
+  keeps records whose FILTER is `PASS` or `.`. `--variants-sample NAME`
+  keeps only sites where that sample's GT carries an ALT allele, and
+  `--variants-het-only` keeps only its heterozygous sites.
+- **Genotyping.** The rule is pileup-style, as in WhatsHap and longphase
+  haplotag. An SNV takes the aligned base. An MNV or indel takes the
+  read's bases over the REF span, with CIGAR insertions after each REF base
+  included (after the last REF base too, for indel sites). That string is
+  compared with each allele. There is no realignment: an indel the aligner
+  placed differently from the VCF's normalized position (homopolymers,
+  tandem repeats) comes out as `-1`. A site is reported only when its REF
+  span lies inside the alignment (an indel site also needs one aligned base
+  after it) and not in an `N` skip.
+- **DAF.** On a C→T read, a T may be a converted C; on a G→A read, an A may
+  be a converted G. R/Y codes are read as the converted base (Y = T,
+  R = A). If more than one allele fits once conversion is allowed, the site
+  is `-3`. At a C/T site, a C on a C→T read is REF (informative) and a T is
+  `-3`. The read's conversion strand follows FiberHMM's DAF rule (the `st`
+  tag on R/Y input, else the read's R/Y marks or reference mismatches). A
+  DAF read whose strand cannot be decided allows both conversions.
+  `--variants-daf auto` (the default) applies this to BAMs whose header
+  declares DAF (`fiberhmm-daf-encode`, or `fiberhmm-call` with `mode=daf`)
+  and to reads that carry R/Y or `st`. `on` applies it to every read, `off`
+  to none.
+- **`--variants auto`** uses the DAF SNP screen VCF of the BAM. It looks
+  first for the prefix or mask recorded on the `fiberhmm-call` `@PG`, then
+  for `qc/<stem>.daf_snps.vcf` and `<stem>.daf_snps.vcf` next to the BAM.
+  It exits 2 if it finds none.
+
+Each row is a read (more than one row with the same name when sites
+overlap, since bigBed blocks may not overlap). Each block is a site, with
+size = REF length. `score` is the mean base quality of the sites.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `blockAllele` | `int[blockCount]` | `k ≥ 0` VCF allele index (0 REF, 1.. ALT); `-1` other sequence; `-2` the site's REF bases are all deleted in the read (spanning deletion); `-3` ambiguous because of DAF conversion |
+| `blockBq` | `int[blockCount]` | base quality of the SNV base, or the minimum over the compared bases of an MNV/indel; `-1` if none |
+
+The autoSQL description records the VCF:
+`Sample: <name>. VCF: name=<basename>; md5=<md5 of the file>; sample=<NAME or *>. ...`.
+
+## Structural events (`sv`)
+
+`--sv` writes the per-read signatures long-read SV callers (Sniffles2,
+cuteSV) start from. One row is written per alignment record, and
+supplementary records get their own rows (secondary records are skipped).
+
+| Event | `blockType` | Block | `blockLen` |
+|---|---|---|---|
+| CIGAR `D` ≥ `--sv-min-len` (30) | 0 DEL | the deleted reference span | deleted bp |
+| CIGAR `I` ≥ `--sv-min-len` | 1 INS | the 1 bp reference base before the insertion (VCF anchor) | inserted bases |
+| clip ≥ `--sv-min-clip` (100) at the left end | 2 CLIP_LEFT | the first aligned base | soft + hard clipped bases |
+| clip ≥ `--sv-min-clip` at the right end | 3 CLIP_RIGHT | the last aligned base | soft + hard clipped bases |
+
+Left and right are in reference orientation. `N` skips are not deletions.
+After the two per-block arrays come the record's `mapq`, `readLen` (full
+read length including soft and hard clips), `flag` (SAM flag; 0x800 marks a
+supplementary record) and `sa` (the `SA` tag verbatim, `.` if none; a tag
+longer than 4000 characters keeps its leading whole entries and ends in
+`...`). `score` is the MAPQ. As in `var`, events that overlap (an insertion
+next to a deletion, a clip next to an indel) go to a second row with the
+same name.
+
+### Schema
+
+```text
+var: BED12 | blockAllele | blockBq | [hp | ps] | isDuplicate
+sv:  BED12 | blockType | blockLen | mapq | readLen | flag | sa | [hp | ps] | isDuplicate
+```
+
+Table names are `fiberhmm_var` and `fiberhmm_sv`. These columns are written
+whatever `--block-scores` says; `--circular-groups` does not apply. bigBed
+rows must start at their first block and end at their last, so
+`chromStart`/`chromEnd` span the read's sites or events, not its whole
+alignment (the same rule as every other layer). A coordinate column for
+the alignment span would not survive a graph lift, so none is written.
+
+## Keeping bigBeds instead of BAMs
+
+For most browsing and per-molecule questions, the bigBeds carry what the
+BAM was kept for: the call layers, m6A, haplotype tags (`--haplotype-fields`),
+alleles at known sites (`var`) and split/indel signatures (`sv`). A 1 Mb
+slice of a GM12878 PacBio Fiber-seq BAM (351 reads, 6.3 MB) gives 1.7 MB of
+bigBeds for every layer, m6A being most of it; `var` (18 test sites) is 26 KB
+and `sv` 42 KB.
+
+(a) DAF, with the SNP VCF from the call step (add `--daf-snp-all-snvs` to
+`fiberhmm-call` for non-C>T/G>A sites too):
+
+```bash
+fiberhmm-extract -i out/daf.calls.bam -o out/tracks --all --haplotype-fields -c 8
+# var layer: using the DAF SNP screen VCF out/qc/daf.calls.daf_snps.vcf
+```
+
+(b) A DeepVariant or Clair3 VCF, restricted to the sample's heterozygous
+sites:
+
+```bash
+fiberhmm-extract -i sample.calls.bam -o tracks --all \
+    --variants sample.deepvariant.vcf.gz --variants-sample SAMPLE --variants-het-only \
+    --haplotype-fields -c 8
+```
+
+(c) Sites from a pangenome graph with `vg deconstruct`. Use the reference
+path the BAM is aligned to and keep the contig names identical:
+
+```bash
+vg deconstruct -P GRCh38 -a -t 8 graph.gbz > graph.vcf
+bgzip graph.vcf && tabix -p vcf graph.vcf.gz
+fiberhmm-extract -i sample.calls.bam -o tracks --variants graph.vcf.gz --sv -c 8
+```
+
+`vg deconstruct` writes nested and multi-kilobase alleles. Those beyond
+`--variants-max-len` are skipped, and overlapping records give extra rows.
+`--variants-sample` takes one of its haplotype samples.
+
+**Graph lift.** `var` and `sv` rows are plain BED12 whose per-block columns
+come right after `chromStarts`, so `fiberhmm-lift --bed` (graphlift's
+`liftbed`) lifts them like any other layer. Blocks keep their codes; with
+`--bed12-partial keep` (the default), blocks that do not lift are dropped together with
+their codes, and a row lifted to the opposite strand reverses its per-block
+columns with its blocks. Allele indices still refer to the source VCF.
+CLIP_LEFT/CLIP_RIGHT name the source-reference ends, so on a lift to the
+opposite strand they swap physical sides. In current `feat/pg-lift`, BED
+reassembly treats any comma-separated column with `blockCount` items as
+per-block. The verbatim `sa` column (5k+1 comma-separated items for k
+entries) can be mistaken for one when the counts happen to match, so the
+lift should skip columns that contain `;`.
 
 ## Coordinate frames
 

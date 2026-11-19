@@ -15,6 +15,9 @@ Supported annotation types:
           sequence (written by fiberhmm-daf-encode) -> BED12 (one line per
           read). The DAF analogue of --m6a for IUPAC-encoded BAMs that
           don't carry MM/ML.
+  - var: (--variants VCF) the allele each read carries at VCF sites.
+  - sv:  (--sv) per-read CIGAR deletions/insertions, long clips, SA tag.
+         See fiberhmm.io.read_layers.
 
 Extracts various tag types from tagged BAM files using region-parallel processing:
   - nucleosome: Nucleosomes (ns/nl tags) -> BED12 (one line per read)
@@ -2169,6 +2172,10 @@ Examples:
 
     # Keep BED files (in addition to bigBed)
     fiberhmm-extract -i tagged.bam --keep-bed
+
+    # Per-read alleles at a sample's heterozygous sites, and SV signatures
+    fiberhmm-extract -i tagged.bam --variants calls.vcf.gz \\
+        --variants-sample HG002 --variants-het-only --sv
         """
     )
 

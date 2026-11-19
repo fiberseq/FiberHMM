@@ -35,6 +35,11 @@ Two base schema flavors:
       - msp       : +1  (blockAq)
       - m6a / m5c : +1  (blockMl; DddA ddda_mcg interval spans carry 0)
       - tf        : +3  (blockTq, blockEl, blockEr) -- matches MA tf.QQQ
+
+The opt-in read layers ``var`` (``--variants``) and ``sv`` (``--sv``) always
+carry their own columns right after ``chromStarts`` (``_LAYER_FIELDS``):
+``var`` blockAllele, blockBq; ``sv`` blockType, blockLen, mapq, readLen,
+flag, sa. Haplotype fields and ``isDuplicate`` follow as for every layer.
 """
 from __future__ import annotations
 

@@ -307,8 +307,11 @@ def find_daf_snp_vcf(bam_path: str, header=None) -> Tuple[Optional[str], List[st
 
 
 def bam_looks_daf(bam_path: str, header=None) -> bool:
-    """BAM-level DAF evidence: a fiberhmm-daf-encode @PG, a fiberhmm-call
-    @PG declaring ``mode=daf``, or the engine's MM/R-Y sniff."""
+    """BAM-level DAF evidence from the header: a fiberhmm-daf-encode @PG or
+    a fiberhmm-call @PG declaring ``mode=daf``. (The engine's MM sniff is not
+    used: fibertools writes m6A on the opposite strand as ``T-a``, which it
+    reads as DAF.) Reads carrying R/Y or ``st`` are DAF whatever the header
+    says (:func:`daf_conversion`)."""
     if header is None:
         with pysam.AlignmentFile(bam_path, 'rb', check_sq=False) as bam:
             header = bam.header.to_dict()
@@ -320,11 +323,7 @@ def bam_looks_daf(bam_path: str, header=None) -> bool:
             return True
         if program.startswith('fiberhmm-call') and 'mode=daf' in str(pg.get('DS', '')):
             return True
-    try:
-        from fiberhmm.inference.engine import detect_mode_from_bam
-        return detect_mode_from_bam(bam_path, n_sample=50) == 'daf'
-    except Exception:
-        return False
+    return False
 
 
 # ---------------------------------------------------------------------------

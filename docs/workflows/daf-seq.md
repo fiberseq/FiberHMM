@@ -191,6 +191,21 @@ FiberHMM DAF SNP mask: 0 sites
 
 Overriding a threshold is recorded as a `custom` policy in the JSON.
 
+**Other SNVs (opt-in).** The screen reports only C>T and G>A sites, the ones
+deamination can mimic. `fiberhmm-daf-snps --all-snvs` (or
+`fiberhmm-call --daf-snp-all-snvs`) also reports the other recurrent
+substitutions. Deamination cannot produce these, so reads of both
+conversion directions count, and each direction must pass the same
+fraction, depth and read-count thresholds. They go to the VCF (INFO
+`SCREEN=all_snvs`, with per-direction `CTD`/`CTA`/`GAD`/`GAA`) and the JSON
+(`other_snv_calls`), not to the BED mask, so calling is unchanged. The VCF
+is then a fuller site list for
+[`fiberhmm-extract --variants auto`](extracting.md#variant-alleles-var).
+Pass 1 counts every such mismatch, so memory grows with the run's
+sequencing-error rate. This is fine for amplicons and plasmids; on
+whole-genome Nanopore data an external caller (Clair3, DeepVariant) is the
+better source of sites.
+
 ## Strand-swap chimeras
 
 A read deaminated C→T in one segment and G→A in another is a strand-swap

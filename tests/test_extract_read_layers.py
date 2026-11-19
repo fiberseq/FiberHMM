@@ -31,6 +31,7 @@ from fiberhmm.io.read_layers import (
     SV_INS,
     VariantOptions,
     VariantSite,
+    bam_looks_daf,
     daf_conversion,
     find_daf_snp_vcf,
     genotype_read,
@@ -210,6 +211,15 @@ def test_daf_strand_from_md_and_modes():
     # A DAF read without conversions has no decided strand.
     plain = _read('plain', 900, seq, tags=[('MD', _md(seq, seq))])
     assert daf_conversion(plain, _daf_options(daf='on')) == 'both'
+
+
+def test_bam_level_daf_evidence_comes_from_the_header():
+    def pg(program, ds=''):
+        return {'PG': [{'ID': program, 'PN': program, 'DS': ds}]}
+    assert bam_looks_daf('x', pg('fiberhmm-call', 'coord=molecular; mode=daf enzyme=ddda'))
+    assert bam_looks_daf('x', pg('fiberhmm-daf-encode'))
+    assert not bam_looks_daf('x', pg('fiberhmm-call', 'mode=pacbio-fiber'))
+    assert not bam_looks_daf('x', pg('fibertools-rs'))   # m6A T-a is not DAF
 
 
 # ---------------------------------------------------------------------------
