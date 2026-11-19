@@ -4,6 +4,91 @@
 
 Includes the unreleased 3.0.6 changes.
 
+### Candidate (not yet accepted): stricter DAF chimera detector
+
+From `feat/chimera-qc-split` (built on 3.0.3 as "3.0.4"; that number went to the
+`--chimeras` dedupe below). Under evaluation for 3.1.0; if accepted, flagged-read
+counts change and DAF libraries should be re-called.
+
+#### Changed
+
+- **The DAF chimera detector is now stricter by default:** each segment
+  needs 10 same-strand deamination events at 90% purity (was 5 and 80%),
+  counting only deaminations with base quality 15 or more when the record
+  has QUAL (`--chimera-min-baseq`, 0 disables), and the segment's
+  same-strand deaminations must span at least 200 query bp
+  (`--chimera-min-span`, 0 disables). The base-quality filter also anchors
+  split-mode breakpoints. Calling itself still uses every deamination.
+- **Reads with several switches are chimeras too:** a read whose
+  deaminations cut into three or more alternating segments that each pass
+  the rule (for example CT → GA → CT, an opposite-strand island) is flagged
+  or removed, and split mode cuts it into all its pieces
+  (`<name>/c0`, `<name>/c1`, `<name>/c2`, ...; `xb` lists every gap).
+  `--no-chimera-multi-switch` tests one switch only.
+- Duplicate-flagged (`0x400`) reads are still tested and marked but are no
+  longer counted in the chimera count, fraction, regions or grade;
+  `n_duplicates_excluded` reports how many were left out.
+- Flag and remove therefore mark fewer reads than 3.0.3. The 3.0.3 detector
+  is available with `--chimera-min-seg 5 --chimera-purity 0.8
+  --chimera-min-baseq 0 --chimera-min-span 0 --no-chimera-multi-switch
+  --no-chimera-error-mask`; with those options DAF output records are
+  identical to 3.0.3 (only the `@PG` DS line differs). One decision drives
+  flag, remove and split, the count and the grade.
+  `fiberhmm-export-posteriors` uses the same defaults and options. Non-DAF
+  output records are unchanged.
+
+#### Added
+
+- **Chimera-only error mask.** When the DAF SNP screen runs, its two passes
+  also find sites with recurrent opposite-strand mismatches on one strand
+  only, which the bidirectional SNP screen leaves alone. Only clearly
+  single-strand, non-chimeric fibers vote (10 or more deaminations, purity
+  0.92 or more, base quality 15 or more, fixed whatever
+  `--chimera-min-baseq` is). A site is masked at depth 20 or
+  more, 4 or more mismatches, fraction 0.05 or more and binomial
+  P(X ≥ k | depth, 0.01) below 1e-4. The mask is written to
+  `qc/<stem>.daf_snps.chimera_error_mask.bed` and `.json`, never into the
+  SNP BED, and removes events from the chimera test only. Without the SNP
+  screen there is no error mask and the sidecar says why;
+  `--no-chimera-error-mask` turns it off.
+- The chimeras sidecar and `@PG` DS record the detector settings
+  (`min_seg`, `purity`, `min_baseq`, `min_span`, `multi_switch`), the error
+  mask (on/off, number of sites) and the duplicates left out.
+- QC grades the chimera fraction as its own row: PASS below 10%, WARN from
+  10%, WARN with severity `high` from 20%. A chimera WARN can turn an
+  overall PASS into WARN, never into FAIL, and does not change the score.
+  Non-DAF verdicts are unchanged. The count and grade are in `fiberhmm-call`
+  stderr, the `qc/<stem>.chimeras.json` sidecar and the QC report (JSON,
+  TSV, text, PDF/PNG), with a per-region table
+  (`<prefix>.qc.chimera_regions.tsv`).
+- A 3.0.3 sidecar or BAM is graded on its recorded count; the grade's
+  `basis` is `lenient` and its note says the count came from the older
+  detector (5 and 0.8), which marks more reads than the default.
+- `fiberhmm-call` and `fiberhmm-pipeline` print a `WARNING:` line when the
+  chimera fraction is 10% or more.
+- Every chimera report notes that same-strand chimeras are invisible, so
+  with balanced strands the unflagged reads still contain roughly as many
+  undetected chimeras as were flagged, and that read counts, occupancy and
+  long-range results from a library with many chimeras should be taken
+  with caution.
+- `--chimeras split` (optional, not the default): each chimeric alignment is
+  cut at its breakpoint gaps into single-strand records, `<name>/c0`,
+  `<name>/c1`, ... (`xc:Z:split`, `xi`, `xn`, `xb`), which are called separately.
+  The gap is dropped and pieces shorter than `--min-read-length` are
+  dropped. Pieces keep `MM`/`ML` (and `Mm`/`Ml`) re-indexed to the piece,
+  with `MN` set to its length; `MM` without `ML` is re-indexed on its own;
+  a hard-clipped record or one whose `MM`/`ML` do not match SEQ gives
+  pieces without them. Unmapped records (`--process-unmapped`, streamed
+  input) have no CIGAR to cut and are kept whole and flagged. See the
+  DAF-seq guide for the caveats.
+- QC's state-aware rates use the call's chimera detector: settings from
+  the `@PG` DS (a 3.0.3 call gets the 3.0.3 detector) and its chimera error
+  mask, found through the BAM-validated chimeras sidecar (also for a custom
+  `--daf-snp-output-prefix`), the SNP report or at
+  `qc/<stem>.daf_snps.chimera_error_mask.bed` (`unavailable` in the report
+  when missing). Chimeras skipped there are counted as unique read names
+  without duplicate-flagged reads, as in the chimera count.
+
 ### Added
 
 - `fiberhmm-footprint`: motif-anchored footprint scoring from the calls in a
