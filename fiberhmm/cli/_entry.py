@@ -151,6 +151,12 @@ def footprint_model_main():
     return run_reporting_input_errors('fiberhmm-footprint-model', main)
 
 
+def footprint_main():
+    _notify()
+    from fiberhmm.cli.motif_footprint import main
+    return run_reporting_input_errors('fiberhmm-footprint', main)
+
+
 def tag_families_main():
     _notify()
     from fiberhmm.cli.tag_families import main

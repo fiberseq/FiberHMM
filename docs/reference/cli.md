@@ -600,6 +600,40 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--json-progress` | off | Structured progress on stderr (JSON lines) |
 | `--output` | — | New or empty output directory |
 
+## fiberhmm-footprint
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--bam` | — | Indexed BAM with FiberHMM calls (MA tf/nuc/msp layers) |
+| `--calls-bb` | — | FiberHMM call bigBeds from fiberhmm-extract: PREFIX_tf.bb, PREFIX_msp.bb and, when present, PREFIX_nucleosome.bb and PREFIX_m6a.bb (extract with --block-scores for per-call tq, outer edges and m6A ML) |
+| `--tf-bb` | — | Explicit TF call bigBed (overrides --calls-bb) |
+| `--msp-bb` | — | Explicit MSP bigBed |
+| `--nuc-bb` | — | Explicit nucleosome bigBed (optional; nucleosome overlap column) |
+| `--m6a-bb` | — | Explicit m6A bigBed (optional; needed for --require-unmodified) |
+| `--bed` | required | Motifs: BED (BED6: chrom, start, end, name, score, strand; 0-based half-open; .gz ok) or bigBed (detected by its magic number; e.g. JASPAR genome-wide TFBS tracks; queried only where the BAM has reads, or in --region). Each distinct name (bigBed: TF-name field when present) is one motif set and one MA layer pair (fp_NAME, fpneg_NAME) |
+| `--motif-name` | — | Keep motifs whose name, TF name or matrix ID matches (case-insensitive; MA0139 matches MA0139.2) |
+| `--min-score` | — | Keep motifs with score column &gt;= this |
+| `--max-pvalue` | — | bigBed with a p-value field only: keep motifs with p &lt;= this (JASPAR UCSC tracks instead encode p in the score: score = -log10(p) x 100) |
+| `--region` | — | bigBed only: query just these regions (repeatable; 0-based half-open) |
+| `--allow-many-layers` | off | Allow more than 20 motif sets (MA layer pairs) in one run |
+| `-o` / `--out` | `-` | Per-motif table, ft footprint style (default: stdout) |
+| `--per-molecule` | — | Also write one row per molecule x motif (status, code, call bounds, LLR), in genomic order of the motifs |
+| `--out-bam` | — | Also write a copy of --bam with per-motif MA layers fp_NAME (footprinted) and fpneg_NAME (eligible, not footprinted). Existing layers are kept; layers of the same name are replaced |
+| `--out-bb` | — | Also write per-read BED12 bigBeds of footprinted motif instances, PREFIX_fp_NAME.bb, one per motif set (needs bedToBigBed on PATH) |
+| `--layer-name` | — | Use one layer name for every BED row instead of the BED name column (sanitized to [A-Za-z0-9_]; written as fp_NAME / fpneg_NAME) |
+| `--min-llr` | `5.0` | Minimum LLR (nats) of a footprint call; tq &gt;= 10 x this (default 5) |
+| `--edges` | `outer` | Call bounds that must contain the motif: outer = conservative bounds extended through the edge ambiguity in the el/er bytes, up to the terminating informative position (default); conservative = the call as stored Choices: `outer`, `conservative`. |
+| `--outer-bound` | `exclusive` | With --edges outer: whether the outer bound stops just before the terminating informative position (exclusive, default) or includes it (inclusive, one more base per side) Choices: `exclusive`, `inclusive`. |
+| `--max-width` | `74` | Upper bound on footprint call width (conservative reference width, bp, inclusive); 0 = no cap (default 74: label-free 95th percentile of motif-overlapping footprint call widths). A ChIP-calibrated window (fiberhmm-footprint calibrate) usually does better |
+| `--min-width` | `0` | Optional lower bound on footprint call width (conservative reference width, bp, inclusive); default 0 |
+| `--settings` | — | Load the width window and rule options saved by fiberhmm-footprint calibrate; flags given on the command line override it |
+| `--require-unmodified` | off | Also require no m6A call (ML &gt;= --ml) inside the motif (MM/ML m6A only) |
+| `--ml` | `125` | ML threshold for --require-unmodified (default 125, as ft) |
+| `--msp-bam` | — | Advanced: take MSPs from this BAM instead (matched by read name), e.g. the BAM ft footprint read, for like-for-like comparisons |
+| `-F` / `--filter` | `2308` | Skip reads with any of these flag bits (default 0x904: unmapped, secondary, supplementary) |
+| `--min-mapq` | `0` | Skip reads below this MAPQ (default 0) |
+| `--cores` | `1` | Worker processes over motif clusters (default 1) |
+
 ## fiberhmm-footprint-model
 
 | Flag | Default | Description |
@@ -834,6 +868,27 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `bam` | required | BAM to update in place |
 | `--types` | — | Logical MA name(s), comma- or space-separated (no strand/quality suffixes) |
 | `--scan` | off | Exhaustively scan every alignment and discover non-empty MA types |
+| `--io-threads` | `4` | BAM compression and index threads (default: 4) |
+
+### fiberhmm-utils ma-list
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `bam` | required | BAM to inspect |
+| `--sample` | `1000` | Alignments to read (default 1000; 0 = all) |
+| `--scan` | off | Read every alignment (exact counts) |
+| `--region` | — | Only alignments in CHROM or CHROM:START-END (0-based, needs an index) |
+| `--io-threads` | `2` | BAM decompression threads (default: 2) |
+
+### fiberhmm-utils ma-drop
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `bam` | required | Input BAM |
+| `--layers` | required | Logical layer names or globs, comma- or space-separated |
+| `-o` / `--output` | — | Output BAM (indexed) |
+| `--in-place` | off | Replace the input atomically (indexes rebuilt), like ma-types |
+| `--force` | off | Allow dropping core layers (nuc, msp, tf) |
 | `--io-threads` | `4` | BAM compression and index threads (default: 4) |
 
 ### fiberhmm-utils fix-bigbed

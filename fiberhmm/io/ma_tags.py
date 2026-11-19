@@ -395,3 +395,74 @@ def parse_aq_array(aq, qual_spec_per_type: Sequence[str],
                 result.append([int(aq_values[i]) for i in range(idx, end)])
                 idx += n_q
     return result
+
+
+CORE_MA_LAYERS = frozenset({'nuc', 'msp', 'tf'})
+
+
+def replace_read_tags(read, updates) -> None:
+    """Set or remove aux tags without moving the others.
+
+    ``updates`` maps tag -> ``(value, value_type)`` (``value_type`` may be None
+    for arrays, whose subtype comes from the ``array`` typecode) or ``None`` to
+    remove the tag. Unlike repeated ``set_tag`` calls, which move a replaced
+    tag to the end of the record, every tag keeps its position, so untouched
+    tags stay byte-identical and a replaced tag stays where it was. New tags
+    are appended in ``updates`` order.
+    """
+    out, done = [], set()
+    for tag, value, value_type in read.get_tags(with_value_type=True):
+        if tag in updates:
+            done.add(tag)
+            if updates[tag] is None:
+                continue
+            value, value_type = updates[tag]
+        out.append((tag, value) if value_type in (None, 'B') else (tag, value, value_type))
+    for tag, update in updates.items():
+        if tag not in done and update is not None:
+            value, value_type = update
+            out.append((tag, value) if value_type in (None, 'B') else (tag, value, value_type))
+    read.set_tags(out)
+
+
+def drop_ma_layers(read, drop) -> int:
+    """Remove MA groups whose logical name satisfies ``drop(name)``.
+
+    Their AQ quality bytes and AN names go with them; every other group, byte
+    and name is kept in order, and other tags do not move. An MA left with no
+    groups is removed together with AQ/AN; AQ is removed when no bytes remain
+    and AN when no annotation keeps a name. Returns the number of intervals
+    removed. Raises ``ValueError`` on an inconsistent MA/AQ/AN.
+    """
+    if not read.has_tag('MA'):
+        return 0
+    ma = str(read.get_tag('MA'))
+    types = parse_ma_tag(ma)['raw_types']
+    if not any(drop(name) for name, *_ in types):
+        return 0
+    aq = list(read.get_tag('AQ')) if read.has_tag('AQ') else []
+    count = sum(len(iv) for *_, iv in types)
+    names = parse_an_tag(str(read.get_tag('AN'))) if read.has_tag('AN') else None
+    if len(aq) != sum(len(q) * len(iv) for _, _, q, iv in types) or (names is not None and len(names) != count):
+        raise ValueError(f'{read.query_name}: MA/AQ/AN length mismatch')
+    sections = [s for s in ma.split(';')[1:] if s]
+    kept, quals, kept_names, qi, ni, removed = [ma.split(';')[0]], [], [], 0, 0, 0
+    for section, (name, _strand, spec, intervals) in zip(sections, types):
+        n, nq = len(intervals), len(intervals) * len(spec)
+        if drop(name):
+            removed += n
+        else:
+            kept.append(section)
+            quals.extend(aq[qi:qi + nq])
+            if names is not None:
+                kept_names.extend(names[ni:ni + n])
+        qi += nq
+        ni += n
+    has_groups = len(kept) > 1
+    updates = {'MA': (';'.join(kept), 'Z') if has_groups else None}
+    if read.has_tag('AQ') or quals:
+        updates['AQ'] = (array.array('B', quals), None) if (has_groups and quals) else None
+    if names is not None:
+        updates['AN'] = (format_an_tag(kept_names), 'Z') if (has_groups and any(kept_names)) else None
+    replace_read_tags(read, updates)
+    return removed

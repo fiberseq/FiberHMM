@@ -60,6 +60,7 @@ consensus = ["numba>=0.55", "scikit-learn>=1.1", "joblib>=1.4.2", "threadpoolctl
 cuda = ["torch>=2.0"]
 plots = ["matplotlib>=3.5"]
 posteriors = ["h5py>=3.0"]
+bigbed = ["pyBigWig>=0.3"]
 all = [
     "matplotlib>=3.5",
     "h5py>=3.0",
@@ -99,6 +100,7 @@ fiberhmm-strand-rescue = "fiberhmm.cli._entry:strand_rescue_main"
 fiberhmm-strand-rescue-annotate = "fiberhmm.cli._entry:strand_rescue_annotate_main"
 fiberhmm-strand-rescue-audit = "fiberhmm.cli._entry:strand_rescue_audit_main"
 fiberhmm-footprint-model = "fiberhmm.cli._entry:footprint_model_main"
+fiberhmm-footprint = "fiberhmm.cli._entry:footprint_main"
 fiberhmm-tag-consensus = "fiberhmm.cli._entry:tag_families_main"
 fiberhmm-consensus = "fiberhmm.inference.consensus.cli:main"
 fiberhmm-transfer = "fiberhmm.inference.consensus.transfer_cli:main"

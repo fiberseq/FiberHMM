@@ -11,6 +11,8 @@ Usage:
     fiberhmm-utils adjust model.json --state accessible --scale 1.1 -o adjusted.json
     fiberhmm-utils ma-types calls.bam --types nuc,msp,tf
     fiberhmm-utils ma-types calls.bam --scan
+    fiberhmm-utils ma-list calls.bam
+    fiberhmm-utils ma-drop calls.bam --layers fp_REST,fp_CTCF -o out.bam
 """
 
 import argparse
@@ -1063,6 +1065,204 @@ def cmd_ma_types(args):
 
 
 # =============================================================================
+# ma-list / ma-drop subcommands: inspect and remove MA annotation layers
+# =============================================================================
+
+def _parse_region(value):
+    """CHROM or CHROM:START-END (0-based half-open) -> pysam fetch arguments."""
+    chrom, sep, span = value.rpartition(':')
+    if not sep:
+        return value, None, None
+    start, dash, end = span.replace(',', '').partition('-')
+    try:
+        a, b = int(start), int(end)
+    except ValueError:
+        raise SystemExit(f'--region {value!r}: expected CHROM or CHROM:START-END') from None
+    if not dash or a < 0 or b <= a:
+        raise SystemExit(f'--region {value!r}: expected CHROM:START-END with END > START >= 0')
+    return chrom, a, b
+
+
+def ma_layer_counts(bam_path, sample=1000, region=None, io_threads=1):
+    """Per MA group type string: molecules carrying it and intervals.
+
+    ``sample`` = number of alignments to read (0 = all). Returns
+    ``(counts, records_read, declared, exhaustive)`` with counts ordered by
+    first appearance: ``{type_string: [logical_name, molecules, intervals]}``."""
+    import pysam
+    from fiberhmm.io.bam_header import declared_ma_types
+    from fiberhmm.io.ma_tags import parse_ma_tag
+
+    counts = {}
+    records = 0
+    exhaustive = True
+    with pysam.AlignmentFile(bam_path, 'rb', check_sq=False, threads=io_threads) as bam:
+        declared = declared_ma_types(bam.header)
+        if region:
+            chrom, a, b = _parse_region(region)
+            reads = bam.fetch(chrom, a, b)
+        else:
+            reads = bam.fetch(until_eof=True)
+        for read in reads:
+            if sample and records >= sample:
+                exhaustive = False
+                break
+            records += 1
+            if not read.has_tag('MA'):
+                continue
+            seen = set()
+            for name, strand, spec, intervals in parse_ma_tag(str(read.get_tag('MA')))['raw_types']:
+                key = f'{name}{strand}{spec}'
+                row = counts.setdefault(key, [name, 0, 0])
+                row[2] += len(intervals)
+                if key not in seen:
+                    seen.add(key)
+                    row[1] += 1
+    return counts, records, declared, exhaustive
+
+
+def cmd_ma_list(args):
+    """List the MA layers of a BAM."""
+    if not os.path.isfile(args.bam):
+        raise SystemExit(f"BAM not found: {args.bam}")
+    sample = 0 if args.scan else args.sample
+    if sample < 0:
+        raise SystemExit('--sample must be >= 0')
+    counts, records, declared, exhaustive = ma_layer_counts(
+        args.bam, sample=sample, region=args.region, io_threads=args.io_threads)
+    scope = 'all' if exhaustive else 'first'
+    where = f' in {args.region}' if args.region else ''
+    print(f'# {scope} {records:,} alignments{where}' +
+          ('' if exhaustive else ' (sample; --scan for exact counts)'))
+    print('layer\ttype\tdeclared\tmolecules\tintervals')
+    declared_set = set(declared)
+    for key, (name, molecules, intervals) in counts.items():
+        print(f'{name}\t{key}\t{"yes" if name in declared_set else "no"}\t{molecules}\t{intervals}')
+    observed = {row[0] for row in counts.values()}
+    for name in declared:
+        if name not in observed:
+            print(f'{name}\t.\tyes\t0\t0')
+    return 0
+
+
+def _resolve_drop_patterns(values):
+    """Comma/space-separated logical names or fnmatch globs (fp_*)."""
+    import fnmatch
+    patterns = [f.strip() for v in values for f in str(v).split(',') if f.strip()]
+    if not patterns:
+        raise SystemExit('--layers: give at least one layer name or glob')
+    for p in patterns:
+        if not re.fullmatch(r'[A-Za-z0-9_*?\[\]!]+', p):
+            raise SystemExit(f'--layers {p!r}: use logical names or globs (fp_REST, fp_*), not type strings like tf.QQQ')
+    return patterns, (lambda name: any(fnmatch.fnmatchcase(name, p) for p in patterns))
+
+
+def drop_ma_layers_bam(bam_path, out_path, matches, force=False, io_threads=1):
+    """Copy ``bam_path`` to ``out_path`` without the MA layers ``matches`` selects.
+
+    Every other MA group, AQ byte, AN name and tag is kept byte-identical; the
+    @CO MA-TYPES declaration is rewritten without the dropped names. Returns a
+    summary dict. Refuses core layers (nuc, msp, tf) unless ``force``."""
+    import stat
+    import tempfile
+    import pysam
+    from fiberhmm.inference.bam_output import commit_output
+    from fiberhmm.io.bam_header import MA_TYPES_PREFIX, append_pg_record, declared_ma_types, is_valid_ma_name
+    from fiberhmm.io.ma_tags import CORE_MA_LAYERS, drop_ma_layers, parse_ma_tag
+
+    core = sorted(n for n in CORE_MA_LAYERS if matches(n))
+    if core and not force:
+        raise ValueError('refusing to drop core layer(s) ' + ','.join(core) +
+                         ' (they hold the footprint calls); pass --force to drop them anyway')
+    bam_path = os.path.abspath(bam_path)
+    out_path = os.path.abspath(out_path)
+    in_place = out_path == bam_path
+    if not in_place and os.path.exists(out_path):
+        raise ValueError(f'output exists: {out_path}')
+    out_dir = os.path.dirname(out_path) or '.'
+    fd, temp_bam = tempfile.mkstemp(prefix=f'.{os.path.basename(out_path)}.ma_drop.', suffix='.bam', dir=out_dir)
+    os.close(fd)
+    temp_artifacts = {temp_bam}
+    dropped, reads_changed, records = defaultdict(int), 0, 0
+    try:
+        with pysam.AlignmentFile(bam_path, 'rb', check_sq=False, threads=io_threads) as source:
+            hd = source.header.to_dict()
+            declared = declared_ma_types(source.header)
+            kept_declared = [n for n in declared if not matches(n)]
+            comments = [c for c in hd.get('CO', []) if not str(c).startswith(MA_TYPES_PREFIX)
+                        or not all(is_valid_ma_name(n) for n in str(c)[len(MA_TYPES_PREFIX):].split(','))]
+            if kept_declared:
+                # one declaration in the original first-seen order, where the first one was
+                first = next((i for i, c in enumerate(hd.get('CO', [])) if str(c).startswith(MA_TYPES_PREFIX)), len(comments))
+                position = sum(1 for c in hd.get('CO', [])[:first] if c in comments)
+                comments.insert(position, MA_TYPES_PREFIX + ','.join(kept_declared))
+            hd['CO'] = comments
+            header = append_pg_record(pysam.AlignmentHeader.from_dict(hd), dict(
+                PN='fiberhmm-utils', DS='ma-drop: removed MA layers; other tags carried over unchanged',
+                CL=' '.join(sys.argv)))
+            with pysam.AlignmentFile(temp_bam, 'wb', header=header, threads=io_threads) as sink:
+                for read in source.fetch(until_eof=True):
+                    records += 1
+                    if read.has_tag('MA'):
+                        names = [t[0] for t in parse_ma_tag(str(read.get_tag('MA')))['raw_types']]
+                        hit = [n for n in names if matches(n)]
+                        if hit:
+                            drop_ma_layers(read, matches)
+                            reads_changed += 1
+                            for n in hit:
+                                dropped[n] += 1
+                    sink.write(read)
+        if in_place:
+            os.chmod(temp_bam, stat.S_IMODE(os.stat(bam_path).st_mode))
+            index_targets = _existing_bam_indexes(bam_path)
+        else:
+            index_targets = _existing_bam_indexes(bam_path)[:1] or [(bam_path + '.bai', 'bai')]
+        for kind in dict.fromkeys(kind for _p, kind in index_targets):
+            pysam.index(*(['-c'] if kind == 'csi' else []), '-@', str(io_threads), temp_bam)
+            temp_artifacts.add(f'{temp_bam}.{kind}')
+        if in_place:
+            commit_output(temp_bam, bam_path)
+        else:
+            if os.path.exists(out_path):
+                raise ValueError(f'output exists: {out_path}')
+            for kind in dict.fromkeys(kind for _p, kind in index_targets):
+                os.replace(f'{temp_bam}.{kind}', f'{out_path}.{kind}')
+            os.replace(temp_bam, out_path)
+        temp_artifacts.clear()
+    finally:
+        for path in temp_artifacts:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+    removed_declared = [n for n in declared if matches(n)]
+    return dict(output=out_path, alignments=records, reads_changed=reads_changed,
+                layers_dropped=dict(dropped), removed_from_declaration=removed_declared)
+
+
+def cmd_ma_drop(args):
+    """Remove MA layers from every read of a BAM."""
+    if not os.path.isfile(args.bam):
+        raise SystemExit(f"BAM not found: {args.bam}")
+    if bool(args.output) == bool(args.in_place):
+        raise SystemExit('give exactly one of -o/--output or --in-place')
+    if args.output and os.path.abspath(args.output) == os.path.abspath(args.bam):
+        raise SystemExit('-o names the input BAM; use --in-place to rewrite it')
+    patterns, matches = _resolve_drop_patterns(args.layers)
+    try:
+        summary = drop_ma_layers_bam(args.bam, args.bam if args.in_place else args.output, matches,
+                                     force=args.force, io_threads=args.io_threads)
+    except ValueError as error:
+        raise SystemExit(f'ma-drop: {error}') from error
+    if not summary['layers_dropped'] and not summary['removed_from_declaration']:
+        print(f"No layer matched {','.join(patterns)}; wrote an unchanged copy to {summary['output']}"
+              if not args.in_place else f"No layer matched {','.join(patterns)}; {args.bam} rewritten unchanged")
+    else:
+        print(json.dumps(summary))
+    return 0
+
+
+# =============================================================================
 # fix-bigbed subcommand: repair the embedded autoSQL Sample tag
 # =============================================================================
 
@@ -1291,6 +1491,8 @@ Subcommands:
   transfer    Transfer emission probs between modalities (e.g., fiber-seq to DAF-seq)
   adjust      Apply scaling to emission probabilities
   ma-types    Add/repair the advisory MA type declaration in a BAM, in place
+  ma-list     List the MA layers of a BAM (molecules, intervals, declared)
+  ma-drop     Remove MA layers (names or globs) from every read of a BAM
   fix-bigbed  Repair the embedded autoSQL Sample tag in existing bigBed(s)
 
 Examples:
@@ -1301,6 +1503,8 @@ Examples:
   fiberhmm-utils adjust model.json --state accessible --scale 1.1 -o adjusted.json
   fiberhmm-utils ma-types calls.bam --types nuc,msp,tf
   fiberhmm-utils ma-types calls.bam --scan
+  fiberhmm-utils ma-list calls.bam --scan
+  fiberhmm-utils ma-drop calls.bam --layers 'fp_*' -o calls.nofp.bam
   fiberhmm-utils fix-bigbed sample.filtered_T_*.bb sample.filtered_GA_*.bb --in-place
         """
     )
@@ -1402,6 +1606,41 @@ Examples:
         help='BAM compression and index threads (default: 4)',
     )
 
+    # --- ma-list ---
+    p_ma_list = subparsers.add_parser(
+        'ma-list',
+        help='List the MA annotation layers of a BAM',
+        description=('Show each MA layer (full type string, e.g. fp_REST.QQQ), the molecules carrying it, its '
+                     'intervals and whether @CO MA-TYPES declares it. Reads the first --sample alignments by '
+                     'default; --scan reads all of them for exact counts.'),
+    )
+    p_ma_list.add_argument('bam', help='BAM to inspect')
+    how = p_ma_list.add_mutually_exclusive_group()
+    how.add_argument('--sample', type=int, default=1000, metavar='N',
+                     help='Alignments to read (default 1000; 0 = all)')
+    how.add_argument('--scan', action='store_true', help='Read every alignment (exact counts)')
+    p_ma_list.add_argument('--region', help='Only alignments in CHROM or CHROM:START-END (0-based, needs an index)')
+    p_ma_list.add_argument('--io-threads', type=int, default=2, help='BAM decompression threads (default: 2)')
+
+    # --- ma-drop ---
+    p_ma_drop = subparsers.add_parser(
+        'ma-drop',
+        help='Remove MA annotation layers from every read of a BAM',
+        description=('Remove the named MA layers (logical names or globs, e.g. fp_REST or fp_*) from every '
+                     "read, with their AQ bytes and AN names; all other layers and tags stay byte-identical "
+                     'and the @CO MA-TYPES declaration is updated. Core layers (nuc, msp, tf) are refused '
+                     'unless --force.'),
+    )
+    p_ma_drop.add_argument('bam', help='Input BAM')
+    p_ma_drop.add_argument('--layers', nargs='+', required=True, metavar='NAME[,NAME...]',
+                           help='Logical layer names or globs, comma- or space-separated')
+    where = p_ma_drop.add_mutually_exclusive_group()
+    where.add_argument('-o', '--output', help='Output BAM (indexed)')
+    where.add_argument('--in-place', action='store_true',
+                       help='Replace the input atomically (indexes rebuilt), like ma-types')
+    p_ma_drop.add_argument('--force', action='store_true', help='Allow dropping core layers (nuc, msp, tf)')
+    p_ma_drop.add_argument('--io-threads', type=int, default=4, help='BAM compression and index threads (default: 4)')
+
     # --- fix-bigbed ---
     p_fixbb = subparsers.add_parser(
         'fix-bigbed',
@@ -1444,6 +1683,10 @@ Examples:
         cmd_adjust(args)
     elif args.command == 'ma-types':
         cmd_ma_types(args)
+    elif args.command == 'ma-list':
+        cmd_ma_list(args)
+    elif args.command == 'ma-drop':
+        cmd_ma_drop(args)
     elif args.command == 'fix-bigbed':
         cmd_fix_bigbed(args)
 

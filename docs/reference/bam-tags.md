@@ -48,6 +48,8 @@ DddA island groups are kept.
 | `tf_consensus.QQQQQQ` | `tq`, `fi`, `fq`, `op`, `sq`, `q0` | `fiberhmm-consensus`, `fiberhmm-transfer` | native TF calls labelled with their class ([Consensus](../workflows/consensus.md#family-tagged-bams)) |
 | `tf_recaller.QQQQQQ` | `tq`, `fi`, `tier`, `q0`, `lr`, `rr` | `fiberhmm-consensus --bam-recaller-layer` | the lattice recaller's own class calls |
 | `tf_cross_consensus.QQQQQQ` | as `tf_consensus` | `fiberhmm-consensus --engine staged_native_families` (XCR) | deprecated staged engine |
+| `fp_NAME.QQQ` | `tq`, `cw`, `ef` | `fiberhmm-footprint --out-bam` | motif footprinted by a FiberHMM call: call `tq`, conservative width, edge flag ([Motif footprints](../workflows/motif-footprint.md#outputs)) |
+| `fpneg_NAME.Q` | `reason` | `fiberhmm-footprint --out-bam` | motif eligible (in an MSP) but not footprinted |
 
 The strand field of every FiberHMM group is `.`, except the duplex
 coverage groups of `fiberhmm-pair`, whose strand is `+` (`deam+`, CT source)
