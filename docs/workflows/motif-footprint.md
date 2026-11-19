@@ -26,7 +26,7 @@ samples, and consensus to discover and quantify footprint classes where you
 need them.
 
 The width window is what makes the rule work. Without it, FiberHMM's calls
-score about the same as ft. Most false positives are broad protections that
+score within about 0.01 AUROC of ft. Most false positives are broad protections that
 are not motif-sized, and the window removes them.
 
 ```bash

@@ -65,7 +65,7 @@ molecule counts as footprinted at a motif when:
 4. optionally, with `--require-unmodified`, no m6A falls inside the motif.
 
 The width window is where the gain over ft comes from. Without it,
-FiberHMM's calls score about the same as ft. Broad protections that are not
+FiberHMM's calls score within about 0.01 AUROC of ft. Broad protections that are not
 motif-sized make up most of the false positives, and the window removes them.
 The default window, 0-74 bp, needs no labels: 74 bp is the 95th percentile of
 footprint calls that overlap motifs. Where ChIP-seq peaks exist,
