@@ -149,7 +149,7 @@ lines; calibrated windows are scored on cell lines they were not learned on
 
 | Factor (cell lines) | ft footprint | label-free 0-74 bp | ChIP-calibrated, held out | Window learned on all lines |
 |---|---|---|---|---|
-| CTCF (5) | 0.845 | 0.864 | 0.876 | 20-60 bp |
+| CTCF (5) | 0.845 | 0.864 | 0.876 | 20-55 bp |
 | NRF1 (4) | 0.757 | 0.797 | 0.821 | 15-55 bp |
 | REST (4) | 0.728 | 0.792 | 0.836 | 10-35 bp |
 | USF1 (4) | 0.696 | 0.703 | 0.710 | 10-65 bp |
@@ -229,7 +229,7 @@ within 0.005 AUROC of the optimum, for choosing conservative bounds), the
 held-out AUROC per fold, and a ready-to-paste line:
 
 ```text
-use: fiberhmm-footprint --min-width 20 --max-width 60 --require-unmodified
+use: fiberhmm-footprint --min-width 20 --max-width 55 --require-unmodified
   or: fiberhmm-footprint --settings ctcf_window.settings.json
 ```
 

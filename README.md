@@ -90,7 +90,7 @@ list and remove such layers.
 # learn the width window on cell type A (ChIP-seq peaks as labels) ...
 fiberhmm-footprint calibrate --bed ctcf_motifs.bed --bam A.calls.bam --chip A_ctcf_peaks.bed \
     --require-unmodified -o ctcf_A
-#   use: fiberhmm-footprint --min-width 20 --max-width 60 --require-unmodified
+#   use: fiberhmm-footprint --min-width 20 --max-width 55 --require-unmodified
 # ... and apply it to cell type B, which has no ChIP-seq
 fiberhmm-footprint --bam B.calls.bam --bed ctcf_motifs.bed --settings ctcf_A.settings.json \
     -o B_ctcf.tsv --out-bam B.ctcf.bam
