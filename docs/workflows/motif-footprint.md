@@ -123,9 +123,64 @@ molecule, pooled over CTCF, NRF1, REST and USF1 motifs in five cell lines
 87 bp. Calls wider than this are mostly broad protections that are not
 motif-sized.
 
+**Calibrate the window with ChIP-seq when you can.** The label-free window is
+a safe default, but a window learned from ChIP-seq labels usually scores
+better. In the benchmark it raised held-out AUROC over the 0-74 bp default by
++0.013 (CTCF), +0.020 (NRF1) and +0.050 (REST), and only +0.007 for USF1. It
+also held up on cell types it was not learned on: in leave-one-cell-type-out
+tests, windows learned on the other cell lines gave those gains on the held-out
+line. See [Calibrating the width window](#calibrating-the-width-window).
+
 `--require-unmodified` additionally requires no m6A call (ML >= `--ml`,
 default 125) inside the motif, which is ft's footprint criterion. It reads
 MM/ML m6A calls only.
+
+## Calibrating the width window
+
+`fiberhmm-footprint calibrate` learns `[--min-width, --max-width]` from ChIP-seq
+labels, using the benchmark's method:
+
+- **Score.** Per motif, the footprinted fraction of eligible molecules, pooled
+  over a cell type's BAMs.
+- **Objective.** The mean of the per-cell-type AUROCs against the ChIP labels;
+  molecules are never pooled across cell types.
+- **Search.** A 2D grid of conservative call widths: min 0-80 bp and max
+  10-150 bp, in 5 bp steps.
+- **Held out.** Leave-one-cell-type-out when several `--bam`/`--chip` pairs are
+  given, otherwise odd against even chromosomes. A fold's window is always
+  chosen on its training data alone.
+
+```bash
+fiberhmm-footprint calibrate --bed ctcf_motifs.bed \
+    --bam h1_a.bam,h1_b.bam --chip h1_ctcf_peaks.bed --cell H1 \
+    --bam k562.bam --chip k562_ctcf_peaks.bed --cell K562 \
+    --require-unmodified -o ctcf_window
+```
+
+It prints the optimal window, a robust range (the bounds of every window
+within 0.005 AUROC of the optimum, for choosing conservative bounds), the
+held-out AUROC per fold, and a ready-to-paste line:
+
+```text
+use: fiberhmm-footprint --min-width 25 --max-width 55 --require-unmodified
+  or: fiberhmm-footprint --settings ctcf_window.settings.json
+```
+
+It writes:
+
+- `PREFIX.surface.tsv`: the full 2D surface. It holds the per-cell and mean
+  AUROC, plus a `masked` flag where too few molecules or motifs are positive
+  for AUROC to mean much.
+- `PREFIX.heldout.tsv`: the per-fold results, including in-sample minus
+  held-out optimism.
+- `PREFIX.settings.json`: the window and rule options, for `--settings`.
+- `PREFIX.heatmap.png`: the surface as a heatmap, when matplotlib is
+  installed (`fiberhmm[plots]`).
+
+A window learned in one cell type can be applied to another with `--settings`.
+The window is specific to the factor: report the held-out AUROC, not the
+in-sample one, which overstated AUROC by 0.006-0.034 in the benchmark. The
+benchmark windows were learned with `--require-unmodified`.
 
 ## Outputs
 

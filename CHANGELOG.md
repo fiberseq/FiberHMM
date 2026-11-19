@@ -11,6 +11,10 @@
   `--max-width` default (74 bp) is a label-free 95th percentile of
   motif-overlapping footprint call widths. `--min-width` (default 0) adds an
   inclusive floor; negatives below it are reported as `too_narrow`.
+- `fiberhmm-footprint calibrate` learns the width window from ChIP-seq labels
+  (2D grid, mean per-cell AUROC, leave-one-cell-type-out or chromosome-split
+  held-out evaluation, robust range, surface TSV and heatmap). The result is a
+  settings JSON that `fiberhmm-footprint --settings` loads.
 - `fiberhmm-footprint` reads calls from `fiberhmm-extract` bigBeds
   (`--calls-bb PREFIX`, or `--tf-bb`/`--msp-bb`/`--nuc-bb`/`--m6a-bb`) as an
   alternative to the BAM, and `--out-bb` writes per-read bigBeds of

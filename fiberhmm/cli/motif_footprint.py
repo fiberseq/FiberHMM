@@ -4,8 +4,14 @@ The FiberHMM analogue of fibertools `ft footprint`: for each motif in a BED
 and each molecule spanning it, report whether the molecule is footprinted.
 Uses the calls already in the BAM (no re-decoding):
   eligible     an MSP from the BAM's FiberHMM accessibility calls spans the motif
-  footprinted  one FiberHMM TF/sub-nucleosomal call (LLR >= --min-llr, width <=
-               --max-width) whose bounds (outer edges by default) contain the motif
+  footprinted  one FiberHMM TF/sub-nucleosomal call (LLR >= --min-llr, width in
+               [--min-width, --max-width]) whose bounds (outer edges by default)
+               contain the motif
+
+The default width window (0-74 bp) needs no labels. Where ChIP-seq peaks exist,
+a ChIP-calibrated window usually scores better, and in the benchmark it held up
+on cell types it was not learned on: run `fiberhmm-footprint calibrate` and
+apply its window with --min-width/--max-width or --settings.
 
 Not to be confused with fiberhmm-footprint-model (population model of recurrent
 footprint geometries) or fiberhmm-consensus (posterior-based footprint classes,
@@ -34,7 +40,8 @@ from fiberhmm.inference.motif_footprint import (
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog='fiberhmm-footprint', description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+        prog='fiberhmm-footprint', description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='Subcommand: fiberhmm-footprint calibrate --help (learn the width window from ChIP-seq labels)')
     src = p.add_argument_group('call input (one of)')
     src.add_argument('--bam', help='Indexed BAM with FiberHMM calls (MA tf/nuc/msp layers)')
     src.add_argument('--calls-bb', metavar='PREFIX',
@@ -84,12 +91,15 @@ def build_parser() -> argparse.ArgumentParser:
                    help='With --edges outer: whether the outer bound stops just before the terminating informative '
                         'position (exclusive, default) or includes it (inclusive, one more base per side)')
     p.add_argument('--max-width', type=int, default=DEFAULT_MAX_WIDTH,
-                   help=f'Maximum conservative reference width (bp) of the footprint call; 0 = no cap '
-                        f'(default {DEFAULT_MAX_WIDTH}: label-free 95th percentile of motif-overlapping footprint '
-                        'call widths)')
+                   help=f'Upper bound on footprint call width (conservative reference width, bp, inclusive); 0 = no '
+                        f'cap (default {DEFAULT_MAX_WIDTH}: label-free 95th percentile of motif-overlapping footprint '
+                        'call widths). A ChIP-calibrated window (fiberhmm-footprint calibrate) usually does better')
     p.add_argument('--min-width', type=int, default=0,
-                   help='Minimum conservative reference width (bp, inclusive) of the footprint call; 0 = no floor '
-                        '(default 0)')
+                   help='Optional lower bound on footprint call width (conservative reference width, bp, inclusive); '
+                        'default 0')
+    p.add_argument('--settings', metavar='JSON',
+                   help='Load the width window and rule options saved by fiberhmm-footprint calibrate; flags given '
+                        'on the command line override it')
     p.add_argument('--require-unmodified', action='store_true',
                    help='Also require no m6A call (ML >= --ml) inside the motif (MM/ML m6A only)')
     p.add_argument('--ml', type=int, default=125, help='ML threshold for --require-unmodified (default 125, as ft)')
@@ -110,6 +120,10 @@ def _open(path):
 
 
 def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == 'calibrate':
+        from fiberhmm.cli.footprint_calibrate import main as calibrate_main
+        return calibrate_main(argv[1:])
     p = build_parser()
     try:
         return _main(p, argv)
@@ -119,6 +133,11 @@ def main(argv=None):
 
 def _main(p, argv):
     args = p.parse_args(argv)
+    if args.settings:
+        # Saved values become defaults; anything typed on the command line still wins.
+        from fiberhmm.inference.footprint_calibration import load_settings
+        p.set_defaults(**load_settings(args.settings))
+        args = p.parse_args(argv)
     if args.cores < 1:
         p.error('--cores must be >= 1')
     try:

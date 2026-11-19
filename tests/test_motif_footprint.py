@@ -641,3 +641,104 @@ def test_call_bigbeds_without_block_scores_warn_and_use_conservative(tmp_path, m
     # outer bounds and LLR are unknown without block scores
     strip = lambda rows: [r[:7] + r[10:] for r in rows]
     assert strip(_mol_rows(tmp_path / 'a.mol')) == strip(_mol_rows(tmp_path / 'b.mol'))
+
+
+# ------------------------------------------------------------------ width calibration (fiberhmm-footprint calibrate)
+
+def _synthetic_cell(name, seed, n=60, flip=False):
+    """ChIP+ motifs carry 40 bp footprints; ChIP- motifs carry 10, 30, 50 or 85 bp calls. Only windows that
+    include 40 and exclude 30 and 50 separate them: wmin in {35, 40}, wmax in {40, 45}."""
+    import numpy as np
+    from fiberhmm.inference.footprint_calibration import CellData
+    rng = np.random.default_rng(seed)
+    labels = np.array([i % 2 == 0 for i in range(n)])
+    chroms = [f'chr{(i // 2) % 4 + 1}' for i in range(n)]
+    mols = []
+    for lab in labels:
+        good = (40,) if lab else (10, 30, 50, 85)
+        mols.append([(int(rng.choice(good)),) if rng.random() < 0.6 else () for _ in range(20)])
+    if flip:
+        labels = ~labels
+    return CellData(name, chroms, labels, mols)
+
+
+def test_calibration_recovers_known_window():
+    from fiberhmm.inference import footprint_calibration as C
+    wmins, wmaxs = C.parse_range('0:80:5'), C.parse_range('10:150:5')
+    cells = [_synthetic_cell('A', 1), _synthetic_cell('B', 2)]
+    surf = C.surface(cells, wmins, wmaxs)
+    a, b, best = C.optimum(surf.mean, wmins, wmaxs)
+    assert best == pytest.approx(1.0) and (a, b) == (35, 40)     # first perfect window in grid order
+    r = C.robust_range(surf.mean, wmins, wmaxs, 0.005)
+    assert r['wmin'][0] <= 35 <= r['wmin'][1] <= 40 and 40 <= r['wmax'][0] <= r['wmax'][1] < 85
+    assert C.robust_range(surf.mean, wmins, wmaxs, 0.0)['wmin'] == [35, 40]   # exact optimum set
+    # the label-free style window that lets 85 bp calls in is worse
+    assert surf.mean[wmins.index(0), wmaxs.index(90)] < best
+
+
+@pytest.mark.parametrize('design', ['chromosome', 'cell'])
+def test_heldout_choice_never_sees_heldout_labels(design):
+    """Scrambling the held-out labels must not change the window learned for that fold."""
+    import numpy as np
+    from fiberhmm.inference import footprint_calibration as C
+    wmins, wmaxs = C.parse_range('0:80:5'), C.parse_range('10:150:5')
+    base = [_synthetic_cell('A', 1), _synthetic_cell('B', 2)]
+    rows = C.held_out(base, wmins, wmaxs, design, {})
+    if design == 'cell':
+        for r in rows:
+            test = r['held_out']
+            scrambled = [_synthetic_cell(c.name, 1 if c.name == 'A' else 2, flip=(c.name == test)) for c in base]
+            r2 = next(x for x in C.held_out(scrambled, wmins, wmaxs, 'cell', {}) if x['held_out'] == test)
+            assert (r2['wmin'], r2['wmax']) == (r['wmin'], r['wmax'])
+            assert r2['heldout_auroc'] == pytest.approx(1 - r['heldout_auroc'])
+    else:
+        cell = base[0]
+        odd = np.array([C.odd_chromosome(c) for c in cell.motif_chrom])
+        scrambled = C.CellData('A', cell.motif_chrom, np.where(odd, cell.labels, ~cell.labels), cell.molecules)
+        a = {r['train']: (r['wmin'], r['wmax']) for r in C.held_out([cell], wmins, wmaxs, 'chromosome', {})}
+        b = {r['train']: (r['wmin'], r['wmax']) for r in C.held_out([scrambled], wmins, wmaxs, 'chromosome', {})}
+        assert a['A:odd'] == b['A:odd']          # trained on odd chromosomes, whose labels did not change
+    assert C.odd_chromosome('chr3') and not C.odd_chromosome('chrX') and not C.odd_chromosome('chr2')
+
+
+def test_calibrate_cli_settings_round_trip(tmp_path, capsys):
+    import json
+    from fiberhmm.cli.motif_footprint import main
+    src = write_bam(tmp_path / 'src.bam', [
+        lambda h: make_read(h, f'p{i}', msps=[(0, 900)], tfs=[(195, 240, 90, 2, 2), (395, 520, 90, 2, 2)],
+                            pos=POS + 10 * i) for i in range(6)])
+    # label column 7: motifs footprinted by the 45 bp call are positive, by the 125 bp call negative
+    rows = [('chr1', POS + 300 + 210 + k * 0, POS + 300 + 225, 'CTCF', 0, '+', 0) for k in range(1)]
+    rows = [('chr1', POS + 200, POS + 215, 'CTCF', 0, '+', 1), ('chr1', POS + 205, POS + 225, 'CTCF', 0, '-', 1),
+            ('chr1', POS + 400, POS + 415, 'CTCF', 0, '+', 0), ('chr1', POS + 450, POS + 470, 'CTCF', 0, '+', 0),
+            ('chr1', POS + 600, POS + 615, 'CTCF', 0, '+', 0)]
+    b = bed(tmp_path, rows)
+    main(['calibrate', '--bed', str(b), '--label-column', '7', '--bam', str(src), '--cell', 'X', '--bam', str(src),
+          '--cell', 'Y', '-o', str(tmp_path / 'cal'), '--no-plot'])
+    out = capsys.readouterr().out
+    s = json.loads((tmp_path / 'cal.settings.json').read_text())
+    assert s['schema'] == 'fiberhmm-footprint-settings/v1' and s['max_width'] < 125 <= 150
+    assert f"use: fiberhmm-footprint --min-width {s['min_width']} --max-width {s['max_width']}" in out
+    assert 'robust range' in out and (tmp_path / 'cal.surface.tsv').exists() and (tmp_path / 'cal.heldout.tsv').exists()
+    assert s['calibration']['held_out']['design'] == 'cell'
+    # --settings applies the window; explicit flags still win
+    common = ['--bam', str(src), '--bed', str(b)]
+    main([*common, '--settings', str(tmp_path / 'cal.settings.json'), '-o', str(tmp_path / 's.tsv')])
+    main([*common, '--min-width', str(s['min_width']), '--max-width', str(s['max_width']), '-o', str(tmp_path / 'f.tsv')])
+    assert (tmp_path / 's.tsv').read_text() == (tmp_path / 'f.tsv').read_text()
+    main([*common, '--settings', str(tmp_path / 'cal.settings.json'), '--max-width', '0', '-o', str(tmp_path / 'o.tsv')])
+    main([*common, '--min-width', str(s['min_width']), '--max-width', '0', '-o', str(tmp_path / 'p.tsv')])
+    assert (tmp_path / 'o.tsv').read_text() == (tmp_path / 'p.tsv').read_text()
+
+
+def test_standard_cli_with_both_width_bounds(tmp_path):
+    from fiberhmm.cli.motif_footprint import main
+    src = write_bam(tmp_path / 'src.bam', [basic(tfs=((200, 225, 90, 0, 0),)),
+                                           lambda h: make_read(h, 'r2', msps=[MSP], tfs=[(180, 260, 90, 0, 0)],
+                                                               pos=POS + 5)])
+    b = bed(tmp_path, [('chr1', POS + 205, POS + 220, 'CTCF', 0, '+')])
+    main(['--bam', str(src), '--bed', str(b), '--min-width', '30', '--max-width', '90', '-o', str(tmp_path / 't.tsv'),
+          '--per-molecule', str(tmp_path / 'm.tsv')])
+    rows = {r.split('\t')[6]: r.split('\t') for r in (tmp_path / 'm.tsv').read_text().splitlines()[1:]}
+    assert rows['r1'][7:10] == ['not_footprinted', '1', 'too_narrow']       # 25 bp < 30
+    assert rows['r2'][7:9] == ['footprinted', '3']                           # 80 bp in [30, 90]

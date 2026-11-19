@@ -624,8 +624,9 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--min-llr` | `5.0` | Minimum LLR (nats) of a footprint call; tq &gt;= 10 x this (default 5) |
 | `--edges` | `outer` | Call bounds that must contain the motif: outer = conservative bounds extended through the edge ambiguity in the el/er bytes, up to the terminating informative position (default); conservative = the call as stored Choices: `outer`, `conservative`. |
 | `--outer-bound` | `exclusive` | With --edges outer: whether the outer bound stops just before the terminating informative position (exclusive, default) or includes it (inclusive, one more base per side) Choices: `exclusive`, `inclusive`. |
-| `--max-width` | `74` | Maximum conservative reference width (bp) of the footprint call; 0 = no cap (default 74: label-free 95th percentile of motif-overlapping footprint call widths) |
-| `--min-width` | `0` | Minimum conservative reference width (bp, inclusive) of the footprint call; 0 = no floor (default 0) |
+| `--max-width` | `74` | Upper bound on footprint call width (conservative reference width, bp, inclusive); 0 = no cap (default 74: label-free 95th percentile of motif-overlapping footprint call widths). A ChIP-calibrated window (fiberhmm-footprint calibrate) usually does better |
+| `--min-width` | `0` | Optional lower bound on footprint call width (conservative reference width, bp, inclusive); default 0 |
+| `--settings` | — | Load the width window and rule options saved by fiberhmm-footprint calibrate; flags given on the command line override it |
 | `--require-unmodified` | off | Also require no m6A call (ML &gt;= --ml) inside the motif (MM/ML m6A only) |
 | `--ml` | `125` | ML threshold for --require-unmodified (default 125, as ft) |
 | `--msp-bam` | — | Advanced: take MSPs from this BAM instead (matched by read name), e.g. the BAM ft footprint read, for like-for-like comparisons |

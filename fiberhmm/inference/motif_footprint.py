@@ -529,6 +529,9 @@ class Observation:
     read_length: int = 0
     read_end: int = 0
     duplicate: bool = False
+    # Conservative widths of every call that would footprint this eligible molecule under any width
+    # window (LLR, containment and, with require_unmodified, no m6A): used by width calibration.
+    widths: Tuple[int, ...] = ()
 
 
 def score(mol: Molecule, motif: Motif, options: FootprintOptions, want_span: bool = False) -> Observation:
@@ -575,8 +578,12 @@ def score(mol: Molecule, motif: Motif, options: FootprintOptions, want_span: boo
     if chosen is not None:
         edge = 'conservative' if (chosen.x <= m0 and chosen.y >= m1) else 'outer'
     span = mol.refmap.query_span(m0, m1) if (want_span and eligible) else None
+    widths = ()
+    if eligible and reason != 'modified' and not (options.require_unmodified and mol.m6a is not None and len(mol.m6a)
+                                                  and np.any((mol.m6a >= m0) & (mol.m6a < m1))):
+        widths = tuple(sorted({c.width for c in containing}))
     return Observation(code=code, status=status, reason='' if fp else reason, call=chosen, edge=edge,
-                       query_span=span, **base)
+                       query_span=span, widths=widths, **base)
 
 
 # --------------------------------------------------------------------------- region worker
