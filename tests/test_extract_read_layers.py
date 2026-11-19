@@ -544,10 +544,6 @@ def test_lift_reassembly_keeps_layer_columns_with_blocks():
     assert stats.blocks_dropped == 1
 
 
-@pytest.mark.xfail(reason='feat/pg-lift reassemble_bed12 subsets any comma list with '
-                          'blockCount items; the verbatim SA tag of an sv row can match '
-                          '(5k+1 items for k entries). Fix there: skip columns containing ";".',
-                   strict=False)
 def test_lift_reassembly_leaves_sa_column_alone():
     graph_lift = pytest.importorskip('fiberhmm.io.graph_lift')
     row = ('chr1\t0\t60\tr\t60\t+\t0\t60\t0\t6\t1,1,1,1,1,1\t0,10,20,30,40,59\t'
