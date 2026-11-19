@@ -12,7 +12,7 @@ held-out evaluation, and reports:
     in one cell type can be applied to another.
 
 A learned window is factor-specific; the held-out AUROC is the honest number (the
-in-sample optimum overstated AUROC by 0.006-0.034 in the benchmark).
+in-sample optimum overstated AUROC by up to 0.02 in the benchmark).
 
 Example (two cell types):
   fiberhmm-footprint calibrate --bed ctcf_motifs.bed \\

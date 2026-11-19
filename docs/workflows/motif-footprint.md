@@ -141,12 +141,25 @@ molecule, pooled over CTCF, NRF1, REST and USF1 motifs in five cell lines
 motif-sized.
 
 **Calibrate the window with ChIP-seq when you can.** The label-free window is
-a safe default, but a window learned from ChIP-seq labels usually scores
-better. In the benchmark it raised held-out AUROC over the 0-74 bp default by
-+0.013 (CTCF), +0.020 (NRF1) and +0.050 (REST), and only +0.007 for USF1. It
-also held up on cell types it was not learned on: in leave-one-cell-type-out
-tests, windows learned on the other cell lines gave those gains on the held-out
-line. See [Calibrating the width window](#calibrating-the-width-window).
+a safe default, and a window learned from ChIP-seq labels usually scores
+better. The benchmark compared ft footprint, the label-free 0-74 bp window
+and a ChIP-calibrated window. AUROC is against ChIP-seq, averaged over cell
+lines; calibrated windows are scored on cell lines they were not learned on
+(leave-one-cell-type-out):
+
+| Factor (cell lines) | ft footprint | label-free 0-74 bp | ChIP-calibrated, held out | Window learned on all lines |
+|---|---|---|---|---|
+| CTCF (5) | 0.845 | 0.864 | 0.876 | 20-60 bp |
+| NRF1 (4) | 0.757 | 0.797 | 0.821 | 15-55 bp |
+| REST (4) | 0.728 | 0.792 | 0.836 | 10-35 bp |
+| USF1 (4) | 0.696 | 0.703 | 0.710 | 10-65 bp |
+
+For CTCF, NRF1 and REST both windows score above ft, and calibration adds
+0.012-0.044. For USF1 there is no clear gain over ft: every per-cell
+confidence interval of the difference includes 0. Because the calibrated
+windows were scored on held-out cell lines, a window learned in one cell
+type can be expected to carry over to others. See
+[Calibrating the width window](#calibrating-the-width-window).
 
 `--require-unmodified` additionally requires no m6A call (ML >= `--ml`,
 default 125) inside the motif, which is ft's footprint criterion. It reads
@@ -216,7 +229,7 @@ within 0.005 AUROC of the optimum, for choosing conservative bounds), the
 held-out AUROC per fold, and a ready-to-paste line:
 
 ```text
-use: fiberhmm-footprint --min-width 25 --max-width 55 --require-unmodified
+use: fiberhmm-footprint --min-width 20 --max-width 60 --require-unmodified
   or: fiberhmm-footprint --settings ctcf_window.settings.json
 ```
 
@@ -233,7 +246,7 @@ It writes:
 
 A window learned in one cell type can be applied to another with `--settings`.
 The window is specific to the factor: report the held-out AUROC, not the
-in-sample one, which overstated AUROC by 0.006-0.034 in the benchmark. The
+in-sample one, which overstated AUROC by up to 0.02 in the benchmark. The
 benchmark windows were learned with `--require-unmodified`.
 
 ## Outputs

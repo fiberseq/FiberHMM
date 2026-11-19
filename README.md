@@ -71,6 +71,10 @@ The default window, 0-74 bp, needs no labels: 74 bp is the 95th percentile of
 footprint calls that overlap motifs. Where ChIP-seq peaks exist,
 `fiberhmm-footprint calibrate` learns a window per factor. The learned window
 usually scores better and carried over to cell types it was not learned on.
+In the benchmark (AUROC against ChIP-seq, mean over cell lines) ft footprint,
+the default window and a calibrated window scored 0.845 / 0.864 / 0.876 for
+CTCF, 0.757 / 0.797 / 0.821 for NRF1 and 0.728 / 0.792 / 0.836 for REST. USF1
+(0.696 / 0.703 / 0.710) showed no clear gain over ft.
 Calibrate prints a ready-to-paste `--min-width/--max-width` line and writes a
 settings file for other cell types.
 
@@ -86,7 +90,7 @@ list and remove such layers.
 # learn the width window on cell type A (ChIP-seq peaks as labels) ...
 fiberhmm-footprint calibrate --bed ctcf_motifs.bed --bam A.calls.bam --chip A_ctcf_peaks.bed \
     --require-unmodified -o ctcf_A
-#   use: fiberhmm-footprint --min-width 25 --max-width 55 --require-unmodified
+#   use: fiberhmm-footprint --min-width 20 --max-width 60 --require-unmodified
 # ... and apply it to cell type B, which has no ChIP-seq
 fiberhmm-footprint --bam B.calls.bam --bed ctcf_motifs.bed --settings ctcf_A.settings.json \
     -o B_ctcf.tsv --out-bam B.ctcf.bam
