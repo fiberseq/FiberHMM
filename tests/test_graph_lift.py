@@ -1576,3 +1576,20 @@ def test_repair_only_keeps_soft_clipped_supplementary_without_primary_in_source(
     kept, _ = _records(out)
     assert [(r.query_name, r.is_supplementary, r.has_tag("Yo")) for r in kept] == [
         ("orphan", True, False)]
+
+
+def test_reassemble_bed12_leaves_sa_tag_column_alone():
+    """A verbatim SAM SA tag (fiberhmm_sv rows) is row-level even when its comma
+    count matches blockCount; only plain per-block lists are subset/reversed."""
+    from fiberhmm.io import graph_lift
+    row = ('chr1\t0\t60\tr\t60\t+\t0\t60\t0\t6\t1,1,1,1,1,1\t0,10,20,30,40,59\t'
+           '2,0,0,0,0,3\t100,40,40,40,40,120\t60\t500\t0\tchr2,5,+,10M,60,0;\t0')
+    bed6, rows, _header = graph_lift.explode_bed12([row])
+    lifted = [line for line in bed6 if not line.split('\t')[3].endswith('|2')]
+    out, stats = graph_lift.reassemble_bed12(lifted, rows, partial='keep')
+    fields = out[0].split('\t')
+    assert fields[9] == '5'
+    assert fields[12] == '2,0,0,0,3'                # per-block column subset
+    assert fields[13] == '100,40,40,40,120'
+    assert fields[17] == 'chr2,5,+,10M,60,0;'       # SA untouched
+    assert stats.blocks_dropped == 1

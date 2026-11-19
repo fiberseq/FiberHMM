@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- BED12 lift: a column containing `;` (a verbatim SAM `SA` tag, as in
+  `fiberhmm_sv` rows) is no longer treated as a per-block list when its comma
+  count happens to equal blockCount.
+
 ### Added
 
 - **`fiberhmm-lift`** lifts a called BAM, or a BED file, to another assembly

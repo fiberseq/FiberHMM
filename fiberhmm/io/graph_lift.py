@@ -1616,6 +1616,11 @@ def reassemble_bed12(lifted: Iterable[str], rows: List[list],
             if dropped_blocks is not None:
                 dropped_blocks.extend((index, k) for k in sorted(set(range(count)) - set(kept)))
         for col in range(12, len(new)):
+            # A per-block column is a plain comma list with one item per block. A
+            # SAM SA tag (``chr,pos,strand,CIGAR,mapq,NM;`` entries) is a row-level
+            # value whose comma count can match blockCount by chance; ';' marks it.
+            if ";" in new[col]:
+                continue
             values = new[col].split(",")
             if count > 1 and len(values) == count:
                 values = [values[k] for k in kept]
