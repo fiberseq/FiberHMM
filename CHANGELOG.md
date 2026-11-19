@@ -2,12 +2,6 @@
 
 ## 3.2.0 (unreleased)
 
-### Fixed
-
-- BED12 lift: a column containing `;` (a verbatim SAM `SA` tag, as in
-  `fiberhmm_sv` rows) is no longer treated as a per-block list when its comma
-  count happens to equal blockCount.
-
 
 ### Added
 
@@ -128,6 +122,20 @@
   targeted data calibrates on the target. See
   [Nucleosome sizes and arrays](https://fiberseq.github.io/FiberHMM/workflows/nucleosomes/).
 
+- `fiberhmm-extract --variants VCF` writes a `var` layer: the allele each
+  read carries at the sites of a VCF/BCF (SNVs, MNVs, indels up to 50 bp;
+  pileup-style, no realignment), with DAF conversion ambiguity coded
+  separately. `--variants auto` picks up the DAF SNP screen VCF. Options
+  `--variants-sample`, `--variants-het-only`, `--variants-pass-only`,
+  `--variants-max-len`, `--variants-daf`. autoSQL table `fiberhmm_var`; the
+  description records the VCF name, md5 and sample.
+- `fiberhmm-extract --sv` writes an `sv` layer: per-read CIGAR deletions and
+  insertions (`--sv-min-len`, 30), end clips (`--sv-min-clip`, 100) and the
+  `SA` tag, with supplementary records as their own rows. autoSQL table
+  `fiberhmm_sv`.
+- `fiberhmm-daf-snps --all-snvs` / `fiberhmm-call --daf-snp-all-snvs` also
+  report the other recurrent SNVs in the SNP VCF and JSON (not in the mask).
+
 ### Changed
 
 - Writers that re-call footprints (`fiberhmm-call`, `-apply`,
@@ -144,7 +152,15 @@
   `--min-mapq 20` to restore the old filter. A `fiberhmm-pipeline` run started
   with the old default resumes only with `--min-mapq 20`.
 
+- `fiberhmm-extract --all` (and no type flag) now also writes `sv`, and
+  `var` when a VCF is available (`--variants`, or the DAF SNP VCF next to
+  the BAM); otherwise it skips `var` with a note.
+
 ### Fixed
+
+- BED12 lift: a column containing `;` (a verbatim SAM `SA` tag, as in
+  `fiberhmm_sv` rows) is no longer treated as a per-block list when its comma
+  count happens to equal blockCount.
 
 - `fiberhmm-pipeline` records the DAF chimera mode in `outputs.json`
   `call_args` once: a re-call that passes those `call_args` back no longer
@@ -164,28 +180,6 @@
   nucleosomes and TF footprints from `Ma`, `fiberhmm-footprint-model` loads
   `Ma` molecules, and the `fiberhmm-extract` tag sniff, `fiberhmm-utils
   ma-types --scan` and `fiberhmm-check` see `Ma` calls.
-
-### Added
-
-- `fiberhmm-extract --variants VCF` writes a `var` layer: the allele each
-  read carries at the sites of a VCF/BCF (SNVs, MNVs, indels up to 50 bp;
-  pileup-style, no realignment), with DAF conversion ambiguity coded
-  separately. `--variants auto` picks up the DAF SNP screen VCF. Options
-  `--variants-sample`, `--variants-het-only`, `--variants-pass-only`,
-  `--variants-max-len`, `--variants-daf`. autoSQL table `fiberhmm_var`; the
-  description records the VCF name, md5 and sample.
-- `fiberhmm-extract --sv` writes an `sv` layer: per-read CIGAR deletions and
-  insertions (`--sv-min-len`, 30), end clips (`--sv-min-clip`, 100) and the
-  `SA` tag, with supplementary records as their own rows. autoSQL table
-  `fiberhmm_sv`.
-- `fiberhmm-daf-snps --all-snvs` / `fiberhmm-call --daf-snp-all-snvs` also
-  report the other recurrent SNVs in the SNP VCF and JSON (not in the mask).
-
-### Changed
-
-- `fiberhmm-extract --all` (and no type flag) now also writes `sv`, and
-  `var` when a VCF is available (`--variants`, or the DAF SNP VCF next to
-  the BAM); otherwise it skips `var` with a note.
 
 ## 3.1.0
 
