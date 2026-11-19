@@ -240,6 +240,7 @@ def test_core_rule_applies_before_tiles_are_deduplicated(monkeypatch):
     valid = dict(L=[296, 302], R=[328, 334], span=(300.5, 330.), core_bp=26, calls=10, stability=1.)
     tiles = iter([[invalid], [valid]])
     monkeypatch.setattr(W.Un, 'tile_units', lambda *a, **k: [None]*opt.minimum_channel_units)
+    monkeypatch.setattr(W.Un, 'materialize', lambda chosen, *a, **k: chosen)
     monkeypatch.setattr(W.D, 'discover_tile', lambda units, o: (next(tiles), dict(k=1, prediction_strength=[], merges=[])))
     kept, dropped, _tiles, _diag = W.discover([], dict(start=0, end=600), opt, lambda *a, **k: None)
     assert [g['core_bp'] for g in kept] == [26] and dropped == []

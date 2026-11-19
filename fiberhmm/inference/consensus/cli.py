@@ -12,6 +12,11 @@ from .workflow import run_analysis
 from .regions import load_bed, pool_payloads, automatic_parameters
 
 
+# fiberhmm-consensus crops loaded reads to the window +/- this many bp unless --evidence-pad (or a parameters
+# file) says otherwise; the Python API and FiberBrowser keep whole reads (input.evidence_pad_bp = -1).
+CLI_EVIDENCE_PAD_BP=250
+
+
 class Progress:
     def __init__(self, json_output=False):
         self.json_output=json_output;self.last_stage=None;self.last_time=0.
@@ -116,6 +121,12 @@ def _main(argv=None):
     p.add_argument('--stop-after',choices=['native','parents','consolidated','resolved'],help='staged_native_families only: last stage to compute (the lattice recaller runs in one pass)')
     p.add_argument('--start-at',choices=['native','consolidation'],default='native',help='staged_native_families only: consolidation restarts from saved native fits')
     p.add_argument('--cores',type=int,help='Worker processes (sets compute.cores; default 4)')
+    p.add_argument('--max-memory-gb',type=float,metavar='GB',help='--pool-loci runs: refuse to start, or lower --cores, when the '
+                   'pre-run peak-memory estimate (always logged) exceeds GB. The estimate is a planning figure (~30%%)')
+    p.add_argument('--evidence-pad',metavar='BP|full',help='Keep each loaded read\'s calls, MSPs, nucleosomes and aligned blocks '
+                   f'that overlap the window plus BP (sets input.evidence_pad_bp; default {CLI_EVIDENCE_PAD_BP} here, whole reads in '
+                   'the Python API and FiberBrowser). Calls crossing the pad boundary are kept whole. "full" keeps whole-read '
+                   'geometry (memory grows with read length)')
     p.add_argument('--robust',type=int,metavar='N',help='lattice_recaller only, optional and slower: also rerun discovery under N other read orders '
                    'and mark which classes are robust to read order (supported in every one of the N+1 orders, or the share set by '
                    'recaller.order_robust_fraction; classes.tsv columns '
@@ -192,6 +203,14 @@ def _main(argv=None):
             if value: p.error(f'{flag} applies to --engine staged_native_families only; the lattice recaller discovers and scores classes in one pass '
                               '(every run saves evidence.json.gz for replay with --evidence or --resume)')
     values.setdefault('cr',{})['engine']=engine
+    if args.evidence_pad is not None:
+        from fiberhmm.inference.evidence_crop import parse_pad
+        try: pad=parse_pad(args.evidence_pad)
+        except ValueError: p.error('--evidence-pad takes a number of bp or "full"')
+        values.setdefault('input',{})['evidence_pad_bp']=-1 if pad is None else pad
+    else:
+        # The command is meant for motif-scale windows: crop by default (the library default keeps whole reads).
+        values.setdefault('input',{}).setdefault('evidence_pad_bp',CLI_EVIDENCE_PAD_BP)
     for group,name,value in [('families','physical_radius_bp',args.consolidation_bp),('families','stop_after',args.stop_after),
                              ('compute','cores',args.cores),('compute','fit_cache_dir',args.cache),('recaller','order_replicates',args.robust)]:
         if value is not None: values.setdefault(group,{})[name]=value
@@ -229,7 +248,17 @@ def _main(argv=None):
                 return load_bam_payload(datasets,{k:w[k] for k in ('chrom','start','end')},options,progress)
             if args.pool_loci:
                 # CL-CR pools every window into one analysis, so all payloads are needed together.
-                count=1;jobs=iter([('pooled',pool_payloads([load(i,w) for i,w in enumerate(windows)],windows),out)])
+                # With molecule caps, only names under one global read-name hash threshold are decoded
+                # (pooled_sampling); otherwise every window is loaded in full.
+                from .pooled_sampling import load_pooled, planned_loader, scanned_molecules
+                def load_names(i,w,names):
+                    return load_bam_payload(datasets,{k:w[k] for k in ('chrom','start','end')},options,progress,read_names=names)
+                loader=planned_loader(datasets,windows,options,progress.report,load_names)
+                molecules=loader.planned_molecules() if loader is not None else scanned_molecules(datasets,windows,options)
+                _memory_plan(p,args,values,options,molecules,windows[0]['end']-windows[0]['start'],progress)
+                pooled=load_pooled(datasets,windows,options,progress.report,load_names,loader=loader)
+                if pooled is None: pooled=pool_payloads([load(i,w) for i,w in enumerate(windows)],windows)
+                count=1;jobs=iter([('pooled',pooled,out)])
             else:
                 # Independent windows are restartable work units (batch.py): each loads, analyses and marks its own
                 # directory, then drops its payload, so memory grows with --window-jobs, not with the BED rows.
@@ -252,6 +281,26 @@ def _main(argv=None):
             (out/'report.html').write_text('<!doctype html><meta charset="utf-8"><h1>Consensus windows</h1>'+''.join(
                 '<p><a href="'+str(Path(r['output']).relative_to(out))+'/report.html">'+html.escape(r['name'])+'</a></p>' for r in summary))
     print(json.dumps(dict(status='complete',output=str(out),regions=summary,bams=bam_outputs)))
+
+
+def _memory_plan(parser,args,values,options,molecules,window_bp,progress):
+    """Log the pre-run peak-memory estimate; with --max-memory-gb lower compute.cores to fit, or refuse."""
+    from .memory_estimate import estimate,fit_cores,describe
+    from .regions import machine_compute_defaults
+    from .bam import evidence_pad
+    cores=int(values.get('compute',{}).get('cores') or machine_compute_defaults()['cores'])
+    opt=options['recaller'];kw=dict(discovery_cap=opt.max_discovery_molecules,quantification_cap=opt.max_quantification_molecules,
+        pad=evidence_pad(options),read_kb=30)
+    e=estimate(molecules,window_bp,cores,**kw)
+    progress.report('memory',describe(e)+(f'; limit {args.max_memory_gb:g} GB' if args.max_memory_gb else ''))
+    if not args.max_memory_gb or e['total_gb']<=args.max_memory_gb: return
+    fitted=fit_cores(args.max_memory_gb,molecules,window_bp,cores,**kw)
+    if not fitted:
+        parser.exit(2,f'{parser.prog}: error: {describe(estimate(molecules,window_bp,1,**kw))} exceeds --max-memory-gb {args.max_memory_gb:g} even with one core; '
+                    'set --max-discovery-molecules/--max-quantification-molecules, fewer BED windows or a smaller --evidence-pad\n')
+    progress.report('memory_limit',f'--max-memory-gb {args.max_memory_gb:g}: compute.cores {cores} -> {fitted} '
+                    f'({describe(estimate(molecules,window_bp,fitted,**kw))})')
+    values.setdefault('compute',{})['cores']=fitted
 
 
 def _window_task(spec):

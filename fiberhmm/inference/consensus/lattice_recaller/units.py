@@ -43,7 +43,7 @@ def eligible_unit(u, w0, w1, bounds=None):
 
 
 def tile_units(sources, w0, w1, call_min_llr=5.0, call_max_bp=100, efficiency=None,
-               cap=0, seed=1, counts=None, scoring_bounds=None):
+               cap=0, seed=1, counts=None, scoring_bounds=None, select_only=False):
     """Units overlapping [w0, w1) with their sites within SITE_PAD bp, as the prototype's kclass.load + relattice.
 
     efficiency: optional {channel: factor} scaling p_accessible (p_protected kept below the scaled rate)."""
@@ -59,6 +59,14 @@ def tile_units(sources, w0, w1, call_min_llr=5.0, call_max_bp=100, efficiency=No
                     lambda pair: identity(pair[1]))
     if counts is not None:
         counts.extend((candidates, chosen))
+    if select_only:
+        return chosen
+    return materialize(chosen, w0, w1, call_min_llr, call_max_bp, efficiency)
+
+
+def materialize(chosen, w0, w1, call_min_llr=5.0, call_max_bp=100, efficiency=None):
+    """The tile arrays of chosen (source, unit) pairs (tile_units' output). Separate so a stage can select molecules
+    up front and build each task's arrays only when it is submitted to a worker."""
     out = []
     for source, u in chosen:
         pos, hit, pa, pp = full_lattice(source, u)

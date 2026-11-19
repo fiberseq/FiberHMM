@@ -49,8 +49,15 @@ def _chemistry_runtime(runtime, chemistry, **unused):
     return preset,model,context,mode,hit,miss
 
 
+def evidence_pad(options):
+    """input.evidence_pad_bp as a pad in bp, or None for whole-read evidence (-1)."""
+    pad=int(getattr(options['input'],'evidence_pad_bp',-1))
+    return None if pad<0 else pad
+
+
 def _load_dataset_evidence(state, dsid, chemistry, *, chrom, evidence_start, evidence_end,
-                           runtime, minimum_mapq, legacy_annotation_frame=None, read_names=None, decode_cache=None, alignment_cache=None, **unused):
+                           runtime, minimum_mapq, legacy_annotation_frame=None, read_names=None, decode_cache=None, alignment_cache=None,
+                           pad=None, **unused):
     ds=state.get_dataset(dsid)
     preset,model,context,mode,hit,miss=_chemistry_runtime(runtime,chemistry)
     reads=[]; files=[]
@@ -67,6 +74,7 @@ def _load_dataset_evidence(state, dsid, chemistry, *, chrom, evidence_start, evi
             context_size=context,prob_threshold=preset.get('prob_threshold'),llr_hit=hit,llr_miss=miss,
             min_mapq=minimum_mapq,tf_layer='tf',nuc_layer='nuc',max_reads=0,input_index=i,ma_annotation_frame='auto',
             load_diagnostics=diagnostics,**({'alignment_cache':alignment_cache.setdefault(i,{})} if alignment_cache is not None else {}),
+            **({'evidence_pad':pad} if pad is not None else {}),
             **({'required_read_names':pending,'sampling_counts':diagnostics['decoded_channels']} if read_names is not None else {}),**({'legacy_annotation_frame':legacy_annotation_frame} if legacy_annotation_frame is not None else {}))
         if cached:
             diagnostics = dict(cached['diagnostics'], **diagnostics)
@@ -121,7 +129,7 @@ def check_dataset_chemistries(datasets):
             _dataset_chemistry(item,paths)
 
 
-def load_bam_payload(datasets, region, options=None, progress=None, *, loader_sampling=None):
+def load_bam_payload(datasets, region, options=None, progress=None, *, loader_sampling=None, read_names=None):
     """datasets: [{dataset_id, paths, chemistry?}]; metadata conflicts are errors.
 
     loader_sampling is an internal phase-policy override (cap, seed, mode,
@@ -142,8 +150,13 @@ def load_bam_payload(datasets, region, options=None, progress=None, *, loader_sa
         rows[dsid]=SimpleNamespace(paths=paths,path=paths[0],label=dsid,data_type='bam',
             family_scan_chemistry=chemistry,available_layers={})
     state=SimpleNamespace(get_dataset=rows.get)
-    result=_load_payload(state,dict(region,dataset_ids=list(rows)),options,progress or (lambda *a:None),
-                         loader_sampling=loader_sampling)
+    if read_names is not None:
+        # Caller-chosen names {dataset: names} (pooled_sampling): decode only those, no per-window sampling.
+        result=_load_payload_once(state,dict(region,dataset_ids=list(rows),_read_names={k:set(read_names.get(k,()))
+                                  for k in rows}),options,progress or (lambda *a:None))
+    else:
+        result=_load_payload(state,dict(region,dataset_ids=list(rows)),options,progress or (lambda *a:None),
+                             loader_sampling=loader_sampling)
     result['input_files']=[dict(dataset_id=k,path=str(Path(p).resolve()),size=Path(p).stat().st_size,
         mtime_ns=Path(p).stat().st_mtime_ns) for k,ds in rows.items() for p in ds.paths]
     for source in result['strata']: source['model_manifest']['chemistry_resolution']=chemistry_records[source['dataset_id']]
@@ -294,6 +307,7 @@ def _load_payload_once(state,request,options,progress):
                 alignment_cache=(request.get('_alignment_cache',{}).get(dsid) if options['input'].correct_native
                                  or (chemistry=='ddda' and options['input'].ddda_m5c_correction) else None),
                 allow_population=True,require_nucleosomes=False,tf_layer='tf',minimum_mapq=options['input'].minimum_mapq,
+                pad=evidence_pad(options),
                 **({'legacy_annotation_frame':options['input'].legacy_hia5_annotation_frame} if chemistry.startswith('hia5') and options['cr'].engine in (HARMONIZATION_MODE,*STAGED_LIKE) else {}))
             if any(read.pair_partner for read in reads):
                 raise ValueError('Paired source reads are not independent molecules. Run fiberhmm-pair (pair -> merge -> recall) before population consensus; if pairs failed to merge, --pairs-only excludes those unresolved pairs.')
@@ -393,6 +407,21 @@ def _load_payload_once(state,request,options,progress):
                                     u['native_multi_interval_calls']=calls;u['native_multi_interval_tf_intervals']=[c['interval'] for c in calls]
                             found.add(key)
                 if len(found)!=len(lookup):raise ValueError(f'{ds.label}: could not identify every representative alignment for native replay')
+                pad=evidence_pad(options)
+                if pad is not None:
+                    # Replay decoded whole alignments; keep its calls, recalled nucleosomes and MSPs that overlap the
+                    # padded window (whole), as the loader did for the BAM's own calls.
+                    from fiberhmm.inference.evidence_crop import crop_unit_intervals
+                    for unit in units:
+                        crop_unit_intervals(unit,start-pad,end+pad)
+                if alignment_cache is not None:
+                    # A replayed alignment is never needed again: its replacement fields are in the
+                    # replay cache. Drop the whole SAM record (sequence, MM/ML, every tag) now, so a
+                    # sampled load holds only alignments still waiting for replay (e.g. DAF
+                    # duplicates that may become representatives in a later tranche).
+                    for cached_file in alignment_cache.values():
+                        for key in found:
+                            cached_file.pop(key,None)
                 units,diagnostics=_exclude_recall_failures(units,recall_excluded,ds.label,diagnostics)
                 if replayed is not None:
                     for unit in units:

@@ -157,14 +157,30 @@ def _edge_grid(l0, l1, r0, r1, min_w, max_w):
     return L, R, valid, ll.ravel()[valid], rr.ravel()[valid]
 
 
+def _llr_row(m, L, R, valid, out):
+    ia = np.searchsorted(m['positions'], L); ib = np.searchsorted(m['positions'], R)
+    out[:] = (m['prefix'][ib][None, :] - m['prefix'][ia][:, None]).ravel()[valid]
+    np.clip(out, -CLIP, CLIP, out=out)
+    np.exp(out, out=out)
+    return out
+
+
 def _llr_matrix(mols, L, R, valid):
-    rows = []
-    for m in mols:
-        ia = np.searchsorted(m['positions'], L); ib = np.searchsorted(m['positions'], R)
-        rows.append((m['prefix'][ib][None, :] - m['prefix'][ia][:, None]).ravel()[valid])
-    if not rows:
-        return np.zeros((0, int(valid.sum())))
-    return np.exp(np.clip(np.array(rows), -CLIP, CLIP))
+    """exp(clipped interval LLR) for every molecule x valid (L, R) cell, filled in place: one N x cells array at peak
+    (building a list of rows, stacking, clipping and exponentiating held four)."""
+    out = np.empty((len(mols), int(valid.sum())))
+    for i, m in enumerate(mols):
+        _llr_row(m, L, R, valid, out[i])
+    return out
+
+
+def _llr_row_means(mols, L, R, valid):
+    """_llr_matrix(...).mean(1) without the matrix: the broad-protection grid is the widest (tens of thousands of
+    cells), and only each molecule's mean is used. Row by row, the same values and the same per-row reduction."""
+    out = np.empty(len(mols)); row = np.empty(int(valid.sum()))
+    for i, m in enumerate(mols):
+        out[i] = _llr_row(m, L, R, valid, row).mean()
+    return out
 
 
 def _floor_cov(cov):
@@ -223,7 +239,7 @@ def identity_gain(a, b, units, opt):
                 if u['ch'] == ch and len(u['pos']) and u['pos'].min() <= l0 and u['pos'].max() >= r1]
         if len(mols) < 10:
             continue
-        E = _llr_matrix(mols, L, R, valid); O = _llr_matrix(mols, Lo, Ro, vo).mean(1)
+        E = _llr_matrix(mols, L, R, valid); O = _llr_row_means(mols, Lo, Ro, vo)
         per_ch.append((E, O, np.array([_hash(m['uid'], folds) for m in mols])))
     if not per_ch:
         return 0.0, 0

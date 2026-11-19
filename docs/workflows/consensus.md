@@ -75,6 +75,17 @@ filters apply and are recorded in the manifest. Empty evidence gives an empty
 result, not an invented class. Source BAMs are never modified; output
 directories must be new or empty.
 
+**Memory.** Each loaded read keeps only the calls, MSPs, nucleosomes and
+aligned blocks that overlap the window plus `--evidence-pad` bp
+(`input.evidence_pad_bp`; the command defaults to 250, for motif-scale
+windows); a call that crosses the pad boundary is kept whole, never clipped or
+dropped, so even pad 0 keeps every call that reaches into the window. Native
+replay still decodes the whole alignment and its calls are cropped by the same
+rule; replayed saved evidence (`--evidence`) is cropped the same way for
+analysis. `--evidence-pad full` keeps whole-read geometry (memory then grows
+with read length: about 280 KB per 30 kb read). The Python API and FiberBrowser
+keep whole reads unless a pad is passed (`input.evidence_pad_bp`, default -1).
+
 ## How the lattice recaller works
 
 The default engine, the **lattice recaller** (`cr.engine=lattice_recaller`),
@@ -377,6 +388,15 @@ and are not resampled. A molecule seen in several windows contributes one
 deterministic view; the pooling receipt lists the excluded views. The result
 is not an occupancy estimate for any one locus. All windows are loaded
 together.
+
+With both `--max-discovery-molecules` and `--max-quantification-molecules`
+set, a pooled run decodes only the read names under one global read-name hash
+threshold (the rank the caps select by), raised until every pooled tile and
+scoring window has its cap of eligible molecules or no names remain; the
+molecules selected, and so the classes, are the same as with a full load
+(`pooling.pooled_loader_sampling` records the threshold). Before decoding,
+the run logs a peak-memory estimate; `--max-memory-gb GB` lowers `--cores` to
+fit it, or refuses to start.
 
 ## Replay
 

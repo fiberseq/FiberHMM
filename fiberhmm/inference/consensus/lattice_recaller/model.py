@@ -85,7 +85,7 @@ def _prepare(u, gs, f, opt):
     br &= ~anycls
     full = lambda x: np.broadcast_to(x, valid.shape)
     other = valid & ~anycls & ~br
-    cls = []; bounds = []
+    cls = []
     for c, (g, cm) in enumerate(zip(gs, cms)):
         Lw, Rw = g['L'][1] - g['L'][0] + 1, g['R'][1] - g['R'][0] + 1
         if opt.class_weighting == 'bp':
@@ -98,10 +98,13 @@ def _prepare(u, gs, f, opt):
             use = cm
             logw = np.full(int(use.sum()), -math.log(max(int(use.sum()), 1)))
         ii, jc = np.nonzero(use)
-        cls.append((ii, jc + 1, s0[use], logw))
-        # Each configuration's edge ranges (left edge in [l0, l1], right edge in [r0, r1]), for the molecule's own call.
-        el0, el1, er0, er1 = full(l0).astype(float), full(l1).astype(float), full(r0).astype(float), full(r1).astype(float)
-        bounds.append((el0[use], el1[use], er0[use], er1[use]))
+        # Stored once per molecule, class and configuration for the whole fit: int32 site indices and the summed
+        # spot-free score (s0 + log weight, the sum _class_vector always formed first; same values).
+        cls.append((ii.astype(np.int32), (jc + 1).astype(np.int32), s0[use] + logw))
+    # Each configuration's edge ranges (left edge in [l0, l1], right edge in [r0, r1]) depend only on its first
+    # protected site i (l0, l1) and its end j (r0, r1): kept as per-site vectors, not per configuration and class.
+    bounds = (full(l0)[:, 0].astype(float), full(l1)[:, 0].astype(float),
+              full(r0)[0, :].astype(float), full(r1)[0, :].astype(float))
     # The broader-protection configuration that best explains the molecule (its edge ranges), if any.
     broader = None
     if br.any():
@@ -121,10 +124,10 @@ def _prepare(u, gs, f, opt):
 
 def _class_vector(item, c, pc=None):
     """Log weight + log-likelihood of each configuration of class c (with the learned spots pc), or None."""
-    ii, jc, s0c, logw = item['cls'][c]
-    if not len(s0c):
+    ii, jc, v0 = item['cls'][c]
+    if not len(v0):
         return None
-    v = s0c + logw
+    v = v0
     if pc:
         ppc = np.array([pc.get(int(x), np.nan) for x in item['p']]); use = ~np.isnan(ppc)
         if use.any():
@@ -145,7 +148,8 @@ def molecule_edges(item, c, g, pc=None):
     v = _class_vector(item, c, pc)
     if v is None:
         return None
-    k = int(np.argmax(v)); l0, l1, r0, r1 = (float(x[k]) for x in item['bounds'][c])
+    k = int(np.argmax(v)); i, j = int(item['cls'][c][0][k]), int(item['cls'][c][1][k]) - 1
+    el0, el1, er0, er1 = item['bounds']; l0, l1, r0, r1 = float(el0[i]), float(el1[i]), float(er0[j]), float(er1[j])
     a0, a1 = max(l0, g['L'][0]), min(l1, g['L'][1]); b0, b1 = max(r0, g['R'][0]), min(r1, g['R'][1])
     if a0 > a1: a0, a1 = l0, l1
     if b0 > b1: b0, b1 = r0, r1
