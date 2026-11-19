@@ -35,6 +35,11 @@ Two base schema flavors:
       - msp       : +1  (blockAq)
       - m6a / m5c : +1  (blockMl; DddA ddda_mcg interval spans carry 0)
       - tf        : +3  (blockTq, blockEl, blockEr) -- matches MA tf.QQQ
+
+The opt-in read layers ``var`` (``--variants``) and ``sv`` (``--sv``) always
+carry their own columns right after ``chromStarts`` (``_LAYER_FIELDS``):
+``var`` blockAllele, blockBq; ``sv`` blockType, blockLen, mapq, readLen,
+flag, sa. Haplotype fields and ``isDuplicate`` follow as for every layer.
 """
 from __future__ import annotations
 
@@ -59,6 +64,21 @@ def sample_token(sample_name: str) -> str:
     """
     token = re.sub(r'[\s.]+', '_', sample_name.strip()).strip('_')
     return token or sample_name
+
+def _note_token(value: str) -> str:
+    """A value safe inside the quoted autoSQL description and the
+    ``;``-separated VCF marker."""
+    return re.sub(r'[\s";]+', '_', str(value)).strip('_') or '.'
+
+
+def vcf_source_note(vcf_path: str, md5: str, sample: Optional[str]) -> str:
+    """``VCF: name=<basename>; md5=<hex>; sample=<name|*>.``: the ``var``
+    layer's source marker (``*`` = every site, no sample restriction).
+    Viewers parse ``name=``/``md5=``/``sample=`` up to ``;`` / the final
+    ``.``."""
+    return (f'VCF: name={_note_token(os.path.basename(vcf_path))}; '
+            f'md5={md5}; sample={_note_token(sample) if sample else "*"}.')
+
 
 _BED12_FIELDS = """    string  chrom;       "Reference chromosome / contig"
     uint    chromStart;  "Start position on the reference (0-based)"
@@ -146,6 +166,44 @@ _DUPLICATE_FIELD = (
 DUPLICATE_FIELD_COUNT = 1
 
 
+# Always-on columns of the opt-in read layers (written whatever
+# --block-scores says), between the BED12 fields and the circular/haplotype
+# suffix. Per-block arrays come first so circular folding and graph lifts,
+# which carry ``int[blockCount]`` columns 13.. with their blocks, keep them
+# aligned.
+_LAYER_FIELDS = {
+    'var': (
+        '    int[blockCount] blockAllele; '
+        '"Allele the read carries at each VCF site: k >= 0 VCF allele index '
+        '(0 REF, 1.. ALT); -1 other sequence; -2 site deleted in the read '
+        '(spanning deletion); -3 ambiguous because of DAF conversion"\n'
+        '    int[blockCount] blockBq; '
+        '"Base quality at the site (minimum over the compared bases of an '
+        'indel or MNV); -1 if none"\n'
+    ),
+    'sv': (
+        '    int[blockCount] blockType; '
+        '"Event type: 0 DEL (CIGAR D), 1 INS (CIGAR I, block = anchor base '
+        'before it), 2 CLIP_LEFT, 3 CLIP_RIGHT (soft+hard clip at the '
+        'reference-left / reference-right end, block = first / last aligned '
+        'base)"\n'
+        '    int[blockCount] blockLen; '
+        '"Event length: deleted bp, inserted bases or clipped bases"\n'
+        '    uint mapq; "Mapping quality of the alignment record"\n'
+        '    uint readLen; "Full read length including soft and hard clips"\n'
+        '    uint flag; "SAM flag of the alignment record (0x800 = supplementary)"\n'
+        '    lstring sa; "SA tag verbatim (. if none; entries past 4000 '
+        'characters are dropped and the value ends in ...)"\n'
+    ),
+}
+
+# Total always-on columns and how many of them are int[blockCount] arrays.
+LAYER_FIELD_COUNTS = {t: len(f.strip('\n').splitlines())
+                      for t, f in _LAYER_FIELDS.items()}
+LAYER_BLOCK_COLUMN_COUNTS = {t: f.count('int[blockCount]')
+                             for t, f in _LAYER_FIELDS.items()}
+
+
 # Number of extra int[blockCount] columns per type when block_scores=True.
 EXTRA_FIELD_COUNTS = {t: f.count('int[blockCount]')
                      for t, f in _BLOCK_SCORE_FIELDS.items()}
@@ -156,8 +214,11 @@ def _make_schema(table_name: str, description: str,
                  block_scores: bool = False,
                  sample_name: Optional[str] = None,
                  circular_groups: bool = False,
-                 haplotype_fields: bool = False) -> str:
+                 haplotype_fields: bool = False,
+                 source_note: Optional[str] = None) -> str:
     fields = _BED12_FIELDS
+    if extract_type in _LAYER_FIELDS:
+        fields = fields + _LAYER_FIELDS[extract_type]
     if block_scores and extract_type in _BLOCK_SCORE_FIELDS:
         fields = fields + _BLOCK_SCORE_FIELDS[extract_type]
     if circular_groups:
@@ -165,6 +226,8 @@ def _make_schema(table_name: str, description: str,
     if haplotype_fields:
         fields = fields + _HAPLOTYPE_FIELDS
     fields = fields + _DUPLICATE_FIELD
+    if source_note:
+        description = f'{source_note} {description}'
     if sample_name:
         # Prepend a machine-parseable "Sample: <name>." marker. The autoSQL
         # description is a free-form string so we stay format-compatible;
@@ -235,6 +298,20 @@ _DESCRIPTIONS = {
         'joint consensus molecule. Ordinary single-strand reads contribute '
         'no row.'
     ),
+    'var': (
+        'FiberHMM per-read alleles at VCF sites (fiberhmm-extract --variants). '
+        'One BED12 row per read (more when sites overlap); each block is a '
+        'site the read covers (size = REF length); blockAllele gives the '
+        'allele the read carries. Pileup-style genotyping, no realignment. '
+        'BED score = mean base quality of the sites.'
+    ),
+    'sv': (
+        'FiberHMM per-read structural events (fiberhmm-extract --sv): CIGAR '
+        'deletions/insertions and long clips, the signatures long-read SV '
+        'callers start from, plus the SA tag. One BED12 row per alignment '
+        'record (supplementary records included; more rows when events '
+        'overlap); BED score = MAPQ.'
+    ),
 }
 
 
@@ -250,10 +327,13 @@ _TYPE_ALIASES = {'footprint': 'nucleosome'}
 def get_schema(extract_type: str, block_scores: bool = False,
                sample_name: Optional[str] = None,
                circular_groups: bool = False,
-               haplotype_fields: bool = False) -> Optional[str]:
+               haplotype_fields: bool = False,
+               source_note: Optional[str] = None) -> Optional[str]:
     """Return the autoSQL schema string for ``extract_type``, optionally
     with the per-block score columns appended and/or a ``Sample: <name>.``
-    marker prepended to the description."""
+    marker prepended to the description. ``source_note`` (e.g. the ``var``
+    layer's ``VCF: ...`` marker, :func:`vcf_source_note`) goes between the
+    sample marker and the description."""
     extract_type = _TYPE_ALIASES.get(extract_type, extract_type)
     desc = _DESCRIPTIONS.get(extract_type)
     if desc is None:
@@ -263,14 +343,16 @@ def get_schema(extract_type: str, block_scores: bool = False,
                         block_scores=block_scores,
                         sample_name=sample_name,
                         circular_groups=circular_groups,
-                        haplotype_fields=haplotype_fields)
+                        haplotype_fields=haplotype_fields,
+                        source_note=source_note)
 
 
 def write_autosql_for(extract_type: str, out_dir: Optional[str] = None,
                       block_scores: bool = False,
                       sample_name: Optional[str] = None,
                       circular_groups: bool = False,
-                      haplotype_fields: bool = False) -> Optional[str]:
+                      haplotype_fields: bool = False,
+                      source_note: Optional[str] = None) -> Optional[str]:
     """Write the autoSQL file for a given extract_type to disk.
 
     Returns the path to the written file, or None if no schema exists
@@ -283,7 +365,8 @@ def write_autosql_for(extract_type: str, out_dir: Optional[str] = None,
     schema = get_schema(extract_type, block_scores=block_scores,
                         sample_name=sample_name,
                         circular_groups=circular_groups,
-                        haplotype_fields=haplotype_fields)
+                        haplotype_fields=haplotype_fields,
+                        source_note=source_note)
     if schema is None:
         return None
     variant = ''

@@ -52,6 +52,16 @@ def parse_args(argv=None):
     parser.add_argument("--min-mapq", type=int, default=0, help="Minimum mapping quality (default: 0, no filtering)")
     parser.add_argument("--min-amplicon-reads", type=int, default=20, help="Minimum aligned reads required for an amplicon consensus (default 20)")
     parser.add_argument("--reference", default=None, help="Indexed FASTA fallback for BAMs lacking MD")
+    parser.add_argument(
+        "--all-snvs",
+        action="store_true",
+        help=(
+            "Also report the other recurrent SNVs (every substitution except C>T/G>A), "
+            "with the same thresholds required on fibers of each conversion direction. "
+            "Written to the VCF (INFO SCREEN=all_snvs) and JSON, not to the BED mask. "
+            "Memory grows with the run's sequencing-error load."
+        ),
+    )
     from fiberhmm.cli.common import add_version_args
     add_version_args(parser)
     return parser.parse_args(argv)
@@ -71,11 +81,14 @@ def main(argv=None):
         min_mapq=args.min_mapq,
         reference_fasta=args.reference,
         min_amplicon_reads=args.min_amplicon_reads,
+        all_snvs=args.all_snvs,
     )
     payload = write_snp_outputs(payload, prefix)
     print(
         f"FiberHMM DAF SNP mask: {payload['n_called_snps']:,} sites\n"
-        f"  BED mask: {payload['outputs']['bed']}\n"
+        + (f"  other recurrent SNVs (VCF only): {payload['n_called_other_snvs']:,}\n"
+           if args.all_snvs else "")
+        + f"  BED mask: {payload['outputs']['bed']}\n"
         f"  VCF:      {payload['outputs']['vcf']}\n"
         f"  amplicons: {payload['outputs']['amplicons_tsv']}\n"
         f"  report:   {payload['outputs']['json']}",

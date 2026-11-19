@@ -15,6 +15,9 @@ Supported annotation types:
           sequence (written by fiberhmm-daf-encode) -> BED12 (one line per
           read). The DAF analogue of --m6a for IUPAC-encoded BAMs that
           don't carry MM/ML.
+  - var: (--variants VCF) the allele each read carries at VCF sites.
+  - sv:  (--sv) per-read CIGAR deletions/insertions, long clips, SA tag.
+         See fiberhmm.io.read_layers.
 
 Extracts various tag types from tagged BAM files using region-parallel processing:
   - nucleosome: Nucleosomes (ns/nl tags) -> BED12 (one line per read)
@@ -537,6 +540,12 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
         circular_groups = bool(params.get('circular_groups', False))
         haplotype_fields = bool(params.get('haplotype_fields', False))
         frames = params.get('frames')
+        variant_options = params.get('variants')
+        sv_min_len = int(params.get('sv_min_len', 30))
+        sv_min_clip = int(params.get('sv_min_clip', 100))
+        want_sv = 'sv' in extract_types
+        want_var = 'var' in extract_types and variant_options is not None
+        site_window = None
 
         n_reads = 0
         n_features = {t: 0 for t in extract_types}
@@ -548,6 +557,10 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
             bed_outs = {
                 t: stack.enter_context(open(temp_bed_paths[t], 'w')) for t in extract_types
             }
+            if want_var:
+                from fiberhmm.io.read_layers import SiteWindow
+                vcf = stack.enter_context(pysam.VariantFile(variant_options.path))
+                site_window = SiteWindow(vcf, chrom, variant_options, start)
             with pysam.AlignmentFile(
                     input_bam, "rb", check_sq=False,
                     index_filename=params.get('index_filename')) as inbam:
@@ -564,7 +577,10 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                                     'bothstrand'))
 
                 for read in read_iter:
-                    if read.is_unmapped or read.is_secondary or read.is_supplementary:
+                    if read.is_unmapped or read.is_secondary:
+                        continue
+                    # Supplementary records feed only the sv layer.
+                    if read.is_supplementary and not want_sv:
                         continue
                     if read.reference_start < start or read.reference_start >= end:
                         continue
@@ -573,9 +589,20 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
 
                     from fiberhmm.inference.chimeras import is_marked_chimera
                     if is_marked_chimera(read):
-                        n_features['chimeras_skipped'] += 1
+                        if not read.is_supplementary:
+                            n_features['chimeras_skipped'] += 1
+                        continue
+                    if want_sv:
+                        n_features['sv'] += _extract_sv(
+                            read, bed_outs['sv'], sv_min_len, sv_min_clip,
+                            haplotype_fields=haplotype_fields)
+                    if read.is_supplementary:
                         continue
                     n_reads += 1
+                    if want_var:
+                        n_features['var'] += _extract_var(
+                            read, bed_outs['var'], site_window, variant_options,
+                            haplotype_fields=haplotype_fields)
 
                     # Build query->ref mapping once, pass to all extractors.
                     # Lazy: only build if at least one selected type needs it
@@ -1410,6 +1437,57 @@ def _extract_both_strand(read, bed_out, query_to_ref=None,
     return len(blocks)
 
 
+def _extract_var(read, bed_out, window, variant_options,
+                 haplotype_fields: bool = False) -> int:
+    """Write the ``var`` row(s) of a read: one block per VCF site it covers
+    (``blockAllele``, ``blockBq``); see :mod:`fiberhmm.io.read_layers`."""
+    from fiberhmm.io.read_layers import daf_conversion, genotype_read, pack_blocks
+    end = read.reference_end
+    if end is None:
+        return 0
+    sites = window.sites_in(int(read.reference_start), int(end))
+    if not sites:
+        return 0
+    calls = genotype_read(read, sites, daf_conversion(read, variant_options))
+    if not calls:
+        return 0
+    strand = '-' if read.is_reverse else '+'
+    suffix = list(_haplotype_columns(read, haplotype_fields))
+    suffix.append(_duplicate_bed_value(read))
+    for blocks in pack_blocks(calls):
+        quals = [b[3] for b in blocks if b[3] >= 0]
+        score = min(255, int(sum(quals) / len(quals))) if quals else 0
+        extra = [','.join(str(b[2]) for b in blocks),
+                 ','.join(str(b[3]) for b in blocks)] + suffix
+        bed_out.write(_bed12_row(
+            read.reference_name, blocks[0][0], max(b[1] for b in blocks),
+            read.query_name, score, strand, blocks, extra) + '\n')
+    return len(calls)
+
+
+def _extract_sv(read, bed_out, min_len: int, min_clip: int,
+                haplotype_fields: bool = False) -> int:
+    """Write the ``sv`` row(s) of an alignment record: one block per CIGAR
+    deletion/insertion or end clip (``blockType``, ``blockLen``) plus the
+    record's MAPQ, read length, flag and SA tag."""
+    from fiberhmm.io.read_layers import full_read_length, pack_blocks, sa_column, sv_events
+    events = sv_events(read, min_len, min_clip)
+    if not events:
+        return 0
+    strand = '-' if read.is_reverse else '+'
+    mapq = int(read.mapping_quality)
+    suffix = [mapq, full_read_length(read), int(read.flag), sa_column(read)]
+    suffix.extend(_haplotype_columns(read, haplotype_fields))
+    suffix.append(_duplicate_bed_value(read))
+    for blocks in pack_blocks(events):
+        extra = [','.join(str(b[2]) for b in blocks),
+                 ','.join(str(b[3]) for b in blocks)] + suffix
+        bed_out.write(_bed12_row(
+            read.reference_name, blocks[0][0], max(b[1] for b in blocks),
+            read.query_name, min(mapq, 255), strand, blocks, extra) + '\n')
+    return len(events)
+
+
 def _sort_supports_parallel() -> bool:
     """True if the system ``sort`` is GNU coreutils (supports --parallel).
 
@@ -1493,7 +1571,10 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
                           sort_mem: Optional[str] = None,
                           sort_parallel: int = 0,
                           haplotype_fields: bool = False,
-                          input_frame: str = 'auto'):
+                          input_frame: str = 'auto',
+                          variants=None,
+                          sv_min_len: int = 30,
+                          sv_min_clip: int = 100):
     """Extract one or more tag types from BAM in a single region-parallel pass.
 
     All requested extract types share a single BAM traversal + a single
@@ -1507,6 +1588,11 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
         extract_types: list of extract types to process, or a single string.
         input_frame: frame of legacy ns/nl/as/al: ``auto`` (the @PG
             provenance rule, as recall-tfs), ``molecular`` or ``query``.
+        variants: :class:`fiberhmm.io.read_layers.VariantOptions` for the
+            ``var`` type (required with it). An unindexed VCF/BCF is indexed
+            into the run's temporary directory.
+        sv_min_len / sv_min_clip: ``sv`` thresholds (CIGAR I/D length, end
+            clip length).
 
     Returns: (n_reads_processed, {extract_type: n_features})
 
@@ -1528,6 +1614,8 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
     output_beds = {('nucleosome' if k == 'footprint' else k): v
                    for k, v in output_beds.items()}
 
+    if 'var' in extract_types and variants is None:
+        raise ValueError("the 'var' type needs variants=VariantOptions(...)")
     with pysam.AlignmentFile(input_bam, 'rb', check_sq=False) as bam:
         frames = resolve_extract_frames(bam.header, input_frame)
     if set(extract_types) & {'nucleosome', 'msp', 'tf', 'm5c', 'bothstrand'}:
@@ -1553,6 +1641,15 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
         # Workers fetch by region, so they need an index: an existing one
         # (.bai or .csi, as htslib finds it), else a temporary CSI index.
         index_filename = _temporary_index_if_missing(input_bam, temp_dir)
+        if 'var' in extract_types:
+            import dataclasses
+
+            from fiberhmm.io.read_layers import prepare_indexed_vcf
+            indexed = prepare_indexed_vcf(variants.path, temp_dir)
+            if indexed != variants.path:
+                print(f"  [var] {os.path.basename(variants.path)} has no index; "
+                      "indexed a temporary copy (bgzip + tabix it to skip this)")
+                variants = dataclasses.replace(variants, path=indexed)
         params = {
             'index_filename': index_filename,
             'extract_types': extract_types,
@@ -1564,6 +1661,9 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
             'circular_groups': circular_groups,
             'haplotype_fields': haplotype_fields,
             'frames': frames,
+            'variants': variants,
+            'sv_min_len': sv_min_len,
+            'sv_min_clip': sv_min_clip,
         }
 
         # Work items: per region, a dict of {type: temp_bed_path}
@@ -1664,7 +1764,8 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
                    block_scores: bool = False,
                    sample_name: Optional[str] = None,
                    circular_groups: bool = False,
-                   haplotype_fields: bool = False) -> bool:
+                   haplotype_fields: bool = False,
+                   source_note: Optional[str] = None) -> bool:
     """Convert BED to bigBed using bedToBigBed.
 
     If ``extract_type`` matches a FiberHMM autoSQL schema
@@ -1691,6 +1792,7 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
         DUPLICATE_FIELD_COUNT,
         EXTRA_FIELD_COUNTS,
         HAPLOTYPE_FIELD_COUNT,
+        LAYER_FIELD_COUNTS,
         write_autosql_for,
     )
 
@@ -1702,10 +1804,13 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
     as_file = (write_autosql_for(extract_type, block_scores=block_scores,
                                   sample_name=sample_name,
                                   circular_groups=circular_groups,
-                                  haplotype_fields=haplotype_fields)
+                                  haplotype_fields=haplotype_fields,
+                                  source_note=source_note)
                if extract_type else None)
 
     n_extra = EXTRA_FIELD_COUNTS.get(extract_type, 0) if block_scores else 0
+    # var/sv: their own columns are always written.
+    n_extra += LAYER_FIELD_COUNTS.get(extract_type, 0)
     if circular_groups:
         n_extra += CIRCULAR_FIELD_COUNT
     if haplotype_fields:
@@ -1946,6 +2051,8 @@ def _print_tag_diagnostic(diag: Dict[str, object], extract_types: list) -> None:
     elif diag['has_md_only']:
         predicted['deam'] = 'MD-only (path-3 fallback)'
 
+    predicted['sv'] = 'CIGAR / clips / SA'
+    predicted['var'] = 'VCF sites'
     expected = []
     not_detected = []
     for t in extract_types:
@@ -2004,6 +2111,68 @@ def _default_extract_prob_threshold(path: str) -> int:
     return default_prob_threshold(enzyme, seq, EXTRACT_PROB_THRESHOLD)
 
 
+def _resolve_variants(args, all_mode: bool, extract_types: list):
+    """``(VariantOptions or None, autoSQL source note or None)`` for the var
+    layer; drops ``var`` from ``extract_types`` when ``--all`` finds no VCF.
+    Exits 2 on an unusable ``--variants``."""
+    from fiberhmm.io.autosql import vcf_source_note
+    from fiberhmm.io.read_layers import (
+        VariantOptions, bam_looks_daf, find_daf_snp_vcf, vcf_contigs, vcf_md5, vcf_samples,
+    )
+    path = args.variants
+    if path == 'auto' or (path is None and all_mode):
+        found, tried = find_daf_snp_vcf(args.input)
+        if found is None:
+            if path == 'auto':
+                print("fiberhmm-extract: error: --variants auto found no DAF SNP VCF; "
+                      "looked for:\n  " + "\n  ".join(tried), file=sys.stderr)
+                sys.exit(2)
+            print("Note: no VCF for the var layer (pass --variants VCF); skipping var.")
+            return None, None
+        path = found
+        print(f"var layer: using the DAF SNP screen VCF {path}")
+        if 'var' not in extract_types:
+            extract_types.append('var')
+    if path is None:
+        return None, None
+    if not os.path.isfile(path):
+        print(f"fiberhmm-extract: error: --variants file not found: {path}", file=sys.stderr)
+        sys.exit(2)
+    try:
+        samples = vcf_samples(path)
+    except (OSError, ValueError) as exc:
+        print(f"fiberhmm-extract: error: cannot read VCF {path}: {exc}", file=sys.stderr)
+        sys.exit(2)
+    if args.variants_sample is not None and args.variants_sample not in samples:
+        print(f"fiberhmm-extract: error: sample {args.variants_sample!r} is not in "
+              f"{path} (samples: {', '.join(samples) or 'none'})", file=sys.stderr)
+        sys.exit(2)
+    if args.variants_het_only and args.variants_sample is None:
+        print("fiberhmm-extract: error: --variants-het-only needs --variants-sample",
+              file=sys.stderr)
+        sys.exit(2)
+    contigs = vcf_contigs(path)
+    if contigs is not None:
+        bam_contigs = set(get_chrom_sizes(args.input))
+        if not contigs & bam_contigs:
+            print(f"  WARNING: {os.path.basename(path)} shares no contig name with the "
+                  "BAM (chr1 vs 1?); the var layer will be empty.", file=sys.stderr)
+    bam_is_daf = args.variants_daf == 'auto' and bam_looks_daf(args.input)
+    options = VariantOptions(
+        path=path, source_path=path,
+        pass_only=args.variants_pass_only,
+        sample=args.variants_sample,
+        het_only=args.variants_het_only,
+        max_allele_len=args.variants_max_len,
+        daf=args.variants_daf,
+        bam_is_daf=bam_is_daf,
+    )
+    print(f"var layer: {path} (sample={args.variants_sample or '*'}, "
+          f"pass_only={'on' if args.variants_pass_only else 'off'}, "
+          f"DAF handling={'on' if args.variants_daf == 'on' or bam_is_daf else args.variants_daf})")
+    return options, vcf_source_note(path, vcf_md5(path), args.variants_sample)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Extract tags from FiberHMM-tagged BAMs to BED12/bigBed',
@@ -2021,6 +2190,10 @@ Examples:
 
     # Keep BED files (in addition to bigBed)
     fiberhmm-extract -i tagged.bam --keep-bed
+
+    # Per-read alleles at a sample's heterozygous sites, and SV signatures
+    fiberhmm-extract -i tagged.bam --variants calls.vcf.gz \\
+        --variants-sample HG002 --variants-het-only --sv
         """
     )
 
@@ -2059,7 +2232,42 @@ Examples:
                         action='store_true',
                         help='Extract the deam+ / deam- intersection of paired '
                              'DddA consensus reads as a BED12 coverage overlay.')
-    parser.add_argument('--all', action='store_true', help='Extract all tag types (default if none specified)')
+    parser.add_argument('--variants', metavar='VCF|auto', default=None,
+                        help='Extract the var layer: the allele each read carries at the '
+                             'sites of a VCF/BCF (SNVs, MNVs and indels up to '
+                             '--variants-max-len; symbolic/SV alleles skipped). Any standard '
+                             'VCF works (DeepVariant/Clair3, vg deconstruct, the DAF SNP VCF). '
+                             '"auto" uses the DAF SNP screen VCF of this BAM '
+                             '(qc/<stem>.daf_snps.vcf, or the path its fiberhmm-call @PG '
+                             'records) and fails if there is none.')
+    parser.add_argument('--variants-sample', metavar='NAME', default=None,
+                        help='Keep only sites where this VCF sample\'s GT carries an ALT allele.')
+    parser.add_argument('--variants-het-only', action='store_true',
+                        help='With --variants-sample: keep only heterozygous sites.')
+    parser.add_argument('--variants-pass-only', action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help='Keep only sites whose FILTER is PASS or missing (default on; '
+                             '--no-variants-pass-only keeps every record).')
+    parser.add_argument('--variants-max-len', type=int, default=50,
+                        help='Longest REF/ALT allele kept, not counting the VCF anchor base '
+                             '(default 50). Longer alleles are never matched.')
+    parser.add_argument('--variants-daf', choices=['auto', 'on', 'off'], default='auto',
+                        help='DAF conversion handling for var: a T on a C->T read (A on a G->A '
+                             'read) may be a converted C (G), so a site where several alleles '
+                             'fit is coded -3. auto (default): for BAMs that declare DAF and '
+                             'reads carrying R/Y or st; on: every read; off: never.')
+    parser.add_argument('--sv', action='store_true',
+                        help='Extract the sv layer: per-read CIGAR deletions/insertions >= '
+                             '--sv-min-len, end clips >= --sv-min-clip and the SA tag, with '
+                             'supplementary records as their own rows.')
+    parser.add_argument('--sv-min-len', type=int, default=30,
+                        help='Smallest CIGAR deletion/insertion written to sv (default 30).')
+    parser.add_argument('--sv-min-clip', type=int, default=100,
+                        help='Smallest soft+hard clip written to sv (default 100).')
+    parser.add_argument('--all', action='store_true',
+                        help='Extract all tag types (default if none specified): every '
+                             'track plus sv, and var when a VCF is available (--variants, '
+                             'or the DAF SNP screen VCF found next to the BAM).')
 
     # Output options (default: bigbed)
     parser.add_argument('--bed-only', action='store_true', help='Output BED only (no bigBed)')
@@ -2148,11 +2356,15 @@ Examples:
     # Determine what to extract (default: all)
     extract_types = []
     any_selected = (args.nucleosome or args.msp or args.tf or
-                    args.m6a or args.m5c or args.deam or args.both_strand)
-    if args.all or not any_selected:
+                    args.m6a or args.m5c or args.deam or args.both_strand
+                    or args.sv or args.variants is not None)
+    all_mode = args.all or not any_selected
+    if all_mode:
         extract_types = [
-            'nucleosome', 'msp', 'tf', 'm6a', 'm5c', 'deam', 'bothstrand',
+            'nucleosome', 'msp', 'tf', 'm6a', 'm5c', 'deam', 'bothstrand', 'sv',
         ]
+        if args.variants is not None:
+            extract_types.append('var')
     else:
         if args.nucleosome:
             extract_types.append('nucleosome')
@@ -2168,6 +2380,12 @@ Examples:
             extract_types.append('deam')
         if args.both_strand:
             extract_types.append('bothstrand')
+        if args.sv:
+            extract_types.append('sv')
+        if args.variants is not None:
+            extract_types.append('var')
+
+    variant_options, variant_note = _resolve_variants(args, all_mode, extract_types)
 
     # Default to bigbed unless --bed-only specified
     make_bigbed = not args.bed_only
@@ -2245,6 +2463,9 @@ Examples:
             sort_mem=args.sort_mem,
             sort_parallel=args.sort_parallel or args.cores,
             input_frame=args.input_frame,
+            variants=variant_options,
+            sv_min_len=args.sv_min_len,
+            sv_min_clip=args.sv_min_clip,
         )
     except ExtractFrameError as exc:
         print(f"fiberhmm-extract: error: {exc}", file=sys.stderr)
@@ -2295,7 +2516,9 @@ Examples:
                               block_scores=args.block_scores,
                               sample_name=sample_name,
                               circular_groups=circular_groups_for_type,
-                              haplotype_fields=args.haplotype_fields):
+                              haplotype_fields=args.haplotype_fields,
+                              source_note=(variant_note if extract_type == 'var'
+                                           else None)):
                 print(f"  [{extract_type}] bigBed: {bb_path}")
                 if not args.keep_bed:
                     try:

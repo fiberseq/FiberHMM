@@ -16,6 +16,7 @@ from fiberhmm.daf.snps import (
     call_opposite_conversion_snps,
     describe_snp_threshold_policy,
     wrapped_reference_sites,
+    write_snp_outputs,
 )
 
 
@@ -330,3 +331,70 @@ def test_wrapped_mask_follows_in_place_changes_of_a_mutable_mask(tmp_path):
     first = wrapped_reference_sites(read, mask["p"])
     assert first == {5, 105, 205, 305}
     assert wrapped_reference_sites(read, mask["p"]) is first
+
+
+# --- --all-snvs: recurrent non-conversion SNVs -------------------------------
+
+def _write_other_snv_bam(path: Path) -> None:
+    """20 C->T and 20 G->A fibers; an A>G SNV at 140 on 8 fibers of each
+    direction, a C>A error at 120 on C->T fibers only."""
+    reference = "C" * 30 + "A" * 20 + "G" * 50
+    header = pysam.AlignmentHeader.from_dict(
+        {"HD": {"VN": "1.6"}, "SQ": [{"SN": "chr1", "LN": 1000}]}
+    )
+    with pysam.AlignmentFile(path, "wb", header=header) as bam:
+        for direction in ("ct", "ga"):
+            for index in range(20):
+                query = list(reference)
+                if direction == "ct":
+                    for position in range(0, 10):
+                        query[position] = "T"
+                    if index < 10:
+                        query[20] = "A"
+                else:
+                    for position in range(60, 70):
+                        query[position] = "A"
+                if index < 8:
+                    query[40] = "G"
+                sequence = "".join(query)
+                md, nm = _md_tag(reference, sequence)
+                read = pysam.AlignedSegment(header)
+                read.query_name = f"{direction}_{index}"
+                read.query_sequence = sequence
+                read.reference_id = 0
+                read.reference_start = 100
+                read.mapping_quality = 60
+                read.cigar = [(0, len(sequence))]
+                read.set_tag("MD", md)
+                read.set_tag("NM", nm)
+                bam.write(read)
+
+
+def test_all_snvs_reports_bidirectional_non_conversion_snvs(tmp_path):
+    bam_path = tmp_path / "other.bam"
+    _write_other_snv_bam(bam_path)
+    kwargs = dict(min_fraction=0.2, min_depth=5, min_alt_fibers=5,
+                  min_dominant_events=5, min_amplicon_reads=1000)
+    plain = call_opposite_conversion_snps(str(bam_path), **kwargs)
+    assert "other_snv_calls" not in plain
+    payload = call_opposite_conversion_snps(str(bam_path), all_snvs=True, **kwargs)
+    assert payload["parameters"]["all_snvs"] is True
+    calls = payload["other_snv_calls"]
+    # A>G on both directions is called; the one-direction C>A is not.
+    assert [(c["position_0based"], c["reference"], c["alternate"]) for c in calls] == [
+        (140, "A", "G")]
+    assert calls[0]["ct_direction_depth"] == 20
+    assert calls[0]["ct_direction_alternate_fibers"] == 8
+    assert calls[0]["ga_direction_alternate_fibers"] == 8
+    assert calls[0]["alternate_fraction"] == 0.4
+    written = write_snp_outputs(payload, str(tmp_path / "out" / "x.daf_snps"))
+    vcf = Path(written["outputs"]["vcf"]).read_text()
+    assert "SCREEN=all_snvs" in vcf and "CTD=20;CTA=8;GAD=20;GAA=8" in vcf
+    assert "\t141\t.\tA\tG\t" in vcf
+    bed = Path(written["outputs"]["bed"]).read_text()
+    assert "141" not in bed.split("\n", 1)[1]  # never in the mask
+    with pysam.VariantFile(written["outputs"]["vcf"]) as handle:
+        assert [r.pos for r in handle] == [141]
+    # without the flag the VCF is byte-identical to before (no new header lines)
+    plain_vcf = Path(write_snp_outputs(plain, str(tmp_path / "p" / "x"))["outputs"]["vcf"]).read_text()
+    assert "SCREEN" not in plain_vcf
