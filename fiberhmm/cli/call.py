@@ -302,6 +302,12 @@ def parse_args():
     p.add_argument('--daf-snp-min-dominant-purity', type=float, default=0.80,
                    help='Minimum conversion-direction purity for '
                         '--daf-call-snps (default 0.80).')
+    p.add_argument('--daf-snp-all-snvs', action='store_true',
+                   help='DAF only: the SNP screen also reports the other recurrent '
+                        'SNVs (every substitution except C>T/G>A, same thresholds on '
+                        'fibers of each conversion direction) in its VCF, so '
+                        'fiberhmm-extract --variants auto gets a fuller site list. '
+                        'The BED mask is unchanged.')
     p.add_argument('--daf-snp-min-amplicon-reads', type=int, default=20,
                    help='Minimum aligned reads required to discover and plot an '
                         'amplicon consensus in SNP QC (default 20).')
@@ -1345,6 +1351,7 @@ def _main(args):
                 min_mapq=args.min_mapq,
                 reference_fasta=args.reference,
                 min_amplicon_reads=args.daf_snp_min_amplicon_reads,
+                all_snvs=getattr(args, 'daf_snp_all_snvs', False),
             )
             if dedup_tmp is not None:
                 snp_payload["input"] = str(Path(args.input).resolve())

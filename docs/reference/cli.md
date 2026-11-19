@@ -147,6 +147,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--daf-snp-min-alt-fibers` | `5` | Minimum alternate fibers in each direction for --daf-call-snps (validated default 5). |
 | `--daf-snp-min-dominant-events` | `5` | Minimum dominant conversions to classify a fiber for --daf-call-snps (default 5). |
 | `--daf-snp-min-dominant-purity` | `0.8` | Minimum conversion-direction purity for --daf-call-snps (default 0.80). |
+| `--daf-snp-all-snvs` | off | DAF only: the SNP screen also reports the other recurrent SNVs (every substitution except C&gt;T/G&gt;A, same thresholds on fibers of each conversion direction) in its VCF, so fiberhmm-extract --variants auto gets a fuller site list. The BED mask is unchanged. |
 | `--daf-snp-min-amplicon-reads` | `20` | Minimum aligned reads required to discover and plot an amplicon consensus in SNP QC (default 20). |
 | `--ddda-mcg` | off | Deprecated integrated per-CpG mode; retained only to emit a clear migration error. Run fiberhmm-call, then fiberhmm-tag-m5c (whole CpG islands), then fiberhmm-call again on the tagged BAM. |
 | `--dedup` | auto | DAF (ddda/dddb) only: force PCR duplicate detection (already automatic for file-based DddA/DddB calls). Detect by deamination-pattern fingerprint (see fiberhmm-dedup) and similar alignment ends BEFORE footprinting. The integrated default is nondestructive: retain every read and set 0x400 plus di/ds cluster tags. Amplicon/UMI-less DAF libraries can be heavily PCR-duplicated and coordinate dedup does not apply. Requires a file input (not stdin). Ignored for fiber-seq (hia5). |
@@ -342,7 +343,16 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--m5c` | off | Extract DddA MA ddda_mcg spans, or native MM/ML 5mC positions |
 | `--deam` | off | Extract DAF-seq deamination calls. Priority: (1) MM/ML-native dU calls (mod code "u" or ChEBI 55797); (2) IUPAC R/Y codes in the query sequence (fiberhmm-daf-encode output); (3) MD-tag ref mismatches as a fallback for raw DAF BAMs. First non-empty source wins per read. blockMod: 0 = R/GA-dea, 1 = Y/CT-dea, matching FiberBrowser flavor codes. |
 | `--both-strand` / `--bothstrand` | off | Extract the deam+ / deam- intersection of paired DddA consensus reads as a BED12 coverage overlay. |
-| `--all` | off | Extract all tag types (default if none specified) |
+| `--variants` | — | Extract the var layer: the allele each read carries at the sites of a VCF/BCF (SNVs, MNVs and indels up to --variants-max-len; symbolic/SV alleles skipped). Any standard VCF works (DeepVariant/Clair3, vg deconstruct, the DAF SNP VCF). "auto" uses the DAF SNP screen VCF of this BAM (qc/&lt;stem&gt;.daf_snps.vcf, or the path its fiberhmm-call @PG records) and fails if there is none. |
+| `--variants-sample` | — | Keep only sites where this VCF sample's GT carries an ALT allele. |
+| `--variants-het-only` | off | With --variants-sample: keep only heterozygous sites. |
+| `--variants-pass-only` / `--no-variants-pass-only` | on | Keep only sites whose FILTER is PASS or missing (default on; --no-variants-pass-only keeps every record). |
+| `--variants-max-len` | `50` | Longest REF/ALT allele kept, not counting the VCF anchor base (default 50). Longer alleles are never matched. |
+| `--variants-daf` | `auto` | DAF conversion handling for var: a T on a C-&gt;T read (A on a G-&gt;A read) may be a converted C (G), so a site where several alleles fit is coded -3. auto (default): for BAMs that declare DAF and reads carrying R/Y or st; on: every read; off: never. Choices: `auto`, `on`, `off`. |
+| `--sv` | off | Extract the sv layer: per-read CIGAR deletions/insertions &gt;= --sv-min-len, end clips &gt;= --sv-min-clip and the SA tag, with supplementary records as their own rows. |
+| `--sv-min-len` | `30` | Smallest CIGAR deletion/insertion written to sv (default 30). |
+| `--sv-min-clip` | `100` | Smallest soft+hard clip written to sv (default 100). |
+| `--all` | off | Extract all tag types (default if none specified): every track plus sv, and var when a VCF is available (--variants, or the DAF SNP screen VCF found next to the BAM). |
 | `--bed-only` | off | Output BED only (no bigBed) |
 | `--keep-bed` | off | Keep BED files when creating bigBed |
 | `-q` / `--min-mapq` | `0` | Min mapping quality (default: 0, no filtering) |
@@ -403,6 +413,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--min-mapq` | `20` | Minimum mapping quality (default 20) |
 | `--min-amplicon-reads` | `20` | Minimum aligned reads required for an amplicon consensus (default 20) |
 | `--reference` | — | Indexed FASTA fallback for BAMs lacking MD |
+| `--all-snvs` | off | Also report the other recurrent SNVs (every substitution except C&gt;T/G&gt;A), with the same thresholds required on fibers of each conversion direction. Written to the VCF (INFO SCREEN=all_snvs) and JSON, not to the BED mask. Memory grows with the run's sequencing-error load. |
 
 ## fiberhmm-pair
 

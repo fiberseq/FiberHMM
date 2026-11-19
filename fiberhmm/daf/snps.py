@@ -530,6 +530,55 @@ class _SiteAccumulator:
             site_stats[(chrom, int(self.positions[site]), self.references[site])] = stats
 
 
+_ACGT_CODES = np.array([BASE_A, BASE_C, BASE_G, BASE_T], dtype=np.int64)
+
+
+def _other_snv_mask(ref_codes, query_codes, ct_mask, ga_mask):
+    """Mismatches DAF conversion cannot produce: A/C/G/T read base differing
+    from an A/C/G/T reference base, other than C->T/Y and G->A/R."""
+    return (
+        np.isin(ref_codes, _ACGT_CODES)
+        & np.isin(query_codes, _ACGT_CODES)
+        & (query_codes != ref_codes)
+        & ~ct_mask
+        & ~ga_mask
+    )
+
+
+class _OtherSnvAccumulator:
+    """Pass-2 per-direction depth and alternate fibers at one contig's
+    ``--all-snvs`` candidate sites (any non-conversion SNV)."""
+
+    def __init__(self, sites: dict):
+        # sites: {position: (reference base, {alternate bases})}
+        self.positions = np.fromiter(sorted(sites), dtype=np.int64, count=len(sites))
+        self.reference_codes = np.array(
+            [_base_code(sites[p][0]) for p in self.positions.tolist()], dtype=np.int64)
+        self.alternates = [sites[p][1] for p in self.positions.tolist()]
+        self.depth = {"CT": np.zeros(self.positions.size, dtype=np.int64),
+                      "GA": np.zeros(self.positions.size, dtype=np.int64)}
+        self.alt = {"CT": Counter(), "GA": Counter()}
+
+    def add_read(self, direction: str, rpos, ref_codes, query_codes) -> None:
+        index = np.searchsorted(self.positions, rpos)
+        np.minimum(index, self.positions.size - 1, out=index)
+        hit = (self.positions[index] == rpos) & (self.reference_codes[index] == ref_codes)
+        if not hit.any():
+            return
+        sites = index[hit]
+        query = query_codes[hit]
+        # fancy-index increments count a site once per read (circular turns)
+        self.depth[direction][sites] += 1
+        seen = set()
+        for site, code in zip(sites.tolist(), query.tolist()):
+            if code == self.reference_codes[site] or (site, code) in seen:
+                continue
+            seen.add((site, code))
+            base = chr(code) if code else ""
+            if base in self.alternates[site]:
+                self.alt[direction][(site, base)] += 1
+
+
 def _dominant_direction(
     ct_count: int,
     ga_count: int,
@@ -603,6 +652,7 @@ def call_opposite_conversion_snps(
     profile_min_depth: int = _SITE_PROFILE_MIN_DEPTH,
     profile_seed: int = _SITE_PROFILE_SEED,
     min_amplicon_reads: int = _AMPLICON_MIN_READS,
+    all_snvs: bool = False,
 ) -> dict:
     """Two-pass DAF SNP call using recurrent events on opposite-direction fibers.
 
@@ -614,6 +664,14 @@ def call_opposite_conversion_snps(
     cliff. A deterministic bounded sample of ordinary C/G positions is
     retained so QC can display the background mismatch distribution rather
     than showing called variants alone. Original MD tags are never modified.
+
+    ``all_snvs`` also reports the other recurrent SNVs (every substitution
+    except C>T and G>A, which deamination can mimic): counted on fibers of
+    both conversion directions, each direction must pass the same depth,
+    alternate-fiber and fraction thresholds. They are returned as
+    ``other_snv_calls`` and written to the VCF only, never to the BED mask
+    (deamination cannot create them). Pass 1 keeps a counter of every such
+    mismatch, so memory grows with the sequencing-error load of the run.
     """
     if not 0 < min_fraction <= 1:
         raise ValueError("min_fraction must be in (0, 1]")
@@ -628,6 +686,7 @@ def call_opposite_conversion_snps(
 
     reference_handle = pysam.FastaFile(reference_fasta) if reference_fasta else None
     candidate_alt_counts: Counter = Counter()
+    other_alt_counts: Counter = Counter()
     accounting = Counter()
     profile_heap: list[tuple[int, tuple[str, int, str]]] = []
     sampled_profile_sites: set[tuple[str, int, str]] = set()
@@ -692,6 +751,14 @@ def call_opposite_conversion_snps(
                                 max_profile_sites,
                                 profile_seed,
                             )
+                if all_snvs:
+                    other = _other_snv_mask(ref_codes, query_codes, ct_mask, ga_mask)
+                    if other.any():
+                        chrom = read.reference_name
+                        for key in set(zip(rpos[other].tolist(),
+                                           ref_codes[other].tolist(),
+                                           query_codes[other].tolist())):
+                            other_alt_counts[(chrom, key[0], chr(key[1]), chr(key[2]))] += 1
                 if direction == "GA":
                     for position in set(ct_positions):
                         candidate_alt_counts[(read.reference_name, position, "C", "T", "GA")] += 1
@@ -704,6 +771,16 @@ def call_opposite_conversion_snps(
             for key, count in candidate_alt_counts.items()
             if count >= min_alt_fibers
         }
+        other_sites_by_chrom: dict = defaultdict(dict)
+        if all_snvs:
+            for (chrom, position, reference, alternate), count in other_alt_counts.items():
+                if count < min_alt_fibers:
+                    continue
+                entry = other_sites_by_chrom[chrom].setdefault(position, (reference, set()))
+                if entry[0] == reference:  # MD disagreement: first reference wins
+                    entry[1].add(alternate)
+            other_alt_counts.clear()
+        other_accumulators: dict = {}
         profiled_sites = set(sampled_profile_sites)
         for chrom, position, reference, _alternate, _direction in candidates:
             profiled_sites.add((chrom, position, reference))
@@ -762,7 +839,8 @@ def call_opposite_conversion_snps(
                     endpoint_stats["ends"][int(read.reference_end or read.reference_start)] += 1
                     endpoint_stats["total_reads"] += 1
                 chrom_sites = profiled_by_chrom.get(read.reference_name)
-                if not chrom_sites:
+                other_sites = other_sites_by_chrom.get(read.reference_name)
+                if not chrom_sites and not other_sites:
                     continue
                 arrays = _read_arrays(read, reference_handle)
                 if arrays is None:
@@ -776,6 +854,14 @@ def call_opposite_conversion_snps(
                     min_dominant_purity,
                 )
                 if direction is None:
+                    continue
+                if other_sites:
+                    accumulator = other_accumulators.get(read.reference_name)
+                    if accumulator is None:
+                        accumulator = _OtherSnvAccumulator(other_sites)
+                        other_accumulators[read.reference_name] = accumulator
+                    accumulator.add_read(direction, rpos, ref_codes, query_codes)
+                if not chrom_sites:
                     continue
                 accumulator = site_accumulators.get(read.reference_name)
                 if accumulator is None:
@@ -847,6 +933,36 @@ def call_opposite_conversion_snps(
                     "candidate_alt_fibers_pass1": int(alt_fibers),
                 }
             )
+    other_calls = []
+    for chrom in sorted(other_accumulators):
+        accumulator = other_accumulators[chrom]
+        for site, position in enumerate(accumulator.positions.tolist()):
+            reference = chr(int(accumulator.reference_codes[site]))
+            for alternate in sorted(accumulator.alternates[site]):
+                per = {}
+                for direction in ("CT", "GA"):
+                    depth = int(accumulator.depth[direction][site])
+                    alt = int(accumulator.alt[direction][(site, alternate)])
+                    per[direction] = (depth, alt, alt / depth if depth else 0.0)
+                if all(
+                    depth >= min_depth and alt >= min_alt_fibers and fraction >= min_fraction
+                    for depth, alt, fraction in per.values()
+                ):
+                    depth = per["CT"][0] + per["GA"][0]
+                    alt = per["CT"][1] + per["GA"][1]
+                    other_calls.append({
+                        "chrom": chrom,
+                        "position_0based": int(position),
+                        "reference": reference,
+                        "alternate": alternate,
+                        "alternate_fibers": alt,
+                        "depth": depth,
+                        "alternate_fraction": float(alt / depth),
+                        "ct_direction_depth": per["CT"][0],
+                        "ct_direction_alternate_fibers": per["CT"][1],
+                        "ga_direction_depth": per["GA"][0],
+                        "ga_direction_alternate_fibers": per["GA"][1],
+                    })
     called_keys = {
         (call["chrom"], call["position_0based"], call["reference"])
         for call in calls
@@ -961,7 +1077,14 @@ def call_opposite_conversion_snps(
                 f"{min_amplicon_reads:,} aligned reads"
             ),
         }
+    extra = {}
+    if all_snvs:
+        extra = {
+            "n_called_other_snvs": len(other_calls),
+            "other_snv_calls": other_calls,
+        }
     return {
+        **extra,
         "schema_version": 3,
         "method": "bidirectional_recurrent_daf_snp",
         "threshold_policy": describe_snp_threshold_policy(
@@ -983,6 +1106,7 @@ def call_opposite_conversion_snps(
             "site_profile_seed": int(profile_seed),
             "min_amplicon_reads": int(min_amplicon_reads),
             "amplicon_start_bin_bp": int(_AMPLICON_BIN_BP),
+            **({"all_snvs": True} if all_snvs else {}),
         },
         "accounting": dict(accounting),
         "n_candidate_sites_after_min_alt": len(candidates),
@@ -1024,17 +1148,40 @@ def write_snp_outputs(payload: dict, output_prefix: str) -> dict:
         handle.write('##INFO=<ID=EA,Number=1,Type=Integer,Description="Expected-direction mismatch fibers">\n')
         handle.write('##INFO=<ID=EF,Number=1,Type=Float,Description="Expected-direction mismatch fraction">\n')
         handle.write('##INFO=<ID=OD,Number=1,Type=String,Description="Dominant direction on which event is unexpected">\n')
+        other_calls = payload.get("other_snv_calls")
+        if other_calls is not None:
+            handle.write('##INFO=<ID=SCREEN,Number=1,Type=String,Description="all_snvs: recurrent non-conversion SNV (--all-snvs); AF/DP/AC pooled over both directions">\n')
+            handle.write('##INFO=<ID=CTD,Number=1,Type=Integer,Description="C->T-direction fiber depth">\n')
+            handle.write('##INFO=<ID=CTA,Number=1,Type=Integer,Description="C->T-direction alternate fibers">\n')
+            handle.write('##INFO=<ID=GAD,Number=1,Type=Integer,Description="G->A-direction fiber depth">\n')
+            handle.write('##INFO=<ID=GAA,Number=1,Type=Integer,Description="G->A-direction alternate fibers">\n')
         handle.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
+        records = []
         for call in payload["calls"]:
-            handle.write(
+            records.append((call["chrom"], call["position_0based"], 0, (
                 f"{call['chrom']}\t{call['position_0based'] + 1}\t.\t"
                 f"{call['reference']}\t{call['alternate']}\t.\tPASS\t"
                 f"AF={call['alternate_fraction']:.8f};DP={call['opposite_direction_depth']};"
                 f"AC={call['alternate_fibers']};ED={call['expected_direction_depth']};"
                 f"EA={call['expected_direction_mismatch_fibers']};"
                 f"EF={call['expected_direction_mismatch_fraction']:.8f};"
-                f"OD={call['opposite_dominant_direction']}\n"
-            )
+                f"OD={call['opposite_dominant_direction']}\n")))
+        for call in other_calls or ():
+            records.append((call["chrom"], call["position_0based"], 1, (
+                f"{call['chrom']}\t{call['position_0based'] + 1}\t.\t"
+                f"{call['reference']}\t{call['alternate']}\t.\tPASS\t"
+                f"AF={call['alternate_fraction']:.8f};DP={call['depth']};"
+                f"AC={call['alternate_fibers']};"
+                f"CTD={call['ct_direction_depth']};CTA={call['ct_direction_alternate_fibers']};"
+                f"GAD={call['ga_direction_depth']};GAA={call['ga_direction_alternate_fibers']};"
+                f"SCREEN=all_snvs\n")))
+        if other_calls is None:
+            # unchanged order (and bytes) without --all-snvs
+            for record in records:
+                handle.write(record[3])
+        else:
+            for record in sorted(records, key=lambda item: item[:3]):
+                handle.write(record[3])
     with amplicon_path.open("w") as handle:
         handle.write(
             "amplicon_id\tchrom\tconsensus_start_0based\t"
