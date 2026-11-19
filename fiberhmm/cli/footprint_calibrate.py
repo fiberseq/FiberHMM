@@ -30,12 +30,36 @@ from collections import defaultdict
 import numpy as np
 
 
+class _GroupAction(argparse.Action):
+    """--bam and --calls-bb both start a cell-type group; keep them in command-line order."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        groups = list(getattr(namespace, self.dest, None) or [])
+        groups.append(('bam' if option_string == '--bam' else 'bb', values))
+        setattr(namespace, self.dest, groups)
+
+
+PER_GROUP = ('msp_bam', 'tf_bb', 'msp_bb', 'nuc_bb', 'm6a_bb')
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog='fiberhmm-footprint calibrate', description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--bed', required=True, help='Motif BED (BED6), the same motifs for every cell')
-    p.add_argument('--bam', action='append', required=True, metavar='BAM[,BAM...]',
-                   help='BAM(s) of one cell type, comma-separated; repeat per cell type, each with its own --chip')
+    src = p.add_argument_group(
+        'call inputs, one group per cell type (as fiberhmm-footprint)',
+        'Each --bam or --calls-bb starts a cell-type group; --chip, --cell and the per-group source options '
+        'below pair with the groups in order (one value per group; "-" = none for that group). Within a group, '
+        'several BAMs are comma-separated, and so are their --msp-bam files.')
+    src.add_argument('--bam', action=_GroupAction, dest='groups', metavar='BAM[,BAM...]',
+                     help='BAM(s) of one cell type, comma-separated; repeat per cell type, each with its own --chip')
+    src.add_argument('--calls-bb', action=_GroupAction, dest='groups', metavar='PREFIX',
+                     help='Instead of --bam: FiberHMM call bigBeds of one cell type (PREFIX_tf.bb, PREFIX_msp.bb, ...)')
+    src.add_argument('--msp-bam', action='append', metavar='BAM[,BAM...]|-',
+                     help='Per --bam group: take MSPs from these BAMs (matched by read name), as fiberhmm-footprint '
+                          '--msp-bam')
+    for flag, what in (('--tf-bb', 'TF call'), ('--msp-bb', 'MSP'), ('--nuc-bb', 'nucleosome'), ('--m6a-bb', 'm6A')):
+        src.add_argument(flag, action='append', metavar='BB|-', help=f'Per --calls-bb group: explicit {what} bigBed')
     p.add_argument('--chip', action='append', metavar='PEAKS',
                    help='ChIP-seq peak BED for the matching --bam (a motif overlapping a peak is positive)')
     p.add_argument('--label-column', type=int, metavar='N',
@@ -67,15 +91,35 @@ def build_parser():
     return p
 
 
-def collect(cell_name, bams, motifs, labels, options, cores):
-    """One cell: qualifying widths per eligible molecule, per motif, pooled over its BAMs."""
+def collect(cell_name, sources, motifs, labels, options, cores):
+    """One cell: qualifying widths per eligible molecule, per motif, pooled over its call sources.
+
+    ``sources``: ``[(source, msp_bam)]`` as returned by the main command's ``resolve_call_source``."""
     from fiberhmm.inference.footprint_calibration import CellData
     from fiberhmm.inference.motif_footprint import iter_footprint
     per_motif = defaultdict(list)
-    for bam in bams:
-        for m, obs in iter_footprint(bam, motifs, options, cores=cores):
+    for source, msp_bam in sources:
+        for m, obs in iter_footprint(source, motifs, options, cores=cores, msp_bam_path=msp_bam):
             per_motif[m.index].extend(o.widths for o in obs if o.code in (1, 3))
     return CellData(cell_name, [m.chrom for m in motifs], labels, [per_motif.get(m.index, []) for m in motifs])
+
+
+def group_sources(kind, value, extra, options):
+    """Call sources of one cell-type group through the main command's resolve_call_source."""
+    from fiberhmm.cli.motif_footprint import resolve_call_source
+    if kind == 'bam':
+        bams = [b for b in value.split(',') if b]
+        msp = [m for m in (extra.get('msp_bam') or '').split(',') if m] if extra.get('msp_bam') else []
+        if msp and len(msp) != len(bams):
+            raise ValueError(f'--msp-bam {extra["msp_bam"]}: give one MSP BAM per BAM of the group ({value})')
+        for key in ('tf_bb', 'msp_bb', 'nuc_bb', 'm6a_bb'):
+            if extra.get(key):
+                raise ValueError(f'--{key.replace("_", "-")} applies to --calls-bb groups')
+        return [resolve_call_source(options, bam=b, msp_bam=msp[i] if msp else None)[:2] for i, b in enumerate(bams)]
+    if extra.get('msp_bam'):
+        raise ValueError('--msp-bam applies to --bam groups (a --calls-bb group takes MSPs from its msp bigBed)')
+    return [resolve_call_source(options, calls_bb=value, tf_bb=extra.get('tf_bb'), msp_bb=extra.get('msp_bb'),
+                                nuc_bb=extra.get('nuc_bb'), m6a_bb=extra.get('m6a_bb'))[:2]]
 
 
 def main(argv=None):
@@ -83,14 +127,24 @@ def main(argv=None):
     args = p.parse_args(argv)
     from fiberhmm.inference import footprint_calibration as C
     from fiberhmm.inference.motif_footprint import FootprintOptions, load_motif_bed
+    groups = args.groups or []
+    if not groups:
+        p.error('give at least one call-input group: --bam or --calls-bb')
     try:
-        if args.chip and len(args.chip) != len(args.bam):
-            p.error('give one --chip per --bam group')
+        if args.chip and len(args.chip) != len(groups):
+            p.error('give one --chip per --bam/--calls-bb group')
         if not args.chip and args.label_column is None:
-            p.error('give ChIP labels: --chip per --bam, or --label-column')
-        if args.cell and len(args.cell) != len(args.bam):
-            p.error('give one --cell per --bam group, or none')
-        names = args.cell or [f'cell{i + 1}' for i in range(len(args.bam))]
+            p.error('give ChIP labels: --chip per group, or --label-column')
+        if args.cell and len(args.cell) != len(groups):
+            p.error('give one --cell per group, or none')
+        extras = [dict() for _ in groups]
+        for key in PER_GROUP:
+            values = getattr(args, key) or []
+            if values and len(values) != len(groups):
+                p.error(f'--{key.replace("_", "-")}: give one value per group ("-" for none), {len(groups)} in all')
+            for e, v in zip(extras, values):
+                e[key] = None if v in ('-', '') else v
+        names = args.cell or [f'cell{i + 1}' for i in range(len(groups))]
         if len(set(names)) != len(names):
             p.error('--cell names must be distinct')
         wmins, wmaxs = C.parse_range(args.wmin_range), C.parse_range(args.wmax_range)
@@ -99,10 +153,11 @@ def main(argv=None):
                                    min_ml=args.ml, flag_filter=args.filter, min_mapq=args.min_mapq)
         motifs = load_motif_bed(args.bed, layer_name='calibration')
         cells = []
-        for i, (name, group) in enumerate(zip(names, args.bam)):
+        for i, (name, (kind, value)) in enumerate(zip(names, groups)):
             labels = C.label_motifs(motifs, args.chip[i] if args.chip else None, args.label_column, args.bed)
             print(f'{name}: {int(labels.sum())} ChIP+ / {len(labels)} motifs; scoring molecules', file=sys.stderr)
-            cells.append(collect(name, [b for b in group.split(',') if b], motifs, labels, options, args.cores))
+            sources = group_sources(kind, value, extras[i], options)
+            cells.append(collect(name, sources, motifs, labels, options, args.cores))
         design = args.holdout if args.holdout != 'auto' else ('cell' if len(cells) > 1 else 'chromosome')
         cache = {}
         surf = C.surface(cells, wmins, wmaxs, cache=cache)
@@ -118,7 +173,10 @@ def main(argv=None):
     calibration = dict(
         method='mean per-cell AUROC of the per-motif footprinted fraction vs ChIP labels; grid search over '
                '[min_width, max_width] (conservative call width, inclusive)',
-        cells=[dict(name=c.name, motifs=len(c.labels), chip_positive=int(c.labels.sum())) for c in cells],
+        cells=[dict(name=c.name, motifs=len(c.labels), chip_positive=int(c.labels.sum()),
+                    calls={'bam' if kind == 'bam' else 'calls_bb': value,
+                           **{k: v for k, v in extra.items() if v}})
+               for c, (kind, value), extra in zip(cells, groups, extras)],
         motif_bed=args.bed, grid=dict(wmin=args.wmin_range, wmax=args.wmax_range),
         optimum=dict(min_width=wmin, max_width=wmax, insample_auroc=best),
         robust_range=robust, label_free_0_74_auroc=label_free,

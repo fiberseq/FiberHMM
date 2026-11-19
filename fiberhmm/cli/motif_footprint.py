@@ -115,6 +115,27 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def resolve_call_source(options, *, bam=None, msp_bam=None, calls_bb=None, tf_bb=None, msp_bb=None, nuc_bb=None,
+                        m6a_bb=None):
+    """``(source, msp_bam, chrom_sizes)`` for :func:`iter_footprint` from one set of call inputs: a BAM
+    (optionally with MSPs from ``msp_bam``) or FiberHMM call bigBeds. Shared by the main command and
+    ``calibrate``, so both read calls and decide eligibility the same way. Raises ValueError on a bad
+    combination."""
+    bb_input = any((calls_bb, tf_bb, msp_bb, nuc_bb, m6a_bb))
+    if bool(bam) == bb_input:
+        raise ValueError('give the calls as --bam or as call bigBeds (--calls-bb / --tf-bb --msp-bb ...), not both')
+    if not bb_input:
+        return bam, msp_bam, None
+    if msp_bam:
+        raise ValueError('--msp-bam needs --bam input (with call bigBeds, MSPs come from the msp bigBed)')
+    from fiberhmm.io.call_bigbeds import CallBigBeds, resolve_call_bigbeds
+    paths = resolve_call_bigbeds(calls_bb, tf=tf_bb, msp=msp_bb, nucleosome=nuc_bb, m6a=m6a_bb)
+    if options.require_unmodified and 'm6a' not in paths:
+        raise ValueError('--require-unmodified with bigBed input needs the m6A bigBed (--m6a-bb or PREFIX_m6a.bb)')
+    calls = CallBigBeds(**paths)                      # prints format-limit warnings once
+    return calls.spec(), None, calls.tracks['tf'].reader.chroms()
+
+
 def _open(path):
     return sys.stdout if path == '-' else open(path, 'w')
 
@@ -148,21 +169,11 @@ def _main(p, argv):
         p.error(str(error))
     from fiberhmm.io.bigbed_motifs import MotifFilter, is_bigbed
     bb_input = any((args.calls_bb, args.tf_bb, args.msp_bb, args.nuc_bb, args.m6a_bb))
-    if bool(args.bam) == bb_input:
-        p.error('give the calls as --bam or as call bigBeds (--calls-bb / --tf-bb --msp-bb ...), not both')
-    source = args.bam
-    chrom_sizes = None
-    if bb_input:
-        if args.out_bam or args.msp_bam:
-            p.error('--out-bam and --msp-bam need --bam input')
-        from fiberhmm.io.call_bigbeds import CallBigBeds, resolve_call_bigbeds
-        paths = resolve_call_bigbeds(args.calls_bb, tf=args.tf_bb, msp=args.msp_bb, nucleosome=args.nuc_bb,
-                                     m6a=args.m6a_bb)
-        if options.require_unmodified and 'm6a' not in paths:
-            p.error('--require-unmodified with bigBed input needs the m6A bigBed (--m6a-bb or PREFIX_m6a.bb)')
-        calls = CallBigBeds(**paths)                      # prints format-limit warnings once
-        source = calls.spec()
-        chrom_sizes = calls.tracks['tf'].reader.chroms()
+    if bb_input and (args.out_bam or args.msp_bam):
+        p.error('--out-bam and --msp-bam need --bam input')
+    source, msp_bam, chrom_sizes = resolve_call_source(
+        options, bam=args.bam, msp_bam=args.msp_bam, calls_bb=args.calls_bb, tf_bb=args.tf_bb,
+        msp_bb=args.msp_bb, nuc_bb=args.nuc_bb, m6a_bb=args.m6a_bb)
     names = [n for n in (args.motif_name or '').split(',') if n.strip()] or None
     filt = MotifFilter(names=names, min_score=args.min_score, max_pvalue=args.max_pvalue) \
         if (names or args.min_score is not None or args.max_pvalue is not None) else None
@@ -198,7 +209,7 @@ def _main(p, argv):
         out.write('\t'.join(TABLE_COLUMNS) + '\n')
         if mol:
             mol.write('\t'.join(MOLECULE_COLUMNS) + '\n')
-        for m, obs in iter_footprint(source, motifs, options, cores=args.cores, msp_bam_path=args.msp_bam):
+        for m, obs in iter_footprint(source, motifs, options, cores=args.cores, msp_bam_path=msp_bam):
             count += 1
             if fp_bb is not None:
                 fp_bb.add(m, obs)

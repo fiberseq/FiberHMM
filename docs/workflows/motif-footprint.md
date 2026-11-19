@@ -199,6 +199,18 @@ fiberhmm-footprint calibrate --bed ctcf_motifs.bed \
    fiberhmm-footprint --bam B.calls.bam --bed ctcf_motifs.bed --settings ctcf_A.settings.json -o B_ctcf.tsv
    ```
 
+Calibrate takes the same call and MSP inputs as the scoring command, one value
+per cell-type group in the order of the groups. Each group is started by a
+`--bam` or a `--calls-bb`; `--msp-bam`, `--tf-bb`, `--msp-bb`, `--nuc-bb` and
+`--m6a-bb` take one value per group (`-` for none). Calibrate with the same
+MSP source you will score with, so both use the same eligible molecules:
+
+```bash
+fiberhmm-footprint calibrate --bed ctcf_motifs.bed --label-column 7 \
+    --bam A.calls.bam --msp-bam A.ft_input.bam --cell A \
+    --calls-bb bb/B --msp-bam - --cell B -o ctcf_AB
+```
+
 It prints the optimal window, a robust range (the bounds of every window
 within 0.005 AUROC of the optimum, for choosing conservative bounds), the
 held-out AUROC per fold, and a ready-to-paste line:

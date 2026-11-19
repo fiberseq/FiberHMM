@@ -717,7 +717,7 @@ def test_calibrate_cli_settings_round_trip(tmp_path, capsys):
     import json
     from fiberhmm.cli.motif_footprint import main
     src = write_bam(tmp_path / 'src.bam', [
-        lambda h: make_read(h, f'p{i}', msps=[(0, 900)], tfs=[(195, 240, 90, 2, 2), (395, 520, 90, 2, 2)],
+        lambda h, i=i: make_read(h, f'p{i}', msps=[(0, 900)], tfs=[(195, 240, 90, 2, 2), (395, 520, 90, 2, 2)],
                             pos=POS + 10 * i) for i in range(6)])
     # label column 7: motifs footprinted by the 45 bp call are positive, by the 125 bp call negative
     rows = [('chr1', POS + 300 + 210 + k * 0, POS + 300 + 225, 'CTCF', 0, '+', 0) for k in range(1)]
@@ -754,3 +754,44 @@ def test_standard_cli_with_both_width_bounds(tmp_path):
     rows = {r.split('\t')[6]: r.split('\t') for r in (tmp_path / 'm.tsv').read_text().splitlines()[1:]}
     assert rows['r1'][7:10] == ['not_footprinted', '1', 'too_narrow']       # 25 bp < 30
     assert rows['r2'][7:9] == ['footprinted', '3']                           # 80 bp in [30, 90]
+
+
+def test_calibrate_msp_bam_uses_the_main_commands_eligibility(tmp_path, capsys):
+    import numpy as np
+    """calibrate --msp-bam decides eligibility exactly as fiberhmm-footprint --msp-bam does."""
+    import json
+    from fiberhmm.cli.footprint_calibrate import collect, group_sources
+    from fiberhmm.cli.motif_footprint import main
+    calls = write_bam(tmp_path / 'calls.bam', [
+        lambda h, i=i: make_read(h, f'p{i}', msps=[(0, 900)], tfs=[(195, 240, 90, 2, 2), (395, 520, 90, 2, 2)],
+                            pos=POS + 10 * i) for i in range(6)])
+    # a different MSP source: only half the molecules have an MSP over the first motifs
+    (tmp_path / 'msp').mkdir()
+    msps = write_bam(tmp_path / 'msp' / 'msp.bam', [
+        lambda h, i=i: make_read(h, f'p{i}', msps=[(0, 900)] if i % 2 else [(600, 900)], tfs=[], pos=POS + 10 * i)
+        for i in range(6)])
+    rows = [('chr1', POS + 200, POS + 215, 'CTCF', 0, '+', 1), ('chr1', POS + 205, POS + 225, 'CTCF', 0, '-', 1),
+            ('chr1', POS + 400, POS + 415, 'CTCF', 0, '+', 0), ('chr1', POS + 450, POS + 470, 'CTCF', 0, '+', 0),
+            ('chr1', POS + 700, POS + 715, 'CTCF', 0, '+', 0)]
+    b = bed(tmp_path, rows)
+    main(['--bam', str(calls), '--msp-bam', str(msps), '--bed', str(b), '-o', str(tmp_path / 'main.tsv')])
+    table = [r.split('\t') for r in (tmp_path / 'main.tsv').read_text().splitlines()[1:]]
+    main_eligible = [int(r[7]) for r in table]
+    motifs = mf.load_motif_bed(b)
+    options = mf.FootprintOptions(max_width=0)
+    cell = collect('X', group_sources('bam', str(calls), {'msp_bam': str(msps)}, options), motifs,
+                   np.zeros(len(motifs), bool), options, 1)
+    assert [len(m) for m in cell.molecules] == main_eligible
+    assert main_eligible[:2] == [3, 3]                      # the MSP BAM, not the calls BAM, decided
+    own = collect('X', group_sources('bam', str(calls), {}, options), motifs, np.zeros(len(motifs), bool), options, 1)
+    assert [len(m) for m in own.molecules][:2] == [6, 6]
+    # the command line: one --msp-bam per --bam group ("-" = none), recorded in the settings
+    main(['calibrate', '--bed', str(b), '--label-column', '7', '--bam', str(calls), '--msp-bam', str(msps),
+          '--cell', 'X', '--bam', str(calls), '--msp-bam', '-', '--cell', 'Y', '-o', str(tmp_path / 'cal'),
+          '--no-plot'])
+    s = json.loads((tmp_path / 'cal.settings.json').read_text())
+    assert s['calibration']['cells'][0]['calls'] == {'bam': str(calls), 'msp_bam': str(msps)}
+    assert s['calibration']['cells'][1]['calls'] == {'bam': str(calls)}
+    with pytest.raises(SystemExit):
+        main(['calibrate', '--bed', str(b), '--label-column', '7', '--bam', str(calls), '--bam', str(calls),
+              '--msp-bam', str(msps), '-o', str(tmp_path / 'bad'), '--no-plot'])
