@@ -15,8 +15,11 @@ Includes the unreleased 3.0.6 changes.
   inclusive floor; negatives below it are reported as `too_narrow`.
 - `fiberhmm-footprint calibrate` learns the width window from ChIP-seq labels
   (2D grid, mean per-cell AUROC, leave-one-cell-type-out or chromosome-split
-  held-out evaluation, robust range, surface TSV and heatmap). The result is a
-  settings JSON that `fiberhmm-footprint --settings` loads.
+  held-out evaluation, robust range, surface TSV and heatmap). It takes the
+  main command's call and MSP inputs per cell type (`--bam` with `--msp-bam`,
+  or `--calls-bb` and the explicit `--*-bb` files), so calibration and scoring
+  use the same eligibility. The result is a settings JSON that
+  `fiberhmm-footprint --settings` loads.
 - `fiberhmm-footprint` reads calls from `fiberhmm-extract` bigBeds
   (`--calls-bb PREFIX`, or `--tf-bb`/`--msp-bb`/`--nuc-bb`/`--m6a-bb`) as an
   alternative to the BAM, and `--out-bb` writes per-read bigBeds of
