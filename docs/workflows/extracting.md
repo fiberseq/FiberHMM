@@ -119,7 +119,8 @@ VCF. An unindexed or plain-text VCF is indexed into a temporary copy.
   be a converted G. R/Y codes are read as the converted base (Y = T,
   R = A). If more than one allele fits once conversion is allowed, the site
   is `-3`. At a C/T site, a C on a C→T read is REF (informative) and a T is
-  `-3`. The read's conversion strand follows FiberHMM's DAF rule (the `st`
+  `-3`. If exactly one allele fits, the site takes that allele, so a T at a
+  C/G site on a C→T read counts as C (REF). The read's conversion strand follows FiberHMM's DAF rule (the `st`
   tag on R/Y input, else the read's R/Y marks or reference mismatches). A
   DAF read whose strand cannot be decided allows both conversions.
   `--variants-daf auto` (the default) applies this to BAMs whose header
@@ -178,6 +179,17 @@ rows must start at their first block and end at their last, so
 `chromStart`/`chromEnd` span the read's sites or events, not its whole
 alignment (the same rule as every other layer). A coordinate column for
 the alignment span would not survive a graph lift, so none is written.
+
+**SCHEMA note (3.2 draft).** The layout differs from the original draft spec
+in five ways:
+
+1. `chromStart`/`chromEnd` span the blocks, not the read alignment.
+   bedToBigBed rejects rows whose first block does not start at
+   `chromStart` and whose last block does not end at `chromEnd`.
+2. `isDuplicate` is the last column, as in every FiberHMM layer.
+3. A read can have more than one row (overlapping sites or events).
+4. `readLen` includes hard clips.
+5. An INS block is the anchor base before the insertion.
 
 ## Keeping bigBeds instead of BAMs
 
