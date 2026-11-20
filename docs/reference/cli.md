@@ -52,7 +52,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--force-chemistry` | off | Run although the reads contradict --enzyme/--seq (a FIBERHMM-CHEMISTRY declaration naming another enzyme or platform; m6A-tagged reads without deaminations for ddda/dddb; deaminated or untagged reads for hia5). Default: refuse. |
 | `--topology` | `auto` | Reference topology. auto (default): a plasmid map's own topology, FASTA contigs linear. circular: every contig is circular (a plasmid FASTA). Choices: `auto`, `circular`, `linear`. |
 | `--region` | — | Keep only reads overlapping this region (1-based, inclusive; repeatable). The first region is the one outputs.json asks FiberBrowser to open. |
-| `--min-mapq` | `0` | Keep primary alignments with at least this MAPQ (default: 0, no filtering); also passed to fiberhmm-call and fiberhmm-qc. |
+| `--min-mapq` | — | Keep primary alignments with at least this MAPQ (default: 0, no filtering; continuing an output directory keeps the value its earlier run recorded); also passed to fiberhmm-call and fiberhmm-qc. |
 | `--keep-soft-clips` | off | Keep unaligned read arms as soft clips everywhere. Default: kept on linear contigs (DAF calling treats them as no evidence); for ddda/dddb hard-clipped on circular contigs (concatemer arms beyond one full circle). |
 | `--hard-clip` | off | Hard-clip unaligned read arms on every contig (the earlier ddda/dddb default). |
 | `--no-origin-merge` | off | Do not join the two pieces of reads that run through the origin of a circular reference (keep the primary piece). |

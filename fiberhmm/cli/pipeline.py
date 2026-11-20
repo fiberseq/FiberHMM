@@ -104,10 +104,13 @@ def build_parser() -> argparse.ArgumentParser:
                         "outputs.json asks FiberBrowser to open.")
 
     align = p.add_argument_group("alignment")
-    align.add_argument("--min-mapq", type=int, default=0,
+    # None = not given: a new run uses 0; continuing an OUTDIR uses the value its
+    # completed steps recorded (runs before 3.2.0 defaulted to 20).
+    align.add_argument("--min-mapq", type=int, default=None,
                        help="Keep primary alignments with at least this MAPQ "
-                            "(default: 0, no filtering); also passed to fiberhmm-call and "
-                            "fiberhmm-qc.")
+                            "(default: 0, no filtering; continuing an output directory "
+                            "keeps the value its earlier run recorded); also passed to "
+                            "fiberhmm-call and fiberhmm-qc.")
     clips = align.add_mutually_exclusive_group()
     clips.add_argument("--keep-soft-clips", action="store_true",
                        help="Keep unaligned read arms as soft clips everywhere. "

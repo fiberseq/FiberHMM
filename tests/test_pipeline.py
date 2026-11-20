@@ -802,3 +802,139 @@ def test_call_fingerprint_records_the_alignment_default():
     assert call_parser_defaults()["alignments"] == "primary-supplementary"
     assert call_parser_defaults()["daf_mask_unaligned"] is True
     assert call_parser_defaults()["daf_insert_consensus"] == "auto"
+
+
+# ---------------------------------------------------------------------------
+# --min-mapq not given: continue an OUTDIR with its recorded value (3.2.0
+# changed the default from 20 to 0; FiberBrowser 3.0.x never passes it)
+# ---------------------------------------------------------------------------
+
+def _mapq_pipe(out, **config):
+    pipe = Pipeline(PipelineConfig(reads=["r.fastq"], reference="ref.fa", enzyme="dddb",
+                                   outdir=str(out), quiet=True, **config),
+                    ProgressReporter())
+    pipe._log_handle = None
+    return pipe
+
+
+def test_min_mapq_not_given_resumes_with_the_recorded_value(tmp_path):
+    from fiberhmm.pipeline.progress import write_marker
+    out = tmp_path / "out"
+    (out / "x.bam").parent.mkdir(parents=True)
+    (out / "x.bam").write_bytes(b"BAM\x01 records")
+    write_marker(str(out), "align", {"min_mapq": 20, "a": 1}, {"bam": str(out / "x.bam")})
+
+    # Not given: the recorded value is reused, logged once, and the step is kept.
+    pipe = _mapq_pipe(out)
+    assert pipe.config.min_mapq is None and pipe.config.resolved_min_mapq() == 0
+    pipe._resolve_min_mapq()
+    assert pipe.config.min_mapq == 20
+    assert pipe.config.calling_settings()["min_mapq"] == 20
+    assert pipe._notes == [f"min_mapq: resuming with the recorded min_mapq=20 (from the "
+                           f"earlier 'align' step in {out}; the default is now 0)"]
+    fingerprint = {"min_mapq": pipe.config.resolved_min_mapq(), "a": 1}
+    assert pipe._is_complete("align", fingerprint) is True
+
+    # Given explicitly: kept as given; a different recorded value is refused.
+    explicit = _mapq_pipe(out, min_mapq=0)
+    explicit._resolve_min_mapq()
+    assert explicit.config.min_mapq == 0 and explicit._notes == []
+    with pytest.raises(PipelineError, match=r"different settings or inputs \(min_mapq\)"):
+        explicit._is_complete("align", {"min_mapq": explicit.config.resolved_min_mapq(),
+                                        "a": 1})
+    same = _mapq_pipe(out, min_mapq=20)
+    same._resolve_min_mapq()
+    assert same.config.min_mapq == 20 and same._notes == []
+
+    # --redo align (or all) reuses nothing: the new default.
+    for redo in ("align", "all"):
+        redone = _mapq_pipe(out, redo=redo)
+        redone._resolve_min_mapq()
+        assert redone.config.min_mapq == 0 and redone._notes == []
+
+
+def test_min_mapq_not_given_new_run_and_later_step_sources(tmp_path):
+    from fiberhmm.pipeline.progress import STATE_DIR, write_marker
+    # A new OUTDIR: the default, no note.
+    fresh = _mapq_pipe(tmp_path / "fresh")
+    fresh._resolve_min_mapq()
+    assert fresh.config.min_mapq == 0 and fresh._notes == []
+    assert PipelineConfig(reads=[], reference="r.fa", enzyme="dddb",
+                          outdir="o").calling_settings()["min_mapq"] == 0
+
+    # Aligned input (no align marker): the call marker is the source; with
+    # --redo call, the earlier QC/track markers are not reused either.
+    out = tmp_path / "aligned"
+    write_marker(str(out), "call", {"min_mapq": 20}, {})
+    write_marker(str(out), "qc", {"min_mapq": 20}, {})
+    pipe = _mapq_pipe(out)
+    pipe._resolve_min_mapq()
+    assert pipe.config.min_mapq == 20 and "'call' step" in pipe._notes[0]
+    redo = _mapq_pipe(out, redo="call")
+    redo._resolve_min_mapq()
+    assert redo.config.min_mapq == 0
+
+    # An interrupted calling state records it too.
+    out = tmp_path / "interrupted"
+    (out / STATE_DIR).mkdir(parents=True)
+    (out / STATE_DIR / "call.started").write_text(json.dumps({"fingerprint": {"min_mapq": 20}}))
+    pipe = _mapq_pipe(out)
+    pipe._resolve_min_mapq()
+    assert pipe.config.min_mapq == 20
+
+    # Markers that do not record it (older FiberHMM): the default.
+    out = tmp_path / "unrecorded"
+    write_marker(str(out), "align", {"a": 1}, {})
+    pipe = _mapq_pipe(out)
+    pipe._resolve_min_mapq()
+    assert pipe.config.min_mapq == 0 and pipe._notes == []
+
+
+def test_min_mapq_cli_default_is_not_given():
+    from fiberhmm.cli.pipeline import config_from_args, parse_args
+    base = ["r.fastq", "--reference", "ref.fa", "--enzyme", "dddb", "-o", "out"]
+    assert config_from_args(parse_args(base)).min_mapq is None
+    assert config_from_args(parse_args(base + ["--min-mapq", "0"])).min_mapq == 0
+    assert config_from_args(parse_args(base + ["--min-mapq", "20"])).min_mapq == 20
+
+
+@needs_minimap2
+def test_min_mapq_resume_end_to_end(plasmid_run):
+    """A run recorded with MAPQ 20 (the pre-3.2.0 default) continues without
+    --min-mapq, is refused with an explicit different value, and a new run
+    uses 0."""
+    run = plasmid_run
+    base = [str(run["reads"]), "--reference", str(run["map"]), "--enzyme", "dddb",
+            "--sample", "s1", "-c", "2", "--min-read-length", "500", "--no-qc"]
+    first = _run_cli(base + ["-o", str(run["out"]), "--min-mapq", "20"])
+    assert first.returncode == 0, first.stderr[-3000:]
+    state = run["out"] / ".fiberhmm-pipeline"
+    assert json.loads((state / "align.done").read_text())["fingerprint"]["min_mapq"] == 20
+
+    # Interrupted after alignment: the calling step is gone.
+    (state / "call.done").unlink()
+    (run["out"] / "s1.fiberhmm.bam").unlink()
+    again = _run_cli(base + ["-o", str(run["out"]), "--progress-json", str(run["progress"])])
+    assert again.returncode == 0, again.stderr[-3000:]
+    assert "resuming with the recorded min_mapq=20" in again.stderr
+    assert "resuming with the recorded min_mapq=20" in (
+        run["out"] / "logs" / "pipeline.log").read_text()
+    events = _events(run["progress"])
+    status = {e["step"]: e["status"] for e in events
+              if e["event"] == "step" and e["status"] != "running"}
+    assert status["align"] == "skipped" and status["call"] == "done"
+    assert next(e for e in events if e["event"] == "start")["settings"]["min_mapq"] == 20
+    assert json.loads((state / "call.done").read_text())["fingerprint"]["min_mapq"] == 20
+    assert json.loads((run["out"] / "outputs.json").read_text())["settings"]["min_mapq"] == 20
+
+    refused = _run_cli(base + ["-o", str(run["out"]), "--min-mapq", "0"])
+    assert refused.returncode != 0
+    assert "made with different settings or inputs (min_mapq)" in refused.stderr
+
+    fresh_out = run["out"].parent / "fresh"
+    fresh = _run_cli(base + ["-o", str(fresh_out)])
+    assert fresh.returncode == 0, fresh.stderr[-3000:]
+    assert "resuming with the recorded" not in fresh.stderr
+    assert json.loads((fresh_out / ".fiberhmm-pipeline" / "align.done").read_text()
+                      )["fingerprint"]["min_mapq"] == 0
+    assert json.loads((fresh_out / "outputs.json").read_text())["settings"]["min_mapq"] == 0

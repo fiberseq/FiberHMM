@@ -87,6 +87,13 @@ class PipelineCancelled(PipelineError):
         self.exit_code = 128 + int(signum)
 
 
+# --min-mapq when neither given nor recorded by an earlier run in OUTDIR
+# (FiberHMM before 3.2.0: 20).
+DEFAULT_MIN_MAPQ = 0
+# Steps whose markers record min_mapq, in run order.
+_MAPQ_STEPS = ("align", "call", "qc", "tracks")
+
+
 @dataclass
 class PipelineConfig:
     reads: list[str]
@@ -98,7 +105,10 @@ class PipelineConfig:
     seq: Optional[str] = None
     topology: str = "auto"
     regions: list[str] = field(default_factory=list)
-    min_mapq: int = 0
+    # None: not given. Pipeline._setup resolves it to the value an earlier run in
+    # OUTDIR recorded for a step this run reuses (FiberHMM before 3.2.0 defaulted
+    # to 20), else DEFAULT_MIN_MAPQ.
+    min_mapq: Optional[int] = None
     min_read_length: Optional[int] = None
     # None: DAF reads on circular contigs only (concatemer arms beyond one
     # full circle); linear-contig soft clips are kept (DAF calling treats them
@@ -163,6 +173,10 @@ class PipelineConfig:
             return 'keep'
         return _call_arg_value(self.call_args, '--chimeras') or self.resolved_chimeras()
 
+    def resolved_min_mapq(self) -> int:
+        """``min_mapq``, or the default when neither given nor resolved from OUTDIR."""
+        return DEFAULT_MIN_MAPQ if self.min_mapq is None else int(self.min_mapq)
+
     def resolved_hard_clip(self) -> str:
         """``on``, ``off``, or ``circular`` (DAF default: hard-clip records on
         circular contigs only)."""
@@ -201,7 +215,7 @@ class PipelineConfig:
         return {
             "enzyme": self.enzyme,
             "seq": self.resolved_seq() or "auto",
-            "min_mapq": self.min_mapq,
+            "min_mapq": self.resolved_min_mapq(),
             "min_read_length": self.min_read_length or 1000,
             "dedup": self.dedup if daf else "off",
             "dedup_mode": self.dedup_mode if daf else None,
@@ -772,6 +786,7 @@ class Pipeline:
         os.makedirs(os.path.join(self.outdir, "logs"), exist_ok=True)
         self._log_handle = open(os.path.join(self.outdir, "logs", "pipeline.log"), "a",
                                 encoding="utf-8")
+        self._resolve_min_mapq()
         self.aligned_bam = os.path.join(self.outdir, f"{self.sample}.aligned.bam")
         self.called_bam = os.path.join(self.outdir, f"{self.sample}.fiberhmm.bam")
         self.qc_prefix = os.path.join(self.outdir, "qc", f"{self.sample}.fiberhmm")
@@ -794,6 +809,46 @@ class Pipeline:
             self.basecalled_bam = os.path.join(self.outdir, f"{self.sample}.basecalled.bam")
             return
         self._inspect_inputs()
+
+    def _recorded_min_mapq(self) -> Optional[tuple[int, str]]:
+        """``(min_mapq, step)`` recorded by the first step in OUTDIR this run would
+        reuse (not redone), or by an interrupted calling state; None when none
+        records it."""
+        cfg = self.config
+        for step in _MAPQ_STEPS:
+            if (step not in self.steps or self._forced(step)
+                    or (step == "qc" and not cfg.qc)):
+                continue
+            records = [read_marker(self.outdir, step)]
+            if step == "call":
+                try:
+                    with open(os.path.join(self.outdir, STATE_DIR, "call.started"),
+                              encoding="utf-8") as handle:
+                        records.append(json.load(handle))
+                except (OSError, ValueError):
+                    pass
+            for record in records:
+                fingerprint = (record or {}).get("fingerprint") if isinstance(record, dict) else None
+                value = fingerprint.get("min_mapq") if isinstance(fingerprint, dict) else None
+                if isinstance(value, int) and not isinstance(value, bool):
+                    return value, step
+        return None
+
+    def _resolve_min_mapq(self) -> None:
+        """--min-mapq not given: continue with the value OUTDIR's earlier run
+        recorded (its steps are reused, not refused, after the 3.2.0 default
+        change from 20 to 0); a new run uses DEFAULT_MIN_MAPQ. A given value
+        is kept, and a reused step recorded with another value is refused."""
+        cfg = self.config
+        if cfg.min_mapq is not None:
+            return
+        recorded = self._recorded_min_mapq()
+        cfg.min_mapq = DEFAULT_MIN_MAPQ if recorded is None else recorded[0]
+        if recorded is not None and recorded[0] != DEFAULT_MIN_MAPQ:
+            self._notes.append(
+                f"min_mapq: resuming with the recorded min_mapq={recorded[0]} (from the "
+                f"earlier '{recorded[1]}' step in {self.outdir}; the default is now "
+                f"{DEFAULT_MIN_MAPQ})")
 
     def _inspect_inputs(self) -> None:
         """Chemistry and platform checks on the read files, and their
@@ -1282,7 +1337,7 @@ class Pipeline:
             "reads": [file_fingerprint(rf.path, self.memo) for rf in self.read_files],
             "reference": self._reference_identity(),
             "preset": cfg.preset(),
-            "min_mapq": cfg.min_mapq,
+            "min_mapq": cfg.resolved_min_mapq(),
             "hard_clip": cfg.resolved_hard_clip(),
             "alignments": cfg.alignments,
             "origin_merge": cfg.origin_merge,
@@ -1445,7 +1500,7 @@ class Pipeline:
         pipeline_pg = {
             "ID": "fiberhmm-pipeline", "PN": "fiberhmm-pipeline", "VN": __version__,
             "CL": "fiberhmm-pipeline " + " ".join(shlex.quote(a) for a in sys.argv[1:]),
-            "DS": (f"primary MAPQ>={cfg.min_mapq}; alignments={cfg.alignments}; "
+            "DS": (f"primary MAPQ>={cfg.resolved_min_mapq()}; alignments={cfg.alignments}; "
                    f"origin_merge={'on' if cfg.origin_merge else 'off'}; "
                    f"hard_clip={cfg.resolved_hard_clip()}; "
                    + bcprov.ds_tokens(self.basecaller)),
@@ -1515,7 +1570,7 @@ class Pipeline:
         _sort_index_publish(unsorted, self.aligned_bam, cfg.cores)
         stats["message"] = (
             "{reads} reads: {kept} kept (primary, MAPQ>={q}), {unmapped} unmapped, "
-            "{low_mapq} below MAPQ {q}".format(q=cfg.min_mapq, **stats)
+            "{low_mapq} below MAPQ {q}".format(q=cfg.resolved_min_mapq(), **stats)
             + (f", {stats['outside_regions']} outside --region" if self.regions else "")
             + (f"; {stats['origin_merged']} joined across a circular origin"
                if circular else "")
@@ -1573,6 +1628,7 @@ class Pipeline:
         piece on a circular contig) and, unless ``alignments`` is
         ``primary``, its other supplementary records on linear contigs."""
         cfg = self.config
+        min_mapq = cfg.resolved_min_mapq()
         stats["reads"] += 1
         primary = None
         supplementary = []
@@ -1589,7 +1645,7 @@ class Pipeline:
         # Each piece is filtered on its own MAPQ: a uniquely aligned
         # supplementary arm (an SV partner) is kept even when the primary
         # piece maps ambiguously.
-        record = primary if primary.mapping_quality >= cfg.min_mapq else None
+        record = primary if primary.mapping_quality >= min_mapq else None
         if record is None:
             stats["low_mapq"] += 1
         contig = primary.reference_name
@@ -1615,7 +1671,7 @@ class Pipeline:
             extra = [sup for sup in supplementary
                      if sup is not merged_piece
                      and sup.reference_name not in circular
-                     and sup.mapping_quality >= cfg.min_mapq]
+                     and sup.mapping_quality >= min_mapq]
         if record is None and cfg.alignments == "primary":
             return []
         kept = []
@@ -1665,7 +1721,7 @@ class Pipeline:
             "reference": self._reference_identity(),
             "enzyme": cfg.enzyme,
             "seq": cfg.resolved_seq(),
-            "min_mapq": cfg.min_mapq,
+            "min_mapq": cfg.resolved_min_mapq(),
             "min_read_length": cfg.min_read_length,
             "dedup": cfg.dedup,
             "dedup_mode": cfg.dedup_mode,
@@ -1713,7 +1769,7 @@ class Pipeline:
                "-i", self.aligned_bam, "-o", self.called_bam,
                "--enzyme", cfg.enzyme, "-c", str(cfg.cores),
                "--io-threads", str(max(1, min(4, cfg.cores))),
-               "--min-mapq", str(cfg.min_mapq)]
+               "--min-mapq", str(cfg.resolved_min_mapq())]
         if cfg.resolved_seq():
             cmd += ["--seq", cfg.resolved_seq()]
         if cfg.min_read_length is not None:
@@ -1900,7 +1956,7 @@ class Pipeline:
             return
         fingerprint = {"called": file_fingerprint(self.called_bam, self.memo),
                        "fiberhmm": __version__,
-                       "prob_threshold": cfg.prob_threshold, "min_mapq": cfg.min_mapq,
+                       "prob_threshold": cfg.prob_threshold, "min_mapq": cfg.resolved_min_mapq(),
                        "snp_mask": (file_fingerprint(cfg.snp_mask, self.memo)
                                     if cfg.snp_mask else None)}
         if self._is_complete("qc", fingerprint, upstream={"called": "call"}):
@@ -1915,7 +1971,7 @@ class Pipeline:
                 os.remove(leftover)
         self.progress.step("qc", "running")
         cmd = [sys.executable, "-m", "fiberhmm.cli.qc", "-i", self.called_bam,
-               "-o", os.path.dirname(self.qc_prefix), "--min-mapq", str(cfg.min_mapq),
+               "-o", os.path.dirname(self.qc_prefix), "--min-mapq", str(cfg.resolved_min_mapq()),
                *self.qc_assay_args()]
         if cfg.prob_threshold is not None:
             cmd += ["--prob-threshold", str(cfg.prob_threshold)]
@@ -2006,7 +2062,7 @@ class Pipeline:
         bigbed = shutil.which("bedToBigBed") is not None
         fingerprint = {"called": file_fingerprint(self.called_bam, self.memo),
                        "bigbed": bigbed, "enzyme": cfg.enzyme,
-                       "prob_threshold": cfg.prob_threshold, "min_mapq": cfg.min_mapq}
+                       "prob_threshold": cfg.prob_threshold, "min_mapq": cfg.resolved_min_mapq()}
         if self._is_complete("tracks", fingerprint, upstream={"called": "call"}):
             marker = read_marker(self.outdir, "tracks") or {}
             self.track_files = list((marker.get("outputs") or {}).get("files") or [])
@@ -2033,7 +2089,7 @@ class Pipeline:
         staging = os.path.join(self.outdir, STATE_DIR, "tracks_staging")
         shutil.rmtree(staging, ignore_errors=True)
         cmd = [sys.executable, "-m", "fiberhmm.cli.extract_tags", "-i", self.called_bam,
-               "-o", staging, "-c", str(cfg.cores), "-q", str(cfg.min_mapq), *layers]
+               "-o", staging, "-c", str(cfg.cores), "-q", str(cfg.resolved_min_mapq()), *layers]
         if cfg.prob_threshold is not None:
             cmd += ["-p", str(cfg.prob_threshold)]
         if not bigbed:

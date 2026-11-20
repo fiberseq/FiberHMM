@@ -149,8 +149,13 @@
   AN name.
 - MAPQ filtering is off by default everywhere: `--min-mapq`, `--qc-min-mapq`,
   `-q` and the consensus `input.minimum_mapq` default to 0 (was 20). Pass
-  `--min-mapq 20` to restore the old filter. A `fiberhmm-pipeline` run started
-  with the old default resumes only with `--min-mapq 20`.
+  `--min-mapq 20` to restore the old filter. `fiberhmm-pipeline` without
+  `--min-mapq` continues an output directory from an earlier run with the
+  `min_mapq` its completed steps recorded (20 before 3.2.0), and logs it, so a
+  pre-3.2 folder is no longer refused for `min_mapq` (FiberBrowser 3.0.x never
+  passes the flag). An explicit `--min-mapq` that differs from the recorded
+  value is still refused, and so, as before, is a completed calling step made
+  by another FiberHMM version.
 
 - `fiberhmm-extract --all` (and no type flag) now also writes `sv`, and
   `var` when a VCF is available (`--variants`, or the DAF SNP VCF next to

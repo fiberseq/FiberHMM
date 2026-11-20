@@ -1235,10 +1235,15 @@ def test_marker_without_new_settings_is_remade_not_refused(tmp_path, monkeypatch
     marker = json.loads(marker_path.read_text())
     marker["fingerprint"]["min_mapq"] = 5    # a recorded setting that changed: refused
     marker_path.write_text(json.dumps(marker))
-    p, seen = _tracks_pipeline(tmp_path, monkeypatch, lambda: ["tf"])
+    p, seen = _tracks_pipeline(tmp_path, monkeypatch, lambda: ["tf"], min_mapq=0)
     with pytest.raises(PipelineError, match="min_mapq"):
         p.step_tracks()
     p.close()
+    # --min-mapq not given: the recorded value is reused instead (3.2.0 default change).
+    p, seen = _tracks_pipeline(tmp_path, monkeypatch, lambda: ["tf"])
+    assert p.config.min_mapq == 5
+    p.step_tracks(); p.close()
+    assert seen == []
 
 
 @needs_minimap2
