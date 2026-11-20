@@ -192,6 +192,10 @@
   few uncalled reads made a Strong peak. Such reads are now in neither the
   numerator nor the total (FiberBrowser's uncalled-read rule).
 
+- Scan unit cache keys include the unit's contig and mode, so `--continue`
+  (or an extended browser scan) never reuses a BED unit's result for a grid
+  unit over the same span.
+
 ## 3.1.0
 
 Includes the unreleased 3.0.6 changes.

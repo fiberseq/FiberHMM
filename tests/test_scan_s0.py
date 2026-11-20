@@ -525,3 +525,16 @@ def test_stitched_tracks_promote_dtypes_across_zones():
                           100)
     x = runs[0][2]['x']
     assert x.dtype == np.float64 and int((x > 0.5).sum()) == 250
+
+
+def test_unit_cache_key_includes_mode_and_chrom():
+    """M18: a BED unit and a grid unit with the same id and span (or units on two contigs with the same
+    coordinates) must not share a cached result on continue/extend."""
+    from dataclasses import replace
+    from fiberhmm.scan.runner import _unit_key
+    grid = ScanUnit(unit_id='c:0-25000', chrom='c', start=0, end=25_000, zone_start=0, zone_end=25_000,
+                    mode='grid', index=0)
+    key = lambda u: _unit_key('base', 'm', '1', 'sh', None, u, [])
+    assert key(grid) == key(replace(grid, index=7))
+    assert key(grid) != key(replace(grid, mode='bed'))
+    assert key(grid) != key(replace(grid, chrom='d'))

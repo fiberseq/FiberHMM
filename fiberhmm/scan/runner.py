@@ -304,8 +304,10 @@ def _survey_key(base, unit: ScanUnit) -> str:
 
 
 def _unit_key(base, module, version, settings_hash, cal_sha, unit: ScanUnit, upstream_keys) -> str:
-    return I.digest([base, module, version, settings_hash, cal_sha, unit.unit_id, unit.start, unit.end,
-                     unit.zone_start, unit.zone_end, upstream_keys])
+    # The unit's chrom and mode too: a BED unit and a grid unit over the same span are computed differently,
+    # so continue/extend must not reuse one's result for the other.
+    return I.digest([base, module, version, settings_hash, cal_sha, unit.unit_id, unit.chrom, unit.mode,
+                     unit.start, unit.end, unit.zone_start, unit.zone_end, upstream_keys])
 
 
 # ------------------------------------------------------------------ unit work
