@@ -154,12 +154,15 @@ class LegacyScopeError(ValueError):
     """A record's legacy calls fit neither its stored sequence nor its whole molecule."""
 
 
-def _ints(value):
-    if value is None:
+def _score_ints(value):
+    """nq scores as ints (an array, or a comma string), or None. Scores are not calls, so the array-pair
+    rule (which decides the ns/nl calls) does not apply to them."""
+    try:
+        if isinstance(value, str):
+            return [int(x) for x in value.split(',') if x]
+        return [int(x) for x in value]
+    except (TypeError, ValueError):
         return None
-    if isinstance(value, str):
-        return [int(x) for x in value.split(',') if x]
-    return [int(x) for x in value]
 
 
 def _legacy_as_ma(read):
@@ -174,19 +177,12 @@ def _legacy_as_ma(read):
     cigar = read.cigartuples or []
     hard = sum(n for op, n in (cigar[:1] + cigar[-1:] if len(cigar) > 1 else cigar[:1]) if op == 5)
 
-    def pairs(start_tag, len_tag):
-        if not (read.has_tag(start_tag) and read.has_tag(len_tag)):
-            return None
-        try:
-            starts, lens = _ints(read.get_tag(start_tag)), _ints(read.get_tag(len_tag))
-        except (TypeError, ValueError):
-            raise LegacyScopeError(f'unreadable {start_tag}/{len_tag}') from None
-        if len(starts) != len(lens):
-            raise LegacyScopeError(f'{start_tag}/{len_tag} lengths differ')
-        return starts, lens
+    from fiberhmm.io.legacy_tags import array_tag_pair
 
-    nuc = pairs('ns', 'nl')
-    msp = pairs('as', 'al')
+    # Array-pair rule: a pair that is not two integer arrays of equal length (a scalar, a string, a missing
+    # partner, unequal lengths) is absent, not calls.
+    nuc = array_tag_pair(read, 'ns', 'nl')
+    msp = array_tag_pair(read, 'as', 'al')
     if nuc is None and msp is None:
         return None
     ends = [s0 + l0 for p_ in (nuc, msp) if p_ for s0, l0 in zip(*p_)]
@@ -201,10 +197,7 @@ def _legacy_as_ma(read):
         raise LegacyScopeError('legacy calls extend past the molecule')
     parts, aq = [str(length)], []
     if nuc is not None:
-        try:
-            q = _ints(read.get_tag('nq')) if read.has_tag('nq') else None
-        except (TypeError, ValueError):
-            q = None
+        q = _score_ints(read.get_tag('nq')) if read.has_tag('nq') else None
         with_q = q is not None and len(q) == len(nuc[0])
         rows = sorted((s0, l0, q[i] if with_q else None) for i, (s0, l0) in enumerate(zip(*nuc)) if l0 > 0)
         if rows:

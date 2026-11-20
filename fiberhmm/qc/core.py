@@ -25,7 +25,7 @@ from fiberhmm.core.bam_reader import (
     parse_mm_tag_query_calls,
     parse_mm_tag_query_positions,
 )
-from fiberhmm.io.ma_tags import annotation_tags, parse_ma_tag
+from fiberhmm.io.ma_tags import parse_ma_tag
 from fiberhmm.qc.states import (
     DEFAULT_LIGHT_CALL_READS,
     DEFAULT_LIGHT_CALL_SECONDS,
@@ -724,11 +724,17 @@ def _signal_profile(
 
 
 def _footprint_lengths(read) -> tuple[list[int], list[int], bool]:
-    # FiberHMM MA, else fibertools (>= 0.13) Ma; either wins over legacy nl.
-    tags = annotation_tags(read)
-    if tags is not None:
+    # FiberHMM MA, else fibertools (>= 0.13) Ma; either wins over legacy ns/nl,
+    # but only when it holds footprint (nuc/msp/tf) groups: an m5C- or
+    # FIRE-only MA does not call the read's footprints.
+    from fiberhmm.io.legacy_tags import (
+        array_tag_pair, has_array_tag_pair, ma_has_footprint_groups)
+
+    for tag in ("MA", "Ma"):
+        if not read.has_tag(tag) or not ma_has_footprint_groups(read.get_tag(tag)):
+            continue
         try:
-            parsed = parse_ma_tag(tags[0])
+            parsed = parse_ma_tag(str(read.get_tag(tag)))
             return (
                 [int(length) for _start, length in parsed.get("nuc", [])],
                 [int(length) for _start, length in parsed.get("tf", [])],
@@ -736,11 +742,13 @@ def _footprint_lengths(read) -> tuple[list[int], list[int], bool]:
             )
         except (ValueError, TypeError, KeyError):
             return [], [], True
-    if read.has_tag("nl"):
-        try:
-            return [int(length) for length in read.get_tag("nl")], [], True
-        except (ValueError, TypeError):
-            pass
+    # Legacy tags follow the array-pair rule: two integer arrays of equal
+    # length; a scalar, a string or an unpaired tag is not a call.
+    nucs = array_tag_pair(read, "ns", "nl")
+    if nucs is not None:
+        return list(nucs[1]), [], True
+    if has_array_tag_pair(read, "as", "al"):
+        return [], [], True
     return [], [], False
 
 

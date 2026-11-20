@@ -87,18 +87,22 @@ def convert_legacy_tags(read, source: Optional[str], target: Optional[str]) -> N
     them from a reverse read. Forward reads are unchanged."""
     if not read.is_reverse or source == target and source is not None:
         return
+    from fiberhmm.io.legacy_tags import array_tag_pair, int_array
+
     length = _read_length(read)
     for start_tag, length_tag, score_tag in LEGACY_PAIRS:
-        if not (read.has_tag(start_tag) and read.has_tag(length_tag)):
+        # Array-pair rule: a pair that is not two integer arrays of equal length is not calls (e.g.
+        # Dorado's scalar ns:i); it is passed through untouched.
+        pair = array_tag_pair(read, start_tag, length_tag)
+        if pair is None:
             continue
         if source is None or target is None:
             for tag in (start_tag, length_tag, score_tag):
                 if read.has_tag(tag):
                     read.set_tag(tag, None)
             continue
-        starts = [int(v) for v in read.get_tag(start_tag)]
-        sizes = [int(v) for v in read.get_tag(length_tag)]
-        scores = list(read.get_tag(score_tag)) if read.has_tag(score_tag) else None
+        starts, sizes = pair
+        scores = int_array(read.get_tag(score_tag)) if read.has_tag(score_tag) else None
         rows = []
         for index, (start, size) in enumerate(zip(starts, sizes)):
             start, size = flip_interval_frame(start, size, length)

@@ -61,6 +61,7 @@ from fiberhmm.core.progress import progress, progress_end
 from fiberhmm.inference.bam_output import atomic_output, temporary_output_path
 from fiberhmm.inference.parallel import _get_genome_regions
 from fiberhmm.inference.region_planning import RegionPlanError
+from fiberhmm.io.legacy_tags import array_tag_pair, has_array_tag_pair, int_array
 from fiberhmm.io.ma_tags import (
     DDDA_MCG_FEATURE,
     annotation_tags,
@@ -185,8 +186,26 @@ def _duplicate_bed_value(read) -> int:
     return int(bool(getattr(read, 'is_duplicate', False)))
 
 
+def _footprint_annotation_tags(read):
+    """``annotation_tags`` restricted to an MA/Ma tag holding footprint (nuc/msp/tf) groups.
+
+    An MA carrying only other groups (``ddda_mcg.``, ``fire.Q``) does not call
+    the read's footprints: fibertools' ``Ma`` (when it has footprint groups) or
+    the legacy ns/nl/as/al tags do. ``None`` when neither tag has footprint groups."""
+    from fiberhmm.io.legacy_tags import ma_has_footprint_groups
+    from fiberhmm.io.ma_tags import FIBERHMM_ANNOTATION_TAGS, FIBERTOOLS_ANNOTATION_TAGS
+
+    for ma_tag, aq_tag, an_tag in (FIBERHMM_ANNOTATION_TAGS, FIBERTOOLS_ANNOTATION_TAGS):
+        if read.has_tag(ma_tag) and ma_has_footprint_groups(read.get_tag(ma_tag)):
+            return (str(read.get_tag(ma_tag)),
+                    read.get_tag(aq_tag) if read.has_tag(aq_tag) else None,
+                    read.get_tag(an_tag) if read.has_tag(an_tag) else None,
+                    ma_tag)
+    return None
+
+
 def _parse_all_ma_annotations(read, *, annotation_frame='molecular', molecular_layers=frozenset(),
-                              dot_groups_molecular=False, group_frame=None):
+                              dot_groups_molecular=False, group_frame=None, footprints_only=False):
     """Parse MA/AQ/AN once and return annotations grouped by type.
 
     Values retain the exact target-specific ordering and quality orientation
@@ -198,11 +217,12 @@ def _parse_all_ma_annotations(read, *, annotation_frame='molecular', molecular_l
     with ``dot_groups_molecular`` (a header without frame evidence) so is
     every '.'-strand group (``annotation_frame.ma_group_is_molecular``).
     ``group_frame`` (``annotation_frame.MAGroupFrame``) decides each group
-    instead of the three options above.
+    instead of the three options above. With ``footprints_only`` the tag read
+    is the first one holding nuc/msp/tf groups (:func:`_footprint_annotation_tags`).
     """
     if annotation_frame not in ('seq', 'molecular'):
         raise ValueError('Unknown MA annotation frame')
-    tags = annotation_tags(read)
+    tags = _footprint_annotation_tags(read) if footprints_only else annotation_tags(read)
     if tags is None:
         return None
     ma_str, aq, an, source = tags
@@ -314,8 +334,14 @@ def _legacy_tags_to_seq(starts, lengths, read, frames):
 
 
 def _parse_ma_annotations(read, target_name: str, frames=None):
-    """Return target annotations from MA/AQ/AN in positional annotation order."""
-    parsed = _parse_all_ma_annotations(read, **_ma_parse_options(frames))
+    """Return target annotations from MA/AQ/AN in positional annotation order.
+
+    For a footprint target (nuc/msp/tf) only an MA/Ma tag holding footprint
+    groups is authoritative; ``None`` (fall back to legacy tags) otherwise."""
+    from fiberhmm.io.legacy_tags import FOOTPRINT_GROUP_TYPES
+
+    parsed = _parse_all_ma_annotations(read, **_ma_parse_options(frames),
+                                       footprints_only=target_name in FOOTPRINT_GROUP_TYPES)
     if parsed is None:
         return None
     return parsed.get(target_name, [])
@@ -716,11 +742,11 @@ def _extract_footprints(read, bed_out, with_scores: bool,
     if ma_count is not None:
         return ma_count
 
-    try:
-        ns_raw = read.get_tag('ns')
-        nl_raw = read.get_tag('nl')
-    except KeyError:
+    # Array-pair rule: ns/nl are calls only as two integer arrays of equal length.
+    pair = array_tag_pair(read, 'ns', 'nl')
+    if pair is None:
         return 0
+    ns_raw, nl_raw = pair
     # SEQ (query) coords for ref mapping: molecular-frame tags are flipped.
     ns, nl = _legacy_tags_to_seq(ns_raw, nl_raw, read, frames)
 
@@ -731,10 +757,8 @@ def _extract_footprints(read, bed_out, with_scores: bool,
     # with_scores is False (the mean-score column 5 still uses 0).
     scores = None
     if with_scores or block_scores:
-        try:
-            scores = read.get_tag('nq')
-        except KeyError:
-            pass
+        if read.has_tag('nq'):
+            scores = int_array(read.get_tag('nq'))   # None for a scalar or string
 
     ref_name = read.reference_name
     strand = '-' if read.is_reverse else '+'
@@ -917,11 +941,11 @@ def _extract_msps(read, bed_out, with_scores: bool,
     if ma_count is not None:
         return ma_count
 
-    try:
-        as_raw = read.get_tag('as')
-        al_raw = read.get_tag('al')
-    except KeyError:
+    # Array-pair rule: as/al are calls only as two integer arrays of equal length.
+    pair = array_tag_pair(read, 'as', 'al')
+    if pair is None:
         return 0
+    as_raw, al_raw = pair
     as_starts, al_lengths = _legacy_tags_to_seq(as_raw, al_raw, read, frames)
 
     if len(as_starts) == 0:
@@ -929,10 +953,8 @@ def _extract_msps(read, bed_out, with_scores: bool,
 
     scores = None
     if with_scores or block_scores:
-        try:
-            scores = read.get_tag('aq')
-        except KeyError:
-            pass
+        if read.has_tag('aq'):
+            scores = int_array(read.get_tag('aq'))   # None for a scalar or string
 
     ref_name = read.reference_name
     strand = '-' if read.is_reverse else '+'
@@ -1923,9 +1945,9 @@ def diagnose_bam_tags(input_bam: str, n_reads: int = 20) -> Dict[str, object]:
                     continue
                 counts['reads_scanned'] += 1
 
-                if read.has_tag('ns') and read.has_tag('nl'):
+                if has_array_tag_pair(read, 'ns', 'nl'):
                     counts['has_ns_nl'] += 1
-                if read.has_tag('as') and read.has_tag('al'):
+                if has_array_tag_pair(read, 'as', 'al'):
                     counts['has_as_al'] += 1
                 if read.has_tag('MA') and read.has_tag('AQ'):
                     counts['has_MA_AQ'] += 1

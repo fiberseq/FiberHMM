@@ -446,10 +446,14 @@ def _footprints_from_ma(read, ctx: DecodeContext, read_length: int, *, parsed=No
 
 
 def _footprints_from_legacy(read, ctx: DecodeContext, read_length: int):
+    from fiberhmm.io.legacy_tags import array_tag_pair
+
     def pairs(st, ln):
-        if not (read.has_tag(st) and read.has_tag(ln)):
+        # Array-pair rule: only two integer arrays of equal length are calls.
+        pair = array_tag_pair(read, st, ln)
+        if pair is None:
             return []
-        return [(int(a), int(a) + int(b)) for a, b in zip(read.get_tag(st), read.get_tag(ln))]
+        return [(a, a + b) for a, b in zip(*pair)]
     nucs = pairs('ns', 'nl')
     msps = pairs('as', 'al')
     if not nucs and not msps:

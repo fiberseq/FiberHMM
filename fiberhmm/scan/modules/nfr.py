@@ -34,16 +34,19 @@ VARIANT_COLUMNS = ('name', 'L', 'R', 'Lsd', 'Rsd', 'width', 'depth', 'relation',
 def nucleosome_runs(read) -> List[tuple]:
     """(start, length) of the record's nucleosome calls (MA, else fibertools Ma, else ns/nl), any frame:
     lengths and gaps are the same in SEQ and molecular frame."""
+    from fiberhmm.io.legacy_tags import FOOTPRINT_GROUP_TYPES, array_tag_pair
     from fiberhmm.io.ma_tags import parse_ma_tag
     for tag in ('MA', 'Ma'):
         if read.has_tag(tag):
             try:
-                return sorted(parse_ma_tag(str(read.get_tag(tag)))['nuc'])
+                parsed = parse_ma_tag(str(read.get_tag(tag)))
             except ValueError:
                 return []
-    if read.has_tag('ns') and read.has_tag('nl'):
-        return sorted(zip((int(x) for x in read.get_tag('ns')), (int(x) for x in read.get_tag('nl'))))
-    return []
+            if not any(name in FOOTPRINT_GROUP_TYPES for name, *_r in parsed['raw_types']):
+                continue          # an m5C- or FIRE-only tag does not call the read's footprints
+            return sorted(parsed['nuc'])
+    pair = array_tag_pair(read, 'ns', 'nl')   # array-pair rule: two integer arrays of equal length
+    return sorted(zip(*pair)) if pair is not None else []
 
 
 def molecule_scalars(read) -> Dict[str, Optional[float]]:

@@ -2604,6 +2604,11 @@ def qc_verdicts(path: Optional[str]) -> dict:
 
 
 def _count_called(bam_path: str) -> dict:
+    """Primary records, called records and duplicates. A record is called when its MA (or fibertools Ma)
+    holds footprint (nuc/msp/tf) groups, or it has a legacy ns/nl or as/al array pair; an m5C-only MA or a
+    scalar ns:i is not a call."""
+    from fiberhmm.io.legacy_tags import has_legacy_pair, ma_has_footprint_groups
+
     total = called = duplicates = 0
     with pysam.AlignmentFile(bam_path, check_sq=False) as bam:
         for read in bam.fetch(until_eof=True):
@@ -2612,6 +2617,7 @@ def _count_called(bam_path: str) -> dict:
             total += 1
             if read.is_duplicate:
                 duplicates += 1
-            if read.has_tag("MA") or read.has_tag("ns"):
+            if has_legacy_pair(read) or any(read.has_tag(tag) and ma_has_footprint_groups(read.get_tag(tag))
+                                            for tag in ("MA", "Ma")):
                 called += 1
     return {"records": total, "called": called, "duplicate_flagged": duplicates}

@@ -152,13 +152,15 @@ def _carry_record(read) -> bool:
         return False
     if legacy_frame_of(read.header).for_read(read) == MOLECULAR:
         return True
-    for start_tag, size_tag, score_tag in (('ns', 'nl', 'nq'), ('as', 'al', 'aq')):
-        if not (read.has_tag(start_tag) and read.has_tag(size_tag)):
+    from fiberhmm.io.legacy_tags import LEGACY_PAIRS, array_tag_pair, int_array
+    for start_tag, size_tag, score_tag in LEGACY_PAIRS:
+        pair = array_tag_pair(read, start_tag, size_tag)   # array-pair rule; anything else passes through
+        if pair is None:
             continue
-        scores = list(read.get_tag(score_tag)) if read.has_tag(score_tag) else None
+        scores = int_array(read.get_tag(score_tag)) if read.has_tag(score_tag) else None
         rows = []
-        for k, (a, n) in enumerate(zip(read.get_tag(start_tag), read.get_tag(size_tag))):
-            a, n = flip_interval_frame(int(a), int(n), total)
+        for k, (a, n) in enumerate(zip(*pair)):
+            a, n = flip_interval_frame(a, n, total)
             rows.append((a, n, scores[k] if scores and k < len(scores) else None))
         rows.sort(key=lambda r: r[0])
         read.set_tag(start_tag, array.array('I', [r[0] for r in rows]))
