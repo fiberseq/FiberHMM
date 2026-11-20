@@ -5,9 +5,10 @@ Four groups, molecular coordinates, each self-contained:
 ``nucsz.QQQQ``  one interval per footprint (nucleosome and TF calls).
     Q1 = coarse code (0 can't tell, 1 short, 2 mono, 3 long, 4 multi2,
     5 multi3+, 6 edge-truncated) in the low 4 bits, +16 when the footprint is
-    a TF call or overlaps one (``tf_overlap``); Q2 = named code (0 none,
-    1 small, 2 hexasome, 3 octasome, 4 chromatosome; absolute calibration
-    only); Q3 = round(255 x posterior); Q4 = clip(round(20 z + 128), 0, 254),
+    a TF call or overlaps one (``tf_overlap``); Q2 = reserved, always 0
+    (it carried a named size class before 3.2.0; FiberHMM no longer assigns
+    named nucleosome classes, and the byte is kept so the layout is
+    unchanged); Q3 = round(255 x posterior); Q4 = clip(round(20 z + 128), 0, 254),
     255 = missing.
 ``nucseg.QQQ`` (group version 2)  segment rows and event rows.
     Segment rows (Q1 < 16) partition the molecule's measurable stretches:
@@ -62,6 +63,8 @@ NUC_GROUPS = (NUCSZ, NUCSEG, NUCMOL, NUCREG, NUCPATCH)
 GROUP_VERSIONS = {NUCSZ: 1, NUCSEG: 2, NUCMOL: 2, NUCREG: 1, NUCPATCH: 1}
 EVENT_MIN_CODE = 16
 TF_FLAG = 16
+#: nucsz Q2: reserved (a named size class before 3.2.0); always written as 0
+NUCSZ_RESERVED = 0
 
 #: (name, nbytes, scale, offset, unit), in byte order
 NUCMOL_CODECS: Tuple[Tuple[str, int, float, float, str], ...] = (
@@ -146,7 +149,7 @@ def group_rows(result) -> Dict[str, Tuple[str, List[Tuple[int, int, List[int], s
         for i in range(len(fp['start'])):
             q1 = int(fp['coarse'][i]) | (TF_FLAG if bool(fp['tf_overlap'][i]) else 0)
             rows.append((int(fp['start'][i]), int(fp['end'][i] - fp['start'][i]),
-                         [q1, int(fp['named'][i]), int(round(255 * float(fp['posterior'][i]))),
+                         [q1, NUCSZ_RESERVED, int(round(255 * float(fp['posterior'][i]))),
                           _z_byte(float(fp['z'][i]))], ''))
     rows.sort(key=lambda r: (r[0], r[1]))
     out[NUCSZ] = (SPECS[NUCSZ], [(s, n, q, f'{NUCSZ}@{dg}_{k}') for k, (s, n, q, _a) in enumerate(rows)])
@@ -239,7 +242,7 @@ def ma_group_declarations(regularity=None, patches=None, reference=None) -> List
     from fiberhmm.nuc.sizes import COARSE_NAMES
     return [
         {'group': NUCSZ, 'group_version': GROUP_VERSIONS[NUCSZ], 'kind': 'mark',
-         'quality_names': ['coarse', 'named', 'posterior', 'z'],
+         'quality_names': ['coarse', 'reserved', 'posterior', 'z'],
          'state_codes': {str(k): v for k, v in COARSE_NAMES.items()}, 'codecs': [],
          'an': 'nucsz@<calls digest8>_<index>'},
         {'group': NUCSEG, 'group_version': GROUP_VERSIONS[NUCSEG], 'kind': 'mark',

@@ -190,8 +190,6 @@ class NucModule(ScanModuleBase):
         types = [
             FeatureTypeDecl('nuc.size.coarse', 'nuc', 'Footprint size class', 'Footprint size classes', ('mark',),
                             'centre', scores=(post, ScoreDecl('z', 'Density-matched z', 'z', 'none', False))),
-            FeatureTypeDecl('nuc.size.named', 'nuc', 'Named size class', 'Named size classes', ('mark',),
-                            'centre', scores=(post,)),
             FeatureTypeDecl('nuc.seg.regular', 'nuc', 'Regular array segment', 'Regular array segments',
                             ('mark',), 'none', scores=(post, qh)),
             FeatureTypeDecl('nuc.seg.disordered', 'nuc', 'Disordered spacing', 'Disordered spacing',

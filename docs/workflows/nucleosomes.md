@@ -23,10 +23,8 @@ are used only to place marks and to pool molecules.
   called when the class's posterior under the edge noise is at least 0.8 and
   both edges have at least 3 informative sites; otherwise it is can't tell.
   Footprints that end at a read end are edge-truncated.
-- **Named classes** (hexasome, octasome, chromatosome) only with an absolute
-  calibration from a control of known core length (601 arrays or
-  spike-ins). Without one the size mixture is not identifiable, and no names
-  are given.
+- No named (biological) classes are assigned: size output is the measured
+  length, z and the coarse call above.
 
 **Dyad eligibility**: a nucleosome call contributes its midpoint when it is
 not edge-truncated and its length is within `NucParams.mono_frac`
@@ -128,8 +126,8 @@ draws the windows from the scanned territory instead.
 ## Tags
 
 With annotation the scan writes four MA groups in molecular coordinates:
-`nucsz` (one interval per footprint: coarse code, named code, posterior,
-z), `nucseg` (one per segment: state, posterior, q̂; plus one row per
+`nucsz` (one interval per footprint: coarse code, a reserved byte (always 0),
+posterior, z), `nucseg` (one per segment: state, posterior, q̂; plus one row per
 undersized run or missing nucleosome), `nucmol` (one per record: the
 molecule scalars) and `nucreg` (one per regularity tile: score and local
 repeat length). See [BAM tags](../reference/bam-tags.md#nucleosome-groups).

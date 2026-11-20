@@ -1,5 +1,5 @@
-"""Footprint sizes: the density-matched reference curve, z, coarse calls and
-(absolute calibration only) named classes (NUC 3.2).
+"""Footprint sizes: the density-matched reference curve, z and coarse calls
+(NUC 3.2).
 
 Observation model: L = T + o_L + o_R + eps. The overshoot o shrinks as the
 accessible marking rate lambda rises, so footprint length depends on mark
@@ -25,13 +25,14 @@ region L falls in). A footprint is called when the top posterior is at least
 ``coarse_min_posterior`` and min(n_L, n_R) >= ``min_edge_sites``; otherwise
 it is can't-tell. Edge-truncated footprints get their own code.
 
-**Named classes** need an absolute control (NUC 4.2): locations T_k + b(lambda)
-with b from the control, never fitted jointly with the weights.
+FiberHMM assigns no named (biological) nucleosome classes: size output is the
+measured length, z and the coarse code above (removed in 3.2.0; the nucsz Q2
+byte that carried a named code is reserved and always 0).
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence
+from typing import List, Optional, Sequence
 
 import numpy as np
 from scipy.stats import norm
@@ -42,10 +43,6 @@ from fiberhmm.nuc.params import DEFAULT_PARAMS, NucParams
 CANT_TELL, SHORT, MONO, LONG, MULTI2, MULTI3, EDGE_TRUNCATED = range(7)
 COARSE_NAMES = {CANT_TELL: 'cant_tell', SHORT: 'short', MONO: 'mono', LONG: 'long',
                 MULTI2: 'multi2', MULTI3: 'multi3+', EDGE_TRUNCATED: 'edge_truncated'}
-# Named codes (MA nucsz Q2)
-NAMED_NONE, NAMED_SMALL, NAMED_HEXA, NAMED_OCT, NAMED_CHROMATO = range(5)
-NAMED_CODES = {'small': NAMED_SMALL, 'hexasome': NAMED_HEXA, 'octasome': NAMED_OCT,
-               'chromatosome': NAMED_CHROMATO}
 
 
 def kde_mode(values: np.ndarray, lo: float, hi: float, bw: float = 3.0) -> float:
@@ -224,80 +221,3 @@ def call_coarse(lengths, lambdas, curve: ReferenceCurve, nrl, sigma_gap: float,
     code = np.where(weak, CANT_TELL, code)
     code = np.where(np.asarray(truncated, dtype=bool), EDGE_TRUNCATED, code)
     return CoarseCall(code.astype(np.int64), post, z, P)
-
-
-@dataclass
-class AbsoluteClasses:
-    """Named-class model from an absolute control (NUC 4.2)."""
-    T: Dict[str, float]                 # class -> true protected length
-    b_log_lambda: List[float]           # b(lambda) knots
-    b: List[float]
-    sigma_b: List[float]
-    sigma_struct: Dict[str, float]
-    weights: Dict[str, float] = field(default_factory=dict)
-
-    def locations(self, lam):
-        x = np.log(np.clip(np.asarray(lam, float), 1e-6, 1.0))
-        b = np.interp(x, self.b_log_lambda, self.b)
-        sb = np.interp(x, self.b_log_lambda, self.sigma_b)
-        names = list(self.T)
-        mu = np.stack([self.T[k] + b for k in names], axis=-1)
-        sd = np.stack([np.sqrt(self.sigma_struct.get(k, 5.0) ** 2 + sb ** 2) for k in names], axis=-1)
-        return names, mu, sd
-
-    def posteriors(self, lengths, lam):
-        names, mu, sd = self.locations(lam)
-        L = np.asarray(lengths, float)[..., None]
-        w = np.asarray([self.weights.get(k, 1.0 / len(names)) for k in names])
-        like = w * norm.pdf(L, mu, sd)
-        tot = like.sum(axis=-1, keepdims=True)
-        return names, np.where(tot > 0, like / np.maximum(tot, 1e-300), 0.0)
-
-    def to_dict(self):
-        return {'T': dict(self.T), 'b_log_lambda': list(self.b_log_lambda), 'b': list(self.b),
-                'sigma_b': list(self.sigma_b), 'sigma_struct': dict(self.sigma_struct),
-                'weights': dict(self.weights)}
-
-    @classmethod
-    def from_dict(cls, d):
-        return cls(dict(d['T']), list(d['b_log_lambda']), list(d['b']), list(d['sigma_b']),
-                   dict(d['sigma_struct']), dict(d.get('weights', {})))
-
-
-def call_named(lengths, lambdas, model: Optional[AbsoluteClasses], n_left, n_right,
-               params: NucParams = DEFAULT_PARAMS):
-    """(named code, posterior) per footprint; code 0 without an absolute model
-    or when the call is can't-tell (max posterior < named_min_posterior or
-    min(n_L, n_R) < min_edge_sites)."""
-    L = np.asarray(lengths, float)
-    if model is None or len(L) == 0:
-        return np.zeros(len(L), dtype=np.int64), np.zeros(len(L))
-    names, P = model.posteriors(L, lambdas)
-    top = P.argmax(axis=1)
-    post = P[np.arange(len(L)), top]
-    codes = np.asarray([NAMED_CODES.get(names[t], NAMED_NONE) for t in top], dtype=np.int64)
-    weak = (post < params.named_min_posterior) | (np.minimum(n_left, n_right) < params.min_edge_sites)
-    return np.where(weak, NAMED_NONE, codes), post
-
-
-def fit_named_weights(model: AbsoluteClasses, lengths, lambdas, n_iter: int = 200) -> Dict[str, float]:
-    """Class weights pi_k by EM with the locations and widths fixed (NUC 3.2)."""
-    L = np.asarray(lengths, float)
-    names, mu, sd = model.locations(lambdas)
-    if len(L) == 0:
-        return {k: 1.0 / len(names) for k in names}
-    like = norm.pdf(L[:, None], mu, sd)
-    w = np.full(len(names), 1.0 / len(names))
-    for _ in range(n_iter):
-        r = like * w
-        tot = r.sum(axis=1, keepdims=True)
-        ok = tot[:, 0] > 0
-        if not ok.any():
-            break
-        r = r[ok] / tot[ok]
-        w_new = r.mean(axis=0)
-        if np.abs(w_new - w).max() < 1e-8:
-            w = w_new
-            break
-        w = w_new
-    return {k: float(v) for k, v in zip(names, w)}

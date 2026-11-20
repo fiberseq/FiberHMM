@@ -138,6 +138,19 @@
 
 ### Changed
 
+- **`fiberhmm.nuc` assigns no named nucleosome classes.** Footprints keep
+  their measured length, density-matched z and coarse size code (short, mono,
+  long, multi(2), multi(3+), can't tell, edge-truncated); the categorical
+  labels (small, hexasome, octasome, chromatosome) are gone from every output.
+  The `nucsz` Q2 byte is reserved and always 0 (the layout, group version and
+  FiberBrowser 3.1 parsing are unchanged; its header quality name is now
+  `reserved`). Scans no longer declare or write `nuc.size.named` features,
+  window class counts have no `named_*` keys, and calibration records keep
+  `absolute: null` as a reserved field (digests unchanged). The library-only
+  `calibrate_absolute` (and `AbsoluteClasses`, `call_named`,
+  `fit_named_weights`, `NAMED_CODES`) is removed; the nuc parameter
+  `named_min_posterior` is still accepted but ignored, with a
+  `DeprecationWarning` for a non-default value.
 - Writers that re-call footprints (`fiberhmm-call`, `-apply`,
   `-recall-tfs`, `-recall-nucs`) drop the MA groups derived from the old calls
   (`nucsz`, `nucseg`, `nucmol`, `fpcls`, `nfrvar`, `nfrmol`) and their header
