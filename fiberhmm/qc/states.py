@@ -34,6 +34,8 @@ from typing import Optional, Sequence
 import numpy as np
 
 from fiberhmm.core.bam_reader import ContextEncoder
+from fiberhmm.io.legacy_tags import array_tag_pair
+from fiberhmm.io.legacy_tags import has_array_tag_pair as _array_tag_pair  # noqa: F401  (re-exported)
 
 #: QC-side minimum MSP length. FiberHMM's MSP tags include every accessible
 #: gap between nucleosome-sized footprints, so linkers are MSPs in the tags.
@@ -176,22 +178,9 @@ def msp_intervals_from_tags(read, frames: dict) -> Optional[list]:
             return None
         if not has_msps:
             return []
-        try:
-            starts = list(read.get_tag("as"))
-            lengths = list(read.get_tag("al"))
-        except (KeyError, TypeError):
-            return None
+        starts, lengths = array_tag_pair(read, "as", "al")
         return _to_seq_frame(list(zip(starts, lengths)), read, frame)
     return None
-
-
-def _array_tag_pair(read, start_tag: str, length_tag: str) -> bool:
-    if not (read.has_tag(start_tag) and read.has_tag(length_tag)):
-        return False
-    starts, lengths = read.get_tag(start_tag), read.get_tag(length_tag)
-    return (not isinstance(starts, (int, float, str))
-            and not isinstance(lengths, (int, float, str))
-            and len(starts) == len(lengths))
 
 
 def msp_mask(intervals, read_length: int, min_msp_bp: int) -> np.ndarray:
