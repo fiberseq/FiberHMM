@@ -107,6 +107,30 @@ def _run_tasks(tasks, settings, cores):
 # helpers
 # ---------------------------------------------------------------------------
 
+EMPTY_CALLS = {'nucs': [], 'tfs': [], 'msps': []}
+
+
+def collect_recalls(res, mols) -> Tuple[Dict[tuple, 'NucMolecule'], List[tuple]]:
+    """``(recalled, errors)`` from caller results ``(key, calls, mods)``.
+
+    ``Caller.call()`` returns None when no footprint remains: that run is an
+    empty call set (every reference footprint dropped), not a missing run.
+    A caller exception (``{'error': ...}``) is kept apart in ``errors``: the
+    run has no outcome at all, so it is neither kept nor dropped.
+    """
+    recalled: Dict[tuple, NucMolecule] = {}
+    errors: List[tuple] = []
+    for key, calls, mods in res:
+        if isinstance(calls, dict) and 'error' in calls:
+            errors.append((key, calls['error']))
+            continue
+        if calls is None:
+            calls = EMPTY_CALLS
+        i = key[1]
+        recalled[key] = _recalled_molecule(mols[i], calls, mods if key[0] == 'thin' else None)
+    return recalled, errors
+
+
 def _recalled_molecule(mol: NucMolecule, calls: dict, mod_seq_positions=None) -> NucMolecule:
     """``mol`` with calls (SEQ frame) replaced and, for thinned runs, marks
     restricted to the kept ones."""
@@ -376,13 +400,9 @@ def calibrate_thin(bam_path, params: NucParams = DEFAULT_PARAMS, *, label: str =
     t0 = time.time()
     res = _run_tasks(tasks, settings, cores)
     t_call = time.time() - t0
-    errors = [r for r in res if isinstance(r[1], dict) and 'error' in r[1]]
-    recalled: Dict[tuple, NucMolecule] = {}
-    for key, calls, mods in res:
-        if calls is None or (isinstance(calls, dict) and 'error' in calls):
-            continue
-        i = key[1]
-        recalled[key] = _recalled_molecule(mols[i], calls, mods if key[0] == 'thin' else None)
+    recalled, errors = collect_recalls(res, mols)
+    if errors and not recalled:
+        raise RuntimeError(f'calibrate_thin: every caller run failed ({errors[0][1]})')
     # --- outcomes and edge noise on thinned dense molecules --------------------
     rows = []   # (achieved lambda_i, outcome, m, dl, dr, dlen, held_out)
     thin_ft = {'train': ([], []), 'hold': ([], [])}
@@ -523,6 +543,8 @@ def calibrate_thin(bam_path, params: NucParams = DEFAULT_PARAMS, *, label: str =
     cal.validation['decode'] = stats
     cal.validation['caller_runs'] = len(tasks)
     cal.validation['caller_errors'] = len(errors)
+    if errors:
+        cal.validation['caller_error_examples'] = sorted({e for _, e in errors})[:5]
     return cal
 
 

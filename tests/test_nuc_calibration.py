@@ -313,3 +313,47 @@ def test_absolute_weights_use_tf_calls_and_density_bias():
     fp = footprint_calls(probe, cal=cal)
     from fiberhmm.nuc.sizes import NAMED_CODES
     assert fp['named'].tolist() == [NAMED_CODES[k] for k in ('small', 'hexasome', 'octasome', 'chromatosome')]
+
+
+def test_no_call_recalls_count_as_dropped_and_errors_apart():
+    """Audit H9: 4 intact + 4 no-call (None) thinned recalls of molecules with
+    20 reference footprints each give 50% kept / 50% dropped over n=160, not
+    100% kept over n=80. A caller exception is neither kept nor dropped."""
+    from fiberhmm.nuc.records import NucMolecule
+    from fiberhmm.nuc.thinning import collect_recalls
+    nucs = [(200 * k, 200 * k + 147) for k in range(20)]
+    mols = [NucMolecule(name=f'm{i}', length=4100, is_reverse=False, nucs=nucs, tfs=[],
+                        msps=[], hits=np.zeros(4100, bool), informative=np.ones(4100, bool),
+                        no_call=[]) for i in range(8)]
+    calls = {'nucs': nucs, 'tfs': [], 'msps': []}
+    res = [(('nat', i, 0, 0), calls, []) for i in range(8)]
+    res += [(('thin', i, 0, 0), calls if i < 4 else None, []) for i in range(8)]
+    res += [(('thin', 0, 1, 0), {'error': "RuntimeError('boom')"}, None)]
+    recalled, errors = collect_recalls(res, mols)
+    assert errors == [(('thin', 0, 1, 0), "RuntimeError('boom')")]
+    assert ('thin', 0, 1, 0) not in recalled
+    outcomes = []
+    for key, tm in recalled.items():
+        if key[0] == 'thin':
+            outcomes += [o[0] for o in match_outcomes(recalled[('nat', key[1], 0, 0)].nucs,
+                                                       tm.nucs)]
+    assert len(outcomes) == 160
+    assert outcomes.count('kept') == 80 and outcomes.count('dropped') == 80
+
+
+def test_calibrate_thin_counts_runs_without_calls(called_bam, monkeypatch):
+    """Every thinned run returning None (no footprints left): calibration
+    still has outcomes, all dropped (it used to find no matched footprints)."""
+    from fiberhmm.nuc import thinning
+
+    real = thinning._caller
+
+    class NoCalls:
+        def call(self, fr):
+            return None
+
+    monkeypatch.setattr(thinning, '_caller', lambda f: real(f) if f >= 1.0 else NoCalls())
+    cal = calibrate_thin(called_bam, n_population=36, seeds=1, n_targets=4, cores=1)
+    assert cal.validation['caller_errors'] == 0
+    assert cal.outcomes['n'] and all(d == 1.0 for d in cal.outcomes['dropped'])
+

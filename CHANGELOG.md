@@ -166,6 +166,13 @@
 
 ### Fixed
 
+- Thinning calibration counts a recall that returns no footprints
+  (`Caller.call()` returning None) as an empty call set, so every reference
+  footprint of that run is dropped (4 intact + 4 no-call recalls of 20
+  footprints: 50% kept over 160, not 100% over 80). Caller exceptions are
+  kept apart: no outcome, counted in `caller_errors` with examples, and a
+  calibration whose every run failed stops with the error.
+
 - `fiberhmm-extract` `var`: a deletion longer than a site's ALT deletion
   (e.g. `1M3D10M` over `REF=AC ALT=A`) is coded as another allele, not ALT
   (the base after an indel site must be aligned); reads through the origin of
