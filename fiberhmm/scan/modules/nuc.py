@@ -650,26 +650,30 @@ class NucModule(ScanModuleBase):
             return None
         return [f'{p}:{k}' for k in ENRICH_KINDS for p in ('enr_p', 'enr_n')]
 
-    def _tested(self, territory, tracks, settings, kind):
-        """(run_index, offset, p) of every tested window of ``kind`` (empty zones are zero-padded: n = 0)."""
-        out = []
-        for run_index in range(len(territory)):
-            pv, nv = (tracks.get(f'{n}:{kind}') for n in ('enr_p', 'enr_n'))
-            if pv is None or nv is None or pv[run_index] is None or nv[run_index] is None:
+    def _tested_chunks(self, territory, tracks, settings, kind):
+        """Per bounded chunk of each territory run: (run_index, chunk offsets of tested windows, their p).
+        Empty zones are zero-padded (n = 0), so they are never tested."""
+        min_n = int(settings['enrich_min_molecules'])
+        for run_index, (t0, t1, _lo, _ro) in enumerate(territory):
+            if not _has(tracks, f'enr_p:{kind}', run_index) or not _has(tracks, f'enr_n:{kind}', run_index):
                 continue
-            pa, na = np.asarray(pv[run_index], dtype=float), np.asarray(nv[run_index], dtype=float)
-            valid = np.isfinite(pa) & np.isfinite(na) & (na >= int(settings['enrich_min_molecules']))
-            for off in np.flatnonzero(valid):
-                out.append((run_index, int(off), float(pa[off])))
-        return out
+            for a, b in _chunks(t1 - t0):
+                pa = _get(tracks, f'enr_p:{kind}', run_index, slice(a, b))
+                na = _get(tracks, f'enr_n:{kind}', run_index, slice(a, b))
+                valid = np.isfinite(pa) & np.isfinite(na) & (na >= min_n)
+                off = np.flatnonzero(valid)
+                yield run_index, off + a, pa[off]
 
     def stitch_statistics(self, chrom, territory, tracks, settings, calibration):
         from fiberhmm.nuc.enrichment import bh_candidate_bound
         bound = bh_candidate_bound(float(settings['enrich_fdr']))
         res = {}
         for kind in ENRICH_KINDS:
-            tested = self._tested(territory, tracks, settings, kind)
-            res[kind] = (len(tested), [p for _r, _o, p in tested if p <= bound])
+            m, small = 0, []
+            for _run, off, p in self._tested_chunks(territory, tracks, settings, kind):
+                m += len(off)
+                small.extend(float(x) for x in p[p <= bound])
+            res[kind] = (m, small)
         return res
 
     def combine_statistics(self, per_contig, settings, calibration):
@@ -685,6 +689,12 @@ class NucModule(ScanModuleBase):
         return {'fdr_scope': 'scan', 'enrich_fdr': q, 'kinds': kinds}
 
     def stitch(self, chrom, territory, tracks, settings, calibration, scan_statistics=None) -> StitchResult:
+        """Recurrence, phased and fuzzy patches over one contig's territory runs.
+
+        Tracks are per base but hold values only at window starts (every enrich_step_bp / phase_step_bp), so
+        they are read in bounded chunks (``STITCH_CHUNK_BP``) and only the tested window starts are kept;
+        per-group values read only the bases of each patch. Peak memory scales with the chunk and the
+        patches, not the contig (a whole-run expansion of every track took about 24 GiB for 250 Mb)."""
         from fiberhmm.nuc.enrichment import bh, merge_windows
         out = StitchResult()
         groups = sorted({name.split(':', 1)[1] for name in tracks if name.startswith('measured:')})
@@ -696,11 +706,7 @@ class NucModule(ScanModuleBase):
 
         def getter(run_index):
             def get(name, selection=None):
-                arrs = tracks.get(name)
-                if arrs is None or arrs[run_index] is None:
-                    return None
-                arr = arrs[run_index]
-                return np.asarray(arr if selection is None else arr[selection], dtype=float)
+                return _get(tracks, name, run_index, selection)
             return get
 
         def kind_of(g):
@@ -711,39 +717,46 @@ class NucModule(ScanModuleBase):
         if scan_fdr and scan_statistics is None:
             raise ValueError("nuc: enrich_fdr_scope 'scan' needs the scan-wide statistics (run through "
                              "fiberhmm.scan.run_units, or set enrich_fdr_scope 'contig')")
+        min_n = int(settings['enrich_min_molecules'])
         for kind, ptype in PATCH_KINDS:
-            rows = []                          # (run_index, offset, p, obs, exp, n)
+            # tested windows only (empty zones are zero-padded: n = 0 there), as columns in run/offset order
+            r_run, r_off, r_p, r_obs, r_exp = [], [], [], [], []
+            names = [f'enr_{x}:{kind}' for x in ('p', 'obs', 'exp', 'n')]
             for run_index, (t0, t1, _lo, _ro) in enumerate(territory):
+                if not all(_has(tracks, n, run_index) for n in names):
+                    continue
                 get = getter(run_index)
-                pv = get(f'enr_p:{kind}')
-                if pv is None:
-                    continue
-                ov, ev, nv = get(f'enr_obs:{kind}'), get(f'enr_exp:{kind}'), get(f'enr_n:{kind}')
-                if ov is None or ev is None or nv is None:
-                    continue
-                # tested windows only (empty zones are zero-padded: n = 0 there)
-                valid = np.isfinite(pv) & np.isfinite(nv) & (nv >= int(settings['enrich_min_molecules']))
-                for off in np.flatnonzero(valid):
-                    rows.append((run_index, int(off), float(pv[off]), float(ov[off]), float(ev[off]), int(nv[off])))
-            if not rows:
+                for a, b in _chunks(t1 - t0):
+                    pv, ov, ev, nv = (get(n, slice(a, b)) for n in names)
+                    valid = np.isfinite(pv) & np.isfinite(nv) & (nv >= min_n)
+                    off = np.flatnonzero(valid)
+                    if len(off):
+                        r_run.append(np.full(len(off), run_index, dtype=np.int64))
+                        r_off.append(off + a)
+                        r_p.append(pv[off])
+                        r_obs.append(ov[off])
+                        r_exp.append(ev[off])
+            if not r_off:
                 continue
+            r_run, r_off, r_p, r_obs, r_exp = (np.concatenate(c) for c in (r_run, r_off, r_p, r_obs, r_exp))
             if scan_fdr:
                 rec = scan_statistics['kinds'][kind]
                 thr = rec['p_threshold']
-                rej = [thr is not None and r[2] <= thr for r in rows]
+                rej = (r_p <= thr) if thr is not None else np.zeros(len(r_p), dtype=bool)
                 n_tests = int(rec['windows_tested'])
             else:
-                rej = bh([r[2] for r in rows], q)
-                n_tests = len(rows)
+                rej = bh(r_p, q)
+                n_tests = len(r_p)
             for run_index, (t0, t1, left_open, right_open) in enumerate(territory):
                 get = getter(run_index)
-                sig = [r for r, ok in zip(rows, rej) if ok and r[0] == run_index]
-                if not sig:
+                sel = np.flatnonzero(rej & (r_run == run_index))
+                if not len(sel):
                     continue
+                s_off, s_p, s_obs, s_exp = r_off[sel], r_p[sel], r_obs[sel], r_exp[sel]
                 L = t1-t0
-                for a, b in merge_windows([r[1] for r in sig], EW):
+                for a, b in merge_windows(s_off.tolist(), EW):
                     b = min(b, L)
-                    inside = [r for r in sig if a <= r[1] < b]
+                    lo_i, hi_i = np.searchsorted(s_off, a, 'left'), np.searchsorted(s_off, b, 'left')
                     s, e = t0 + a, t0 + b
                     open_end = (a == 0 and left_open) or (b == L and right_open)
                     vals = []
@@ -758,7 +771,7 @@ class NucModule(ScanModuleBase):
                         qs, rn = get('qsum:all', slice(a, b)).sum(), get('reg:all', slice(a, b)).sum()
                         qh = float(qs / rn) if rn > 0 else None
                         regular_patches.append((s, e))
-                    p_min = min(r[2] for r in inside)
+                    p_min = float(np.min(s_p[lo_i:hi_i]))
                     score = vals[[v[0] for v in vals].index('all')][2]
                     key = f'{ptype}:{s}'
                     out.hits.append(Hit(f'nuc.patch.{ptype}', key, chrom, s, e, (s + e) // 2, score=score,
@@ -769,52 +782,65 @@ class NucModule(ScanModuleBase):
                         out.values.append(Value(key, g, kd, 'fraction', fg, n_molecules=nm))
                     out.values.append(Value(key, 'all', 'all', 'p_min', p_min))
                     out.values.append(Value(key, 'all', 'all', 'expected_fraction',
-                                            float(np.mean([r[4] for r in inside]))))
+                                            float(np.mean(s_exp[lo_i:hi_i]))))
                     out.values.append(Value(key, 'all', 'all', 'observed_fraction',
-                                            float(np.mean([r[3] for r in inside]))))
+                                            float(np.mean(s_obs[lo_i:hi_i]))))
                     out.values.append(Value(key, 'all', 'all', 'windows_tested', float(n_tests)))
                     if qh is not None:
                         out.values.append(Value(key, 'all', 'all', 'q_hat', qh))
         # --- phased and fuzzy windows on the fixed grid --------------------------------
+        min_measured = int(settings['patch_min_measured'])
+        min_excess = float(settings['phase_min_excess'])
+        log_max_p, log_fuzzy_p = np.log(float(settings['phase_max_p'])), np.log(float(settings['fuzzy_min_p']))
         for run_index, (t0, t1, left_open, right_open) in enumerate(territory):
             get = getter(run_index)
-            R, null, logp, P = get('phase_R:all'), get('phase_null:all'), get('phase_logp:all'), get('phase_P:all')
-            C = get('phase_C:all')
-            if R is None:
+            if not _has(tracks, 'phase_R:all', run_index):
                 continue
-            excess = R - null
-            Nw = get('phase_n:all')
-            nw = np.nan_to_num(Nw) if Nw is not None else np.zeros(len(R))
-            # computed windows only (empty zones are zero-padded: n = 0 there)
-            fin = np.isfinite(R) & (nw >= int(settings['patch_min_measured']))
-            phased = fin & (excess >= float(settings['phase_min_excess'])) & \
-                (logp <= np.log(float(settings['phase_max_p'])))
-            # fuzzy: a window starting inside a recurrent regular patch whose
-            # molecules do not share a phase (coherence at the null)
-            in_reg = np.zeros(len(R), dtype=bool)
-            for s_, e_ in regular_patches:
-                a_, b_ = max(s_ - t0, 0), min(e_ - t0, len(R))
-                if b_ > a_:
-                    in_reg[a_:b_] = True
-            fuzzy = fin & in_reg & (logp > np.log(float(settings['fuzzy_min_p']))) & \
-                (excess < float(settings['phase_min_excess']))
-            for ptype, starts_mask in (('phased', phased), ('fuzzy', fuzzy)):
-                starts = np.flatnonzero(starts_mask)
-                if not len(starts):
+            L = t1 - t0
+            # window starts of each type, with excess, P and C there (C None without the track)
+            found = {'phased': ([], [], [], []), 'fuzzy': ([], [], [], [])}
+            for a, b in _chunks(L):
+                sl = slice(a, b)
+                R, null, logp, P = (get(f'{n}:all', sl) for n in ('phase_R', 'phase_null', 'phase_logp', 'phase_P'))
+                C, Nw = get('phase_C:all', sl), get('phase_n:all', sl)
+                excess = R - null
+                nw = np.nan_to_num(Nw) if Nw is not None else np.zeros(len(R))
+                # computed windows only (empty zones are zero-padded: n = 0 there)
+                fin = np.isfinite(R) & (nw >= min_measured)
+                phased = fin & (excess >= min_excess) & (logp <= log_max_p)
+                # fuzzy: a window starting inside a recurrent regular patch whose
+                # molecules do not share a phase (coherence at the null)
+                in_reg = np.zeros(len(R), dtype=bool)
+                for s_, e_ in regular_patches:
+                    a_, b_ = max(s_ - t0, a), min(e_ - t0, b)
+                    if b_ > a_:
+                        in_reg[a_ - a:b_ - a] = True
+                fuzzy = fin & in_reg & (logp > log_fuzzy_p) & (excess < min_excess)
+                for ptype, mask in (('phased', phased), ('fuzzy', fuzzy)):
+                    idx = np.flatnonzero(mask)
+                    if len(idx):
+                        ks, ex, ps, cs = found[ptype]
+                        ks.append(idx + a)
+                        ex.append(excess[idx])
+                        ps.append(P[idx])
+                        cs.append(C[idx] if C is not None else None)
+            for ptype in ('phased', 'fuzzy'):
+                ks, ex, ps, cs = found[ptype]
+                if not ks:
                     continue
-                good = np.zeros(len(R), dtype=bool)
-                for k_ in starts:
-                    good[k_:min(k_ + W, len(good))] = True
-                for a, b in _runs(good):
+                starts, excess, P = np.concatenate(ks), np.concatenate(ex), np.concatenate(ps)
+                C = None if any(c is None for c in cs) else np.concatenate(cs)
+                for a, b in _start_runs(starts, W, L):
+                    lo_i, hi_i = np.searchsorted(starts, a, 'left'), np.searchsorted(starts, b, 'left')
+                    inwin = starts[lo_i:hi_i]
                     s, e = t0 + a, t0 + b
-                    inwin = [k_ for k_ in starts if a <= k_ < b]
                     key = f'{ptype}:{s}'
-                    open_end = (a == 0 and left_open) or (b == len(good) and right_open)
-                    Pm = float(np.median(P[inwin]))
+                    open_end = (a == 0 and left_open) or (b == L and right_open)
+                    Pm = float(np.median(P[lo_i:hi_i]))
                     if ptype == 'phased':
-                        score = float(np.max(excess[inwin]))
+                        score = float(np.max(excess[lo_i:hi_i]))
                     else:
-                        cc = C[inwin] if C is not None else np.array([np.nan])
+                        cc = C[lo_i:hi_i] if C is not None else np.array([np.nan])
                         cm = float(np.nanmedian(cc)) if np.isfinite(cc).any() else float('nan')
                         score = float(Pm / (2 * np.pi) * np.sqrt(-2 * np.log(cm))) if 0 < cm < 1 else float('nan')
                     out.hits.append(Hit(f'nuc.patch.{ptype}', key, chrom, s, e, (s + e) // 2, score=score,
@@ -822,22 +848,22 @@ class NucModule(ScanModuleBase):
                                         columns={'q_hat': '', 'P': round(Pm, 1), 'width': e - s,
                                                  'open_end': int(open_end)}))
                     for g in groups:
-                        Rg, ng, Cg = (get(f'{prefix}:{g}', slice(a, b)) for prefix in
-                                      ('phase_R', 'phase_null', 'phase_C'))
-                        if Rg is None:
+                        if not _has(tracks, f'phase_R:{g}', run_index):
                             continue
-                        vals = [Rg[k_-a] - ng[k_-a] for k_ in inwin if np.isfinite(Rg[k_-a])]
+                        Rg, ng = _points(get, f'phase_R:{g}', inwin), _points(get, f'phase_null:{g}', inwin)
+                        Cg = _points(get, f'phase_C:{g}', inwin)
+                        ok = np.isfinite(Rg)
+                        diff = (Rg - ng)[ok]
                         out.values.append(Value(key, g, kind_of(g), 'R_minus_null',
-                                                float(np.max(vals)) if vals else None))
+                                                float(np.max(diff)) if len(diff) else None))
                         if Cg is not None:
-                            cs = [Cg[k_-a] for k_ in inwin if np.isfinite(Cg[k_-a])]
+                            cs_ = Cg[np.isfinite(Cg)]
                             out.values.append(Value(key, g, kind_of(g), 'coherence',
-                                                    float(np.median(cs)) if cs else None))
+                                                    float(np.median(cs_)) if len(cs_) else None))
                     out.values.append(Value(key, 'all', 'all', 'P', Pm))
                     if ptype == 'fuzzy':
                         out.values.append(Value(key, 'all', 'all', 'dispersion_bp', score))
         return out
-
 
     def scalar_names(self) -> List[str]:
         from fiberhmm.nuc.tags import NUCMOL_CODECS
@@ -1023,12 +1049,57 @@ def _subtract_iv(iv, cut) -> List[Tuple[int, int]]:
     return out
 
 
-def _runs(mask: np.ndarray) -> List[Tuple[int, int]]:
-    m = np.asarray(mask, dtype=np.int8)
-    if not len(m):
-        return []
-    d = np.diff(np.concatenate([[0], m, [0]]))
-    return list(zip(np.flatnonzero(d == 1).tolist(), np.flatnonzero(d == -1).tolist()))
+# Territory runs are read in chunks of this many bases at finalize (nuc stitch); see NucModule.stitch.
+STITCH_CHUNK_BP = 1_000_000
+
+
+def _chunks(length: int, size: Optional[int] = None):
+    size = max(1, int(size or STITCH_CHUNK_BP))
+    for a in range(0, int(length), size):
+        yield a, min(int(length), a + size)
+
+
+def _has(tracks, name, run_index) -> bool:
+    arrs = tracks.get(name)
+    return arrs is not None and arrs[run_index] is not None
+
+
+def _get(tracks, name, run_index, selection=None):
+    """One territory run's track (or a slice of it) as float64, or None when absent."""
+    arrs = tracks.get(name)
+    if arrs is None or arrs[run_index] is None:
+        return None
+    arr = arrs[run_index]
+    return np.asarray(arr if selection is None else arr[selection], dtype=float)
+
+
+def _points(get, name, offsets):
+    """A track's values at sorted run offsets, read in chunks of at most STITCH_CHUNK_BP bases."""
+    offsets = np.asarray(offsets, dtype=np.int64)
+    out = np.empty(len(offsets), dtype=float)
+    i = 0
+    while i < len(offsets):
+        a = int(offsets[i])
+        j = int(np.searchsorted(offsets, a + STITCH_CHUNK_BP, 'left'))
+        seg = get(name, slice(a, int(offsets[j - 1]) + 1))
+        if seg is None:
+            return None
+        out[i:j] = seg[offsets[i:j] - a]
+        i = j
+    return out
+
+
+def _start_runs(starts, width: int, length: int) -> List[Tuple[int, int]]:
+    """Maximal runs of the union of [k, min(k + width, length)) over sorted window starts (``_runs`` of the
+    dilated mask, without the per-base mask)."""
+    runs: List[List[int]] = []
+    for k in starts.tolist():
+        end = min(k + width, length)
+        if runs and k <= runs[-1][1]:
+            runs[-1][1] = max(runs[-1][1], end)
+        else:
+            runs.append([k, end])
+    return [(a, b) for a, b in runs]
 
 
 def _ref_envelopes(mol, starts, ends) -> List[Tuple[int, int]]:

@@ -215,6 +215,13 @@
   two nucleosomes (uncalled records included); the all-missing row (`AQ`
   255×4) made such records look called.
 
+- **Scan finalize no longer expands nuc tracks over whole chromosomes.** The
+  nuc `stitch` (and the scan-wide FDR pass) read territory runs in 1 Mb
+  chunks and keep only tested window starts, instead of several float64
+  per-base arrays per run (about 115 MiB per Mb, ~24 GiB for a 250 Mb
+  chromosome). Outputs are unchanged; peak memory no longer grows with the
+  contig (~150 MiB on a synthetic 32 Mb run, against ~0.9 GiB for 8 Mb before).
+
 ## 3.1.0
 
 Includes the unreleased 3.0.6 changes.
