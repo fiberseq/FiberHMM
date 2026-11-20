@@ -489,12 +489,19 @@ def _anchors(bam, chrom, start, end, include_duplicates=False, row_rule='view', 
             yield anchor
 
 
+def _not_an_array(tag):
+    """A tag value that is a string or a scalar (``ns:Z:100,700``, Dorado's ``ns:i``), not an array."""
+    return isinstance(tag, (str, bytes, int, float))
+
+
 def parse_int_tag_values(tag):
-    """BAM array, list or comma-separated string tag values as ints (FiberBrowser ``parse_int_tag_values``)."""
-    if tag is None:
+    """BAM array or list tag values as ints; None for a missing tag, a string or a scalar.
+
+    FiberBrowser 3.0.5's array-pair rule (``bam_tags.interval_tag_pair``): footprint and MSP interval tags
+    (ns/nl, as/al) are calls only as arrays. No FiberHMM or fibertools writer stores them as strings, and
+    Dorado's scalar ``ns:i`` is a signal sample count, so a string or scalar gives no calls."""
+    if tag is None or _not_an_array(tag):
         return None
-    if isinstance(tag, str):
-        return [int(x) for x in tag.split(',') if x]
     return [int(x) for x in tag]
 
 
@@ -690,7 +697,13 @@ def _record_tiles(read, lo, hi, *, legacy, group_frame, hide_terminal_gaps, term
         ns_tag = read.get_tag('ns')
         nl_tag = read.get_tag('nl') if read.has_tag('nl') else None
         nq_tag = read.get_tag('nq') if read.has_tag('nq') and nl_tag is not None else None
-    if ns_tag is None and read.has_tag('as') and read.has_tag('al'):
+        if nl_tag is None or _not_an_array(ns_tag) or _not_an_array(nl_tag):
+            # Only two arrays are a pair (FiberBrowser's array-pair rule): a missing nl, or a string or scalar in
+            # either position, gives no footprint calls; MSPs, MA or a neutral tile decide the row, as in
+            # FiberBrowser.
+            ns_tag = nl_tag = nq_tag = None
+    if (ns_tag is None and read.has_tag('as') and read.has_tag('al')
+            and not _not_an_array(read.get_tag('as')) and not _not_an_array(read.get_tag('al'))):
         try:
             ns_tag, nl_tag = msp_complement(read.get_tag('as'), read.get_tag('al'), read.query_length or 0)
         except (TypeError, ValueError):

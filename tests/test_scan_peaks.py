@@ -216,14 +216,29 @@ def _rows(path, start=0, end=1500, **kw):
         return compact_rows(bam, 'chrP', start, end, **kw)
 
 
-def test_string_footprint_tags_parse_like_arrays(tmp_path):
-    a = _bam(tmp_path / 'a.bam', [dict(tags={'ns': [100, 700], 'nl': [147, 147]})])
-    b = _bam(tmp_path / 'b.bam', [dict(tags={'ns': '100,700', 'nl': '147,147'})])
-    assert _rows(a) == _rows(b) and len(_rows(a)) == 1
+def test_string_and_scalar_footprint_tags_are_not_calls(tmp_path):
+    """FiberBrowser 3.0.5's array-pair rule: ns/nl (and as/al) are calls only as arrays. A comma string or a
+    scalar (Dorado's ns:i) gives no calls: the read is the neutral tile an untagged read is."""
+    import array
+    from fiberhmm.scan.peaks_reads import parse_int_tag_values
+    assert parse_int_tag_values(array.array('I', [100, 700])) == [100, 700]
+    assert parse_int_tag_values('100,700') is None and parse_int_tag_values(40_000) is None
+    untagged = _rows(_bam(tmp_path / 'u.bam', [dict(tags={})]))
+    assert len(untagged) == 1 and all(iv[2] == 0 for iv in untagged[0]['intervals'])
+    for name, tags in (('string', {'ns': '100,700', 'nl': '147,147'}), ('mixed', {'ns': [100, 700], 'nl': '147,147'}),
+                       ('scalar', {'ns': 40_000}), ('msp_string', {'as': '100,700', 'al': '147,147'})):
+        rows = _rows(_bam(tmp_path / f'{name}.bam', [dict(tags=tags)]))
+        assert [r['intervals'] for r in rows] == [untagged[0]['intervals']], name
+    called = _rows(_bam(tmp_path / 'a.bam', [dict(tags={'ns': [100, 700], 'nl': [147, 147]})]))
+    assert any(iv[2] > 0 for iv in called[0]['intervals'])
 
 
-def test_ns_without_nl_gives_no_row(tmp_path):
-    assert _rows(_bam(tmp_path / 'a.bam', [dict(tags={'ns': [100, 700]})])) == []
+def test_ns_without_nl_is_not_a_call(tmp_path):
+    """ns without nl is not a pair (FiberBrowser's array-pair rule): the read is the neutral tile an untagged
+    read is, as FiberBrowser shows it."""
+    untagged = _rows(_bam(tmp_path / 'u.bam', [dict(tags={})]))
+    rows = _rows(_bam(tmp_path / 'a.bam', [dict(tags={'ns': [100, 700]})]))
+    assert [r['intervals'] for r in rows] == [untagged[0]['intervals']]
 
 
 def test_unrepaired_lift_hides_former_supplementaries(tmp_path):
@@ -266,6 +281,8 @@ def test_review_records_match_browser(tmp_path):
            {'ID': 'ft', 'PN': 'fibertools', 'CL': 'ft add-nucleosomes in.bam', 'PP': 'mm2'},
            {'ID': 'ft.1', 'PN': 'fibertools', 'CL': 'ft add-nucleosomes in.bam', 'PP': 'mm2'},
            {'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call', 'PP': 'mm2'}]
+    # Case 0: comma-string ns/nl are not calls in either tool (FiberBrowser 3.0.5's array-pair rule): parity
+    # with "no calls" (no footprint in the counts).
     cases = [([dict(tags={'ns': '100,700', 'nl': '147,147'})], None),
              ([dict(tags={'ns': [100, 700]})], None),
              ([dict(tags={'ns': [100, 700], 'nl': [147, 147], 'Yf': 2048})],
@@ -279,6 +296,9 @@ def test_review_records_match_browser(tmp_path):
             a = PS.compute_scan_counts(rows, 'accessibility', end - start)
             b = C.compute_scan_counts(_rows(path, start, end), 'accessibility', end - start)
             assert np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]), (i, start, end)
+            if i == 0:
+                assert not any(iv[2] > 0 for r in _rows(path, start, end) for iv in r['intervals'])
+                assert not any(iv[2] > 0 for r in rows for iv in r['intervals'])
 
 
 
