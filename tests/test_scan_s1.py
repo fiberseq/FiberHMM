@@ -273,3 +273,40 @@ def test_nfr_depth_mode_writes_depth_states(tmp_path, locus_bam):
     assert depth and all(hits[h]['relation'] == 'depth state' and hits[h]['prevalence_strict'] for h in depth)
     states = [s for s in read_all(tmp_path / 's' / 'nfr' / 'states.tsv.bgz') if s['hit_id'] in depth]
     assert states and {s['state'] for s in states} <= {'0', '1'}
+
+
+def test_nfrmol_skips_molecules_with_fewer_than_two_nucleosomes():
+    """M14: a record with fewer than two >= 90 bp nucleosomes (an uncalled record included) gets no nfrmol row
+    and no MA group: an all-missing nfrmol (AQ 255 x 4) made an uncalled read look called."""
+    from fiberhmm.scan.finalize import _Annotations, _emit_molecule
+    from fiberhmm.scan.modules.nfr import NfrModule
+    from fiberhmm.scan.types import FullMolecule, RecordRef
+    header = pysam.AlignmentHeader.from_dict({'HD': {'VN': '1.6'}, 'SQ': [{'SN': 'c', 'LN': 10_000}]})
+    mod = NfrModule()
+    groups = {g.group: g for g in mod.ma_groups()}
+
+    class Rows:
+        def __init__(self):
+            self.rows = []
+
+        def add(self, *row):
+            self.rows.append(row)
+
+    def emitted(tags):
+        a = pysam.AlignedSegment(header)
+        a.query_name, a.reference_id, a.reference_start, a.cigarstring = 'm/1/ccs', 0, 100, '2000M'
+        a.query_sequence = 'A' * 2000
+        for k, v in tags.items():
+            a.set_tag(k, v)
+        rec = RecordRef('d', 0, 'm/1/ccs', 'ab' * 32, 0, 'c', 100, 2100)
+        mr = mod.molecule_outputs(FullMolecule(rec, a, None), {}, None)
+        w = {'molecules': Rows(), 'marks': Rows()}
+        _emit_molecule('nfr', mod, groups, mr, w, None, True)
+        ann = _Annotations()
+        _emit_molecule('nfr', mod, groups, mr, None, ann, False)
+        return mr.scalars, len(w['molecules'].rows), sum(len(v) for f in ann.by_file.values() for v in f.values())
+
+    assert emitted({}) == ({}, 0, 0)                                          # uncalled
+    assert emitted({'MA': '2000;nuc.:101-147'}) == ({}, 0, 0)                # one nucleosome
+    scalars, rows, marks = emitted({'MA': '2000;nuc.:101-147,501-147'})
+    assert scalars['n_nfr'] == 1.0 and rows == 1 and marks == 1

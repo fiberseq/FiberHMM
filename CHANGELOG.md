@@ -211,6 +211,10 @@
   `nucgeo`: it writes no header contract for them, lists only active groups in
   the manifest, and an annotated BAM keeps such groups from an earlier scan.
 
+- Scan `nfr` writes no `nfrmol` row or MA group for a record with fewer than
+  two nucleosomes (uncalled records included); the all-missing row (`AQ`
+  255×4) made such records look called.
+
 ## 3.1.0
 
 Includes the unreleased 3.0.6 changes.

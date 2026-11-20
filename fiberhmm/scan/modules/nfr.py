@@ -301,7 +301,12 @@ class NfrModule(ScanModuleBase):
         return res
 
     def molecule_outputs(self, molecule, settings, calibration):
-        return MoleculeResult(molecule.record, scalars=molecule_scalars(molecule.read))
+        scalars = molecule_scalars(molecule.read)
+        if all(v is None for v in scalars.values()):
+            # Fewer than two >= 90 bp nucleosomes (uncalled reads included): nothing is measured, so no nfrmol
+            # row or MA group (an all-missing nfrmol would make an uncalled read look called).
+            scalars = {}
+        return MoleculeResult(molecule.record, scalars=scalars)
 
 
 def _asdict(value):
