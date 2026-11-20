@@ -163,6 +163,27 @@
 
 ### Fixed
 
+- **Legacy `ns`/`nl` and `as`/`al` tags follow the array-pair rule everywhere.**
+  A pair counts as calls only when both tags are present, both are integer
+  arrays and they have the same length (FiberBrowser's rule, now in
+  `fiberhmm.io.legacy_tags`). A scalar (Dorado's `ns:i`), a string
+  (`ns:Z:100,700`), a missing partner or unequal lengths mean no calls. Before,
+  these crashed `fiberhmm-lift` (TypeError, FrameError or AnnotationError on a
+  reverse read), became digit-by-digit or truncated calls in
+  `fiberhmm-extract`, became real `nuc`/`msp` MA groups in scan annotation and
+  intervals in nucleosome decoding, made reads callable in
+  `fiberhmm-scan` (`callable.tsv.bgz`, calibration windows), skewed
+  `fiberhmm-qc` footprint lengths and triggered the `untracked-footprint-calls`
+  advisory. `fiberhmm-lift` and frame carrying now pass such tags through
+  unchanged. In `fiberhmm-scan`, a valid `as`/`al`-only read is callable, and
+  empty arrays are not call evidence.
+
+- An `MA`/`Ma` tag holding only non-footprint groups (`ddda_mcg.`, `fire.Q`)
+  no longer counts as the read's footprint calls: `fiberhmm-extract`
+  footprint/MSP/TF layers, `fiberhmm-qc`, the pipeline's called-read count,
+  scan callability and NFR nucleosome runs fall back to `Ma` or the legacy
+  tags.
+
 - BED12 lift: a column containing `;` (a verbatim SAM `SA` tag, as in
   `fiberhmm_sv` rows) is no longer treated as a per-block list when its comma
   count happens to equal blockCount.
