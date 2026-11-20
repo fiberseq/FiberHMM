@@ -2,7 +2,8 @@
 
 Per base: ``numerator`` and ``total`` read counts from the reads' compact
 tilings, the signal ``numerator / total`` (float32), smoothed by a boxcar of
-``smooth_width`` (``np.convolve(..., 'same')``, float32), then progressively
+``smooth_width`` (``np.convolve(..., 'same')`` window semantics, float64 prefix-sum
+arithmetic, cast to float32; see ``smooth_scan_signal``), then progressively
 masked threshold tiers: Strong, Medium, Weak and Rare. Regions wider than
 ``max_width`` are the view's background, not peaks ("broad").
 
@@ -76,11 +77,27 @@ def scan_signal_from_counts(numerator: np.ndarray, total: np.ndarray) -> np.ndar
 
 
 def smooth_scan_signal(signal: np.ndarray, smooth_width: int) -> np.ndarray:
+    # Boxcar mean with np.convolve(signal, ones(w) / w, mode="same") window
+    # semantics: output k averages signal[k - w//2 : k - w//2 + w], positions
+    # outside the array count as 0, and the divisor is always w. The arithmetic
+    # is float64 sums from one sequential prefix sum, divided by w, then cast to
+    # float32. float32 np.convolve used a BLAS-style dot product whose rounding
+    # differs between x86 and Apple Silicon, which moved peak edges sitting on a
+    # threshold. Prefix sums are exact while len(signal) * max coverage < 2**29
+    # (inputs are float32 ratios >= 1/coverage), so each window sum is then the
+    # exact sum of its float32 inputs on every platform.
+    # The kernel is clamped to the signal length for short viewports so
+    # smoothing never changes the signal length.
     if len(signal) == 0:
         return signal.astype(np.float32, copy=True)
-    smooth_width = min(max(1, int(smooth_width)), len(signal))
-    kernel = np.ones(smooth_width, dtype=np.float32) / smooth_width
-    return np.convolve(signal, kernel, mode='same')
+    n = len(signal)
+    w = min(max(1, int(smooth_width)), n)
+    prefix = np.zeros(n + 1, dtype=np.float64)
+    np.cumsum(np.asarray(signal, dtype=np.float64), out=prefix[1:])
+    lo = np.arange(n, dtype=np.int64) - w // 2
+    hi = np.clip(lo + w, 0, n)
+    lo = np.clip(lo, 0, n)
+    return ((prefix[hi] - prefix[lo]) / w).astype(np.float32)
 
 
 def build_peak_thresholds(threshold_strong, threshold_medium, threshold_weak, threshold_rare, min_reads, n_reads,
