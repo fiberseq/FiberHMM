@@ -141,9 +141,12 @@
 - Writers that re-call footprints (`fiberhmm-call`, `-apply`,
   `-recall-tfs`, `-recall-nucs`) drop the MA groups derived from the old calls
   (`nucsz`, `nucseg`, `nucmol`, `fpcls`, `nfrvar`, `nfrmol`) and their header
-  declarations, on every read they write. Other tools' groups are still kept,
-  and `fiberhmm-merge`/`-pair` keep scan groups on the reads they pass
-  through unmerged.
+  declarations, on every read they write. The recall writers (`-recall-tfs`,
+  `-recall-nucs`) keep other tools' groups (e.g. `custom.`) on the reads they
+  recall; `fiberhmm-call` and `-apply` keep only the three DddA m5C groups
+  (`ddda_mcg`, `ddda_ucg`, `ddda_mcg_hemi`) and drop every other input group.
+  `fiberhmm-merge`/`-pair` keep scan groups on the reads they pass through
+  unmerged.
 - `fiberhmm-footprint-model` reads BAMs annotated by `fiberhmm-scan` (every
   interval named in `AN`); it still refuses tf/msp pieces linked by a shared
   AN name.
