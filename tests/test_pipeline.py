@@ -938,3 +938,98 @@ def test_min_mapq_resume_end_to_end(plasmid_run):
     assert json.loads((fresh_out / ".fiberhmm-pipeline" / "align.done").read_text()
                       )["fingerprint"]["min_mapq"] == 0
     assert json.loads((fresh_out / "outputs.json").read_text())["settings"]["min_mapq"] == 0
+
+
+def test_min_mapq_ignores_an_align_marker_the_call_was_not_made_from(tmp_path):
+    """Audit M1(a): aligned input subset with --region at MAPQ 20, then a run
+    that used the input in place at MAPQ 0. The older align.done (20) is not
+    what the newer call.done (0) was made from: it is not adopted."""
+    from fiberhmm.pipeline.progress import write_marker
+    out = tmp_path / "out"
+    own = out / "s.aligned.bam"
+    out.mkdir()
+    own.write_bytes(b"subset")
+    write_marker(str(out), "align", {"min_mapq": 20}, {"bam": str(own)})
+    write_marker(str(out), "call", {"min_mapq": 0,
+                                    "aligned": {"path": str(tmp_path / "in.bam")}}, {})
+    pipe = _mapq_pipe(out, sample="s")
+    pipe.sample = "s"
+    pipe._resolve_min_mapq()
+    assert pipe.config.min_mapq == 0 and pipe._notes == []
+
+    # The call made from the OUTDIR alignment: the align marker is the source.
+    write_marker(str(out), "call", {"min_mapq": 20, "aligned": {"path": str(own)}}, {})
+    pipe = _mapq_pipe(out, sample="s")
+    pipe.sample = "s"
+    pipe._resolve_min_mapq()
+    assert pipe.config.min_mapq == 20 and "'align' step" in pipe._notes[0]
+
+
+def test_bypassed_align_clears_the_earlier_align_marker(tmp_path):
+    from fiberhmm.pipeline.progress import read_marker, write_marker
+    out = tmp_path / "out"
+    write_marker(str(out), "align", {"min_mapq": 20}, {})
+    pipe = _mapq_pipe(out)
+    pipe.use_aligned_input = str(tmp_path / "in.bam")
+    pipe.regions = []
+    pipe.step_align()
+    assert read_marker(str(out), "align") is None
+    assert pipe.aligned_bam == str(tmp_path / "in.bam")
+
+
+def test_min_mapq_ignores_markers_of_an_interrupted_redo(tmp_path):
+    """Audit M1(b): an interrupted --redo align left the old call/qc markers
+    (and calling state) at MAPQ 20; the next resume must not adopt 20 from
+    them. A step that starts now clears the markers after it."""
+    from fiberhmm.pipeline.progress import STATE_DIR, read_marker, write_marker
+    out = tmp_path / "out"
+    own = out / "s.aligned.bam"
+    (out / STATE_DIR).mkdir(parents=True)
+    called = out / "s.fiberhmm.bam"
+    called.write_bytes(b"called")
+    write_marker(str(out), "call", {"min_mapq": 20, "aligned": {"path": str(own)}},
+                 {"bam": str(called)})
+    write_marker(str(out), "qc", {"min_mapq": 20, "called": {"path": str(called)}}, {})
+    (out / STATE_DIR / "call.started").write_text(json.dumps(
+        {"fingerprint": {"min_mapq": 20, "aligned": {"path": str(own)}}}))
+    # Old state (written before markers were cleared at step start): the
+    # alignment is made again, so none of these is reused.
+    pipe = _mapq_pipe(out, sample="s")
+    pipe.sample = "s"
+    pipe._resolve_min_mapq()
+    assert pipe.config.min_mapq == 0 and pipe._notes == []
+
+    # QC of an earlier called BAM (an interrupted --redo call): not adopted.
+    out2 = tmp_path / "out2"
+    write_marker(str(out2), "call", {"aligned": {"path": "/in.bam"}}, {"bam": str(called)})
+    write_marker(str(out2), "qc", {"min_mapq": 20,
+                                   "called": {"path": str(called), "size": 1, "sha256": "x"}}, {})
+    pipe = _mapq_pipe(out2, sample="s")
+    pipe._resolve_min_mapq()
+    assert pipe.config.min_mapq == 0
+
+    # Starting a step clears the markers after it (and, for align, the
+    # interrupted calling state).
+    for step, left in (("align", set()), ("call", {"align"}), ("qc", {"align", "call", "tracks"})):
+        for name in ("align", "call", "qc", "tracks"):
+            write_marker(str(out), name, {"min_mapq": 20}, {})
+        (out / STATE_DIR / "call.started").write_text("{}")
+        pipe = _mapq_pipe(out, sample="s")
+        pipe._start_step(step)
+        kept = {name for name in ("align", "call", "qc", "tracks")
+                if read_marker(str(out), name) and name != step}
+        assert kept == left, step
+        assert (out / STATE_DIR / "call.started").exists() == (step != "align")
+
+
+def test_min_mapq_ignores_call_started_in_streaming_mode(tmp_path):
+    from fiberhmm.pipeline.progress import STATE_DIR
+    out = tmp_path / "out"
+    (out / STATE_DIR).mkdir(parents=True)
+    (out / STATE_DIR / "call.started").write_text(json.dumps({"fingerprint": {"min_mapq": 20}}))
+    pipe = _mapq_pipe(out, call_mode="streaming")
+    pipe._resolve_min_mapq()
+    assert pipe.config.min_mapq == 0
+    pipe = _mapq_pipe(out, call_mode="resumable")
+    pipe._resolve_min_mapq()
+    assert pipe.config.min_mapq == 20

@@ -163,6 +163,15 @@
 
 ### Fixed
 
+- `fiberhmm-pipeline` without `--min-mapq` takes the recorded min_mapq only
+  from markers the run will reuse: an align marker the later call was not
+  made from (the aligned input was used in place since), a call or
+  interrupted calling state made from an alignment being made again, and
+  QC/track markers of another called BAM are ignored, as is `call.started` in
+  streaming mode. A step that starts now clears the markers of the steps
+  after it (and, for align, the interrupted calling state), and using the
+  aligned input in place clears an earlier align marker.
+
 - BED12 lift: a column containing `;` (a verbatim SAM `SA` tag, as in
   `fiberhmm_sv` rows) is no longer treated as a per-block list when its comma
   count happens to equal blockCount.

@@ -812,26 +812,80 @@ class Pipeline:
 
     def _recorded_min_mapq(self) -> Optional[tuple[int, str]]:
         """``(min_mapq, step)`` recorded by the first step in OUTDIR this run would
-        reuse (not redone), or by an interrupted calling state; None when none
-        records it."""
+        reuse (not redone), or by an interrupted calling state it would resume;
+        None when none records it.
+
+        Only markers this run can actually reuse count: an align marker the
+        call was not made from (the aligned input was used in place since), a
+        call (or interrupted calling state) made from an OUTDIR alignment that
+        is being made again, and QC/track markers of a called BAM that is
+        being made again, or that the call marker does not describe, are
+        stale and ignored. The interrupted calling state is ignored in
+        streaming mode, which discards it."""
         cfg = self.config
-        for step in _MAPQ_STEPS:
-            if (step not in self.steps or self._forced(step)
-                    or (step == "qc" and not cfg.qc)):
+        own_aligned = os.path.join(self.outdir, f"{self.sample}.aligned.bam")
+
+        def recorded(record) -> Optional[int]:
+            fingerprint = record.get("fingerprint") if isinstance(record, dict) else None
+            value = fingerprint.get("min_mapq") if isinstance(fingerprint, dict) else None
+            if isinstance(value, int) and not isinstance(value, bool):
+                return value
+            return None
+
+        def aligned_path(record) -> Optional[str]:
+            fingerprint = record.get("fingerprint") if isinstance(record, dict) else None
+            aligned = fingerprint.get("aligned") if isinstance(fingerprint, dict) else None
+            return aligned.get("path") if isinstance(aligned, dict) else None
+
+        def reused(step: str) -> bool:
+            return (step in self.steps and not self._forced(step)
+                    and not (step == "qc" and not cfg.qc))
+
+        align = read_marker(self.outdir, "align")
+        call = read_marker(self.outdir, "call")
+        started = None
+        if cfg.call_mode != "streaming":
+            try:
+                with open(os.path.join(self.outdir, STATE_DIR, "call.started"),
+                          encoding="utf-8") as handle:
+                    started = json.load(handle)
+            except (OSError, ValueError):
+                started = None
+        # The OUTDIR alignment is kept only if the align step is reused, and
+        # only if it is what the later call was made from.
+        align_kept = (isinstance(align, dict) and reused("align")
+                      and (call is None or aligned_path(call) is None
+                           or aligned_path(call) == (align.get("outputs") or {}).get("bam")))
+        if align_kept and recorded(align) is not None:
+            return recorded(align), "align"
+
+        def call_kept(record) -> bool:
+            # Made from the OUTDIR alignment while it is made again: redone.
+            return (isinstance(record, dict) and reused("call")
+                    and not (aligned_path(record) == own_aligned and not align_kept))
+
+        call_ok = call_kept(call)
+        for record in (call, started):
+            if call_kept(record) and recorded(record) is not None:
+                return recorded(record), "call"
+        if call is not None and not call_ok:
+            return None  # the called BAM is made again: its QC/tracks too
+        called_digest = None
+        if isinstance(call, dict):
+            bam = (call.get("outputs") or {}).get("bam")
+            called_digest = (call.get("artifacts") or {}).get(bam)
+        for step in ("qc", "tracks"):
+            marker = read_marker(self.outdir, step)
+            if not isinstance(marker, dict) or not reused(step):
                 continue
-            records = [read_marker(self.outdir, step)]
-            if step == "call":
-                try:
-                    with open(os.path.join(self.outdir, STATE_DIR, "call.started"),
-                              encoding="utf-8") as handle:
-                        records.append(json.load(handle))
-                except (OSError, ValueError):
-                    pass
-            for record in records:
-                fingerprint = (record or {}).get("fingerprint") if isinstance(record, dict) else None
-                value = fingerprint.get("min_mapq") if isinstance(fingerprint, dict) else None
-                if isinstance(value, int) and not isinstance(value, bool):
-                    return value, step
+            if called_digest is not None:
+                made_from = (marker.get("fingerprint") or {}).get("called") or {}
+                if not isinstance(made_from, dict) or (
+                        made_from.get("size"), made_from.get("sha256")) != (
+                        called_digest.get("size"), called_digest.get("sha256")):
+                    continue  # QC/tracks of an earlier called BAM
+            if recorded(marker) is not None:
+                return recorded(marker), step
         return None
 
     def _resolve_min_mapq(self) -> None:
@@ -967,10 +1021,27 @@ class Pipeline:
 
     def _start_step(self, step: str) -> None:
         """A step is about to change OUTDIR: the previous outputs.json no longer
-        describes it (it is written again when the run completes)."""
+        describes it (it is written again when the run completes). The markers
+        of the steps after it describe the result being replaced: they are
+        cleared, so an interrupted run does not leave them to a later resume
+        (which would otherwise read its min_mapq from them)."""
         self._ran.add(step)
         with contextlib.suppress(FileNotFoundError):
             os.remove(os.path.join(self.outdir, "outputs.json"))
+        self._clear_downstream(step)
+
+    def _clear_downstream(self, step: str) -> None:
+        if step not in _MAPQ_STEPS:
+            return
+        for later in _MAPQ_STEPS[_MAPQ_STEPS.index(step) + 1:]:
+            if step == "qc" and later == "tracks":
+                continue  # tracks are made from the called BAM, not from QC
+            clear_marker(self.outdir, later)
+        if step == "align":
+            # An interrupted call of the alignment being replaced: discarded
+            # by _prepare_call_state anyway (its 'aligned' no longer matches).
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(os.path.join(self.outdir, STATE_DIR, "call.started"))
 
     def _drop_stale_markers(self) -> None:
         """Forget QC/track results of an earlier called BAM that this run did not
@@ -1352,6 +1423,9 @@ class Pipeline:
     def step_align(self) -> None:
         if self.use_aligned_input and not self.regions:
             self.aligned_bam = self.use_aligned_input
+            # An OUTDIR alignment from an earlier run (e.g. with --region) is
+            # not used: its marker must not describe this run's alignment.
+            clear_marker(self.outdir, "align")
             self.progress.step("align", "skipped", message="input already aligned")
             return
         fingerprint = self._align_fingerprint()
