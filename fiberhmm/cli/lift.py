@@ -700,8 +700,10 @@ def _bed12_lift(args, work_dir, bed_in, out_tmp, unl_tmp) -> int:
     lifted, report, reasons = _lift_units(args, work_dir, bed6)
     dropped: list = []
     dropped_blocks: list = []
+    edge_columns = gl.bed_edge_columns(header, args.edge_columns)
     out, stats = gl.reassemble_bed12(lifted, rows, dropped=dropped, explicit_strand=True,
-                                     partial=args.bed12_partial, dropped_blocks=dropped_blocks)
+                                     partial=args.bed12_partial, dropped_blocks=dropped_blocks,
+                                     edge_columns=edge_columns)
     _write_header_and_rows(out_tmp, header, out)
     if unl_tmp:
         row_reason = {}
@@ -724,7 +726,9 @@ def _bed12_lift(args, work_dir, bed_in, out_tmp, unl_tmp) -> int:
                      f"{fields[3]}|{block}", fields[4], fields[5]]) + "\n")
     print(f"{TOOL}: {stats.rows_out} of {stats.rows_in} BED12 rows lifted "
           f"({stats.rows_lost_blocks} lost a block, {stats.rows_split} split across contigs, "
-          f"{stats.rows_rearranged} rearranged; {stats.rows_flipped} changed strand)"
+          f"{stats.rows_rearranged} rearranged; {stats.rows_flipped} changed strand"
+          + (f", blockEl/blockEr swapped on {stats.edge_columns_swapped}"
+             if edge_columns is not None else "") + ")"
           + (f"; {stats.rows_partial} rows kept without {stats.blocks_dropped} unliftable "
              "blocks (--bed12-partial keep)" if args.bed12_partial == "keep" else "")
           + (f"; thickStart/thickEnd lifted on {stats.thick_lifted} rows, emptied on "
@@ -753,7 +757,7 @@ def _bed_rows_lift(args, work_dir, bed_in, out_tmp, unl_tmp, fmt, thick) -> int:
     lifted, report, reasons = _lift_units(args, work_dir, bed6)
     dropped: list = []
     out, stats = gl.reassemble_bed_rows(lifted, rows, thick=thick, summit=summit,
-                                        dropped=dropped)
+                                        dropped=dropped, unstranded_as="+")
     _write_header_and_rows(out_tmp, header, out)
     if unl_tmp:
         with open(unl_tmp, "w") as handle:
@@ -875,6 +879,12 @@ Examples:
                              "and bounds recomputed) when at least one does, and list the "
                              "dropped blocks in --unlifted with their reasons; drop: drop the "
                              "whole row")
+    parser.add_argument("--edge-columns", metavar="L,R", default=None,
+                        help="--bed, BED12: 1-based columns of per-block genomic left/right "
+                             "edge scores (fiberhmm-extract --block-scores blockEl,blockEr: "
+                             "14,15 for nucleosome and tf rows), swapped on a row that changes "
+                             "strand. Default: found by name in a bigBedToBed -header line, "
+                             "else none")
     parser.add_argument("-g", "--graph", help="Pangenome graph (GBZ) with source and target paths")
     parser.add_argument("-p", "--prefix",
                         help="panSN prefix of the source assembly's paths in the graph, "
@@ -939,6 +949,8 @@ def main(argv=None) -> int:
         if missing:
             parser.error(f"lifting needs {', '.join(missing)}"
                          + (" (or --map for the native engine)" if not args.map else ""))
+    if args.edge_columns and not args.bed:
+        parser.error("--edge-columns is for --bed")
     if args.unlifted and (args.repair_only or not (args.bed or args.engine == "native")):
         parser.error("--unlifted is for the native engine, or --bed")
     if args.source and not args.repair_only:

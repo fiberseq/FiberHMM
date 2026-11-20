@@ -1426,6 +1426,7 @@ class BedStats:
     rows_split: int = 0
     rows_rearranged: int = 0
     rows_flipped: int = 0
+    edge_columns_swapped: int = 0
     rows_partial: int = 0
     blocks_dropped: int = 0
     rows_unlifted: int = 0
@@ -1519,6 +1520,36 @@ def explode_bed12(lines: Iterable[str], unstranded_as: Optional[str] = None
     return ["\t".join(str(v) for v in r) for r in bed6], rows, header
 
 
+EDGE_COLUMN_NAMES = ("blockEl", "blockEr")
+
+
+def bed_edge_columns(header_lines: Iterable[str], explicit: Optional[str] = None
+                     ) -> Optional[Tuple[int, int]]:
+    """0-based ``(left, right)`` edge-score columns of a BED12+N file, or None.
+
+    ``explicit``: ``"L,R"`` 1-based column numbers. Otherwise a column-name
+    header (``bigBedToBed -header``: ``#chrom<TAB>chromStart...``) naming
+    ``blockEl`` and ``blockEr``. Without either the columns are unknown (a
+    BED file does not carry its autoSQL), and nothing is swapped."""
+    if explicit:
+        try:
+            left, right = (int(v) - 1 for v in explicit.split(","))
+        except ValueError:
+            raise ValueError(f"edge columns must be two 1-based column numbers 'L,R': "
+                             f"{explicit!r}") from None
+        if min(left, right) < 12 or left == right:
+            raise ValueError(f"edge columns must be two distinct columns after the 12th: "
+                             f"{explicit!r}")
+        return left, right
+    for line in header_lines:
+        if not line.startswith("#"):
+            continue
+        names = line.lstrip("#").split()
+        if names[:1] == ["chrom"] and all(n in names for n in EDGE_COLUMN_NAMES):
+            return tuple(names.index(n) for n in EDGE_COLUMN_NAMES)
+    return None
+
+
 def _parse_lifted_units(lifted: Iterable[str]):
     """``{row: {unit: (chrom, start, end, strand)}}`` of lifted ``<row>|<unit>`` rows
     (a unit seen twice is kept as a list under ``(unit, 'dup')``)."""
@@ -1543,7 +1574,9 @@ def _parse_lifted_units(lifted: Iterable[str]):
 def reassemble_bed12(lifted: Iterable[str], rows: List[list],
                      dropped: Optional[list] = None, *,
                      explicit_strand: bool = False, partial: str = "drop",
-                     dropped_blocks: Optional[list] = None) -> Tuple[List[str], BedStats]:
+                     dropped_blocks: Optional[list] = None,
+                     edge_columns: Optional[Tuple[int, int]] = None
+                     ) -> Tuple[List[str], BedStats]:
     """BED12 rows rebuilt from lifted BED6 blocks (named ``<row>|<block>``).
 
     A row is dropped (counted) when a block did not lift, its blocks land on
@@ -1566,7 +1599,10 @@ def reassemble_bed12(lifted: Iterable[str], rows: List[list],
     order. ``explicit_strand`` (liftbed, which swaps the strand column on a
     ``-`` chain; explode with ``unstranded_as="+"``) takes the flip from the
     lifted strand alone and drops a multi-block row whose block order does
-    not agree with it as rearranged."""
+    not agree with it as rearranged. ``edge_columns`` (0-based, from
+    :func:`bed_edge_columns`): the per-block genomic left/right edge-score
+    columns (``blockEl``/``blockEr``), whose values swap columns on a row
+    that changed strand (after the per-block reversal)."""
     if partial not in BED12_PARTIAL:
         raise ValueError(f"partial must be one of {BED12_PARTIAL}")
 
@@ -1646,17 +1682,25 @@ def reassemble_bed12(lifted: Iterable[str], rows: List[list],
             if dropped_blocks is not None:
                 dropped_blocks.extend((index, k) for k in sorted(set(range(count)) - set(kept)))
         for col in range(12, len(new)):
-            # A per-block column is a plain comma list with one item per block. A
+            # A per-block column is a plain comma list with one item per block
+            # (bigBedToBed writes int[blockCount] with a trailing comma). A
             # SAM SA tag (``chr,pos,strand,CIGAR,mapq,NM;`` entries) is a row-level
             # value whose comma count can match blockCount by chance; ';' marks it.
             if ";" in new[col]:
                 continue
-            values = new[col].split(",")
+            trailing = new[col].endswith(",")
+            values = new[col].rstrip(",").split(",") if trailing else new[col].split(",")
             if count > 1 and len(values) == count:
                 values = [values[k] for k in kept]
                 if flipped and n > 1:
                     values.reverse()
-                new[col] = ",".join(values)
+                new[col] = ",".join(values) + ("," if trailing else "")
+        if flipped and edge_columns is not None:
+            # Genomic left/right edge scores trade places on a reverse lift.
+            left, right = edge_columns
+            if max(left, right) < len(new):
+                new[left], new[right] = new[right], new[left]
+                stats.edge_columns_swapped += 1
         if flipped:
             stats.rows_flipped += 1
             new[5] = _FLIP_STRAND.get(original, original)
@@ -1714,14 +1758,22 @@ def explode_bed_rows(lines: Iterable[str], *, thick: bool = False, summit: bool 
 
 
 def reassemble_bed_rows(lifted: Iterable[str], rows: List[list], *, thick: bool = False,
-                        summit: bool = False, dropped: Optional[list] = None
+                        summit: bool = False, dropped: Optional[list] = None,
+                        unstranded_as: Optional[str] = None
                         ) -> Tuple[List[str], BedStats]:
     """Rows of ``explode_bed_rows`` rebuilt from their lifted units: chrom, start and end
     from ``<row>|m`` (a ``+``/``-`` strand column from it too: liftbed swaps it on a
     ``-`` chain, ft copies it), thickStart/thickEnd as in ``reassemble_bed12``, the
     summit as its lifted base's offset from the new start (-1 when it did not lift or
     landed outside the row; -1 stays -1). Other columns are copied. ``dropped`` receives
-    ``(row index, 'unlifted')`` for rows whose interval did not lift."""
+    ``(row index, 'unlifted')`` for rows whose interval did not lift.
+
+    ``rows_flipped`` counts every row that changed orientation. A BED3/BED4 or
+    ``.``-stranded row keeps its strand column (it has none to swap), and its
+    flip is known only when it was exploded with ``unstranded_as`` (the same
+    value here) and lifted by an engine that swaps the strand column on a
+    ``-`` chain (liftbed, vg BED); ft copies the column, so such a flip is
+    invisible and not counted."""
     stats = BedStats(rows_in=len(rows))
     units = _parse_lifted_units(lifted)
     out = []
@@ -1736,8 +1788,11 @@ def reassemble_bed_rows(lifted: Iterable[str], rows: List[list], *, thick: bool 
         chrom, start, end, strand = main
         new = list(fields)
         new[0], new[1], new[2] = chrom, str(start), str(end)
-        if len(new) > 5 and new[5] in _FLIP_STRAND and strand in _FLIP_STRAND and strand != new[5]:
-            new[5] = strand
+        if len(new) > 5 and new[5] in _FLIP_STRAND:
+            if strand in _FLIP_STRAND and strand != new[5]:
+                new[5] = strand
+                stats.rows_flipped += 1
+        elif unstranded_as in _FLIP_STRAND and strand == _FLIP_STRAND[unstranded_as]:
             stats.rows_flipped += 1
         if thick:
             ts, te = _lifted_thick(fields, start, end, chrom, row_units.get("t"), stats)

@@ -1,5 +1,6 @@
-"""fiberhmm-lift 3.2.0 fixes: DAF evidence on a strand change (H2) and unmapped
-vg surject records (H4)."""
+"""fiberhmm-lift 3.2.0 fixes: DAF evidence on a strand change (H2), unmapped vg
+surject records (H4), BED12 trailing-comma per-block columns (H11), edge-score
+columns on a reverse lift (M4) and rows_flipped for unstranded rows."""
 from __future__ import annotations
 
 import pysam
@@ -139,3 +140,77 @@ def test_unmapped_surject_records_are_skipped_not_written(tmp_path):
     assert stats.unmapped_skipped == 2 and stats.records_out == 2
     assert stats.orphan_supplementary_kept == 0 and stats.supplementary_restored == 0
     assert "unmapped_skipped=2" in hdr["PG"][-1]["DS"]
+
+
+# --- BED12: trailing commas (H11), edge columns (M4) ---------------------------
+
+_HEADER = ("#chrom\tchromStart\tchromEnd\tname\tscore\tstrand\tthickStart\tthickEnd\t"
+           "reserved\tblockCount\tblockSizes\tchromStarts\tblockNq\tblockEl\tblockEr")
+_ROW = ("srcA\t100\t400\tr\t0\t+\t100\t400\t0\t3\t50,50,50,\t0,100,250,\t"
+        "10,20,30,\t1,2,3,\t4,5,6,")
+
+
+def test_partial_forward_lift_subsets_trailing_comma_columns():
+    bed6, rows, header = gl.explode_bed12([_HEADER, _ROW], unstranded_as="+")
+    lifted = [line.replace("srcA", "tgt") for line in bed6 if "|1\t" not in line]
+    out, stats = gl.reassemble_bed12(lifted, rows, explicit_strand=True, partial="keep",
+                                     edge_columns=gl.bed_edge_columns(header))
+    f = out[0].split("\t")
+    assert f[9:12] == ["2", "50,50", "0,250"]
+    assert f[12:] == ["10,30,", "1,3,", "4,6,"]
+    assert stats.rows_partial == 1 and stats.edge_columns_swapped == 0
+
+
+def test_reverse_partial_lift_reverses_and_swaps_edge_columns():
+    bed6, rows, header = gl.explode_bed12([_HEADER, _ROW], unstranded_as="+")
+    assert gl.bed_edge_columns(header) == (13, 14)
+    lifted = ["tgt\t2900\t2950\t0|0\t0\t-", "tgt\t2600\t2650\t0|2\t0\t-"]
+    out, stats = gl.reassemble_bed12(lifted, rows, explicit_strand=True, partial="keep",
+                                     edge_columns=gl.bed_edge_columns(header))
+    f = out[0].split("\t")
+    assert f[1:3] == ["2600", "2950"] and f[5] == "-"
+    assert f[9:12] == ["2", "50,50", "0,300"]
+    # blocks reversed; the old right edges are now the left ones
+    assert f[12:] == ["30,10,", "6,4,", "3,1,"]
+    assert stats.rows_flipped == 1 and stats.edge_columns_swapped == 1
+    # Unknown columns (no header): reversed, not swapped.
+    out, stats = gl.reassemble_bed12(lifted, rows, explicit_strand=True, partial="keep")
+    assert out[0].split("\t")[12:] == ["30,10,", "3,1,", "6,4,"]
+
+
+def test_bed_edge_columns_explicit_and_absent():
+    assert gl.bed_edge_columns([], "14,15") == (13, 14)
+    assert gl.bed_edge_columns(["track name=x"]) is None
+    for bad in ("14", "3,4", "14,14", "a,b"):
+        try:
+            gl.bed_edge_columns([], bad)
+        except ValueError:
+            continue
+        raise AssertionError(bad)
+
+
+def test_cli_edge_columns_needs_bed(tmp_path, capsys):
+    import pytest
+    from fiberhmm.cli import lift
+
+    with pytest.raises(SystemExit):
+        lift.main(["-i", str(tmp_path / "x.bam"), "-o", str(tmp_path / "y.bam"),
+                   "--map", "m.json", "--edge-columns", "14,15"])
+    assert "--edge-columns is for --bed" in capsys.readouterr().err
+
+
+# --- rows_flipped for BED3/BED4/'.' rows ---------------------------------------
+
+def test_rows_flipped_counts_unstranded_rows():
+    rows_in = ["srcA\t100\t200", "srcA\t300\t400\tn", "srcA\t500\t600\tm\t0\t.",
+               "srcA\t700\t800\tp\t0\t+", "srcA\t900\t950"]
+    bed6, rows, _ = gl.explode_bed_rows(rows_in, unstranded_as="+")
+    lifted = ["tgt\t1000\t1100\t0|m\t0\t-", "tgt\t1200\t1300\t1|m\t0\t-",
+              "tgt\t1400\t1500\t2|m\t0\t-", "tgt\t1600\t1700\t3|m\t0\t-",
+              "tgt\t1800\t1850\t4|m\t0\t+"]
+    out, stats = gl.reassemble_bed_rows(lifted, rows, unstranded_as="+")
+    assert out == ["tgt\t1000\t1100", "tgt\t1200\t1300\tn", "tgt\t1400\t1500\tm\t0\t.",
+                   "tgt\t1600\t1700\tp\t0\t-", "tgt\t1800\t1850"]
+    assert stats.rows_flipped == 4
+    # Without unstranded_as (ft copies the strand column) only stranded flips are known.
+    assert gl.reassemble_bed_rows(lifted, rows)[1].rows_flipped == 1

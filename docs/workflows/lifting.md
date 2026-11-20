@@ -216,7 +216,8 @@ fiberhmm-lift --bed -i calls_nucleosome.bed -o calls_nucleosome.grch38.bed \
     has integer columns 7–8 within the row.
 - **BED12 rows with unliftable blocks** (`--bed12-partial`). By default
   (`keep`) a row keeps the blocks that lift: blockCount, sizes, starts and
-  the row bounds are recomputed (per-block columns are subset too), and each
+  the row bounds are recomputed (per-block columns are subset too, also
+  `bigBedToBed`'s `10,20,30,` form with a trailing comma), and each
   dropped block goes to `--unlifted` as a BED6 row in source coordinates,
   named `<row name>|<block index>`, after a `#partial_<reason>` line. With
   `drop` the whole row is dropped when one of its blocks does not lift
@@ -227,6 +228,14 @@ fiberhmm-lift --bed -i calls_nucleosome.bed -o calls_nucleosome.grch38.bed \
   molecule into a primary and a supplementary (across a large target-only
   gap, say): `keep` writes the blocks of both pieces in one row, while
   `fiberhmm-extract` writes the primary only.
+- **Rows that change strand.** A BED12 row takes the opposite strand and its
+  per-block columns are reversed with the blocks. Per-block genomic left/right
+  edge scores (`fiberhmm-extract --block-scores` `blockEl`/`blockEr`) also
+  trade columns; they are found by name in a column header
+  (`bigBedToBed -header`), or given with `--edge-columns 14,15` (1-based;
+  nucleosome and tf rows). Without either they are reversed but not swapped.
+  BED3/BED4 and `.`-stranded rows keep their strand column, but their flips
+  are counted in the "changed strand" total.
 - **Native rules.** An interval runs from its first to its last projected
   base, so bases with no target counterpart (an insertion in the source)
   shrink it. An interval that lands in several pieces (across an inversion
