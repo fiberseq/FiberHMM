@@ -186,6 +186,12 @@
   `Ma` molecules, and the `fiberhmm-extract` tag sniff, `fiberhmm-utils
   ma-types --scan` and `fiberhmm-check` see `Ma` calls.
 
+- **Scan peaks leave uncalled reads out of the counts.** A read without
+  footprint annotations (no MA/Ma `nuc`/`msp`/`tf` group, no ns/nl or as/al
+  array pair) was a neutral zero-size tile that counted as accessible, so a
+  few uncalled reads made a Strong peak. Such reads are now in neither the
+  numerator nor the total (FiberBrowser's uncalled-read rule).
+
 ## 3.1.0
 
 Includes the unreleased 3.0.6 changes.
