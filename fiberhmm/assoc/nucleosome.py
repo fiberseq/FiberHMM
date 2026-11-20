@@ -715,9 +715,15 @@ def association_stats(molecules, *, cal, params=None, x_state: str = 'regular', 
             if results is not None:
                 results[id(m)] = res
         return res
-    groups_: Dict[str, list] = {}
+    def physical_key(m):
+        # one physical molecule per dataset: the same QNAME in two datasets is
+        # two molecules (as in anchor_appearances)
+        if labels and 'dataset' in labels:
+            return (str(labels['dataset'](m)), molecule_key(m))
+        return ('', molecule_key(m))
+    groups_: Dict[tuple, list] = {}
     for m in molecules:
-        groups_.setdefault(molecule_key(m), []).append(m)
+        groups_.setdefault(physical_key(m), []).append(m)
     chosen = []
     for k in sorted(groups_):
         recs = sorted(groups_[k], key=lambda m_: (-m_.length, m_.name or ''))
@@ -765,7 +771,8 @@ def association_stats(molecules, *, cal, params=None, x_state: str = 'regular', 
             skipped['no_informative'] += 1
             continue
         L.append(n); IV.append(iv); PT.append(pp); JN.append(junc)
-        CH.append(m.chrom); MID.append((m.ref_start + m.ref_end) // 2); MOL.append(molecule_key(m))
+        CH.append(m.chrom); MID.append((m.ref_start + m.ref_end) // 2)
+        MOL.append('\t'.join(physical_key(m)) if labels and 'dataset' in labels else molecule_key(m))
         for name, f in (labels or {}).items():
             lab[name].append(f(m))
     d = RateData(np.array(L, np.int64), IV, PT, np.array(CH, dtype=object), np.array(MID, np.int64),

@@ -552,3 +552,22 @@ def test_real_nuc_scan_annotated_marks_equal_table_inputs(nuc_scan, tmp_path):
         assert a.tobytes() == b.tobytes()
     for a, b in zip(actual.points, expected.points):
         assert a.tobytes() == b.tobytes()
+
+
+def test_association_stats_dedups_per_dataset():
+    """Audit M9: the same QNAME in two datasets is two physical molecules,
+    not a duplicate record (deduplication keys on dataset + molecule)."""
+    import copy
+    rng = np.random.default_rng(13)
+    cal = flat_calibration(nrl=190.0)
+    mol = array_molecule([('reg', 20, 190), ('irr', 10, 0)], rng, name='m/7/ccs', chrom='c', ref_start=0,
+                         ref_end=7000)
+    other = copy.deepcopy(mol)
+    ds = {id(mol): 'A', id(other): 'B'}
+    kw = dict(cal=cal, y=lambda x: np.array([1500, 3000, 5000]), n_shift=10, n_boot=0, censor_bp=200,
+              edges=False)
+    two = N.association_stats([mol, other], labels={'dataset': lambda m: ds[id(m)]}, **kw)
+    assert two['skipped']['duplicate_records'] == 0
+    same = N.association_stats([mol, other], labels={'dataset': lambda m: 'A'}, **kw)
+    assert same['skipped']['duplicate_records'] == 1
+    assert N.association_stats([mol, other], **kw)['skipped']['duplicate_records'] == 1

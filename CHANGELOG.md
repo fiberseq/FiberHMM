@@ -166,6 +166,10 @@
 
 ### Fixed
 
+- M3 association statistics deduplicate records per dataset and molecule:
+  the same read name in two datasets is no longer dropped as a duplicate
+  record (as `anchor_appearances()` already did).
+
 - M2 pooled within-anchor permutations are molecule-level when a molecule
   contributes at several anchors: each molecule's state is shuffled once and
   applied at every anchor it contributes to (within its density stratum and
