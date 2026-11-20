@@ -49,7 +49,7 @@ def test_cant_tell_nucleosomes_supply_dyads_but_tf_and_truncated_do_not():
     narrow = replace(DEFAULT_PARAMS, mono_frac=(0.9, 1.25))
     other = molecule_outputs(m, narrow, cal)
     assert other.scalars['n_dyads'] == 0
-    for key in ('coarse', 'posterior', 'named', 'z', 'n_left', 'n_right'):
+    for key in ('coarse', 'posterior', 'z', 'n_left', 'n_right'):
         np.testing.assert_array_equal(r.footprints[key], other.footprints[key])
 
 

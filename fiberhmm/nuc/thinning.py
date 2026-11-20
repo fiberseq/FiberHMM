@@ -1,10 +1,11 @@
-"""Calibration by thinning, and the absolute-control path (NUC 4).
+"""Calibration by thinning (NUC 4).
 
 **Thinning is a degradation model** (D2). It gives the edge noise
 sigma_loc(lambda), the structural outcome rates and the overshoot shift as
 mark density falls, the supported lambda range and the size-resolution floor.
 It never gives true lengths or class offsets: the dense reference is itself
-biased. Named classes need an absolute control (:func:`calibrate_absolute`).
+biased. FiberHMM assigns no named nucleosome classes (the absolute-control
+named-class path was removed in 3.2.0).
 
 1. **Population**: up to ``n_population`` molecules by stable name-hash rank
    (never a viewport), restricted to the central 90% of informative-site
@@ -50,7 +51,7 @@ from fiberhmm.nuc.calibration import (NucCalibration, calibrate_self, footprint_
 from fiberhmm.nuc.density import accessible_counts
 from fiberhmm.nuc.params import DEFAULT_PARAMS, NucParams
 from fiberhmm.nuc.records import DecodeContext, NucMolecule, decode_record
-from fiberhmm.nuc.sizes import CANT_TELL, EDGE_TRUNCATED, AbsoluteClasses, fit_reference_curve
+from fiberhmm.nuc.sizes import CANT_TELL, EDGE_TRUNCATED, fit_reference_curve
 
 KEEP_GRID = np.exp(np.linspace(np.log(0.02), 0.0, 60))
 
@@ -523,68 +524,4 @@ def calibrate_thin(bam_path, params: NucParams = DEFAULT_PARAMS, *, label: str =
     cal.validation['decode'] = stats
     cal.validation['caller_runs'] = len(tasks)
     cal.validation['caller_errors'] = len(errors)
-    return cal
-
-
-# ---------------------------------------------------------------------------
-# absolute controls (NUC 4.2)
-# ---------------------------------------------------------------------------
-
-DEFAULT_T = {'small': 70.0, 'hexasome': 110.0, 'octasome': 147.0, 'chromatosome': 167.0}
-
-
-def calibrate_absolute(base: NucCalibration, control_molecules: Sequence[NucMolecule],
-                       control_class: str = 'octasome', T: Optional[Dict[str, float]] = None,
-                       params: NucParams = DEFAULT_PARAMS, sigma_struct: float = 5.0,
-                       naked_molecules: Sequence[NucMolecule] = (),
-                       dataset_molecules: Sequence[NucMolecule] = ()) -> NucCalibration:
-    """Absolute calibration from a control of known core length.
-
-    ``control_molecules`` carry footprints of one known class (601 arrays:
-    octasomes, T = 147 bp). The bias b(lambda) = observed mode - T is fitted
-    on the control alone (monotone, over log lambda) and shared by every
-    class: mu_k(lambda) = T_k + b(lambda), sigma_k^2 = sigma_struct^2 +
-    sigma_b(lambda)^2. Class locations are never fitted jointly with the
-    weights. ``dataset_molecules`` (the dataset's own molecules) fit the class
-    weights pi_k by EM with those locations fixed. ``naked_molecules`` (naked
-    DNA) give the false-footprint length distribution per lambda bin, the null
-    for short calls.
-    """
-    T = dict(DEFAULT_T if T is None else T)
-    if control_class not in T:
-        raise ValueError(f'control class {control_class!r} has no T')
-    ft = footprint_table(control_molecules, base, params)
-    keep = ~ft['truncated']
-    nrl = base.nrl_pooled
-    curve = fit_reference_curve(ft['length'][keep], ft['lambda'][keep], nrl, params)
-    b = [m - T[control_class] for m in curve.mu]
-    cal = NucCalibration.from_dict(base.to_dict())
-    cal.source = 'absolute'
-    cal.absolute = AbsoluteClasses(T=T, b_log_lambda=list(curve.log_lambda), b=b,
-                                   sigma_b=list(curve.sigma), sigma_struct={k: sigma_struct for k in T})
-    if dataset_molecules:
-        from fiberhmm.nuc.sizes import fit_named_weights
-        # every footprint, TF calls included (recall moves small particles
-        # there); the length cut follows each footprint's density-dependent
-        # class locations (T_k + b(lambda) + 3 sd_k), so large classes are not
-        # censored where marking is sparse
-        ftd = footprint_table(dataset_molecules, base, params, include_tfs=True)
-        _names, mu, sd = cal.absolute.locations(ftd['lambda'])
-        top = (mu + 3 * sd).max(axis=-1) if len(ftd['lambda']) else np.zeros(0)
-        kd = ~ftd['truncated'] & (ftd['length'] <= top)
-        cal.absolute.weights = fit_named_weights(cal.absolute, ftd['length'][kd], ftd['lambda'][kd])
-    if naked_molecules:
-        ftn = footprint_table(naked_molecules, base, params)
-        Ln, ln = ftn['length'], ftn['lambda']
-        total_bp = sum(m.length for m in naked_molecules)
-        e = _bin_edges(ln, 4) if len(ln) >= 40 else np.array([-np.inf, np.inf])
-        rows = []
-        for a, c in zip(e[:-1], e[1:]):
-            s = (np.log(np.maximum(ln, 1e-9)) >= a) & (np.log(np.maximum(ln, 1e-9)) < c)
-            if s.sum():
-                rows.append({'log_lambda': float(np.median(np.log(ln[s]))), 'n': int(s.sum()),
-                             'length_q': [float(x) for x in np.percentile(Ln[s], [10, 50, 90])]})
-        cal.naked = {'footprints_per_kb': float(len(Ln) / max(total_bp, 1) * 1000), 'bins': rows}
-    cal.notes.append(f'absolute: control class {control_class} (T = {T[control_class]:g} bp), '
-                     f'{int(keep.sum())} control footprints')
     return cal

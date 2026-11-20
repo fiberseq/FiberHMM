@@ -5,7 +5,7 @@ row, selection) with an optional anchor and orientation. Every molecule whose
 alignment covers at least ``window_min_cover`` of it is measured inside the
 window projected into its molecular coordinates:
 
-- coarse (and named) class counts of footprints centred in the window, with
+- coarse size-class counts of footprints centred in the window, with
   can't-tell and edge-truncated counted, never dropped;
 - NRL, S and CV_g from the eligible dyads centred in the window (or too short);
 - with an anchor: the molecule's local phase theta, resultant r and
@@ -39,7 +39,7 @@ from fiberhmm.nuc.params import DEFAULT_PARAMS, NucParams
 from fiberhmm.nuc.phasing import anchor_offsets, phasing
 from fiberhmm.nuc.records import NucMolecule
 from fiberhmm.nuc.segment import REGULAR, STATE_NAMES
-from fiberhmm.nuc.sizes import COARSE_NAMES, NAMED_CODES
+from fiberhmm.nuc.sizes import COARSE_NAMES
 from fiberhmm.nuc.spacing import molecule_spacing
 
 
@@ -126,10 +126,6 @@ def molecule_window_row(mol: NucMolecule, result, ms: int, me: int, params: NucP
         codes = fp['coarse'][inside]                       # nucleosome and TF calls
         counts = {COARSE_NAMES[k]: int((codes == k).sum()) for k in COARSE_NAMES}
         counts['tf'] = int((inside & fp['is_tf']).sum())
-        if cal is not None and cal.named_available:
-            named = fp['named'][inside]          # TF calls too: small particles land there
-            for nm, code in NAMED_CODES.items():
-                counts[f'named_{nm}'] = int((named == code).sum())
         row['class_counts'] = counts
     nrl = cal.nrl_pooled if cal is not None else None
     sp, dy = molecule_spacing(mol, nrl, params, window=(ms, me))

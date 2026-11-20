@@ -4,9 +4,9 @@ Pure functions on full molecule records (molecular coordinates). The public
 API (NUC 5.1):
 
 - :func:`iter_molecules` / :func:`decode_record`: BAM records -> :class:`NucMolecule`
-- :func:`calibrate_self`, :func:`calibrate_thin`, :func:`calibrate_absolute` ->
+- :func:`calibrate_self`, :func:`calibrate_thin` ->
   :class:`NucCalibration` (dataset level, once)
-- :func:`molecule_outputs` -> :class:`MoleculeResult` (coarse/named size calls,
+- :func:`molecule_outputs` -> :class:`MoleculeResult` (coarse size calls,
   segments, per-molecule scalars)
 - :func:`window_metrics` -> :class:`WindowResult` (called within a peak, hit,
   BED row or selection, per :class:`Observation`)
@@ -34,7 +34,7 @@ from fiberhmm.nuc.records import (DecodeContext, NucMolecule, decode_record, ite
 __all__ = [
     'record_outputs', 'measured_track', 'NucParams', 'DEFAULT_PARAMS', 'parameter_schema', 'NucMolecule', 'DecodeContext',
     'decode_record', 'iter_molecules', 'make_molecule', 'calibrate_self', 'calibrate_thin',
-    'calibrate_absolute', 'NucCalibration', 'molecule_outputs', 'MoleculeResult',
+    'NucCalibration', 'molecule_outputs', 'MoleculeResult',
     'window_metrics', 'WindowResult', 'Observation', 'phasing', 'PhasingResult', 'mark_acf',
     'anchor_phase', 'dephasing_test', 'AnchorPhase', 'condition_stats', 'association_stats',
     'RegularityParams', 'RegularityTrack', 'sliding_regularity', 'reference_scores', 'masked_mark_acf',
@@ -50,7 +50,7 @@ def __getattr__(name):
     if name in ('calibrate_self', 'NucCalibration'):
         from fiberhmm.nuc import calibration as m
         return getattr(m, name)
-    if name in ('calibrate_thin', 'calibrate_absolute'):
+    if name == 'calibrate_thin':
         from fiberhmm.nuc import thinning as m
         return getattr(m, name)
     if name in ('molecule_outputs', 'MoleculeResult'):

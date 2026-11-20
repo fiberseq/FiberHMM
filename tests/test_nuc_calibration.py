@@ -250,66 +250,48 @@ def test_calibrate_thin_refuses_an_empty_sample(tmp_path):
         calibrate_thin(path, n_population=10, seeds=1, n_targets=2)
 
 
-def test_named_calls_only_for_single_particle_footprints_and_weights_are_fitted():
+def test_no_named_size_classes_even_with_an_octasome_reference():
+    """Owner decision (3.2.0): FiberHMM emits no named nucleosome classes. A
+    147 bp footprint read with a pre-3.2.0 calibration record that carries an
+    octasome reference gets its length and coarse call only: no named code, no
+    ``nuc.size.named`` row or feature type, the nucsz reserved byte is 0, and
+    the record's ``absolute`` entry is dropped (kept as a null field)."""
+    import warnings
+
     from fiberhmm.nuc.molecule import footprint_calls
+    from fiberhmm.nuc.params import NucParams
     from fiberhmm.nuc.records import make_molecule
-    from fiberhmm.nuc.sizes import AbsoluteClasses, fit_named_weights
-    model = AbsoluteClasses(T={'hexasome': 110.0, 'octasome': 147.0, 'chromatosome': 167.0},
-                            b_log_lambda=[np.log(0.5)], b=[0.0], sigma_b=[3.0],
-                            sigma_struct={'hexasome': 5.0, 'octasome': 5.0, 'chromatosome': 5.0})
+    from fiberhmm.nuc.sizes import MONO
+    from fiberhmm.nuc.tags import NUCSZ, group_rows, ma_group_declarations
+    from fiberhmm.scan.modules.nuc import NucModule
+    d = flat_calibration().to_dict()
+    d['source'] = 'absolute'
+    d['absolute'] = {'T': {'hexasome': 110.0, 'octasome': 147.0, 'chromatosome': 167.0},
+                     'b_log_lambda': [float(np.log(0.5))], 'b': [0.0], 'sigma_b': [3.0],
+                     'sigma_struct': {'hexasome': 5.0, 'octasome': 5.0, 'chromatosome': 5.0},
+                     'weights': {}}
+    cal = NucCalibration.from_dict(d)
+    assert cal.to_dict()['absolute'] is None and not hasattr(cal, 'absolute')
     nucs = [(300, 447), (700, 950), (1300, 1660), (2000, 2110)]
     m = make_molecule(4000, nucs=nucs, msps=[(0, 300), (447, 700), (950, 1300), (1660, 2000), (2110, 4000)],
                       hits=[299, 448, 699, 951, 1299, 1661, 1999, 2111])
-    cal = flat_calibration()
-    cal.source, cal.absolute = 'absolute', model
     fp = footprint_calls(m, cal=cal)
-    named = dict(zip(fp['length'].tolist(), fp['named'].tolist()))
-    assert named[147] == 3 and named[110] == 2           # octasome, hexasome
-    assert named[250] == 0 and named[360] == 0           # long / multi: never named
-    rng = np.random.default_rng(0)
-    L = np.r_[rng.normal(147, 5, 800), rng.normal(110, 5, 200)]
-    w = fit_named_weights(model, L, np.full(len(L), 0.5))
-    assert abs(w['octasome'] - 0.8) < 0.05 and abs(w['hexasome'] - 0.2) < 0.05
-
-
-def test_absolute_weights_use_tf_calls_and_density_bias():
-    """Class weights fitted on the dataset: small particles sit in TF calls and
-    every class is shifted by the control's bias b(lambda); none may be
-    censored or missed."""
-    from fiberhmm.nuc.calibration import calibrate_self
-    from fiberhmm.nuc.molecule import footprint_calls
-    from fiberhmm.nuc.records import make_molecule
-    from fiberhmm.nuc.thinning import calibrate_absolute
-    rng = np.random.default_rng(42)
-
-    def mol(name, nucs, tfs=()):
-        L = (max(b for _a, b in list(nucs) + list(tfs)) + 300)
-        occ = np.zeros(L, bool)
-        for a, b in list(nucs) + list(tfs):
-            occ[a:b] = True
-        hits = np.flatnonzero(~occ & (rng.random(L) < 0.25))
-        allc = sorted(list(nucs) + list(tfs))
-        msps, prev = [], 0
-        for a, b in allc:
-            if a - prev >= 15:
-                msps.append((prev, a))
-            prev = max(prev, b)
-        msps.append((prev, L))
-        return make_molecule(L, nucs=list(nucs), tfs=list(tfs), msps=msps, hits=hits, name=name)
-    ctrl = [mol(f'c{i}', [(200 + 200 * k, 200 + 200 * k + int(rng.normal(177, 5))) for k in range(12)])
-            for i in range(40)]
-    ds = []
-    for i in range(80):
-        nucs, tfs, pos = [], [], 200
-        for k in range(12):
-            L = int(round(rng.normal((100, 140, 177, 197)[k % 4], 5)))
-            (tfs if k % 4 == 0 else nucs).append((pos, pos + L))
-            pos += 240
-        ds.append(mol(f'd{i}', nucs, tfs))
-    cal = calibrate_absolute(calibrate_self(ds), ctrl, control_class='octasome', dataset_molecules=ds)
-    w = cal.absolute.weights
-    assert all(abs(w[k] - 0.25) < 0.05 for k in ('small', 'hexasome', 'octasome', 'chromatosome')), w
-    probe = mol('probe', [(600, 740), (900, 1077), (1200, 1397)], [(300, 400)])
-    fp = footprint_calls(probe, cal=cal)
-    from fiberhmm.nuc.sizes import NAMED_CODES
-    assert fp['named'].tolist() == [NAMED_CODES[k] for k in ('small', 'hexasome', 'octasome', 'chromatosome')]
+    assert not any('named' in k for k in fp)
+    i147 = fp['length'].tolist().index(147)
+    assert fp['coarse'][i147] == MONO                       # numeric/coarse size output kept
+    r = molecule_outputs(m, cal=cal)
+    rows = r.marks_rows()
+    assert not any(row['type'] == 'nuc.size.named' for row in rows)
+    assert any(row['type'] == 'nuc.size.coarse' and row['L_mol'] == 147 for row in rows)
+    spec, sz = group_rows(r)[NUCSZ]
+    assert spec == 'QQQQ' and sz and all(len(q) == 4 and q[1] == 0 for _s, _n, q, _a in sz)
+    decl = next(g for g in ma_group_declarations() if g['group'] == NUCSZ)
+    assert decl['quality_names'] == ['coarse', 'reserved', 'posterior', 'z']
+    assert decl['group_version'] == 1                       # layout unchanged
+    assert 'nuc.size.named' not in {t.type_id for t in NucModule().feature_types()}
+    # the named-class parameter is accepted but ignored (digest unchanged)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        p = NucParams.from_dict({'named_min_posterior': 0.9})
+    assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+    assert p.digest() == NucParams().digest()

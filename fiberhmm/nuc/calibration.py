@@ -5,14 +5,14 @@ Every dataset-level quantity the per-molecule outputs depend on lives in one
 depends on nothing else:
 
 - the calibration population (molecule-name hashes), its source
-  (``self`` / ``thin`` / ``absolute``) and the caller settings;
+  (``self`` / ``thin``; ``absolute`` only in records written before 3.2.0)
+  and the caller settings;
 - NRL_pooled, the lambda_acc beta prior, the reference curve
   (mu_mono, sigma_mono knots), sigma_gap, the empirical gap density and the
   dyad-gap model (regular jitter, irregular spread, missing-dyad weights);
 - segmentation composition frequencies;
 - thinning: sigma_loc knots, outcome rates, overshoot, supported lambda range,
   held-out validation and the size-resolution floor and censoring status (D8);
-- absolute controls: class locations T_k and b(lambda); naked-DNA nulls;
 - disruption backgrounds: the undersized-footprint rate and the in-core mark
   rate per lambda_i bin (NUC 13.1).
 
@@ -32,7 +32,7 @@ from fiberhmm.nuc.density import (FLAT_PRIOR, BetaPrior, accessible_counts, edge
                                   fit_beta_prior, footprint_lambdas)
 from fiberhmm.nuc.params import DEFAULT_PARAMS, NucParams
 from fiberhmm.nuc.records import NucMolecule
-from fiberhmm.nuc.sizes import AbsoluteClasses, ReferenceCurve, fit_reference_curve
+from fiberhmm.nuc.sizes import ReferenceCurve, fit_reference_curve
 from fiberhmm.nuc.spacing import dataset_period, eligible_dyads, mono_range
 
 SCHEMA = 'fiberhmm.nuc.calibration.v3'
@@ -74,7 +74,6 @@ class NucCalibration:
     #: Size-resolution threshold, independent of spacing eligibility.
     lambda_floor_status: str = 'unknown'
     validation: Dict = field(default_factory=dict)
-    absolute: Optional[AbsoluteClasses] = None
     naked: Dict = field(default_factory=dict)
     #: density-matched background rates of the disruption calls (NUC 13.1):
     #: 'undersized' and 'protected' {log_lambda_edges, rate, n}
@@ -116,10 +115,6 @@ class NucCalibration:
     def below_floor(self, lam_acc: float) -> bool:
         return self.lambda_floor is not None and np.isfinite(lam_acc) and lam_acc < self.lambda_floor
 
-    @property
-    def named_available(self) -> bool:
-        return self.source == 'absolute' and self.absolute is not None
-
     # --- serialisation ----------------------------------------------------------
     def to_dict(self) -> dict:
         return {
@@ -138,7 +133,9 @@ class NucCalibration:
             'lambda_floor': None if self.lambda_floor is None else float(self.lambda_floor),
             'lambda_floor_status': self.lambda_floor_status,
             'validation': _clean(self.validation),
-            'absolute': self.absolute.to_dict() if self.absolute else None,
+            # reserved: named-class model (removed in 3.2.0); always null, kept
+            # so the record layout and the digests of existing records are unchanged
+            'absolute': None,
             'naked': _clean(self.naked), 'disruption': _clean(self.disruption),
             'notes': list(self.notes),
         }
@@ -161,7 +158,6 @@ class NucCalibration:
             supported=d.get('supported'), lambda_floor=d.get('lambda_floor'),
             lambda_floor_status=d.get('lambda_floor_status', 'unknown'),
             validation=d.get('validation', {}),
-            absolute=AbsoluteClasses.from_dict(d['absolute']) if d.get('absolute') else None,
             naked=d.get('naked', {}), disruption=d.get('disruption', {}) or {},
             notes=list(d.get('notes', [])),
         )

@@ -6,7 +6,7 @@ so a live call and a scan give the same rows.
 
 Footprints are the molecule's nucleosome calls and TF calls (the small end
 must read TF calls: recall moves TF-sized footprints to MA ``tf``). Each gets
-lambda_i, z, a coarse call and, with an absolute calibration, a named call.
+lambda_i, z and a coarse call (no named classes: lengths and coarse codes only).
 Eligible dyads, spacing scalars and segments use nucleosome calls only.
 Segments partition the measurable stretches into regular (decoder OR the
 model-free rule), disordered, undetermined and low-information; disruption
@@ -39,8 +39,7 @@ from fiberhmm.nuc.disrupted import (EVENT_NAMES, Event, missing_nucleosomes, ove
                                     undersized_runs)
 from fiberhmm.nuc.segment import (DISORDERED, REGULAR, UNDETERMINED, Segment, lowinfo_segment,
                                   segment_molecule)
-from fiberhmm.nuc.sizes import (CANT_TELL, LONG, MONO, MULTI2, MULTI3, SHORT, call_coarse,
-                                call_named)
+from fiberhmm.nuc.sizes import CANT_TELL, LONG, MONO, MULTI2, MULTI3, SHORT, call_coarse
 from fiberhmm.nuc.spacing import molecule_spacing
 
 #: per-molecule scalar names, in their storage order
@@ -95,12 +94,6 @@ def footprint_calls(mol: NucMolecule, params: NucParams = DEFAULT_PARAMS,
     L = iv[:, 1] - iv[:, 0]
     cc = call_coarse(L, lam, cal.curve, cal.nrl_pooled, cal.sigma_gap, cal.sigma_loc_at,
                      nl, nr, trunc, params, lambda_supported=cal.is_supported)
-    named, named_post = call_named(L, lam, cal.absolute if cal.named_available else None, nl, nr, params)
-    # names only for footprints with a single-particle coarse call inside the
-    # supported range (no tails, multimers, truncated or can't-tell)
-    ok_named = np.isin(cc.code, (SHORT, MONO)) & ~trunc & cal.is_supported(lam)
-    named = np.where(ok_named, named, 0)
-    named_post = np.where(ok_named, named_post, 0.0)
     # TF calls coinciding with a short nucleosome call, or short calls that are TF calls
     tf_overlap = is_tf.copy()
     if len(tf):
@@ -110,7 +103,7 @@ def footprint_calls(mol: NucMolecule, params: NucParams = DEFAULT_PARAMS,
     return {'start': iv[:, 0].astype(np.int64), 'end': iv[:, 1].astype(np.int64),
             'length': L.astype(np.int64), 'is_tf': is_tf, 'src_index': src_index,
             'lambda': lam, 'z': cc.z, 'coarse': cc.code, 'posterior': cc.posterior,
-            'named': named, 'named_posterior': named_post, 'n_left': nl, 'n_right': nr,
+            'n_left': nl, 'n_right': nr,
             'truncated': trunc, 'tf_overlap': tf_overlap, 'lambda_acc': lam_acc}
 
 
@@ -148,10 +141,6 @@ class MoleculeResult:
                              'n_edge': int(min(fp['n_left'][i], fp['n_right'][i])),
                              'lambda': float(fp['lambda'][i]), 'tf_overlap': int(fp['tf_overlap'][i]),
                              'source': 'tf' if fp['is_tf'][i] else 'nuc'})
-                if int(fp['named'][i]):
-                    rows.append({'type': 'nuc.size.named', 'start': int(fp['start'][i]), 'end': int(fp['end'][i]),
-                                 'q1': int(fp['named'][i]),
-                                 'q2': int(round(255 * float(fp['named_posterior'][i])))})
         for s in self.segments:
             rows.append({'type': 'nuc.seg', 'start': s.start, 'end': s.end, 'q1': s.code,
                          'q2': _pbyte(s.posterior), 'q_hat': s.q_hat, 'S': s.regularity,
@@ -183,7 +172,7 @@ def molecule_outputs(mol: NucMolecule, params: NucParams = DEFAULT_PARAMS,
                      ref_median: Optional[float] = None,
                      calibration_digest: Optional[str] = None,
                      ref_widths: Optional[dict] = None) -> MoleculeResult:
-    """Coarse (and named) calls, segments and scalars for one molecule; with
+    """Coarse size calls, segments and scalars for one molecule; with
     ``regularity``, also its sliding-window regularity track (``nucreg``) and,
     with ``patches`` (PatchParams) and ``ref_median`` (the dataset's
     random-packing reference median; ``ref_widths`` its per-width deltas for

@@ -1,5 +1,5 @@
-"""fiberhmm.nuc calls (NUC P-C): coarse size calls, named classes with an
-absolute control, factorial segmentation, molecule outputs. Planted signals."""
+"""fiberhmm.nuc calls (NUC P-C): coarse size calls, factorial segmentation,
+molecule outputs. Planted signals."""
 from __future__ import annotations
 
 import numpy as np
@@ -13,8 +13,7 @@ from fiberhmm.nuc.records import make_molecule
 from fiberhmm.nuc.disrupted import MISSING, UNDERSIZED
 from fiberhmm.nuc.segment import DISORDERED, IRREGULAR, LOWINFO, REGULAR, UNDETERMINED, state_space
 from fiberhmm.nuc.sizes import (CANT_TELL, EDGE_TRUNCATED, LONG, MONO, MULTI2, MULTI3, SHORT,
-                                AbsoluteClasses, ReferenceCurve, call_coarse, call_named)
-from fiberhmm.nuc.thinning import calibrate_absolute
+                                ReferenceCurve, call_coarse)
 
 CURVE = ReferenceCurve([np.log(0.5)], [147.0], [15.0])
 
@@ -48,43 +47,6 @@ def test_edge_sites_truncation_and_support():
     assert c.code.tolist() == [EDGE_TRUNCATED, MONO]
     c = _calls([150], supported=lambda lam: np.zeros(np.shape(lam), bool))
     assert c.code.tolist() == [CANT_TELL]
-
-
-def test_named_classes_need_an_absolute_model():
-    codes, post = call_named([147, 110], [0.5, 0.5], None, [10, 10], [10, 10])
-    assert codes.tolist() == [0, 0]
-    model = AbsoluteClasses(T={'hexasome': 110.0, 'octasome': 147.0}, b_log_lambda=[np.log(0.5)],
-                            b=[0.0], sigma_b=[3.0], sigma_struct={'hexasome': 5.0, 'octasome': 5.0})
-    codes, post = call_named([147, 110, 128], [0.5] * 3, model, [10] * 3, [10] * 3)
-    assert codes.tolist() == [3, 2, 0]           # octasome, hexasome, can't tell
-
-
-def test_calibrate_absolute_recovers_density_bias():
-    rng = np.random.default_rng(1)
-    base = flat_calibration()
-    mols = []
-    for i in range(60):
-        dense = i % 2 == 0
-        rate = 0.6 if dense else 0.15
-        bias = 5 if dense else 35            # sparse marking: longer footprints
-        nucs, pos = [], 300
-        L = 6000
-        while pos < L - 400:
-            n = int(rng.normal(147 + bias, 4))
-            nucs.append((pos, pos + n))
-            pos += n + 40
-        occ = np.zeros(L, bool)
-        for s, e in nucs:
-            occ[s:e] = True
-        hits = np.flatnonzero(~occ & (rng.random(L) < rate))
-        mols.append(make_molecule(L, nucs=nucs, msps=complement_msps(L, nucs), hits=hits, name=f'c{i}'))
-    cal = calibrate_absolute(base, mols)
-    assert cal.source == 'absolute' and cal.named_available
-    b = dict(zip(np.round(np.exp(cal.absolute.b_log_lambda), 2), cal.absolute.b))
-    lams = sorted(b)
-    assert b[lams[0]] > 25 and b[lams[-1]] < 12
-    rt = type(cal).from_dict(cal.to_dict())
-    assert rt.absolute.T == cal.absolute.T
 
 
 # --- segmentation ---------------------------------------------------------------------

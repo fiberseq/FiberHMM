@@ -8,8 +8,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import warnings
 from dataclasses import asdict, dataclass, field, fields
 from typing import Optional, Tuple
+
+
+#: parameters still accepted but ignored (from_dict resets them to the default)
+DEPRECATED_NOOP = frozenset({'named_min_posterior'})
 
 
 @dataclass(frozen=True)
@@ -68,6 +73,10 @@ class NucParams:
     z_short: float = -2.0
     z_long: float = 2.0
     coarse_min_posterior: float = 0.8
+    #: deprecated, ignored: configured the named size classes removed in
+    #: 3.2.0 (FiberHMM assigns no named nucleosome classes). Still accepted,
+    #: with a warning when set to another value, and kept at its old default
+    #: so parameter digests (calibration records, scan unit keys) are unchanged.
     named_min_posterior: float = 0.7
     min_edge_sites: int = 3
     #: knots of the reference curve over log(lambda).
@@ -169,6 +178,10 @@ class NucParams:
                 raise ValueError(f"unknown nuc parameter: {key!r}")
             if isinstance(value, list):
                 value = tuple(value)
+            if key in DEPRECATED_NOOP and value != getattr(DEFAULT_PARAMS, key):
+                warnings.warn(f"nuc parameter {key!r} is deprecated and ignored: FiberHMM no longer "
+                              "assigns named nucleosome classes (3.2.0)", DeprecationWarning, stacklevel=2)
+                value = getattr(DEFAULT_PARAMS, key)
             kwargs[key] = value
         return cls(**kwargs)
 
