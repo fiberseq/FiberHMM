@@ -166,6 +166,13 @@
 
 ### Fixed
 
+- `fiberhmm-extract` `var`: a deletion longer than a site's ALT deletion
+  (e.g. `1M3D10M` over `REF=AC ALT=A`) is coded as another allele, not ALT
+  (the base after an indel site must be aligned); reads through the origin of
+  a `TP:circular` contig are genotyped at the sites after the origin too; a
+  mapped record with `SEQ=*` is skipped instead of crashing the worker, and
+  the `sv` layer skips records without a reference end.
+
 - `fiberhmm-pipeline` without `--min-mapq` takes the recorded min_mapq only
   from markers the run will reuse: an align marker the later call was not
   made from (the aligned input was used in place since), a call or

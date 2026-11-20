@@ -139,11 +139,19 @@ def record_to_site(rec, options: VariantOptions) -> Optional[VariantSite]:
 class SiteWindow:
     """Sites of one contig fetched in growing chunks while reads (sorted by
     start) advance through a region; ``sites_in(start, end)`` returns the
-    sites whose REF span lies inside ``[start, end)``."""
+    sites whose REF span lies inside ``[start, end)``.
+
+    On a ``TP:circular`` contig of ``circular_length`` an alignment through
+    the origin has coordinates past the contig end; the sites after the
+    origin are returned for that part too, shifted by ``+circular_length``
+    (the read's coordinates). ``circular_length`` is None (linear) unless
+    given or found by :meth:`set_circular_from_header`.
+    """
 
     CHUNK = 1_000_000
 
-    def __init__(self, vcf, chrom: str, options: VariantOptions, origin: int):
+    def __init__(self, vcf, chrom: str, options: VariantOptions, origin: int,
+                 circular_length: Optional[int] = None):
         self.vcf = vcf
         self.chrom = chrom
         self.options = options
@@ -151,17 +159,23 @@ class SiteWindow:
         self.starts: List[int] = []
         self.sites: List[VariantSite] = []
         self.missing_contig = False
+        self.circular_length = int(circular_length) if circular_length else None
+        self.circular_known = circular_length is not None
+        self._wrapped: List[VariantSite] = []   # sites from the origin, unshifted
+        self._wrapped_starts: List[int] = []
+        self._wrapped_end = 0
 
-    def _extend(self, end: int) -> None:
-        if self.missing_contig:
-            return
-        stop = max(int(end), self.fetched_end + self.CHUNK)
+    def set_circular_from_header(self, header) -> None:
+        """Take ``circular_length`` from the BAM header's ``@SQ TP:circular``."""
+        self.circular_known = True
+        self.circular_length = circular_contig_length(header, self.chrom)
+
+    def _fetch(self, lo: int, stop: int) -> List[VariantSite]:
         try:
-            records = self.vcf.fetch(self.chrom, self.fetched_end, stop)
+            records = self.vcf.fetch(self.chrom, lo, stop)
         except ValueError:  # contig not in the VCF index
             self.missing_contig = True
-            return
-        lo = self.fetched_end
+            return []
         new = []
         for rec in records:
             if not lo <= rec.start < stop:
@@ -170,6 +184,15 @@ class SiteWindow:
             if site is not None:
                 new.append(site)
         new.sort(key=lambda s: (s.start, s.end))
+        return new
+
+    def _extend(self, end: int) -> None:
+        if self.missing_contig:
+            return
+        stop = max(int(end), self.fetched_end + self.CHUNK)
+        new = self._fetch(self.fetched_end, stop)
+        if self.missing_contig:
+            return
         self.sites.extend(new)
         self.starts.extend(s.start for s in new)
         self.fetched_end = stop
@@ -177,14 +200,48 @@ class SiteWindow:
     def sites_in(self, start: int, end: int) -> List[VariantSite]:
         if end > self.fetched_end:
             self._extend(end)
-        i = bisect_left(self.starts, start)
-        out = []
-        while i < len(self.sites) and self.sites[i].start < end:
-            site = self.sites[i]
-            if site.end <= end:
-                out.append(site)
-            i += 1
+        out = _sites_between(self.sites, self.starts, start, end)
+        length = self.circular_length
+        if length and end > length and not self.missing_contig:
+            # The part of the alignment past the origin: [0, end - length).
+            stop = end - length
+            if stop > self._wrapped_end:
+                # Everything up to the requested stop (a site fetched by an
+                # earlier, shorter request is fetched again only if it
+                # starts in the new range).
+                more = self._fetch(self._wrapped_end, max(stop, self._wrapped_end + 10_000))
+                self._wrapped.extend(more)
+                self._wrapped_starts.extend(s.start for s in more)
+                self._wrapped_end = max(stop, self._wrapped_end + 10_000)
+            for site in _sites_between(self._wrapped, self._wrapped_starts,
+                                       max(0, start - length), stop):
+                out.append(VariantSite(site.start + length, site.end + length,
+                                       site.alleles, site.indel))
         return out
+
+
+def _sites_between(sites: List[VariantSite], starts: List[int], start: int,
+                   end: int) -> List[VariantSite]:
+    i = bisect_left(starts, start)
+    out = []
+    while i < len(sites) and sites[i].start < end:
+        site = sites[i]
+        if site.end <= end:
+            out.append(site)
+        i += 1
+    return out
+
+
+def circular_contig_length(header, chrom: str) -> Optional[int]:
+    """The length of ``chrom`` when the header declares it ``TP:circular``."""
+    try:
+        sqs = header.to_dict().get('SQ', [])
+    except (AttributeError, ValueError):
+        return None
+    for sq in sqs:
+        if sq.get('SN') == chrom and str(sq.get('TP', '')).lower() == 'circular':
+            return int(sq['LN'])
+    return None
 
 
 def vcf_md5(path: str) -> str:
@@ -419,7 +476,11 @@ def genotype_read(read, sites: Iterable[VariantSite], conversion: Optional[str] 
     the base quality of an SNV base, the minimum over the compared bases of
     a longer site, ``-1`` without qualities or bases.
     """
-    seq = (read.query_sequence or '').upper().translate(_RY_TO_BASE)
+    if read.reference_end is None or not read.query_sequence:
+        # Unmapped, or SEQ '*' (e.g. a secondary record without bases):
+        # nothing to compare, so no site is genotyped.
+        return []
+    seq = read.query_sequence.upper().translate(_RY_TO_BASE)
     quals = read.query_qualities
     has_quals = quals is not None and len(quals) == len(seq) and (len(quals) == 0 or quals[0] != 255)
     r2q, insert_after, ref_start = layout or _read_layout(read)
@@ -435,6 +496,16 @@ def genotype_read(read, sites: Iterable[VariantSite], conversion: Optional[str] 
         if (idx == -1).all():
             out.append((s, e, ALLELE_DELETED, -1))
             continue
+        if site.indel:
+            # The base after the site must be aligned: a deletion running
+            # past the REF span is longer than any allele of the site (e.g.
+            # 1M3D over REF=AC ALT=A), not the shorter ALT deletion.
+            flank = int(r2q[e - ref_start])
+            if flank == -2:
+                continue
+            if flank == -1:
+                out.append((s, e, ALLELE_OTHER, -1))
+                continue
         if not site.indel and e - s == 1:
             q = int(idx[0])
             observed = seq[q]
@@ -485,7 +556,9 @@ def sv_events(read, min_len: int = DEFAULT_SV_MIN_LEN,
     ``length`` = soft plus hard clipped bases at that end (left/right in
     reference orientation). ``N`` skips are not deletions.
     """
-    cigar = read.cigartuples or ()
+    if read.reference_end is None or not read.cigartuples:
+        return []  # unmapped, or no CIGAR (no aligned bases)
+    cigar = read.cigartuples
     ref_start = int(read.reference_start)
     ref_end = int(read.reference_end)
     events = []

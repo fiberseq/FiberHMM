@@ -575,3 +575,103 @@ def test_lift_reassembly_leaves_sa_column_alone():
     lifted = [line for line in bed6 if not line.split('\t')[3].endswith('|2')]
     out, _stats = graph_lift.reassemble_bed12(lifted, rows, partial='keep')
     assert out[0].split('\t')[17] == 'chr2,5,+,10M,60,0;'
+
+
+# ---------------------------------------------------------------------------
+# 3.2.0 audit fixes (M3, M5, M6)
+# ---------------------------------------------------------------------------
+
+def test_longer_deletion_does_not_match_a_shorter_alt_deletion():
+    """REF=AC ALT=A read through by 1M3D10M: the read deletes C and the two
+    bases after it, which is no allele of the site (audit M3)."""
+    site = _site(1400, 'AT', 'A')
+    seq = REF[1400:1401] + REF[1404:1414]
+    longer = _read('longer', 1400, seq, [(0, 1), (2, 3), (0, 10)])
+    assert genotype_read(longer, [site]) == [(1400, 1402, ALLELE_OTHER, -1)]
+    # the exact 1 bp deletion is still ALT, and the reference still REF
+    seq = REF[1400:1401] + REF[1402:1414]
+    exact = _read('exact', 1400, seq, [(0, 1), (2, 1), (0, 12)])
+    assert genotype_read(exact, [site])[0][2] == 1
+    ref = _read('ref', 1400, REF[1400:1414])
+    assert genotype_read(ref, [site])[0][2] == 0
+
+
+def test_seq_star_and_unmapped_records_are_skipped():
+    """SEQ '*' on a mapped record is not genotyped (no IndexError), and
+    sv_events handles a record without reference_end (audit M6)."""
+    star = pysam.AlignedSegment(HEADER)
+    star.query_name = 'star'
+    star.flag = 256
+    star.reference_id = 0
+    star.reference_start = 990
+    star.mapping_quality = 0
+    star.cigartuples = [(0, 20)]
+    assert star.query_sequence is None and star.reference_end == 1010
+    assert genotype_read(star, [_site(1000, 'C', 'T')]) == []
+    unmapped = pysam.AlignedSegment(HEADER)
+    unmapped.query_name = 'u'
+    unmapped.flag = 4
+    unmapped.query_sequence = 'ACGT'
+    assert unmapped.reference_end is None
+    assert sv_events(unmapped) == []
+    assert genotype_read(unmapped, [_site(1000, 'C', 'T')]) == []
+
+
+CIRC = REF[:100]
+CIRC_HEADER = pysam.AlignmentHeader.from_dict({
+    'HD': {'VN': '1.6', 'SO': 'coordinate'},
+    'SQ': [{'SN': 'plasmid', 'LN': 100, 'TP': 'circular'}],
+})
+
+
+def _circular_vcf(tmp_path):
+    text = ('##fileformat=VCFv4.3\n##contig=<ID=plasmid,length=100>\n'
+            '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
+            '#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\n'
+            f'plasmid\t6\t.\t{CIRC[5]}\t{"A" if CIRC[5] != "A" else "C"}\t.\tPASS\t.\tGT\t0/1\n'
+            f'plasmid\t96\t.\t{CIRC[95]}\t{"A" if CIRC[95] != "A" else "C"}\t.\tPASS\t.\tGT\t0/1\n')
+    path = tmp_path / 'circ.vcf'
+    path.write_text(text)
+    return prepare_indexed_vcf(str(path), str(tmp_path))
+
+
+def test_site_window_returns_sites_after_a_circular_origin(tmp_path):
+    from fiberhmm.io.read_layers import SiteWindow
+    path = _circular_vcf(tmp_path)
+    options = VariantOptions(path=path, source_path=path)
+    with pysam.VariantFile(path) as vcf:
+        linear = SiteWindow(vcf, 'plasmid', options, 0)
+        assert [s.start for s in linear.sites_in(90, 120)] == [95]
+        circular = SiteWindow(vcf, 'plasmid', options, 0)
+        circular.set_circular_from_header(CIRC_HEADER)
+        assert circular.circular_length == 100
+        assert [(s.start, s.end) for s in circular.sites_in(90, 120)] == [(95, 96), (105, 106)]
+        assert [s.start for s in circular.sites_in(92, 104)] == [95]   # 5 not reached
+        assert [s.start for s in circular.sites_in(0, 30)] == [5]
+
+
+def test_extract_var_genotypes_origin_spanning_reads(tmp_path):
+    path = _circular_vcf(tmp_path)
+    bam = tmp_path / 'circ.bam'
+    seq = CIRC[90:] + CIRC[:20]              # 90..120 through the origin
+    alt = 'A' if CIRC[5] != 'A' else 'C'
+    seq = seq[:15] + alt + seq[16:]          # ALT at site 5 (read offset 15)
+    a = pysam.AlignedSegment(CIRC_HEADER)
+    a.query_name = 'origin'
+    a.query_sequence = seq
+    a.flag = 0
+    a.reference_id = 0
+    a.reference_start = 90
+    a.mapping_quality = 60
+    a.cigartuples = [(0, 30)]
+    a.query_qualities = pysam.qualitystring_to_array('5' * 30)
+    with pysam.AlignmentFile(str(bam), 'wb', header=CIRC_HEADER) as out:
+        out.write(a)
+    pysam.index(str(bam))
+    beds = {'var': str(tmp_path / 'circ_var.bed')}
+    options = VariantOptions(path=path, source_path=path)
+    extract_tags_parallel(str(bam), beds, ['var'], n_cores=1, variants=options)
+    (row,) = _rows(beds['var'])
+    starts = [int(row[1]) + int(x) for x in row[11].split(',') if x]
+    assert starts == [95, 105]
+    assert row[12].split(',')[:2] == ['0', '1']
