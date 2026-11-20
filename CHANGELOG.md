@@ -166,6 +166,14 @@
 
 ### Fixed
 
+- M2 pooled within-anchor permutations are molecule-level when a molecule
+  contributes at several anchors: each molecule's state is shuffled once and
+  applied at every anchor it contributes to (within its density stratum and
+  channel, balance weights recomputed per draw), so repeated molecules no
+  longer inflate significance (four molecules repeated over ten anchors moved
+  `p_within_anchor` from ~0.33 to ~0.004). Bins report `permutation_unit`;
+  per-anchor tests keep the within-cell permutation.
+
 - `CallerSettings.from_header()` (thinning calibration) reuses the recorded
   DddA derived-TF edge gap (`ddda_derived_tf_edge_gap` in the call record, or
   `--ddda-derived-tf-max-edge-gap`; `off`/-1 stays off) instead of always

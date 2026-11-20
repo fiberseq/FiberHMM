@@ -16,7 +16,11 @@ intact (NUC 2.3: closed molecules had 9x lower density).
 
 **Tests.**
 
-- Delta_anchor (state matters at the anchors): labels permuted within cells, 1,000 permutations.
+- Delta_anchor (state matters at the anchors): labels permuted within cells, 1,000 permutations. When a
+  molecule contributes at several anchors, the pooled test permutes at the molecule level: each molecule's
+  state is shuffled once and applied at every anchor it contributes to (within its density stratum and
+  channel; balance weights recomputed per draw), so repeated molecules do not inflate significance
+  (``permutation_unit``). A molecule whose state differs between anchors is one unit per state.
 - Delta_site = Delta_anchor - Delta_random: each anchor and its matched backgrounds form a matched set; under "anchors
   behave like their matched backgrounds" the set's loci are exchangeable, so the test **permutes which locus in
   each set plays the anchor** (1,000 draws of one role per set). Every locus keeps its own molecules and
@@ -175,6 +179,10 @@ class _Bin:
         key = [loc] + ([app.channel[self.idx]] if app.channel is not None else []) + [app.stratum[self.idx]] \
             + ([app.mask[self.idx]] if mask_rule == 'exact' else [])
         cell = ST.combine(*key) if len(self.idx) else np.zeros(0, np.int64)
+        # The stratification without the locus: the exchangeability class of a
+        # molecule that appears at several loci (molecule-level permutation).
+        self.mol_class = ST.combine(*key[1:-1] if mask_rule == 'exact' else key[1:]) \
+            if len(self.idx) else np.zeros(0, np.int64)
         nc = int(cell.max()) + 1 if len(cell) else 0
         n1 = np.bincount(cell, weights=st, minlength=nc)
         n0 = np.bincount(cell, weights=1 - st, minlength=nc)
@@ -231,6 +239,65 @@ def _perm_labels(cell, state, n_perm, rng, *, one_at=None):
     return L
 
 
+def _molecule_units(molecule, state, locus, cell, mol_class):
+    """Permutation units of the pooled within-anchor test, or None when every
+    molecule appears at one anchor (the appearance-level permutation within
+    cells is then already a molecule-level one).
+
+    A unit is a molecule (a molecule whose state differs between its anchors
+    is one unit per observed state). Its state is permuted once and applied to
+    every appearance, so a molecule seen at many anchors counts once, not once
+    per anchor. A unit at one locus is exchanged within its cell, as before; a
+    unit at several loci within the class of its density stratum (and channel)
+    across those loci -- its cells differ by locus, so the balance weights are
+    recomputed for every permutation. Returns ``(unit_of_appearance,
+    unit_state, unit_class)``."""
+    if len(molecule) == 0:
+        return None
+    unit = ST.combine(molecule, state)
+    n_units = int(unit.max()) + 1
+    first = np.full(n_units, len(unit), np.int64)
+    np.minimum.at(first, unit, np.arange(len(unit)))
+    loc_min = np.full(n_units, np.iinfo(np.int64).max)
+    loc_max = np.full(n_units, -1, np.int64)
+    np.minimum.at(loc_min, unit, locus)
+    np.maximum.at(loc_max, unit, locus)
+    multi = loc_min != loc_max
+    if not multi.any():
+        return None
+    # a unit's class: its cell (one locus) or its stratum signature (several)
+    sig: Dict[tuple, int] = {}
+    ucls = np.zeros(n_units, np.int64)
+    members: Dict[int, set] = {}
+    for a, u in enumerate(unit.tolist()):
+        if multi[u]:
+            members.setdefault(u, set()).add(int(mol_class[a]))
+    for u in range(n_units):
+        key = ('multi', tuple(sorted(members[u]))) if multi[u] else ('cell', int(cell[first[u]]))
+        ucls[u] = sig.setdefault(key, len(sig))
+    return unit, state[first].astype(np.int64), ucls
+
+
+def _reweighted_sums(L, X, cell, P, balance):
+    """(S1, S0) under labels ``L`` (c, n) with the cell balance weights
+    recomputed from the permuted state counts."""
+    nc = int(cell.max()) + 1
+    from scipy.sparse import csr_matrix
+    C = csr_matrix((np.ones(len(cell)), (np.arange(len(cell)), cell)), shape=(len(cell), nc))
+    n1 = np.asarray((C.T @ L.T).T)
+    n0 = np.bincount(cell, minlength=nc)[None, :] - n1
+    if balance:
+        m = np.minimum(n1, n0)
+        w1 = np.divide(m, n1, out=np.zeros_like(m), where=n1 > 0)
+        w0 = np.divide(m, n0, out=np.zeros_like(m), where=n0 > 0)
+    else:
+        w1, w0 = (n1 > 0).astype(float), (n0 > 0).astype(float)
+    W1, W0 = w1[:, cell], w0[:, cell]
+    S1 = np.stack([(L * W1 ** P[j]) @ X[:, j] for j in range(X.shape[1])], axis=-1)
+    S0 = np.stack([((1 - L) * W0 ** P[j]) @ X[:, j] for j in range(X.shape[1])], axis=-1)
+    return S1, S0
+
+
 def _sets(loci: LocusTable, ok: np.ndarray):
     """Matched sets with an eligible anchor and at least one eligible background: (n_sets, max_members) locus
     indices (anchor first, -1 padded) and member counts."""
@@ -283,6 +350,14 @@ def _bin_result(bd: _Bin, loci: LocusTable, *, n_perm, n_role, per_anchor, min_p
         one_at = np.arange(len(cellA)) - np.repeat(starts, sizes) < np.repeat(ones, sizes)
         want = np.flatnonzero(anc & (bd.n1_bal >= min_per_state) & (bd.n0_bal >= min_per_state)) if per_anchor \
             else np.zeros(0, np.int64)
+        # Molecules repeated across anchors: the pooled null permutes each
+        # molecule's state once (H8); per-anchor tests keep the within-cell
+        # permutation (a molecule appears at most once per anchor).
+        units = _molecule_units(bd.molecule[ai], stA, locA, cellA, bd.mol_class[ai])
+        out['permutation_unit'] = 'appearance' if units is None else 'molecule'
+        if units is not None:
+            uA, ustA, uclsA = units
+            XA = bd.X[ai]
         if len(want):
             from scipy.sparse import csr_matrix
             col = {int(l): c for c, l in enumerate(want)}
@@ -296,11 +371,17 @@ def _bin_result(bd: _Bin, loci: LocusTable, *, n_perm, n_role, per_anchor, min_p
         while done < n_perm:
             checkpoint("permutations", done, n_perm)
             c = min(chunk, n_perm - done)
-            L = _perm_labels(cellA, stA, c, rng, one_at=one_at).astype(float)
-            # Tiny output width: einsum avoids starting a large BLAS thread
-            # team for every resampling batch in a single-locus analysis.
-            S1 = np.einsum('ij,jk->ik', L, X1A, optimize=False)
-            S0 = np.einsum('ij,jk->ik', 1-L, X0A, optimize=False)
+            if units is None:
+                L = _perm_labels(cellA, stA, c, rng, one_at=one_at).astype(float)
+                # Tiny output width: einsum avoids starting a large BLAS thread
+                # team for every resampling batch in a single-locus analysis.
+                S1 = np.einsum('ij,jk->ik', L, X1A, optimize=False)
+                S0 = np.einsum('ij,jk->ik', 1-L, X0A, optimize=False)
+            else:
+                Lm = _perm_labels(uclsA, ustA, c, rng)[:, uA].astype(float)
+                S1, S0 = _reweighted_sums(Lm, XA, cellA, bd.P, bd.balance)
+                if len(want):
+                    L = _perm_labels(cellA, stA, c, rng, one_at=one_at).astype(float)
             null.extend(bd.delta(S1, S0).tolist())
             if len(want):
                 S1l = np.stack([(L * X1A[:, j]) @ G for j in range(X1A.shape[1])], axis=-1)
