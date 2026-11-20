@@ -65,7 +65,16 @@ def passes(read, filters: Mapping) -> bool:
 
 
 def has_annotations(read) -> bool:
-    return any(read.has_tag(t) for t in ('MA', 'Ma', 'ns'))
+    """True when the record carries footprint-call evidence.
+
+    An MA/Ma tag counts when it holds a nuc/msp/tf group (an m5C- or FIRE-only MA does not call
+    footprints); legacy tags count under the array-pair rule: a valid, non-empty ns/nl or as/al pair.
+    A scalar (Dorado's ``ns:i``), a string, an unpaired tag or empty arrays are not evidence."""
+    from fiberhmm.io.legacy_tags import has_legacy_calls, ma_has_footprint_groups
+    for tag in ('MA', 'Ma'):
+        if read.has_tag(tag) and ma_has_footprint_groups(read.get_tag(tag)):
+            return True
+    return has_legacy_calls(read)
 
 
 def iter_records(bam, chrom: str, start: int, end: int, filters: Mapping

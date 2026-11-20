@@ -17,6 +17,8 @@ import re
 from operator import add, itemgetter
 from typing import Dict, Iterable, List, Optional, Tuple
 
+from fiberhmm.io.legacy_tags import array_tag_pair
+
 MA_FOOTPRINT_TYPES = ('nuc', 'tf', 'fp_v2')
 SHORT_TERMINAL_FOOTPRINT_BP = 90
 SHORT_TERMINAL_FOOTPRINT_MAX_END_GAP_BP = 30
@@ -693,19 +695,17 @@ def _record_tiles(read, lo, hi, *, legacy, group_frame, hide_terminal_gaps, term
     if read.is_supplementary and any(op == 5 for op, _n in read.cigartuples or []):
         return None if min_fp_quality > 0 else neutral()
     ns_tag = nl_tag = nq_tag = None
-    if read.has_tag('ns'):
-        ns_tag = read.get_tag('ns')
-        nl_tag = read.get_tag('nl') if read.has_tag('nl') else None
-        nq_tag = read.get_tag('nq') if read.has_tag('nq') and nl_tag is not None else None
-        if nl_tag is None or _not_an_array(ns_tag) or _not_an_array(nl_tag):
-            # Only two arrays are a pair (FiberBrowser's array-pair rule): a missing nl, or a string or scalar in
-            # either position, gives no footprint calls; MSPs, MA or a neutral tile decide the row, as in
-            # FiberBrowser.
-            ns_tag = nl_tag = nq_tag = None
-    if (ns_tag is None and read.has_tag('as') and read.has_tag('al')
-            and not _not_an_array(read.get_tag('as')) and not _not_an_array(read.get_tag('al'))):
+    # Only two integer arrays of equal length are a pair (FiberBrowser's array-pair rule): a missing partner, a
+    # string or scalar in either position, or unequal lengths give no footprint calls; MSPs, MA or a neutral
+    # tile decide the row, as in FiberBrowser.
+    nuc_pair = array_tag_pair(read, 'ns', 'nl')
+    if nuc_pair is not None:
+        ns_tag, nl_tag = nuc_pair
+        nq_tag = read.get_tag('nq') if read.has_tag('nq') else None
+    msp_pair = array_tag_pair(read, 'as', 'al') if ns_tag is None else None
+    if msp_pair is not None:
         try:
-            ns_tag, nl_tag = msp_complement(read.get_tag('as'), read.get_tag('al'), read.query_length or 0)
+            ns_tag, nl_tag = msp_complement(msp_pair[0], msp_pair[1], read.query_length or 0)
         except (TypeError, ValueError):
             return None          # an MSP stream FiberBrowser cannot read either: no row
     if ns_tag is None:
