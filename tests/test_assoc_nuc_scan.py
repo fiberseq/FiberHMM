@@ -571,3 +571,29 @@ def test_association_stats_dedups_per_dataset():
     same = N.association_stats([mol, other], labels={'dataset': lambda m: 'A'}, **kw)
     assert same['skipped']['duplicate_records'] == 1
     assert N.association_stats([mol, other], **kw)['skipped']['duplicate_records'] == 1
+
+
+@pytest.mark.parametrize('extra, needle', [
+    (['--mode', 'cooccur', '--b', 'fp.class', '--region', 'chrT:abc-10'], "--region 'chrT:abc-10'"),
+    (['--mode', 'cooccur', '--b', 'fp.class', '--region', 'chrT:500-100'], '0 <= START < END'),
+    (['--mode', 'cooccur', '--b', 'fp.class', '--n-perm', '-1'], '--n-perm and --n-boot must be >= 0'),
+    (['--mode', 'cooccur', '--b', 'fp.class', '--n-boot', '-5'], '--n-perm and --n-boot must be >= 0'),
+    (['--mode', 'condition', '--response', 'nfr:openness', '--bed', 'SHORT'], 'line 2: expected at least 3'),
+    (['--mode', 'overlap', '--b', 'fp.class', '--strata', 'SHORT'], 'line 1: expected at least 4'),
+    (['--mode', 'condition', '--response', 'nfr:openness', '--bed', 'TEXT'], 'start and end must be integers'),
+])
+def test_cli_assoc_input_errors_exit_2_without_traceback(tmp_path, capsys, extra, needle):
+    """Audit M21: bad --region, negative --n-perm/--n-boot and short or
+    non-numeric BED rows are one-line errors with exit 2."""
+    from fiberhmm.scan.cli import main
+    scan = _write_scan(tmp_path)
+    short = tmp_path / 'short.bed'
+    short.write_text('chrT\t0\t100\nchrT\t5\n')
+    text = tmp_path / 'text.bed'
+    text.write_text('chrT\tzero\t100\n')
+    extra = [str(short) if x == 'SHORT' else str(text) if x == 'TEXT' else x for x in extra]
+    with pytest.raises(SystemExit) as e:
+        main(['assoc', str(scan), '--a', 'nfr.region', *extra, '-o', str(tmp_path / 'x')])
+    assert e.value.code == 2
+    err = capsys.readouterr().err
+    assert 'error:' in err and needle in err and 'Traceback' not in err

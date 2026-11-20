@@ -166,6 +166,12 @@
 
 ### Fixed
 
+- `fiberhmm-scan assoc` reports a malformed `--region`, a negative
+  `--n-perm`/`--n-boot` and short or non-numeric `--bed`/`--strata` rows
+  (file and line named), and `fiberhmm-scan` an unreadable or invalid
+  `--parameters`/`--datasets`/`--signal-filters` JSON file, as one-line
+  `error:` messages with exit 2 instead of tracebacks.
+
 - M3 association statistics deduplicate records per dataset and molecule:
   the same read name in two datasets is no longer dropped as a duplicate
   record (as `anchor_appearances()` already did).

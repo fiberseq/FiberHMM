@@ -179,3 +179,21 @@ def test_evidence_cancel_removes_partial_snapshot(tmp_path):
                   registry={'plant': PlantedAnchorModule}, evidence=records, cancel=lambda: True, out=out)
     assert not list((out / 'work' / '_evidence').glob('snapshot_*'))
     assert not (out / 'manifest.json').exists()
+
+
+@pytest.mark.parametrize('flag', ['--parameters', '--datasets', '--signal-filters'])
+def test_scan_cli_invalid_json_is_a_usage_error(tmp_path, capsys, flag):
+    """Audit M21: an unreadable or invalid JSON file is 'error:' with exit 2."""
+    from fiberhmm.scan.cli import main
+    bad = tmp_path / 'bad.json'
+    bad.write_text('{not json')
+    src = ['--datasets', str(bad)] if flag == '--datasets' else ['--bam', str(tmp_path / 'x.bam'), flag, str(bad)]
+    with pytest.raises(SystemExit) as e:
+        main([*src, '--region', 'chr1:0-100', '-o', str(tmp_path / 'out')])
+    assert e.value.code == 2
+    err = capsys.readouterr().err
+    assert 'error:' in err and f'{flag} {bad}: not valid JSON' in err
+    with pytest.raises(SystemExit) as e:
+        main([*[s if s != str(bad) else str(tmp_path / 'missing.json') for s in src],
+              '--region', 'chr1:0-100', '-o', str(tmp_path / 'out')])
+    assert e.value.code == 2 and 'missing.json' in capsys.readouterr().err
