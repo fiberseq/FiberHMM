@@ -218,27 +218,54 @@ def _rows(path, start=0, end=1500, **kw):
 
 def test_string_and_scalar_footprint_tags_are_not_calls(tmp_path):
     """FiberBrowser 3.0.5's array-pair rule: ns/nl (and as/al) are calls only as arrays. A comma string or a
-    scalar (Dorado's ns:i) gives no calls: the read is the neutral tile an untagged read is."""
+    scalar (Dorado's ns:i) gives no calls: the read is uncalled, as an untagged read is, and has no row."""
     import array
     from fiberhmm.scan.peaks_reads import parse_int_tag_values
     assert parse_int_tag_values(array.array('I', [100, 700])) == [100, 700]
     assert parse_int_tag_values('100,700') is None and parse_int_tag_values(40_000) is None
-    untagged = _rows(_bam(tmp_path / 'u.bam', [dict(tags={})]))
-    assert len(untagged) == 1 and all(iv[2] == 0 for iv in untagged[0]['intervals'])
+    assert _rows(_bam(tmp_path / 'u.bam', [dict(tags={})])) == []
     for name, tags in (('string', {'ns': '100,700', 'nl': '147,147'}), ('mixed', {'ns': [100, 700], 'nl': '147,147'}),
                        ('scalar', {'ns': 40_000}), ('msp_string', {'as': '100,700', 'al': '147,147'})):
-        rows = _rows(_bam(tmp_path / f'{name}.bam', [dict(tags=tags)]))
-        assert [r['intervals'] for r in rows] == [untagged[0]['intervals']], name
+        assert _rows(_bam(tmp_path / f'{name}.bam', [dict(tags=tags)])) == [], name
     called = _rows(_bam(tmp_path / 'a.bam', [dict(tags={'ns': [100, 700], 'nl': [147, 147]})]))
     assert any(iv[2] > 0 for iv in called[0]['intervals'])
 
 
 def test_ns_without_nl_is_not_a_call(tmp_path):
-    """ns without nl is not a pair (FiberBrowser's array-pair rule): the read is the neutral tile an untagged
-    read is, as FiberBrowser shows it."""
-    untagged = _rows(_bam(tmp_path / 'u.bam', [dict(tags={})]))
-    rows = _rows(_bam(tmp_path / 'a.bam', [dict(tags={'ns': [100, 700]})]))
-    assert [r['intervals'] for r in rows] == [untagged[0]['intervals']]
+    """ns without nl is not a pair (FiberBrowser's array-pair rule): the read is uncalled, as an untagged read
+    is; with an MSP pair beside it, MSPs decide the row."""
+    assert _rows(_bam(tmp_path / 'a.bam', [dict(tags={'ns': [100, 700]})])) == []
+    rows = _rows(_bam(tmp_path / 'b.bam', [dict(tags={'ns': [100, 700], 'as': [0, 300], 'al': [100, 400]})]))
+    assert len(rows) == 1
+
+
+def test_uncalled_reads_are_left_out_of_peak_counts(tmp_path):
+    """H6 (FiberBrowser's uncalled-read rule): a read without footprint annotations (no MA/Ma nuc/msp/tf
+    group, no ns/nl or as/al array pair) is in neither the numerator nor the total. Five uncalled reads alone
+    made a Strong peak with score 1.0 across the window."""
+    from fiberhmm.scan.peaks_reads import read_has_footprint_calls
+    uncalled = [dict(name=f'u/{i}/ccs', start=100, cigar='1200M', tags={}) for i in range(5)]
+    path = _bam(tmp_path / 'u.bam', uncalled)
+    assert _rows(path) == []
+    num, tot = C.compute_scan_counts(_rows(path), 'accessibility', 1500)
+    assert not num.any() and not tot.any()
+    assert C.scan_peaks(num, tot, n_reads=0)['peaks'] == []
+    called = [dict(name=f'c/{i}/ccs', start=100, cigar='1200M',
+                   tags={'ns': [50, 250, 450, 850], 'nl': [147, 147, 147, 147]}) for i in range(5)]
+    only = _rows(_bam(tmp_path / 'c.bam', called))
+    mixed = _rows(_bam(tmp_path / 'm.bam', sorted(called + uncalled, key=lambda r: r['name'])))
+    assert [r['id'] for r in mixed] == [r['id'] for r in only]
+    for k in (0, 1):
+        assert np.array_equal(C.compute_scan_counts(mixed, 'accessibility', 1500)[k],
+                              C.compute_scan_counts(only, 'accessibility', 1500)[k])
+    # an MA-only read with a footprint group is called; an MA with only non-footprint groups is not
+    with pysam.AlignmentFile(_bam(tmp_path / 'ma.bam', [
+            dict(name='a/1/ccs', tags={'MA': '1000;nuc.Q:101-147'}),
+            dict(name='a/2/ccs', tags={'MA': '1000;msp.:1-100'}),
+            dict(name='a/3/ccs', tags={'MA': '1000;fire.Q:101-147'}),
+            dict(name='a/4/ccs', tags={'MA': '1000;nuc.Q:'}),
+            dict(name='a/5/ccs', tags={'ns': [], 'nl': []})])) as bam:
+        assert [read_has_footprint_calls(r) for r in bam.fetch(until_eof=True)] == [True, True, False, False, False]
 
 
 def test_unrepaired_lift_hides_former_supplementaries(tmp_path):
@@ -281,8 +308,7 @@ def test_review_records_match_browser(tmp_path):
            {'ID': 'ft', 'PN': 'fibertools', 'CL': 'ft add-nucleosomes in.bam', 'PP': 'mm2'},
            {'ID': 'ft.1', 'PN': 'fibertools', 'CL': 'ft add-nucleosomes in.bam', 'PP': 'mm2'},
            {'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call', 'PP': 'mm2'}]
-    # Case 0: comma-string ns/nl are not calls in either tool (FiberBrowser 3.0.5's array-pair rule): parity
-    # with "no calls" (no footprint in the counts).
+    # Cases 0 and 1: comma-string ns/nl, and ns without nl, are not calls (FiberBrowser 3.0.5's array-pair rule).
     cases = [([dict(tags={'ns': '100,700', 'nl': '147,147'})], None),
              ([dict(tags={'ns': [100, 700]})], None),
              ([dict(tags={'ns': [100, 700], 'nl': [147, 147], 'Yf': 2048})],
@@ -290,15 +316,18 @@ def test_review_records_match_browser(tmp_path):
              ([dict(flag=16, tags={'ns': [100, 700], 'nl': [147, 147]})], {'PG': pgs})]
     for i, (recs, extra) in enumerate(cases):
         path = _bam(tmp_path / f'c{i}.bam', recs, extra)
+        if i in (0, 1):
+            # Not a pair, and no other annotation: the read is uncalled, so FiberHMM leaves it out of the peak
+            # counts (FiberBrowser's uncalled-read rule, which its Read Stats apply; its peak loader still
+            # shows the neutral placeholder tile, so there is no per-base parity to check here).
+            assert _rows(path) == []
+            continue
         for start, end in ((0, 1500), (300, 900)):
             rows = build(path, 'chrP', start, end, spanning_only=False, include_layers=False,
                          short_terminal_footprint_bp=90, hide_terminal_gaps=True, terminal_gap_threshold=500)
             a = PS.compute_scan_counts(rows, 'accessibility', end - start)
             b = C.compute_scan_counts(_rows(path, start, end), 'accessibility', end - start)
             assert np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]), (i, start, end)
-            if i == 0:
-                assert not any(iv[2] > 0 for r in _rows(path, start, end) for iv in r['intervals'])
-                assert not any(iv[2] > 0 for r in rows for iv in r['intervals'])
 
 
 

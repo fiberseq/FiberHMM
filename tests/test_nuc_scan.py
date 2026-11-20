@@ -704,3 +704,138 @@ def test_measured_track_excludes_alignment_holes_and_low_information():
     assert kinds['reg'] == [(200, 800)] and kinds['low'] == [(800, 850)]
     assert kinds['und'] == [(850, 1100)]
     assert kinds['uds'] == [(450, 750)] and kinds['mis'] == [(900, 960)]
+
+
+def test_disabled_nuc_groups_are_neither_declared_nor_owned(scan_bam, tmp_path):
+    """M13: with --no-nucreg (nucreg None), and patches / geometries off, nucreg / nucpatch / nucgeo are not
+    in the scan's header contracts or owned groups, so an earlier scan's groups survive."""
+    from fiberhmm.io.scan_ma import scan_contracts
+    from fiberhmm.scan.modules.nuc import NucModule
+    mod = NucModule()
+    names = lambda params: {g.group for g in mod.active_ma_groups(mod.resolve(params))}
+    every = {g.group for g in mod.ma_groups()}
+    assert names({}) == every - {'nucpatch', 'nucgeo'}                       # patches are off by default
+    assert names({'nucreg': None}) == every - {NUCREG, 'nucpatch', 'nucgeo'}
+    assert names({'nucpatch': {'ref_median': 190.0}}) == every
+    assert names({'nucpatch': {'ref_median': 190.0}, 'nucgeo': None}) == every - {'nucgeo'}
+    first = tmp_path / 'first'
+    _scan(first, scan_bam, annotate=True)
+    m = json.loads((first / 'manifest.json').read_text())
+    src = first / m['outputs']['annotated'][0]['path']
+    with pysam.AlignmentFile(str(src)) as bam:
+        assert NUCREG in scan_contracts(bam.header) and 'nucpatch' not in scan_contracts(bam.header)
+        before = {r.query_name: _nucreg_parts(r) for r in bam.fetch(until_eof=True)}
+    assert any(before.values())
+    units = plan({'chrS': LENGTH}, genome=True, contigs=['chrS'])
+    second = tmp_path / 'second'
+    run_units([{'dataset_id': 'synth', 'paths': [str(src)]}], units, modules=['nuc'],
+              params={'nuc': {'calibration': 'self', 'calibration_population': 400, 'nucreg': None}},
+              out=second, annotate=True)
+    m2 = json.loads((second / 'manifest.json').read_text())
+    assert NUCREG not in {g['group'] for g in m2['modules']['nuc']['ma_groups']}
+    with pysam.AlignmentFile(str(second / m2['outputs']['annotated'][0]['path'])) as bam:
+        contracts = scan_contracts(bam.header)
+        assert contracts[NUCREG]['scan_id'] == m['scan_id'] and contracts[NUCSZ]['scan_id'] == m2['scan_id']
+        after = {r.query_name: _nucreg_parts(r) for r in bam.fetch(until_eof=True)}
+    assert after == before
+
+
+def _nucreg_parts(read):
+    ma = str(read.get_tag('MA')) if read.has_tag('MA') else ''
+    return [p for p in ma.split(';')[1:] if p.startswith(NUCREG + '.')]
+
+
+class _LazyTrack:
+    """A territory-run track computed on demand per slice (as the unit-archive _RunTrack reads it)."""
+
+    def __init__(self, length, fn):
+        self.length, self.fn = length, fn
+        self.shape, self.dtype = (length,), np.dtype('float64')
+
+    def __len__(self):
+        return self.length
+
+    def __array__(self, dtype=None, copy=None):
+        return np.asarray(self[:], dtype=dtype)
+
+    def __getitem__(self, sel):
+        if not isinstance(sel, slice):
+            return self[:][sel]
+        a, b, _ = sel.indices(self.length)
+        return self.fn(np.arange(a, max(a, b), dtype=np.int64))
+
+
+def _grid(step, f):
+    def fn(pos):
+        out = np.full(len(pos), np.nan)
+        on = pos % step == 0
+        out[on] = f(pos[on])
+        return out
+    return fn
+
+
+def _synthetic_stitch_tracks(L):
+    """Window-start tracks with recurrence patches (every 350 kb), phased stretches (every 200 kb) and fuzzy
+    windows inside regular patches, over one territory run of L bp."""
+    hot_e = lambda p: (p // 50_000) % 7 == 0
+    hot_p = lambda p: (p // 40_000) % 5 == 0
+    T = {}
+    for g in ('all', 'd1', 'd1:HP1'):
+        T[f'measured:{g}'] = lambda p: (20 + (p // 1000) % 5).astype(float)
+        for i, k in enumerate(('reg', 'dis', 'und', 'low', 'uds', 'mis')):
+            T[f'{k}:{g}'] = (lambda i: lambda p: ((p // 700 + i) % 9).astype(float))(i)
+        T[f'qsum:{g}'] = lambda p: ((p // 700) % 9) * 180.37
+        for name, f in (('phase_R', lambda p: np.where(hot_p(p), 0.5 + (p % 3000) / 1e5, 0.12 + (p % 1100) / 1e6)),
+                        ('phase_null', lambda p: np.full(len(p), 0.1)),
+                        ('phase_logp', lambda p: np.where(hot_p(p), -10.0, -0.5 - (p % 900) / 1e4)),
+                        ('phase_n', lambda p: np.full(len(p), 15.0)),
+                        ('phase_P', lambda p: 185.0 + (p // 200) % 7),
+                        ('phase_C', lambda p: 0.3 + ((p // 200) % 5) * 0.1)):
+            T[f'{name}:{g}'] = _grid(200, f)
+    for j, kind in enumerate(('reg', 'dis', 'uds', 'mis')):
+        T[f'enr_p:{kind}'] = _grid(250, (lambda j: lambda p: np.where(hot_e(p + j * 10_000), 1e-6 * (1 + (p // 250) % 13),
+                                                                       0.3 + ((p // 250) % 17) / 40))(j))
+        T[f'enr_obs:{kind}'] = _grid(250, lambda p: 0.2 + ((p // 250) % 11) / 50)
+        T[f'enr_exp:{kind}'] = _grid(250, lambda p: 0.1 + ((p // 250) % 7) / 70)
+        T[f'enr_n:{kind}'] = _grid(250, lambda p: 3.0 + (p // 250) % 9)
+    return [(0, L, True, False)], {k: [_LazyTrack(L, f)] for k, f in T.items()}
+
+
+def _stitch_synthetic(L, scope):
+    import tracemalloc
+    from fiberhmm.scan.modules.nuc import NucModule
+    mod = NucModule()
+    settings = mod.resolve({'enrich_fdr_scope': scope})
+    territory, tracks = _synthetic_stitch_tracks(L)
+    tracemalloc.start()
+    try:
+        extra = {}
+        if scope == 'scan':
+            per = {'c': mod.stitch_statistics('c', territory, tracks, settings, None)}
+            extra['scan_statistics'] = mod.combine_statistics(per, settings, None)
+        res = mod.stitch('c', territory, tracks, settings, None, **extra)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    hits = [(h.type, h.key, h.start, h.end, repr(h.score), h.flags, sorted(h.columns.items())) for h in res.hits]
+    values = [(v.hit_key, v.group, v.group_kind, v.value_name, repr(v.value), v.n_molecules) for v in res.values]
+    return hits, values, peak
+
+
+@pytest.mark.parametrize('scope', ['contig', 'scan'])
+def test_stitch_memory_scales_with_chunk_not_contig(monkeypatch, scope):
+    """H7: stitch reads territory runs in bounded chunks. Outputs are identical whatever the chunk (a chunk
+    longer than the run is the former whole-run expansion, which used ~115 MiB per Mb here, about 24 GiB for
+    250 Mb), and peak memory does not grow with the contig."""
+    import fiberhmm.scan.modules.nuc as N
+    monkeypatch.setattr(N, 'STITCH_CHUNK_BP', 10 ** 9)
+    whole = _stitch_synthetic(1_500_000, scope)
+    assert {h[0] for h in whole[0]} == {f'nuc.patch.{t}' for t in
+                                        ('regular', 'disordered', 'undersized', 'missing', 'phased', 'fuzzy')}
+    monkeypatch.setattr(N, 'STITCH_CHUNK_BP', 37_123)      # odd: patches and phased runs cross chunk edges
+    small = _stitch_synthetic(1_500_000, scope)
+    assert small[:2] == whole[:2]
+    monkeypatch.setattr(N, 'STITCH_CHUNK_BP', 50_000)
+    short, long_ = _stitch_synthetic(1_000_000, scope)[2], _stitch_synthetic(6_000_000, scope)[2]
+    assert long_ < 1.5 * short + (2 << 20) and long_ < 32 << 20, (short, long_)
+    assert whole[2] > 4 * long_

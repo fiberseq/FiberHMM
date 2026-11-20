@@ -271,7 +271,7 @@ def _module_block(name, mod, settings, calibration_sha) -> dict:
                 settings_hash=I.settings_hash(settings), load_policy=mod.load_policy(settings),
                 feature_types=[d.to_json() for d in decls],
                 columns=dict(hits=mod.hit_columns(), states=mod.state_columns(), molecules=mod.scalar_names()),
-                ma_groups=[g.to_json() for g in mod.ma_groups()], native_tables=list(mod.native_tables),
+                ma_groups=[g.to_json() for g in mod.active_ma_groups(settings)], native_tables=list(mod.native_tables),
                 calibration=None if calibration_sha is None else dict(path=f'{name}/extra/calibration.json',
                                                                       digest=calibration_sha),
                 needs=sorted(mod.needs(settings)))
@@ -304,8 +304,10 @@ def _survey_key(base, unit: ScanUnit) -> str:
 
 
 def _unit_key(base, module, version, settings_hash, cal_sha, unit: ScanUnit, upstream_keys) -> str:
-    return I.digest([base, module, version, settings_hash, cal_sha, unit.unit_id, unit.start, unit.end,
-                     unit.zone_start, unit.zone_end, upstream_keys])
+    # The unit's chrom and mode too: a BED unit and a grid unit over the same span are computed differently,
+    # so continue/extend must not reuse one's result for the other.
+    return I.digest([base, module, version, settings_hash, cal_sha, unit.unit_id, unit.chrom, unit.mode,
+                     unit.start, unit.end, unit.zone_start, unit.zone_end, upstream_keys])
 
 
 # ------------------------------------------------------------------ unit work
@@ -766,7 +768,7 @@ def _run_locked(out, resolved, reference, contigs, units, units_info, mods, poli
     completed = _dispatch(specs, jobs, progress, cancel)
     from .finalize import finalize
     # No module writes per-molecule MA groups (a peaks-only scan): nothing to annotate.
-    annotate = bool(annotate) and any(m.ma_groups() for _n, m, _s in mods)
+    annotate = bool(annotate) and any(m.active_ma_groups(s) for _n, m, s in mods)
     if annotate:
         foreign = [p for d in resolved for p in d.paths if not _declares_molecular(p)]
         if foreign:

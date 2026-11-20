@@ -130,7 +130,7 @@ def finalize(out: Path, manifest: dict, datasets, reference: Mapping[str, int], 
                                              COMMON + MOLECULE_COLUMNS + mod.scalar_names(), order)
             w['units'] = TableWriter(out / name / 'units.tsv.bgz', COMMON + EVIDENCE_COLUMNS, order)
         writers[name] = w
-        decls[name] = {g.group: g for g in mod.ma_groups()}
+        decls[name] = {g.group: g for g in mod.active_ma_groups(settings)}
         seam_components[name] = 0
         if mod.reconcile == 'stitch':
             open_ends[name] = 0
@@ -158,7 +158,7 @@ def finalize(out: Path, manifest: dict, datasets, reference: Mapping[str, int], 
     ann = _Annotations() if annotate else None
     annotated_outputs = []
     bam_writers = _open_annotated(out, manifest, datasets, mods, decls, command) if annotate else None
-    full_copy = bool(annotate and manifest['units'].get('contigs'))
+    full_copy = bool(annotate and _genome_wide(manifest['units'], reference))
     loop = list(reference) if full_copy else contigs_in_plan
     try:
         for chrom in loop:
@@ -306,6 +306,19 @@ def finalize(out: Path, manifest: dict, datasets, reference: Mapping[str, int], 
                 annotated=[a['path'] for a in annotated_outputs])
 
 
+def _genome_wide(units_info: Mapping[str, Any], reference: Mapping[str, int]) -> bool:
+    """Whether the plan covers every contig of the header (a --genome scan without a restricting --contigs):
+    only then does an annotated BAM hold every record of its input. Uses the plan's recorded
+    ``contigs_restricted``; plans recorded without it compare the planned contigs with the header."""
+    contigs = units_info.get('contigs')
+    if not contigs:
+        return False
+    restricted = units_info.get('contigs_restricted')
+    if restricted is None:
+        restricted = not set(reference) <= set(contigs)
+    return not restricted
+
+
 def _remove_stale_outputs(out: Path, mods, annotate: bool) -> None:
     """A continued or extended scan rewrites every output; remove what this run will not write (per-molecule
     tables in annotated mode, annotated BAMs in tables mode, directories of modules no longer in the scan)."""
@@ -441,7 +454,7 @@ def _open_annotated(out: Path, manifest, datasets, mods, decls, command):
     lines = []
     for name, mod, settings in mods:
         extra = mod.ma_group_provenance(settings) or {}
-        for g in mod.ma_groups():
+        for g in mod.active_ma_groups(settings):
             groups.append(g.group)
             lines.append(dict(g.to_json(), **extra.get(g.group, {}), module=name, module_version=mod.version,
                               scan_id=manifest['scan_id'], settings_hash=I.settings_hash(settings)))
@@ -467,7 +480,7 @@ def _open_annotated(out: Path, manifest, datasets, mods, decls, command):
             tmp = target_dir / ('.' + name + '.tmp')
             dest = pysam.AlignmentFile(str(tmp), 'wb', header=header)
             handles[(ds.dataset_id, i)] = dict(src=src, dest=dest, tmp=tmp, final=target_dir / name, dataset=ds,
-                                               owned={g.group: g.spec for _n, m, _s in mods for g in m.ma_groups()},
+                                               owned={g.group: g.spec for _n, m, s in mods for g in m.active_ma_groups(s)},
                                                input_index=i, source=path, written=0, marked=0, skipped=0)
     return handles
 
@@ -525,6 +538,8 @@ def _write_annotated_contig(handles, chrom, ann, cunits, full_copy):
             continue
         planned = ann.by_file.get(key, {})
         seen: Dict[str, int] = {}
+        # A contig without units was not scanned: its records pass through unchanged (no group is replaced).
+        owned = h['owned'] if cunits else {}
         it = src.fetch(chrom) if full_copy else _regions_iter(src, chrom, sorted((u.start, u.end) for u in cunits))
         for read in it:
             entries = None
@@ -533,7 +548,7 @@ def _write_annotated_contig(handles, chrom, ann, cunits, full_copy):
                 occ = seen.get(sha, 0)
                 seen[sha] = occ + 1
                 entries = planned.get((sha, occ))
-            n = _annotate_read(read, entries, h['owned'])
+            n = _annotate_read(read, entries, owned)
             if n > 0:
                 h['marked'] += 1
             elif n < 0:
@@ -550,10 +565,14 @@ def _regions_iter(src, chrom, spans):
             merged[-1][1] = max(merged[-1][1], b)
         else:
             merged.append([a, b])
+    # The merged spans are sorted and disjoint (separated by gaps), so a record fetched for span i that
+    # overlaps any earlier span also overlaps span i - 1 (it is contiguous and crosses every span between):
+    # checking only the previous span is exact and keeps this O(records + spans) after the sort.
     for i, (a, b) in enumerate(merged):
+        prev = merged[i - 1] if i else None
         for read in src.fetch(chrom, a, b):
-            if any(read.reference_start < z and (read.reference_end or read.reference_start + 1) > y
-                   for y, z in merged[:i]):
+            if prev is not None and read.reference_start < prev[1] and \
+                    (read.reference_end or read.reference_start + 1) > prev[0]:
                 continue
             yield read
 

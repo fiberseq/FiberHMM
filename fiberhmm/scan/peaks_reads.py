@@ -787,6 +787,40 @@ def _cut_abs(intervals, read):
     return split_at_deletions(intervals, cuts) if cuts else intervals
 
 
+_CALL_GROUPS = ('nuc', 'msp', 'tf')
+
+
+def read_has_footprint_calls(read) -> bool:
+    """Whether a record carries any footprint-caller annotation (FiberBrowser's ``read_has_footprint_calls``).
+
+    A record a caller skipped (too short, low MAPQ, no usable marks) has none: no MA/Ma ``nuc``/``msp``/``tf``
+    group with at least one interval, and no non-empty ns/nl or as/al array pair (a string or scalar, such as
+    Dorado's ``ns:i``, is not a pair). Such a record is uncalled: peak counts leave it out of both the
+    numerator and the total."""
+    for tag in ('MA', 'Ma'):
+        if not read.has_tag(tag):
+            continue
+        value = read.get_tag(tag)
+        if not isinstance(value, str):
+            continue
+        for section in value.split(';')[1:]:
+            head, sep, body = section.partition(':')
+            if not sep or not body.strip(','):
+                continue
+            cut = next((i for i in (head.find(c) for c in '+-.') if i >= 0), -1)
+            if cut > 0 and head[:cut] in _CALL_GROUPS:
+                return True
+    for start_tag, length_tag in (('ns', 'nl'), ('as', 'al')):
+        if not (read.has_tag(start_tag) and read.has_tag(length_tag)):
+            continue
+        starts, lengths = read.get_tag(start_tag), read.get_tag(length_tag)
+        if isinstance(starts, (str, bytes, int, float)) or isinstance(lengths, (str, bytes, int, float)):
+            continue
+        if len(starts):
+            return True
+    return False
+
+
 def compact_rows(bam, chrom, region_start, region_end, *, legacy_frame_value=None, group_frame=None,
                  hide_terminal_gaps=True, terminal_gap_threshold=TERMINAL_GAP_THRESHOLD,
                  short_terminal_footprint_bp=SHORT_TERMINAL_FOOTPRINT_BP, include_duplicates=False, include_chimeras=False,
@@ -807,6 +841,10 @@ def compact_rows(bam, chrom, region_start, region_end, *, legacy_frame_value=Non
                 min_fp_quality=min_fp_quality, molecular_layers=molecular_layers)
     rows = []
     for read in _anchors(bam, chrom, region_start, region_end, include_duplicates, row_rule, hidden, include_chimeras):
+        if not read_has_footprint_calls(read):
+            # FiberBrowser's uncalled-read rule: a record the caller skipped is not measured, so it is in neither
+            # the numerator nor the denominator (its neutral placeholder tile would count as accessible).
+            continue
         if row_rule == 'records':
             tiles = _record_tiles(read, read.reference_start, read.reference_end, **opts)
             if tiles:

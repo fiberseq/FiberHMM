@@ -267,6 +267,42 @@
   `Ma` molecules, and the `fiberhmm-extract` tag sniff, `fiberhmm-utils
   ma-types --scan` and `fiberhmm-check` see `Ma` calls.
 
+- **Scan peaks leave uncalled reads out of the counts.** A read without
+  footprint annotations (no MA/Ma `nuc`/`msp`/`tf` group, no ns/nl or as/al
+  array pair) was a neutral zero-size tile that counted as accessible, so a
+  few uncalled reads made a Strong peak. Such reads are now in neither the
+  numerator nor the total (FiberBrowser's uncalled-read rule).
+
+- Scan unit cache keys include the unit's contig and mode, so `--continue`
+  (or an extended browser scan) never reuses a BED unit's result for a grid
+  unit over the same span.
+
+- `fiberhmm-scan --bed --annotate` writes each record once without comparing
+  it with every earlier BED interval: the deduplication was quadratic (about
+  5×10⁹ comparisons for 100k intervals) and is now linear after the sort.
+
+- **`fiberhmm-scan --genome --contigs <subset> --annotate` no longer copies
+  the whole genome.** The plan records `units.contigs_restricted`; a
+  restricted scan's annotated BAMs hold the scanned contigs' records (scope
+  `units`), and records on contigs without units pass through unchanged
+  instead of losing earlier scan groups (`fp`, `fpcls`, `nucsz`, ...).
+
+- A nuc scan with `--no-nucreg`, or with patches or geometries off (the
+  default for patches), no longer declares or owns `nucreg`, `nucpatch` or
+  `nucgeo`: it writes no header contract for them, lists only active groups in
+  the manifest, and an annotated BAM keeps such groups from an earlier scan.
+
+- Scan `nfr` writes no `nfrmol` row or MA group for a record with fewer than
+  two nucleosomes (uncalled records included); the all-missing row (`AQ`
+  255×4) made such records look called.
+
+- **Scan finalize no longer expands nuc tracks over whole chromosomes.** The
+  nuc `stitch` (and the scan-wide FDR pass) read territory runs in 1 Mb
+  chunks and keep only tested window starts, instead of several float64
+  per-base arrays per run (about 115 MiB per Mb, ~24 GiB for a 250 Mb
+  chromosome). Outputs are unchanged; peak memory no longer grows with the
+  contig (~150 MiB on a synthetic 32 Mb run, against ~0.9 GiB for 8 Mb before).
+
 ## 3.1.0
 
 Includes the unreleased 3.0.6 changes.

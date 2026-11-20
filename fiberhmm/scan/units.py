@@ -175,7 +175,9 @@ def plan(reference: Mapping[str, int], *, genome: bool = False, contigs: Optiona
         if missing:
             raise PlanError(f'contig(s) not in the BAM header: {", ".join(missing)}')
         chosen.sort(key=lambda c: order[c])
-        info.update(mode='grid', contigs=chosen)
+        # contigs_restricted: --contigs left out some contig of the header, so the scan is not genome-wide
+        # (annotated BAMs then hold the scanned contigs' records only, and other contigs are not touched).
+        info.update(mode='grid', contigs=chosen, contigs_restricted=len(chosen) < len(reference))
         for chrom in chosen:
             units.extend(_grid_units(chrom, 0, int(reference[chrom]), unit_bp, stride_bp, grid_offset, len(units)))
         return tuple(units), info
