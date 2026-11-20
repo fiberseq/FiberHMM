@@ -130,7 +130,7 @@ def finalize(out: Path, manifest: dict, datasets, reference: Mapping[str, int], 
                                              COMMON + MOLECULE_COLUMNS + mod.scalar_names(), order)
             w['units'] = TableWriter(out / name / 'units.tsv.bgz', COMMON + EVIDENCE_COLUMNS, order)
         writers[name] = w
-        decls[name] = {g.group: g for g in mod.ma_groups()}
+        decls[name] = {g.group: g for g in mod.active_ma_groups(settings)}
         seam_components[name] = 0
         if mod.reconcile == 'stitch':
             open_ends[name] = 0
@@ -454,7 +454,7 @@ def _open_annotated(out: Path, manifest, datasets, mods, decls, command):
     lines = []
     for name, mod, settings in mods:
         extra = mod.ma_group_provenance(settings) or {}
-        for g in mod.ma_groups():
+        for g in mod.active_ma_groups(settings):
             groups.append(g.group)
             lines.append(dict(g.to_json(), **extra.get(g.group, {}), module=name, module_version=mod.version,
                               scan_id=manifest['scan_id'], settings_hash=I.settings_hash(settings)))
@@ -480,7 +480,7 @@ def _open_annotated(out: Path, manifest, datasets, mods, decls, command):
             tmp = target_dir / ('.' + name + '.tmp')
             dest = pysam.AlignmentFile(str(tmp), 'wb', header=header)
             handles[(ds.dataset_id, i)] = dict(src=src, dest=dest, tmp=tmp, final=target_dir / name, dataset=ds,
-                                               owned={g.group: g.spec for _n, m, _s in mods for g in m.ma_groups()},
+                                               owned={g.group: g.spec for _n, m, s in mods for g in m.active_ma_groups(s)},
                                                input_index=i, source=path, written=0, marked=0, skipped=0)
     return handles
 

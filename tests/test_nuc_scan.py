@@ -704,3 +704,42 @@ def test_measured_track_excludes_alignment_holes_and_low_information():
     assert kinds['reg'] == [(200, 800)] and kinds['low'] == [(800, 850)]
     assert kinds['und'] == [(850, 1100)]
     assert kinds['uds'] == [(450, 750)] and kinds['mis'] == [(900, 960)]
+
+
+def test_disabled_nuc_groups_are_neither_declared_nor_owned(scan_bam, tmp_path):
+    """M13: with --no-nucreg (nucreg None), and patches / geometries off, nucreg / nucpatch / nucgeo are not
+    in the scan's header contracts or owned groups, so an earlier scan's groups survive."""
+    from fiberhmm.io.scan_ma import scan_contracts
+    from fiberhmm.scan.modules.nuc import NucModule
+    mod = NucModule()
+    names = lambda params: {g.group for g in mod.active_ma_groups(mod.resolve(params))}
+    every = {g.group for g in mod.ma_groups()}
+    assert names({}) == every - {'nucpatch', 'nucgeo'}                       # patches are off by default
+    assert names({'nucreg': None}) == every - {NUCREG, 'nucpatch', 'nucgeo'}
+    assert names({'nucpatch': {'ref_median': 190.0}}) == every
+    assert names({'nucpatch': {'ref_median': 190.0}, 'nucgeo': None}) == every - {'nucgeo'}
+    first = tmp_path / 'first'
+    _scan(first, scan_bam, annotate=True)
+    m = json.loads((first / 'manifest.json').read_text())
+    src = first / m['outputs']['annotated'][0]['path']
+    with pysam.AlignmentFile(str(src)) as bam:
+        assert NUCREG in scan_contracts(bam.header) and 'nucpatch' not in scan_contracts(bam.header)
+        before = {r.query_name: _nucreg_parts(r) for r in bam.fetch(until_eof=True)}
+    assert any(before.values())
+    units = plan({'chrS': LENGTH}, genome=True, contigs=['chrS'])
+    second = tmp_path / 'second'
+    run_units([{'dataset_id': 'synth', 'paths': [str(src)]}], units, modules=['nuc'],
+              params={'nuc': {'calibration': 'self', 'calibration_population': 400, 'nucreg': None}},
+              out=second, annotate=True)
+    m2 = json.loads((second / 'manifest.json').read_text())
+    assert NUCREG not in {g['group'] for g in m2['modules']['nuc']['ma_groups']}
+    with pysam.AlignmentFile(str(second / m2['outputs']['annotated'][0]['path'])) as bam:
+        contracts = scan_contracts(bam.header)
+        assert contracts[NUCREG]['scan_id'] == m['scan_id'] and contracts[NUCSZ]['scan_id'] == m2['scan_id']
+        after = {r.query_name: _nucreg_parts(r) for r in bam.fetch(until_eof=True)}
+    assert after == before
+
+
+def _nucreg_parts(read):
+    ma = str(read.get_tag('MA')) if read.has_tag('MA') else ''
+    return [p for p in ma.split(';')[1:] if p.startswith(NUCREG + '.')]

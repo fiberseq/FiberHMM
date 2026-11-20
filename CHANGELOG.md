@@ -206,6 +206,11 @@
   `units`), and records on contigs without units pass through unchanged
   instead of losing earlier scan groups (`fp`, `fpcls`, `nucsz`, ...).
 
+- A nuc scan with `--no-nucreg`, or with patches or geometries off (the
+  default for patches), no longer declares or owns `nucreg`, `nucpatch` or
+  `nucgeo`: it writes no header contract for them, lists only active groups in
+  the manifest, and an annotated BAM keeps such groups from an earlier scan.
+
 ## 3.1.0
 
 Includes the unreleased 3.0.6 changes.

@@ -64,6 +64,11 @@ class ScanModuleBase:
     def ma_groups(self) -> List[MAGroupDecl]:
         return []
 
+    def active_ma_groups(self, settings: Mapping[str, Any]) -> List[MAGroupDecl]:
+        """The groups a scan with these settings writes, owns (replaces on every annotated record) and declares
+        in the header; by default every group of :meth:`ma_groups`."""
+        return self.ma_groups()
+
     def ma_group_provenance(self, settings: Mapping[str, Any]) -> Mapping[str, dict]:
         """Extra fields for the header contract line of each group (group -> dict), e.g. settings a reader
         needs to interpret the group's bytes."""

@@ -248,6 +248,20 @@ class NucModule(ScanModuleBase):
                                an='hit_id'))
         return out
 
+    def active_ma_groups(self, settings: Mapping[str, Any]) -> List[MAGroupDecl]:
+        """Only the groups these settings write: with ``--no-nucreg`` / patches or geometries off, nucreg /
+        nucpatch / nucgeo are neither declared nor owned, so an annotated BAM keeps such groups from an earlier
+        scan (and their header contracts) instead of losing them."""
+        from fiberhmm.nuc.tags import NUCPATCH, NUCREG
+        off = set()
+        if settings.get('nucreg') is None:
+            off.add(NUCREG)
+        if settings.get('nucpatch') is None:
+            off.update((NUCPATCH, 'nucgeo'))
+        elif settings.get('nucgeo') is None:
+            off.add('nucgeo')
+        return [g for g in self.ma_groups() if g.group not in off]
+
     def state_columns(self) -> List[str]:
         return ['reason', 'patch_start', 'patch_end']
 
