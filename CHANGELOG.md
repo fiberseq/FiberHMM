@@ -163,6 +163,25 @@
 
 ### Fixed
 
+- `fiberhmm-lift` no longer keeps stale DAF evidence. On a read that changes
+  strand the insertion evidence `ei:Z` is mirrored and its CT/GA strand
+  switched with `SEQ` (a strand-changing `2M3I5M` → `5M3I2M` lift now gives
+  positions 5–7 GA, not 2–4 CT), and it is shifted onto filled hard clips or
+  removed when it no longer fits `SEQ`. The caller's reference SNP mask is in
+  source coordinates: evidence replay (`fiberhmm-nuc` etc.) no longer applies
+  it to a BAM lifted after its last `fiberhmm-call`, and uses no `ei` while a
+  lift is unrepaired; both are recorded as warnings.
+- `fiberhmm-lift --engine vg`: records `vg surject` returns unmapped are
+  skipped and counted as not lifted (`unmapped_skipped`), instead of being
+  written as unmapped supplementaries (invalid `0x4|0x800`), tagged `Yo` and
+  counted as lifted.
+- BED12 lift: per-block columns in `bigBedToBed`'s trailing-comma form
+  (`10,20,30,`) are subset and reversed with the blocks on a partial or
+  reverse lift (they were left unchanged, so `bedToBigBed` rejected the
+  file). On a reverse lift the `blockEl`/`blockEr` edge-score columns also
+  swap, found by name in a `bigBedToBed -header` line or given with the new
+  `--edge-columns`. BED3/BED4 and `.`-stranded rows that change orientation
+  are counted in the "changed strand" total.
 - BED12 lift: a column containing `;` (a verbatim SAM `SA` tag, as in
   `fiberhmm_sv` rows) is no longer treated as a per-block list when its comma
   count happens to equal blockCount.

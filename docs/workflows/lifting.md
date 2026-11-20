@@ -84,6 +84,9 @@ is repaired (the table lists what the vg stages leave; `liftbam` keeps
 | supplementary alignments lose `0x800` and become extra primaries | `FLAG` restored from the source (one primary per read) |
 | hard clips are dropped (`649M1845H` → `649M`) | hard-clipped supplementaries get the clipped bases from their primary before the lift, as soft clips (see below); one whose primary is not in the input is left out and counted |
 | `st` keeps its value on reads that change strand | `st` switched `CT` ↔ `GA` (DAF readers otherwise see no deamination) |
+| DAF insertion evidence (`ei:Z`, SEQ positions and strand) stays as written on reads that change strand | positions mirrored and strand switched with `SEQ` (`insert_evidence_flipped`); a tag that no longer fits `SEQ` is removed (`insert_evidence_dropped`) |
+| the DAF SNP mask in the `fiberhmm-call` `@PG` is in source coordinates | not applied when calls are replayed on the lifted BAM (`fiberhmm-nuc` etc.): aligned sites are unmasked, as for a legacy BAM, with a warning. Re-run `fiberhmm-call` on the target to mask target SNPs |
+| `vg surject` writes reads it could not project as unmapped records | skipped and counted as not lifted (`unmapped_skipped`) |
 | footprint tags in SEQ frame (FiberHMM ≤ 2.12) end up mirrored on those reads | converted to molecular frame before the lift |
 | `MD`, `NM`, `SA` describe the source alignment | recomputed against `--target-fasta` (`samtools calmd`; `SA` rebuilt from the lifted parts); without it they are removed |
 | `MAPQ` | kept from the source alignment by default (see [MAPQ](#mapq)) |
@@ -213,7 +216,8 @@ fiberhmm-lift --bed -i calls_nucleosome.bed -o calls_nucleosome.grch38.bed \
     has integer columns 7–8 within the row.
 - **BED12 rows with unliftable blocks** (`--bed12-partial`). By default
   (`keep`) a row keeps the blocks that lift: blockCount, sizes, starts and
-  the row bounds are recomputed (per-block columns are subset too), and each
+  the row bounds are recomputed (per-block columns are subset too, also
+  `bigBedToBed`'s `10,20,30,` form with a trailing comma), and each
   dropped block goes to `--unlifted` as a BED6 row in source coordinates,
   named `<row name>|<block index>`, after a `#partial_<reason>` line. With
   `drop` the whole row is dropped when one of its blocks does not lift
@@ -224,6 +228,14 @@ fiberhmm-lift --bed -i calls_nucleosome.bed -o calls_nucleosome.grch38.bed \
   molecule into a primary and a supplementary (across a large target-only
   gap, say): `keep` writes the blocks of both pieces in one row, while
   `fiberhmm-extract` writes the primary only.
+- **Rows that change strand.** A BED12 row takes the opposite strand and its
+  per-block columns are reversed with the blocks. Per-block genomic left/right
+  edge scores (`fiberhmm-extract --block-scores` `blockEl`/`blockEr`) also
+  trade columns; they are found by name in a column header
+  (`bigBedToBed -header`), or given with `--edge-columns 14,15` (1-based;
+  nucleosome and tf rows). Without either they are reversed but not swapped.
+  BED3/BED4 and `.`-stranded rows keep their strand column, but their flips
+  are counted in the "changed strand" total.
 - **Native rules.** An interval runs from its first to its last projected
   base, so bases with no target counterpart (an insertion in the source)
   shrink it. An interval that lands in several pieces (across an inversion

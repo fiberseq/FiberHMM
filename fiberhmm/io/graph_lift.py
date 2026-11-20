@@ -76,7 +76,12 @@ Decisions:
 - Without a target FASTA the repair drops MD, NM and SA (SA needs NM) and
   says so in its @PG; with one it recomputes MD/NM (``samtools calmd``) and
   rebuilds SA from the lifted sibling records.
-- Secondary and unmapped source records are not lifted; supplementaries
+- DAF insertion evidence (``ei:Z``, SEQ-frame) is mirrored with its strand
+  on a strand change and shifted onto filled hard clips; the reference SNP
+  mask in the caller's @PG is in source coordinates, and replay does not
+  apply it to a lifted BAM (:mod:`fiberhmm.daf.replay`).
+- Secondary and unmapped source records are not lifted, and a record the
+  lift returns unmapped (vg surject) is skipped, not written; supplementaries
   whose primary did not lift are dropped (no promotion), so every QNAME
   keeps exactly one primary.
 """
@@ -506,6 +511,8 @@ def fill_hard_clips(read, primary: dict, notes: Optional[Dict[str, int]] = None)
     # Setting SEQ clears QUAL; QUAL is set again only when the primary has one.
     read.query_sequence = new_seq
     read.cigartuples = cigar
+    from fiberhmm.daf.replay import lift_insert_evidence
+    lift_insert_evidence(read, partial, offset=left)    # SEQ-frame ``ei``: shift it
     if new_qual is not None:
         read.query_qualities = new_qual
     new_mol = revcomp(new_seq) if read.is_reverse else new_seq
@@ -1029,6 +1036,9 @@ class RepairStats:
     strand_flipped: int = 0
     st_swapped: int = 0
     hard_clips_restored: int = 0
+    insert_evidence_flipped: int = 0
+    insert_evidence_dropped: int = 0
+    unmapped_skipped: int = 0
     unstashed: int = 0
     sa_rewritten: int = 0
     sa_dropped: int = 0
@@ -1127,6 +1137,15 @@ def repair_record(read, stats: RepairStats, mapq: str = MAPQ_SOURCE) -> bool:
             if swapped is not None:
                 read.set_tag("st", swapped, value_type="Z")
                 stats.st_swapped += 1
+    if not read.is_unmapped:
+        # DAF insertion evidence (``ei``) is SEQ-frame: mirror it with the
+        # strand on a strand change; drop it when it no longer fits SEQ.
+        from fiberhmm.daf.replay import lift_insert_evidence
+        kept = lift_insert_evidence(read, len(read.query_sequence or ""), reverse=flipped)
+        if kept is True and flipped:
+            stats.insert_evidence_flipped += 1
+        elif kept is False:
+            stats.insert_evidence_dropped += 1
     if mapq != MAPQ_SOURCE:
         read.mapping_quality = int(mapq.split(":", 1)[1])
     elif read.has_tag(TAG_SOURCE_MAPQ):
@@ -1235,6 +1254,9 @@ def lift_pg_record(*, repair: RepairStats, calmd: bool, mode: str = "lift",
     parts.append(f"orphan_supplementary_dropped={repair.orphan_supplementary_dropped}")
     parts.append(f"orphan_supplementary_marked={repair.orphan_supplementary_kept}")
     parts.append(f"st_swapped={repair.st_swapped}")
+    for key in ("insert_evidence_flipped", "insert_evidence_dropped", "unmapped_skipped"):
+        if getattr(repair, key):
+            parts.append(f"{key}={getattr(repair, key)}")
     parts.append(f"mapq={mapq} provenance_tags={TAG_SOURCE_MAPQ},{TAG_SOURCE_LOCUS}")
     return {
         "PN": LIFT_PROGRAM,
@@ -1291,7 +1313,9 @@ def repair_bam(lifted_path: str, out_path: str, *, work_dir: str,
     apart exactly (else :func:`pending_lift_indices` infers them). The
     output is written next to ``out_path`` first and moved into place, so
     ``work_dir`` may be on another file system; a failure never removes a
-    finished output."""
+    finished output. Unmapped records (reads vg surject could not project)
+    did not lift: they are skipped and counted (``unmapped_skipped``), never
+    written, tagged or counted as lifted."""
     planned = RepairStats()
     supp_counts: Dict[str, int] = defaultdict(int)
     used_contigs = set()
@@ -1302,9 +1326,13 @@ def repair_bam(lifted_path: str, out_path: str, *, work_dir: str,
                               "fiberhmm-lift @PG)")
         for read in bam.fetch(until_eof=True):
             planned.records_in += 1
+            if read.is_unmapped:
+                # vg surject writes a read it could not project as unmapped;
+                # keeping its 0x800 would be invalid SAM. It did not lift.
+                planned.unmapped_skipped += 1
+                continue
             repair_record(read, planned, mapq)
-            if not read.is_unmapped:
-                used_contigs.add(read.reference_name)
+            used_contigs.add(read.reference_name)
             if read.is_supplementary:
                 supp_counts[read.query_name] += 1
     primary_names = set()
@@ -1335,6 +1363,9 @@ def repair_bam(lifted_path: str, out_path: str, *, work_dir: str,
             pysam.AlignmentFile(unsorted, "wb", header=out_header, threads=threads) as out:
         for read in bam.fetch(until_eof=True):
             stats.records_in += 1
+            if read.is_unmapped:
+                stats.unmapped_skipped += 1
+                continue
             lifted_supplementary = read.is_supplementary
             repair_record(read, stats, mapq)
             if read.is_supplementary:
@@ -1395,6 +1426,7 @@ class BedStats:
     rows_split: int = 0
     rows_rearranged: int = 0
     rows_flipped: int = 0
+    edge_columns_swapped: int = 0
     rows_partial: int = 0
     blocks_dropped: int = 0
     rows_unlifted: int = 0
@@ -1488,6 +1520,36 @@ def explode_bed12(lines: Iterable[str], unstranded_as: Optional[str] = None
     return ["\t".join(str(v) for v in r) for r in bed6], rows, header
 
 
+EDGE_COLUMN_NAMES = ("blockEl", "blockEr")
+
+
+def bed_edge_columns(header_lines: Iterable[str], explicit: Optional[str] = None
+                     ) -> Optional[Tuple[int, int]]:
+    """0-based ``(left, right)`` edge-score columns of a BED12+N file, or None.
+
+    ``explicit``: ``"L,R"`` 1-based column numbers. Otherwise a column-name
+    header (``bigBedToBed -header``: ``#chrom<TAB>chromStart...``) naming
+    ``blockEl`` and ``blockEr``. Without either the columns are unknown (a
+    BED file does not carry its autoSQL), and nothing is swapped."""
+    if explicit:
+        try:
+            left, right = (int(v) - 1 for v in explicit.split(","))
+        except ValueError:
+            raise ValueError(f"edge columns must be two 1-based column numbers 'L,R': "
+                             f"{explicit!r}") from None
+        if min(left, right) < 12 or left == right:
+            raise ValueError(f"edge columns must be two distinct columns after the 12th: "
+                             f"{explicit!r}")
+        return left, right
+    for line in header_lines:
+        if not line.startswith("#"):
+            continue
+        names = line.lstrip("#").split()
+        if names[:1] == ["chrom"] and all(n in names for n in EDGE_COLUMN_NAMES):
+            return tuple(names.index(n) for n in EDGE_COLUMN_NAMES)
+    return None
+
+
 def _parse_lifted_units(lifted: Iterable[str]):
     """``{row: {unit: (chrom, start, end, strand)}}`` of lifted ``<row>|<unit>`` rows
     (a unit seen twice is kept as a list under ``(unit, 'dup')``)."""
@@ -1512,7 +1574,9 @@ def _parse_lifted_units(lifted: Iterable[str]):
 def reassemble_bed12(lifted: Iterable[str], rows: List[list],
                      dropped: Optional[list] = None, *,
                      explicit_strand: bool = False, partial: str = "drop",
-                     dropped_blocks: Optional[list] = None) -> Tuple[List[str], BedStats]:
+                     dropped_blocks: Optional[list] = None,
+                     edge_columns: Optional[Tuple[int, int]] = None
+                     ) -> Tuple[List[str], BedStats]:
     """BED12 rows rebuilt from lifted BED6 blocks (named ``<row>|<block>``).
 
     A row is dropped (counted) when a block did not lift, its blocks land on
@@ -1535,7 +1599,10 @@ def reassemble_bed12(lifted: Iterable[str], rows: List[list],
     order. ``explicit_strand`` (liftbed, which swaps the strand column on a
     ``-`` chain; explode with ``unstranded_as="+"``) takes the flip from the
     lifted strand alone and drops a multi-block row whose block order does
-    not agree with it as rearranged."""
+    not agree with it as rearranged. ``edge_columns`` (0-based, from
+    :func:`bed_edge_columns`): the per-block genomic left/right edge-score
+    columns (``blockEl``/``blockEr``), whose values swap columns on a row
+    that changed strand (after the per-block reversal)."""
     if partial not in BED12_PARTIAL:
         raise ValueError(f"partial must be one of {BED12_PARTIAL}")
 
@@ -1615,17 +1682,25 @@ def reassemble_bed12(lifted: Iterable[str], rows: List[list],
             if dropped_blocks is not None:
                 dropped_blocks.extend((index, k) for k in sorted(set(range(count)) - set(kept)))
         for col in range(12, len(new)):
-            # A per-block column is a plain comma list with one item per block. A
+            # A per-block column is a plain comma list with one item per block
+            # (bigBedToBed writes int[blockCount] with a trailing comma). A
             # SAM SA tag (``chr,pos,strand,CIGAR,mapq,NM;`` entries) is a row-level
             # value whose comma count can match blockCount by chance; ';' marks it.
             if ";" in new[col]:
                 continue
-            values = new[col].split(",")
+            trailing = new[col].endswith(",")
+            values = new[col].rstrip(",").split(",") if trailing else new[col].split(",")
             if count > 1 and len(values) == count:
                 values = [values[k] for k in kept]
                 if flipped and n > 1:
                     values.reverse()
-                new[col] = ",".join(values)
+                new[col] = ",".join(values) + ("," if trailing else "")
+        if flipped and edge_columns is not None:
+            # Genomic left/right edge scores trade places on a reverse lift.
+            left, right = edge_columns
+            if max(left, right) < len(new):
+                new[left], new[right] = new[right], new[left]
+                stats.edge_columns_swapped += 1
         if flipped:
             stats.rows_flipped += 1
             new[5] = _FLIP_STRAND.get(original, original)
@@ -1683,14 +1758,22 @@ def explode_bed_rows(lines: Iterable[str], *, thick: bool = False, summit: bool 
 
 
 def reassemble_bed_rows(lifted: Iterable[str], rows: List[list], *, thick: bool = False,
-                        summit: bool = False, dropped: Optional[list] = None
+                        summit: bool = False, dropped: Optional[list] = None,
+                        unstranded_as: Optional[str] = None
                         ) -> Tuple[List[str], BedStats]:
     """Rows of ``explode_bed_rows`` rebuilt from their lifted units: chrom, start and end
     from ``<row>|m`` (a ``+``/``-`` strand column from it too: liftbed swaps it on a
     ``-`` chain, ft copies it), thickStart/thickEnd as in ``reassemble_bed12``, the
     summit as its lifted base's offset from the new start (-1 when it did not lift or
     landed outside the row; -1 stays -1). Other columns are copied. ``dropped`` receives
-    ``(row index, 'unlifted')`` for rows whose interval did not lift."""
+    ``(row index, 'unlifted')`` for rows whose interval did not lift.
+
+    ``rows_flipped`` counts every row that changed orientation. A BED3/BED4 or
+    ``.``-stranded row keeps its strand column (it has none to swap), and its
+    flip is known only when it was exploded with ``unstranded_as`` (the same
+    value here) and lifted by an engine that swaps the strand column on a
+    ``-`` chain (liftbed, vg BED); ft copies the column, so such a flip is
+    invisible and not counted."""
     stats = BedStats(rows_in=len(rows))
     units = _parse_lifted_units(lifted)
     out = []
@@ -1705,8 +1788,11 @@ def reassemble_bed_rows(lifted: Iterable[str], rows: List[list], *, thick: bool 
         chrom, start, end, strand = main
         new = list(fields)
         new[0], new[1], new[2] = chrom, str(start), str(end)
-        if len(new) > 5 and new[5] in _FLIP_STRAND and strand in _FLIP_STRAND and strand != new[5]:
-            new[5] = strand
+        if len(new) > 5 and new[5] in _FLIP_STRAND:
+            if strand in _FLIP_STRAND and strand != new[5]:
+                new[5] = strand
+                stats.rows_flipped += 1
+        elif unstranded_as in _FLIP_STRAND and strand == _FLIP_STRAND[unstranded_as]:
             stats.rows_flipped += 1
         if thick:
             ts, te = _lifted_thick(fields, start, end, chrom, row_units.get("t"), stats)
