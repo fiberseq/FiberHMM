@@ -92,6 +92,8 @@ from typing import Dict, Iterable, List, Optional, Tuple
 import numpy as np
 import pysam
 
+from fiberhmm.io.legacy_tags import LEGACY_PAIRS, array_tag_pair, has_legacy_pair, int_array
+
 TAG_FLAG = "Yf"
 TAG_HARDCLIP = "Yh"
 TAG_ORPHAN = "Yo"
@@ -187,7 +189,7 @@ def _require_legacy_frame(read) -> None:
     :func:`~fiberhmm.io.frame_carry.carry_to_molecular` would silently drop
     those tags; lifting is not the place to lose them. Checked on every
     record that is converted, not on a sample."""
-    if not read.is_reverse or not (read.has_tag("ns") or read.has_tag("as")):
+    if not read.is_reverse or not has_legacy_pair(read):
         return
     from fiberhmm.io.annotation_frame import legacy_frame_of
 
@@ -338,16 +340,17 @@ def annotations_valid(read, length: int) -> bool:
             return False
         if read.has_tag(an_tag) and len(parse_an_tag(str(read.get_tag(an_tag)))) != len(intervals):
             return False
-    for start_tag, size_tag, score_tag in (("ns", "nl", "nq"), ("as", "al", "aq")):
-        if not (read.has_tag(start_tag) or read.has_tag(size_tag)):
-            continue
-        if not (read.has_tag(start_tag) and read.has_tag(size_tag)):
+    for start_tag, size_tag, score_tag in LEGACY_PAIRS:
+        pair = array_tag_pair(read, start_tag, size_tag)
+        if pair is None:
+            continue          # array-pair rule: not two integer arrays of equal length = no legacy calls
+        starts, sizes = pair
+        if any(s + n > length for s, n in zip(starts, sizes)):
             return False
-        starts, sizes = list(read.get_tag(start_tag)), list(read.get_tag(size_tag))
-        if len(starts) != len(sizes) or any(s + n > length for s, n in zip(starts, sizes)):
-            return False
-        if read.has_tag(score_tag) and len(read.get_tag(score_tag)) != len(starts):
-            return False
+        if read.has_tag(score_tag):
+            scores = int_array(read.get_tag(score_tag))
+            if scores is None or len(scores) != len(starts):
+                return False
     return True
 
 
@@ -407,11 +410,10 @@ def annotation_scope(read, partial: int, total: int) -> Optional[str]:
                 return None
             return "partial" if length == partial else "whole" if length == total else None
     ends = []
-    for start_tag, size_tag in (("ns", "nl"), ("as", "al")):
-        if read.has_tag(start_tag) and read.has_tag(size_tag):
-            ends += [s + n for s, n in zip(read.get_tag(start_tag), read.get_tag(size_tag))]
-        elif read.has_tag(start_tag) or read.has_tag(size_tag):
-            return None
+    for start_tag, size_tag, _score_tag in LEGACY_PAIRS:
+        pair = array_tag_pair(read, start_tag, size_tag)   # array-pair rule; anything else is no calls
+        if pair is not None:
+            ends += [s + n for s, n in zip(*pair)]
     if not ends:
         return "none"
     if max(ends) <= partial:
@@ -423,9 +425,10 @@ def _shift_footprints(read, offset: int, total: int) -> None:
     for tag in ("MA", "Ma"):
         if read.has_tag(tag):
             read.set_tag(tag, _shift_ma(str(read.get_tag(tag)), offset, total), value_type="Z")
-    for tag in ("ns", "as"):
-        if read.has_tag(tag):
-            read.set_tag(tag, array.array("I", [int(v) + offset for v in read.get_tag(tag)]))
+    for start_tag, size_tag, _score_tag in LEGACY_PAIRS:
+        pair = array_tag_pair(read, start_tag, size_tag)
+        if pair is not None:
+            read.set_tag(start_tag, array.array("I", [v + offset for v in pair[0]]))
 
 
 def _mark_unassessed(groups, old_mol: str, new_mol: str) -> list:
@@ -556,6 +559,12 @@ def _stash_tags(read, hard: Optional[str]) -> None:
         read.set_tag(TAG_HARDCLIP, None)
 
 
+def _footprint_snapshot(read) -> tuple:
+    """MA and the valid legacy pairs of ``read``, to tell whether a frame carry changed them."""
+    return (read.get_tag("MA") if read.has_tag("MA") else None,
+            array_tag_pair(read, "ns", "nl"), array_tag_pair(read, "as", "al"))
+
+
 def _to_molecular(read, stats: Optional["StashStats"] = None) -> bool:
     """Carry the record's footprint tags into molecular frame. A record
     whose MA cannot be carried (malformed MA/AQ/AN) stops the run
@@ -568,9 +577,7 @@ def _to_molecular(read, stats: Optional["StashStats"] = None) -> bool:
     if not read.is_reverse:
         return True
     _require_legacy_frame(read)
-    before = (read.get_tag("MA") if read.has_tag("MA") else None,
-              tuple(read.get_tag("ns")) if read.has_tag("ns") else None,
-              tuple(read.get_tag("as")) if read.has_tag("as") else None)
+    before = _footprint_snapshot(read)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", RuntimeWarning)
         carry_to_molecular(read)
@@ -581,9 +588,7 @@ def _to_molecular(read, stats: Optional["StashStats"] = None) -> bool:
             "published as molecular while still in SEQ frame; fix or strip them, then lift.")
     for warning in caught:
         warnings.warn(warning.message, warning.category, stacklevel=2)
-    after = (read.get_tag("MA") if read.has_tag("MA") else None,
-             tuple(read.get_tag("ns")) if read.has_tag("ns") else None,
-             tuple(read.get_tag("as")) if read.has_tag("as") else None)
+    after = _footprint_snapshot(read)
     if stats is not None and before != after:
         stats.frame_converted += 1
     return True
