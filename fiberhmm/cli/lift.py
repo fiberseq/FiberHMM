@@ -184,10 +184,12 @@ def run_liftbam(stashed: str, lifted: str, *, liftbam: str, lift_map: str, threa
 
 
 def _count_records(path: str, threads: int) -> int:
+    """Lifted records: the mapped ones (vg surject writes a read it could not
+    project as unmapped; the repair skips those)."""
     import pysam
 
     with pysam.AlignmentFile(path, "rb", check_sq=False, threads=threads) as bam:
-        return sum(1 for _ in bam.fetch(until_eof=True))
+        return sum(1 for read in bam.fetch(until_eof=True) if not read.is_unmapped)
 
 
 def _graph_lift(args, work_dir: str) -> int:
@@ -306,6 +308,11 @@ def _report(stats, stash_info: dict) -> None:
           + f"; restored 0x800 on {stats.supplementary_restored}, kept "
           f"{stats.orphan_supplementary_kept} orphan supplementaries (Yo:i:1); "
           f"{stats.strand_flipped} changed strand (st swapped on {stats.st_swapped}); "
+          + (f"{stats.unmapped_skipped} unmapped lift records skipped; "
+             if stats.unmapped_skipped else "")
+          + (f"DAF insertion evidence mirrored on {stats.insert_evidence_flipped}, dropped "
+             f"on {stats.insert_evidence_dropped}; "
+             if stats.insert_evidence_flipped or stats.insert_evidence_dropped else "")
           + ("MD/NM recomputed, SA rebuilt" if stats.calmd
              else "MD/NM/SA dropped (pass --target-fasta to recompute them)"),
           file=sys.stderr)

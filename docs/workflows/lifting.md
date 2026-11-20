@@ -84,6 +84,9 @@ is repaired (the table lists what the vg stages leave; `liftbam` keeps
 | supplementary alignments lose `0x800` and become extra primaries | `FLAG` restored from the source (one primary per read) |
 | hard clips are dropped (`649M1845H` → `649M`) | hard-clipped supplementaries get the clipped bases from their primary before the lift, as soft clips (see below); one whose primary is not in the input is left out and counted |
 | `st` keeps its value on reads that change strand | `st` switched `CT` ↔ `GA` (DAF readers otherwise see no deamination) |
+| DAF insertion evidence (`ei:Z`, SEQ positions and strand) stays as written on reads that change strand | positions mirrored and strand switched with `SEQ` (`insert_evidence_flipped`); a tag that no longer fits `SEQ` is removed (`insert_evidence_dropped`) |
+| the DAF SNP mask in the `fiberhmm-call` `@PG` is in source coordinates | not applied when calls are replayed on the lifted BAM (`fiberhmm-nuc` etc.): aligned sites are unmasked, as for a legacy BAM, with a warning. Re-run `fiberhmm-call` on the target to mask target SNPs |
+| `vg surject` writes reads it could not project as unmapped records | skipped and counted as not lifted (`unmapped_skipped`) |
 | footprint tags in SEQ frame (FiberHMM ≤ 2.12) end up mirrored on those reads | converted to molecular frame before the lift |
 | `MD`, `NM`, `SA` describe the source alignment | recomputed against `--target-fasta` (`samtools calmd`; `SA` rebuilt from the lifted parts); without it they are removed |
 | `MAPQ` | kept from the source alignment by default (see [MAPQ](#mapq)) |

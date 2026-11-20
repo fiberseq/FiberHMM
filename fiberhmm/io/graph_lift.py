@@ -76,7 +76,12 @@ Decisions:
 - Without a target FASTA the repair drops MD, NM and SA (SA needs NM) and
   says so in its @PG; with one it recomputes MD/NM (``samtools calmd``) and
   rebuilds SA from the lifted sibling records.
-- Secondary and unmapped source records are not lifted; supplementaries
+- DAF insertion evidence (``ei:Z``, SEQ-frame) is mirrored with its strand
+  on a strand change and shifted onto filled hard clips; the reference SNP
+  mask in the caller's @PG is in source coordinates, and replay does not
+  apply it to a lifted BAM (:mod:`fiberhmm.daf.replay`).
+- Secondary and unmapped source records are not lifted, and a record the
+  lift returns unmapped (vg surject) is skipped, not written; supplementaries
   whose primary did not lift are dropped (no promotion), so every QNAME
   keeps exactly one primary.
 """
@@ -506,6 +511,8 @@ def fill_hard_clips(read, primary: dict, notes: Optional[Dict[str, int]] = None)
     # Setting SEQ clears QUAL; QUAL is set again only when the primary has one.
     read.query_sequence = new_seq
     read.cigartuples = cigar
+    from fiberhmm.daf.replay import lift_insert_evidence
+    lift_insert_evidence(read, partial, offset=left)    # SEQ-frame ``ei``: shift it
     if new_qual is not None:
         read.query_qualities = new_qual
     new_mol = revcomp(new_seq) if read.is_reverse else new_seq
@@ -1029,6 +1036,9 @@ class RepairStats:
     strand_flipped: int = 0
     st_swapped: int = 0
     hard_clips_restored: int = 0
+    insert_evidence_flipped: int = 0
+    insert_evidence_dropped: int = 0
+    unmapped_skipped: int = 0
     unstashed: int = 0
     sa_rewritten: int = 0
     sa_dropped: int = 0
@@ -1127,6 +1137,15 @@ def repair_record(read, stats: RepairStats, mapq: str = MAPQ_SOURCE) -> bool:
             if swapped is not None:
                 read.set_tag("st", swapped, value_type="Z")
                 stats.st_swapped += 1
+    if not read.is_unmapped:
+        # DAF insertion evidence (``ei``) is SEQ-frame: mirror it with the
+        # strand on a strand change; drop it when it no longer fits SEQ.
+        from fiberhmm.daf.replay import lift_insert_evidence
+        kept = lift_insert_evidence(read, len(read.query_sequence or ""), reverse=flipped)
+        if kept is True and flipped:
+            stats.insert_evidence_flipped += 1
+        elif kept is False:
+            stats.insert_evidence_dropped += 1
     if mapq != MAPQ_SOURCE:
         read.mapping_quality = int(mapq.split(":", 1)[1])
     elif read.has_tag(TAG_SOURCE_MAPQ):
@@ -1235,6 +1254,9 @@ def lift_pg_record(*, repair: RepairStats, calmd: bool, mode: str = "lift",
     parts.append(f"orphan_supplementary_dropped={repair.orphan_supplementary_dropped}")
     parts.append(f"orphan_supplementary_marked={repair.orphan_supplementary_kept}")
     parts.append(f"st_swapped={repair.st_swapped}")
+    for key in ("insert_evidence_flipped", "insert_evidence_dropped", "unmapped_skipped"):
+        if getattr(repair, key):
+            parts.append(f"{key}={getattr(repair, key)}")
     parts.append(f"mapq={mapq} provenance_tags={TAG_SOURCE_MAPQ},{TAG_SOURCE_LOCUS}")
     return {
         "PN": LIFT_PROGRAM,
@@ -1291,7 +1313,9 @@ def repair_bam(lifted_path: str, out_path: str, *, work_dir: str,
     apart exactly (else :func:`pending_lift_indices` infers them). The
     output is written next to ``out_path`` first and moved into place, so
     ``work_dir`` may be on another file system; a failure never removes a
-    finished output."""
+    finished output. Unmapped records (reads vg surject could not project)
+    did not lift: they are skipped and counted (``unmapped_skipped``), never
+    written, tagged or counted as lifted."""
     planned = RepairStats()
     supp_counts: Dict[str, int] = defaultdict(int)
     used_contigs = set()
@@ -1302,9 +1326,13 @@ def repair_bam(lifted_path: str, out_path: str, *, work_dir: str,
                               "fiberhmm-lift @PG)")
         for read in bam.fetch(until_eof=True):
             planned.records_in += 1
+            if read.is_unmapped:
+                # vg surject writes a read it could not project as unmapped;
+                # keeping its 0x800 would be invalid SAM. It did not lift.
+                planned.unmapped_skipped += 1
+                continue
             repair_record(read, planned, mapq)
-            if not read.is_unmapped:
-                used_contigs.add(read.reference_name)
+            used_contigs.add(read.reference_name)
             if read.is_supplementary:
                 supp_counts[read.query_name] += 1
     primary_names = set()
@@ -1335,6 +1363,9 @@ def repair_bam(lifted_path: str, out_path: str, *, work_dir: str,
             pysam.AlignmentFile(unsorted, "wb", header=out_header, threads=threads) as out:
         for read in bam.fetch(until_eof=True):
             stats.records_in += 1
+            if read.is_unmapped:
+                stats.unmapped_skipped += 1
+                continue
             lifted_supplementary = read.is_supplementary
             repair_record(read, stats, mapq)
             if read.is_supplementary:
