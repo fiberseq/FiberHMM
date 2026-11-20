@@ -550,10 +550,14 @@ def _regions_iter(src, chrom, spans):
             merged[-1][1] = max(merged[-1][1], b)
         else:
             merged.append([a, b])
+    # The merged spans are sorted and disjoint (separated by gaps), so a record fetched for span i that
+    # overlaps any earlier span also overlaps span i - 1 (it is contiguous and crosses every span between):
+    # checking only the previous span is exact and keeps this O(records + spans) after the sort.
     for i, (a, b) in enumerate(merged):
+        prev = merged[i - 1] if i else None
         for read in src.fetch(chrom, a, b):
-            if any(read.reference_start < z and (read.reference_end or read.reference_start + 1) > y
-                   for y, z in merged[:i]):
+            if prev is not None and read.reference_start < prev[1] and \
+                    (read.reference_end or read.reference_start + 1) > prev[0]:
                 continue
             yield read
 

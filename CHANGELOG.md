@@ -196,6 +196,10 @@
   (or an extended browser scan) never reuses a BED unit's result for a grid
   unit over the same span.
 
+- `fiberhmm-scan --bed --annotate` writes each record once without comparing
+  it with every earlier BED interval: the deduplication was quadratic (about
+  5×10⁹ comparisons for 100k intervals) and is now linear after the sort.
+
 ## 3.1.0
 
 Includes the unreleased 3.0.6 changes.

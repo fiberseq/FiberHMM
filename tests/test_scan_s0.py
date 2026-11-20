@@ -538,3 +538,56 @@ def test_unit_cache_key_includes_mode_and_chrom():
     assert key(grid) == key(replace(grid, index=7))
     assert key(grid) != key(replace(grid, mode='bed'))
     assert key(grid) != key(replace(grid, chrom='d'))
+
+
+def test_bed_annotate_region_dedup_is_linear_and_exact():
+    """M20: records overlapping several merged BED spans are written once, by the first span, without
+    comparing each record with every earlier span (quadratic for 100k intervals)."""
+    import random
+    import time
+    from types import SimpleNamespace
+    from fiberhmm.scan.finalize import _regions_iter
+
+    class Src:
+        def __init__(self, reads):
+            self.reads = reads
+
+        def fetch(self, chrom, a, b):
+            return [r for r in self.reads if r.reference_start < b and (r.reference_end or r.reference_start + 1) > a]
+
+    def brute(src, spans):
+        merged = []
+        for a, b in sorted(spans):
+            if merged and a <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], b)
+            else:
+                merged.append([a, b])
+        out = []
+        for i, (a, b) in enumerate(merged):
+            for r in src.fetch('c', a, b):
+                if not any(r.reference_start < z and (r.reference_end or r.reference_start + 1) > y
+                           for y, z in merged[:i]):
+                    out.append(r)
+        return out
+
+    rng = random.Random(5)
+    for _ in range(20):
+        reads = [SimpleNamespace(reference_start=s, reference_end=s + rng.randint(1, 3000) if rng.random() > .05 else None)
+                 for s in sorted(rng.randint(0, 20_000) for _ in range(150))]
+        spans = sorted((a, a + rng.randint(1, 400)) for a in (rng.randint(0, 20_000) for _ in range(60)))
+        src = Src(reads)
+        assert [id(r) for r in _regions_iter(src, 'c', spans)] == [id(r) for r in brute(src, spans)]
+
+    class Indexed:
+        """One read spanning every interval; fetch is O(1) so only the dedup's cost is measured."""
+        def __init__(self, read):
+            self.read = read
+
+        def fetch(self, chrom, a, b):
+            return [self.read]
+
+    n = 100_000
+    spans = [(10 * i, 10 * i + 5) for i in range(n)]
+    started = time.perf_counter()
+    got = list(_regions_iter(Indexed(SimpleNamespace(reference_start=0, reference_end=10 * n)), 'c', spans))
+    assert len(got) == 1 and time.perf_counter() - started < 5.0
