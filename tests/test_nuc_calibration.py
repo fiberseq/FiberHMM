@@ -357,3 +357,24 @@ def test_calibrate_thin_counts_runs_without_calls(called_bam, monkeypatch):
     assert cal.validation['caller_errors'] == 0
     assert cal.outcomes['n'] and all(d == 1.0 for d in cal.outcomes['dropped'])
 
+
+@pytest.mark.parametrize('record, expected', [
+    ({'DS': 'phase_nrl=0 ddda_derived_tf_edge_gap=off chimeras=keep'}, None),
+    ({'DS': 'ddda_derived_tf_edge_gap=4 chimeras=keep'}, 4),
+    ({'DS': 'ddda_derived_tf_edge_gap=20'}, 20),
+    ({'CL_extra': '--ddda-derived-tf-max-edge-gap -1'}, None),
+    ({'CL_extra': '--ddda-derived-tf-max-edge-gap 4'}, 4),
+    ({'CL_extra': '--ddda-derived-tf-max-edge-gap=20'}, 20),
+    ({}, 12),                                   # not recorded: the default
+])
+def test_caller_settings_honor_the_recorded_derived_tf_edge_gap(record, expected):
+    """Audit M11: -1 (off), 4 and 20 used to all become 12."""
+    pg = {'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call',
+          'CL': 'fiberhmm-call --enzyme ddda ' + record.get('CL_extra', '')}
+    if 'DS' in record:
+        pg['DS'] = record['DS']
+    s = CallerSettings.from_header({'PG': [pg]})
+    assert s.derived_tf_max_edge_ambiguity == expected
+    # an explicit override still wins
+    assert CallerSettings.from_header({'PG': [pg]}, derived_tf_max_edge_ambiguity=7
+                                      ).derived_tf_max_edge_ambiguity == 7

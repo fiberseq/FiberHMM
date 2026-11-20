@@ -166,6 +166,11 @@
 
 ### Fixed
 
+- `CallerSettings.from_header()` (thinning calibration) reuses the recorded
+  DddA derived-TF edge gap (`ddda_derived_tf_edge_gap` in the call record, or
+  `--ddda-derived-tf-max-edge-gap`; `off`/-1 stays off) instead of always
+  using 12, so calibration runs the caller that made the calls.
+
 - Thinning calibration counts a recall that returns no footprints
   (`Caller.call()` returning None) as an empty call set, so every reference
   footprint of that run is dropped (4 intact + 4 no-call recalls of 20

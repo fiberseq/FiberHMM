@@ -119,6 +119,17 @@ class CallerSettings:
             m = re.search(r'phase_nrl=(\d+)', str(pg.get('DS', '')))
             if m:
                 kw['phase_nrl'] = int(m.group(1))
+            # DddA derived-TF edge safeguard: the resolved value in DS ('off'
+            # or a gap), else the flag (-1 = off); None in the settings = off.
+            m = re.search(r'ddda_derived_tf_edge_gap=(\S+)', str(pg.get('DS', '')))
+            gap = m.group(1) if m else opt('--ddda-derived-tf-max-edge-gap')
+            if gap is not None:
+                try:
+                    value = None if gap == 'off' else int(gap)
+                    kw['derived_tf_max_edge_ambiguity'] = (
+                        None if value is None or value < 0 else value)
+                except ValueError:
+                    notes.append(f'unreadable ddda_derived_tf_edge_gap {gap!r}; default used')
             runs = opt('--daf-mask-runs')
             if runs is not None:
                 kw['_daf_runs'] = int(runs)
@@ -169,7 +180,8 @@ class CallerSettings:
             from fiberhmm.models import _bundled_model_path
             upd['nuc_profile'] = base.nuc_profile or _bundled_model_path('ddda_nuc_profile.json')
             upd['nuc_model'] = base.nuc_model or get_model_path(enzyme, tool='nuc_refine', seq=seq)
-            if base.derived_tf_max_edge_ambiguity is None:
+            if ('derived_tf_max_edge_ambiguity' not in kw
+                    and base.derived_tf_max_edge_ambiguity is None):
                 upd['derived_tf_max_edge_ambiguity'] = 12
         if 'daf_mask_runs' not in kw:
             from fiberhmm.core.bam_reader import resolve_daf_run_mask
