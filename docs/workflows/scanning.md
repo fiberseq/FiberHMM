@@ -87,8 +87,9 @@ caller; linked sorting passes preserve that provenance. Other inputs make the
 whole scan write tables. Records whose calls cannot be put
 into molecular frame are counted in the manifest
 (`status.records_not_carried`). The scan touches no other annotation of a record. An annotated BAM of
-a genome scan holds every record of its input; one of a BED or window scan
-holds the records overlapping the units. The scan's `MA` groups:
+a genome scan holds every record of its input; one of a BED or window scan,
+or of a `--genome --contigs` scan that leaves out some contig, holds the
+records overlapping the units (records of other contigs are not touched). The scan's `MA` groups:
 
 | Group | Interval | Bytes |
 |---|---|---|

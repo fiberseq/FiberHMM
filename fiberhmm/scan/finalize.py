@@ -158,7 +158,7 @@ def finalize(out: Path, manifest: dict, datasets, reference: Mapping[str, int], 
     ann = _Annotations() if annotate else None
     annotated_outputs = []
     bam_writers = _open_annotated(out, manifest, datasets, mods, decls, command) if annotate else None
-    full_copy = bool(annotate and manifest['units'].get('contigs'))
+    full_copy = bool(annotate and _genome_wide(manifest['units'], reference))
     loop = list(reference) if full_copy else contigs_in_plan
     try:
         for chrom in loop:
@@ -304,6 +304,19 @@ def finalize(out: Path, manifest: dict, datasets, reference: Mapping[str, int], 
                 empty=empty, failed=manifest['status']['units_failed'],
                 tables={k: v['rows'] for k, v in manifest['outputs']['tables'].items()},
                 annotated=[a['path'] for a in annotated_outputs])
+
+
+def _genome_wide(units_info: Mapping[str, Any], reference: Mapping[str, int]) -> bool:
+    """Whether the plan covers every contig of the header (a --genome scan without a restricting --contigs):
+    only then does an annotated BAM hold every record of its input. Uses the plan's recorded
+    ``contigs_restricted``; plans recorded without it compare the planned contigs with the header."""
+    contigs = units_info.get('contigs')
+    if not contigs:
+        return False
+    restricted = units_info.get('contigs_restricted')
+    if restricted is None:
+        restricted = not set(reference) <= set(contigs)
+    return not restricted
 
 
 def _remove_stale_outputs(out: Path, mods, annotate: bool) -> None:
@@ -525,6 +538,8 @@ def _write_annotated_contig(handles, chrom, ann, cunits, full_copy):
             continue
         planned = ann.by_file.get(key, {})
         seen: Dict[str, int] = {}
+        # A contig without units was not scanned: its records pass through unchanged (no group is replaced).
+        owned = h['owned'] if cunits else {}
         it = src.fetch(chrom) if full_copy else _regions_iter(src, chrom, sorted((u.start, u.end) for u in cunits))
         for read in it:
             entries = None
@@ -533,7 +548,7 @@ def _write_annotated_contig(handles, chrom, ann, cunits, full_copy):
                 occ = seen.get(sha, 0)
                 seen[sha] = occ + 1
                 entries = planned.get((sha, occ))
-            n = _annotate_read(read, entries, h['owned'])
+            n = _annotate_read(read, entries, owned)
             if n > 0:
                 h['marked'] += 1
             elif n < 0:

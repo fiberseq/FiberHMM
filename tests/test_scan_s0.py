@@ -591,3 +591,88 @@ def test_bed_annotate_region_dedup_is_linear_and_exact():
     started = time.perf_counter()
     got = list(_regions_iter(Indexed(SimpleNamespace(reference_start=0, reference_end=10 * n)), 'c', spans))
     assert len(got) == 1 and time.perf_counter() - started < 5.0
+
+
+def _two_contig_bam(path, length=60_000, step=3_000, read_bp=6_000):
+    import random
+    rng = random.Random(4)
+    header = {'HD': {'VN': '1.6', 'SO': 'coordinate'}, 'SQ': [{'SN': 'chrA', 'LN': length}, {'SN': 'chrB', 'LN': length}],
+              'CO': ['fiberhmm:coord=molecular',
+                     'FIBERHMM-CHEMISTRY:v1:assay=fiber-seq;enzyme=hia5;platform=pacbio;mode=pacbio'],
+              'PG': [{'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call', 'VN': '3.0.0', 'DS': 'coord=molecular'}]}
+    with pysam.AlignmentFile(str(path), 'wb', header=header) as out:
+        n = 0
+        for tid in (0, 1):
+            for start in range(0, length - read_bp, step):
+                a = pysam.AlignedSegment(out.header)
+                a.query_name = f'm1/{1000 + n}/ccs'
+                a.query_sequence = ''.join(rng.choice('ACGT') for _ in range(read_bp))
+                a.flag = 0
+                a.reference_id = tid
+                a.reference_start = start
+                a.mapping_quality = 60
+                a.cigarstring = f'{read_bp}M'
+                a.set_tag('MA', f'{read_bp};nuc.:' + ','.join(f'{p + 1}-147' for p in range(50, read_bp - 200, 200)))
+                out.write(a)
+                n += 1
+    pysam.index(str(path))
+    return str(path)
+
+
+def _ma_by_name(path):
+    with pysam.AlignmentFile(str(path)) as f:
+        return {(r.reference_name, r.query_name): str(r.get_tag('MA')) for r in f.fetch(until_eof=True)}
+
+
+def test_contigs_subset_annotates_only_scanned_contigs(tmp_path):
+    """H5: --genome --contigs <subset> --annotate is not a genome-wide copy: the annotated BAM holds the scanned
+    contigs' records (scope 'units'), and no record of another contig is rewritten or has its groups stripped."""
+    from fiberhmm.scan import run_units
+    src = _two_contig_bam(tmp_path / 'two.bam')
+    ref = {'chrA': 60_000, 'chrB': 60_000}
+    # a first, genome-wide scan puts mollymol on every record of both contigs
+    units, info = plan(ref, genome=True)
+    assert info['contigs_restricted'] is False
+    run_units([{'dataset_id': 'x', 'paths': [src]}], (units, info), modules=['molly'], out=tmp_path / 'full',
+              annotate=True, registry=REG)
+    full = json.loads((tmp_path / 'full' / 'manifest.json').read_text())['outputs']['annotated'][0]
+    assert full['scope'] == 'full'
+    first = tmp_path / 'full' / full['path']
+    before = _ma_by_name(first)
+    assert len(before) == 36 and all(';mollymol.' in v for v in before.values())
+    # a chrA-only scan of that output
+    units, info = plan(ref, genome=True, contigs=['chrA'])
+    assert info['contigs_restricted'] is True
+    run_units([{'dataset_id': 'x', 'paths': [str(first)]}], (units, info), modules=['molly'], out=tmp_path / 'sub',
+              annotate=True, registry=REG)
+    sub = json.loads((tmp_path / 'sub' / 'manifest.json').read_text())['outputs']['annotated'][0]
+    assert sub['scope'] == 'units' and sub['records'] == 18
+    after = _ma_by_name(tmp_path / 'sub' / sub['path'])
+    assert {c for c, _q in after} == {'chrA'}
+    assert all(';mollymol.' in v for v in after.values())
+
+
+def test_unscanned_contig_records_pass_through_unchanged(tmp_path):
+    """H5: a contig with no unit is not scanned, so its records keep every MA group (no stale-group strip)."""
+    import array
+    from fiberhmm.scan.finalize import _Annotations, _write_annotated_contig
+    src_path = _two_contig_bam(tmp_path / 'two.bam')
+    tagged = tmp_path / 'tagged.bam'
+    with pysam.AlignmentFile(src_path) as f, pysam.AlignmentFile(str(tagged), 'wb', template=f) as out:
+        for r in f.fetch(until_eof=True):
+            r.set_tag('MA', str(r.get_tag('MA')) + ';mollymol.QQQ:1-10')
+            r.set_tag('AQ', array.array('B', [7, 7, 7]))
+            out.write(r)
+    pysam.index(str(tagged))
+    src = pysam.AlignmentFile(str(tagged))
+    dest = pysam.AlignmentFile(str(tmp_path / 'o.bam'), 'wb', template=src)
+    h = dict(src=src, dest=dest, owned={'mollymol': 'QQQ'}, written=0, marked=0, skipped=0)
+    _write_annotated_contig({('x', 0): h}, 'chrB', _Annotations(), [], True)
+    dest.close()
+    src.close()
+    assert h['written'] == 18
+    with pysam.AlignmentFile(str(tagged)) as f:
+        want = {r.query_name: (str(r.get_tag('MA')), list(r.get_tag('AQ'))) for r in f.fetch('chrB')}
+    with pysam.AlignmentFile(str(tmp_path / 'o.bam'), check_sq=False) as f:
+        got = {r.query_name: (str(r.get_tag('MA')), list(r.get_tag('AQ'))) for r in f.fetch(until_eof=True)}
+    assert got == want and all(';mollymol.' in ma for ma, _q in got.values())

@@ -200,6 +200,12 @@
   it with every earlier BED interval: the deduplication was quadratic (about
   5×10⁹ comparisons for 100k intervals) and is now linear after the sort.
 
+- **`fiberhmm-scan --genome --contigs <subset> --annotate` no longer copies
+  the whole genome.** The plan records `units.contigs_restricted`; a
+  restricted scan's annotated BAMs hold the scanned contigs' records (scope
+  `units`), and records on contigs without units pass through unchanged
+  instead of losing earlier scan groups (`fp`, `fpcls`, `nucsz`, ...).
+
 ## 3.1.0
 
 Includes the unreleased 3.0.6 changes.
