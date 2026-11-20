@@ -37,6 +37,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pysam
+import pysam.bcftools  # a submodule: `import pysam` alone does not load it (BCF indexing)
 
 # --- allele codes (``blockAllele``) -----------------------------------------
 # k >= 0 is the VCF allele index (0 = REF, 1.. = ALT).

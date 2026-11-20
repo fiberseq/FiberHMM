@@ -278,6 +278,29 @@ def test_prepare_indexed_vcf_handles_plain_vcf(vcf_path, tmp_path):
     assert prepare_indexed_vcf(indexed, str(work)) == indexed
 
 
+def test_prepare_indexed_vcf_indexes_an_unindexed_bcf_in_a_fresh_process(tmp_path):
+    # `pysam.bcftools` is a submodule: a process that never imported it must still index BCF.
+    bcf = tmp_path / 'calls.bcf'
+    header = pysam.VariantHeader()
+    header.contigs.add('chr1', length=5000)
+    with pysam.VariantFile(str(bcf), 'wb', header=header) as dst:
+        dst.write(dst.new_record(contig='chr1', start=1000, alleles=('A', 'G')))
+    work = tmp_path / 'work'
+    work.mkdir()
+    code = (
+        'import sys, pysam\n'
+        'from fiberhmm.io.read_layers import prepare_indexed_vcf\n'
+        'out = prepare_indexed_vcf(sys.argv[1], sys.argv[2])\n'
+        'with pysam.VariantFile(out) as vcf:\n'
+        '    assert vcf.index is not None\n'
+        '    print(len(list(vcf.fetch("chr1", 990, 1010))))\n'
+    )
+    result = subprocess.run([sys.executable, '-c', code, str(bcf), str(work)],
+                            capture_output=True, text=True, env=os.environ.copy())
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == '1'
+
+
 def test_find_daf_snp_vcf(tmp_path):
     bam = tmp_path / 'run.calls.bam'
     with pysam.AlignmentFile(str(bam), 'wb', header=HEADER):
