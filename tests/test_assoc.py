@@ -450,3 +450,57 @@ def test_clogit_stops_on_cancel_inside_the_fit():
     stages = []
     fit(progress=lambda stage, done, total: stages.append(stage))
     assert 'clogit' in stages
+
+
+def _repeated_molecules(n_anchors, y, strata=None):
+    """Four molecules (two per state) seen at every one of ``n_anchors`` anchors."""
+    st = {0: 1, 1: 1, 2: 0, 3: 0}
+    rows = [(a, m, st[m], (strata or {}).get(m, 0), 1, y[m]) for a in range(n_anchors) for m in range(4)]
+    loc, mol, s, strat, mask, yy = map(np.array, zip(*rows))
+    app = Appearances(loc, mol, s, strat, mask, np.stack([yy, np.ones_like(yy)], -1)[:, None, :])
+    loci = LocusTable([f'a{i}' for i in range(n_anchors)], ['c'] * n_anchors, list(range(n_anchors)),
+                      [True] * n_anchors, [-1] * n_anchors)
+    return app, loci
+
+
+def test_m2_pooled_permutation_is_molecule_level():
+    """Audit H8: the same four molecules repeated over ten anchors are no new
+    evidence: p_within_anchor stays near its one-anchor value (~1/3; 2 of 6
+    labelings), instead of ~0.002 when labels were shuffled per locus."""
+    y = {0: 1.0, 1: 0.9, 2: 0.0, 3: 0.1}
+    p = {}
+    for n in (1, 10):
+        app, loci = _repeated_molecules(n, y)
+        b = condition(app, loci, mean_metric(), n_perm=999, n_role=0, n_boot=0, seed=10,
+                      per_anchor=False)['bins'][0]
+        assert b['delta_anchor'] == pytest.approx(0.9)
+        p[n] = b['p_within_anchor']
+        assert b['permutation_unit'] == ('appearance' if n == 1 else 'molecule')
+    assert 0.25 < p[1] < 0.45 and 0.25 < p[10] < 0.45
+
+
+def test_m2_molecule_permutation_keeps_density_strata_and_balance():
+    """Molecule labels are exchanged only within their density stratum, with
+    the balance weights recomputed: a pure stratum effect stays null."""
+    from fiberhmm.assoc.condition import _molecule_units, _reweighted_sums
+    rows = []
+    for a in range(5):
+        for m in range(40):
+            s_ = m % 2
+            st_ = int(m < (8 if s_ == 0 else 30))      # states unbalanced across strata
+            rows.append((a, m, st_, s_, 1, 10.0 * s_))
+    loc, mol, st, strat, mask, y = map(np.array, zip(*rows))
+    app = Appearances(loc, mol, st, strat, mask, np.stack([y, np.ones_like(y)], -1)[:, None, :])
+    loci = LocusTable([f'a{i}' for i in range(5)], ['c'] * 5, list(range(5)), [True] * 5, [-1] * 5)
+    b = condition(app, loci, mean_metric(), n_perm=200, n_role=0, n_boot=0, per_anchor=False,
+                  return_null=True)['bins'][0]
+    assert b['permutation_unit'] == 'molecule'
+    assert b['delta_anchor'] == pytest.approx(0.0)
+    assert np.allclose(b['null_within'], 0.0)
+    # reweighting with the observed labels reproduces the fixed weights
+    cell = np.unique(loc * 2 + strat, return_inverse=True)[1]
+    X = np.stack([y, np.ones_like(y)], -1).astype(float)
+    S1, S0 = _reweighted_sums(st[None, :].astype(float), X, cell, np.array([1., 1.]), True)
+    assert S1[0, 0] / S1[0, 1] == pytest.approx(S0[0, 0] / S0[0, 1])
+    unit, ust, ucls = _molecule_units(mol, st, loc, cell, strat)
+    assert len(ust) == 40 and len(np.unique(ucls)) == 2

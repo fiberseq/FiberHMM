@@ -1445,6 +1445,9 @@ def _extract_var(read, bed_out, window, variant_options,
     end = read.reference_end
     if end is None:
         return 0
+    if not window.circular_known:
+        # TP:circular: reads through the origin are genotyped past it too.
+        window.set_circular_from_header(read.header)
     sites = window.sites_in(int(read.reference_start), int(end))
     if not sites:
         return 0

@@ -66,12 +66,45 @@ def _parser():
 
 
 def _regions(values):
+    from fiberhmm.assoc.scanio import ScanInputError
     out = []
     for v in values or []:
-        chrom, _, span = v.rpartition(':')
-        a, _, b = span.replace(',', '').partition('-')
-        out.append((chrom, int(a), int(b)))
+        chrom, sep, span = v.rpartition(':')
+        a, dash, b = span.replace(',', '').partition('-')
+        try:
+            a, b = int(a), int(b)
+        except ValueError:
+            raise ScanInputError(f'--region {v!r}: expected CHROM:START-END (0-based, half-open)') from None
+        if not (sep and chrom and dash) or a < 0 or b <= a:
+            raise ScanInputError(f'--region {v!r}: expected CHROM:START-END with 0 <= START < END')
+        out.append((chrom, a, b))
     return out or None
+
+
+def _bed_rows(path, flag, n_fields):
+    """``(chrom, start, end[, label])`` rows of a BED-like file; a short or
+    non-numeric row is an input error naming the file and line."""
+    from fiberhmm.assoc.scanio import ScanInputError
+    try:
+        text = Path(path).read_text()
+    except OSError as error:
+        raise ScanInputError(f'{flag} {path}: {error.strerror or error}') from None
+    rows = []
+    for number, line in enumerate(text.splitlines(), 1):
+        if not line.strip() or line.startswith(('#', 'track', 'browser')):
+            continue
+        fields = line.split()
+        if len(fields) < n_fields:
+            raise ScanInputError(f'{flag} {path}, line {number}: expected at least {n_fields} columns '
+                                 f'(chrom start end{" label" if n_fields > 3 else ""}), found {len(fields)}')
+        try:
+            start, end = int(fields[1]), int(fields[2])
+        except ValueError:
+            raise ScanInputError(f'{flag} {path}, line {number}: start and end must be integers') from None
+        if start < 0 or end < start:
+            raise ScanInputError(f'{flag} {path}, line {number}: expected 0 <= start <= end')
+        rows.append((fields[0], start, end, *fields[3:n_fields]))
+    return rows
 
 
 def _write_tsv(path, rows):
@@ -107,14 +140,16 @@ def _with_defaults(args):
 def run(args) -> dict:
     from fiberhmm.assoc import scanio as S
     args = _with_defaults(args)
+    if args.n_perm < 0 or args.n_boot < 0:
+        raise S.ScanInputError('--n-perm and --n-boot must be >= 0')
     if min(args.background_k, args.background_step, args.background_min_sep, args.site_window, args.site_bin_bp) <= 0:
         raise S.ScanInputError('background and site-density sizes must be positive')
     if args.background_width is not None and args.background_width <= 0:
         raise S.ScanInputError('--background-width must be positive')
     if args.fasta and args.strata:
         raise S.ScanInputError('choose --strata or --fasta for overlap strata')
-    scan = S.open_scan(args.scan_dir)
     regions = _regions(args.region)
+    scan = S.open_scan(args.scan_dir)
     group, gkind = None, 'label'
     if args.group == 'dataset':
         group = 'dataset'
@@ -168,8 +203,7 @@ def run(args) -> dict:
         terr = S.territory(scan, regions=regions)
         strata = None
         if args.strata:
-            strata = [(c, int(s), int(e), lab) for c, s, e, lab in
-                      (line.split()[:4] for line in Path(args.strata).read_text().splitlines() if line.strip())]
+            strata = _bed_rows(args.strata, '--strata', 4)
         if args.fasta:
             from .sites import density_strata
             strata = density_strata(scan, args.fasta, terr, bases=args.site_bases, bin_bp=args.site_bin_bp)
@@ -224,8 +258,7 @@ def _condition_from_scan(scan, args, regions, group, gkind):
     prev = np.bincount(A.hit, weights=A.state, minlength=n) / np.maximum(depth, 1)
     order = np.arange(n)
     if args.bed:
-        bed = [(c, int(a), int(b)) for c, a, b in (line.split()[:3] for line in Path(args.bed).read_text().splitlines()
-                                                   if line.strip() and not line.startswith(('#', 'track')))]
+        bed = _bed_rows(args.bed, '--bed', 3)
         inside = _in_bed(A.chrom, A.anchor, bed)
         anchors, cands = order[inside], order[~inside]
         if not len(anchors):

@@ -154,9 +154,12 @@
 - Writers that re-call footprints (`fiberhmm-call`, `-apply`,
   `-recall-tfs`, `-recall-nucs`) drop the MA groups derived from the old calls
   (`nucsz`, `nucseg`, `nucmol`, `fpcls`, `nfrvar`, `nfrmol`) and their header
-  declarations, on every read they write. Other tools' groups are still kept,
-  and `fiberhmm-merge`/`-pair` keep scan groups on the reads they pass
-  through unmerged.
+  declarations, on every read they write. The recall writers (`-recall-tfs`,
+  `-recall-nucs`) keep other tools' groups (e.g. `custom.`) on the reads they
+  recall; `fiberhmm-call` and `-apply` keep only the three DddA m5C groups
+  (`ddda_mcg`, `ddda_ucg`, `ddda_mcg_hemi`) and drop every other input group.
+  `fiberhmm-merge`/`-pair` keep scan groups on the reads they pass through
+  unmerged.
 - `fiberhmm-footprint-model` reads BAMs annotated by `fiberhmm-scan` (every
   interval named in `AN`); it still refuses tf/msp pieces linked by a shared
   AN name.
@@ -195,6 +198,52 @@
   swap, found by name in a `bigBedToBed -header` line or given with the new
   `--edge-columns`. BED3/BED4 and `.`-stranded rows that change orientation
   are counted in the "changed strand" total.
+- `fiberhmm-scan assoc` reports a malformed `--region`, a negative
+  `--n-perm`/`--n-boot` and short or non-numeric `--bed`/`--strata` rows
+  (file and line named), and `fiberhmm-scan` an unreadable or invalid
+  `--parameters`/`--datasets`/`--signal-filters` JSON file, as one-line
+  `error:` messages with exit 2 instead of tracebacks.
+
+- M3 association statistics deduplicate records per dataset and molecule:
+  the same read name in two datasets is no longer dropped as a duplicate
+  record (as `anchor_appearances()` already did).
+
+- M2 pooled within-anchor permutations are molecule-level when a molecule
+  contributes at several anchors: each molecule's state is shuffled once and
+  applied at every anchor it contributes to (within its density stratum and
+  channel, balance weights recomputed per draw), so repeated molecules no
+  longer inflate significance (four molecules repeated over ten anchors moved
+  `p_within_anchor` from ~0.33 to ~0.004). Bins report `permutation_unit`;
+  per-anchor tests keep the within-cell permutation.
+
+- `CallerSettings.from_header()` (thinning calibration) reuses the recorded
+  DddA derived-TF edge gap (`ddda_derived_tf_edge_gap` in the call record, or
+  `--ddda-derived-tf-max-edge-gap`; `off`/-1 stays off) instead of always
+  using 12, so calibration runs the caller that made the calls.
+
+- Thinning calibration counts a recall that returns no footprints
+  (`Caller.call()` returning None) as an empty call set, so every reference
+  footprint of that run is dropped (4 intact + 4 no-call recalls of 20
+  footprints: 50% kept over 160, not 100% over 80). Caller exceptions are
+  kept apart: no outcome, counted in `caller_errors` with examples, and a
+  calibration whose every run failed stops with the error.
+
+- `fiberhmm-extract` `var`: a deletion longer than a site's ALT deletion
+  (e.g. `1M3D10M` over `REF=AC ALT=A`) is coded as another allele, not ALT
+  (the base after an indel site must be aligned); reads through the origin of
+  a `TP:circular` contig are genotyped at the sites after the origin too; a
+  mapped record with `SEQ=*` is skipped instead of crashing the worker, and
+  the `sv` layer skips records without a reference end.
+
+- `fiberhmm-pipeline` without `--min-mapq` takes the recorded min_mapq only
+  from markers the run will reuse: an align marker the later call was not
+  made from (the aligned input was used in place since), a call or
+  interrupted calling state made from an alignment being made again, and
+  QC/track markers of another called BAM are ignored, as is `call.started` in
+  streaming mode. A step that starts now clears the markers of the steps
+  after it (and, for align, the interrupted calling state), and using the
+  aligned input in place clears an earlier align marker.
+
 - BED12 lift: a column containing `;` (a verbatim SAM `SA` tag, as in
   `fiberhmm_sv` rows) is no longer treated as a per-block list when its comma
   count happens to equal blockCount.

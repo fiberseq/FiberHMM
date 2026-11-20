@@ -170,6 +170,17 @@ def main(argv=None):
     return run_reporting_input_errors('fiberhmm-scan', lambda: _main(argv))
 
 
+def _load_json(parser, path, flag):
+    """A JSON file given on the command line; unreadable or invalid JSON is a
+    usage error (exit 2), not a traceback."""
+    try:
+        return json.loads(Path(path).expanduser().read_text())
+    except OSError as error:
+        parser.error(f'{flag} {path}: {error.strerror or error}')
+    except ValueError as error:
+        parser.error(f'{flag} {path}: not valid JSON ({error})')
+
+
 def _parse_region(parser, value, flag='--region'):
     chrom, sep, span = value.rpartition(':')
     a, dash, b = span.replace(',', '').partition('-')
@@ -383,18 +394,20 @@ def _main(argv=None):
                 'interrupted scan there, add --continue)')
     params = {}
     if args.parameters:
-        params = json.loads(Path(args.parameters).read_text())
+        params = _load_json(p, args.parameters, '--parameters')
         if not isinstance(params, dict):
             p.error('--parameters must hold a JSON object of module groups')
     if args.datasets and (args.input_type != 'called-bam' or args.signal_filters):
         p.error('with --datasets put input_type and signal_filters in each dataset specification')
     if args.datasets:
-        datasets = json.loads(Path(args.datasets).read_text())
+        datasets = _load_json(p, args.datasets, '--datasets')
+        if not isinstance(datasets, list):
+            p.error('--datasets must hold a JSON list of dataset specifications')
     else:
         # labelled by canonical order (dataset_<ordinal + 1>, ordinal = rank by content id), not by --bam
         # position, so a scan with the BAMs listed in another order has the same keys and rows
         datasets = [dict(paths=[str(Path(b).expanduser().resolve())], chemistry=args.chemistry, input_type=args.input_type,
-                              signal_filters=json.loads(Path(args.signal_filters).read_text())
+                              signal_filters=_load_json(p, args.signal_filters, '--signal-filters')
                               if args.signal_filters else {}) for b in args.bam]
     _nucreg_params(p, args, modules, params)
     _nucpatch_params(p, args, modules, params)
