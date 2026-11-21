@@ -617,6 +617,17 @@ def call_supported_options() -> set[str]:
     return {flag for action in parser._actions for flag in action.option_strings}
 
 
+# Options whose default leaves a call unchanged (the opt-in strict chimera
+# detector, 3.3.0). Left out of call_parser_defaults at these defaults, so
+# a standard run's step identity is as before; a strict run is recorded
+# through its call arguments and the step's chimera_detector key.
+_IDENTITY_NEUTRAL_CALL_DEFAULTS = {
+    "chimera_detector": "standard", "chimera_min_baseq": None,
+    "chimera_min_span": None, "chimera_multi_switch": None,
+    "chimera_error_mask": None,
+}
+
+
 def call_parser_defaults() -> dict:
     """``fiberhmm-call``'s option defaults (dest -> default, JSON-safe), so a
     completed calling step is not reused after a FiberHMM default changes
@@ -628,6 +639,9 @@ def call_parser_defaults() -> dict:
     for action in parser._actions:
         dest = action.dest
         if not action.option_strings or dest in ("help", "version") or dest in out:
+            continue
+        if (dest in _IDENTITY_NEUTRAL_CALL_DEFAULTS
+                and parser.get_default(dest) == _IDENTITY_NEUTRAL_CALL_DEFAULTS[dest]):
             continue
         # One value per destination, as argparse resolves it: aliases such as
         # --primary/--no-primary (store_const, default None) share --alignments'

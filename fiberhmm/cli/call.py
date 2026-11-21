@@ -255,11 +255,13 @@ def parse_args():
                         '--chimera-multi-switch and --chimera-error-mask, '
                         'duplicate-flagged reads not counted, a graded chimera row '
                         'in QC, and --chimeras split.')
-    p.add_argument('--chimera-min-seg', type=int, default=None,
+    p.add_argument('--chimera-min-seg', type=int, default=STANDARD_MIN_SEG,
+                   action=_GivenOption,
                    help='DAF chimera: min same-strand deamination events per '
                         f'segment to call a swap (default {STANDARD_MIN_SEG}; '
                         f'{STRICT_MIN_SEG} with --chimera-detector strict).')
-    p.add_argument('--chimera-purity', type=float, default=None,
+    p.add_argument('--chimera-purity', type=float, default=STANDARD_PURITY,
+                   action=_GivenOption,
                    help='DAF chimera: min same-strand purity per segment '
                         f'(default {STANDARD_PURITY:g}; {STRICT_PURITY:g} with '
                         '--chimera-detector strict).')
@@ -481,6 +483,15 @@ def parse_args():
     return args
 
 
+class _GivenOption(argparse.Action):
+    """Store the value and remember that it was given, so the strict
+    detector can apply its own default when it was not."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        setattr(namespace, self.dest, values)
+        setattr(namespace, f'_given_{self.dest}', True)
+
+
 _STRICT_ONLY_CHIMERA_OPTIONS = (
     ('chimera_min_baseq', '--chimera-min-baseq'),
     ('chimera_min_span', '--chimera-min-span'),
@@ -499,8 +510,11 @@ def _resolve_chimera_detector_args(parser, args):
         STRICT_ERROR_MASK, STRICT_MULTI_SWITCH,
     )
     if args.chimera_detector == 'strict':
-        defaults = dict(chimera_min_seg=STRICT_MIN_SEG, chimera_purity=STRICT_PURITY,
-                        chimera_min_baseq=STRICT_MIN_BASEQ,
+        if not getattr(args, '_given_chimera_min_seg', False):
+            args.chimera_min_seg = STRICT_MIN_SEG
+        if not getattr(args, '_given_chimera_purity', False):
+            args.chimera_purity = STRICT_PURITY
+        defaults = dict(chimera_min_baseq=STRICT_MIN_BASEQ,
                         chimera_min_span=STRICT_MIN_SPAN,
                         chimera_multi_switch=STRICT_MULTI_SWITCH,
                         chimera_error_mask=STRICT_ERROR_MASK)
@@ -516,10 +530,6 @@ def _resolve_chimera_detector_args(parser, args):
         parser.error(f"{', '.join(given)} need --chimera-detector strict")
     if args.chimeras == 'split':
         parser.error('--chimeras split needs --chimera-detector strict')
-    if args.chimera_min_seg is None:
-        args.chimera_min_seg = STANDARD_MIN_SEG
-    if args.chimera_purity is None:
-        args.chimera_purity = STANDARD_PURITY
 
 
 def _resolve_apply_model(args):
