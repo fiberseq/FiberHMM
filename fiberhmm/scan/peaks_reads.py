@@ -810,13 +810,10 @@ def read_has_footprint_calls(read) -> bool:
             cut = next((i for i in (head.find(c) for c in '+-.') if i >= 0), -1)
             if cut > 0 and head[:cut] in _CALL_GROUPS:
                 return True
+    from fiberhmm.io.legacy_tags import array_tag_pair
     for start_tag, length_tag in (('ns', 'nl'), ('as', 'al')):
-        if not (read.has_tag(start_tag) and read.has_tag(length_tag)):
-            continue
-        starts, lengths = read.get_tag(start_tag), read.get_tag(length_tag)
-        if isinstance(starts, (str, bytes, int, float)) or isinstance(lengths, (str, bytes, int, float)):
-            continue
-        if len(starts):
+        pair = array_tag_pair(read, start_tag, length_tag)
+        if pair is not None and len(pair[0]):
             return True
     return False
 

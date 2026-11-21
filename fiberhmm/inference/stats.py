@@ -405,20 +405,25 @@ def collect_stats_from_bam(bam_path: str, n_samples: int = 10000,
                     return flip_intervals_to_seq(starts, lengths, read)
                 return [int(x) for x in starts], [int(x) for x in lengths]
 
-            try:
-                _ns, _nl = to_seq(read.get_tag('ns'), read.get_tag('nl'))
+            # Legacy pairs follow the shared array-pair rule (a scalar/string
+            # tag such as Dorado's ns:i, or unequal lengths, = absent).
+            from fiberhmm.io.legacy_tags import array_tag_pair
+            pair = array_tag_pair(read, 'ns', 'nl')
+            if pair is not None:
+                _ns, _nl = to_seq(*pair)
                 ns = np.array(_ns)
                 nl = np.array(_nl)
-            except KeyError:
+            else:
                 ns = np.array([])
                 nl = np.array([])
 
             # Get MSP tags
-            try:
-                _as, _al = to_seq(read.get_tag('as'), read.get_tag('al'))
+            pair = array_tag_pair(read, 'as', 'al')
+            if pair is not None:
+                _as, _al = to_seq(*pair)
                 as_starts = np.array(_as)
                 al_lengths = np.array(_al)
-            except KeyError:
+            else:
                 as_starts = None
                 al_lengths = None
 

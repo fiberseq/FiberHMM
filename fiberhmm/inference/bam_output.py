@@ -864,10 +864,11 @@ def extract_bed_from_tagged_bam(input_bam: str, output_bed: str,
                 continue
 
             # Footprint tags in SEQ/query coords (molecular tags are flipped)
-            try:
-                ns, nl = read.get_tag('ns'), read.get_tag('nl')
-            except KeyError:
-                continue  # No footprint tags
+            from fiberhmm.io.legacy_tags import array_tag_pair
+            pair = array_tag_pair(read, 'ns', 'nl')
+            if pair is None:
+                continue  # No footprint tags (or not a valid array pair)
+            ns, nl = pair
             if legacy_frame.is_molecular(read):
                 ns, nl = flip_intervals_to_seq(ns, nl, read)
             else:

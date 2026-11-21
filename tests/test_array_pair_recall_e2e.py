@@ -63,10 +63,6 @@ def test_dorado_scalar_ns_beside_ma_only_calls_recalls_like_ma_only(tmp_path):
     assert all('nuc.' in v and 'msp.' in v for v in a.values()), a
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    'BUG (coverage-33): tf_recaller.recall_read reads ns/nl with read.get_tag, not the array-pair rule, so a scalar '
-    'Dorado ns:i beside an nl array raises "TypeError: object of type \'int\' has no len()" and recall-tfs writes no '
-    'output. By the rule the ns/nl pair is absent and the read recalls from its as/al pair.'))
 def test_scalar_ns_beside_an_nl_array_is_an_absent_pair_in_recall(tmp_path):
     reference = _rewrite(tmp_path / 'msp_pair.bam', drop=('ns', 'nl', 'nq'))
     broken = _rewrite(tmp_path / 'scalar_ns_nl.bam', drop=('nq',), scalar_ns=True)

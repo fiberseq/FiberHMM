@@ -55,7 +55,7 @@ from collections import deque, namedtuple
 
 import pysam
 from fiberhmm import defaults as _D
-from fiberhmm.io.legacy_tags import has_array_tag_pair, has_legacy_pair
+from fiberhmm.io.legacy_tags import array_tag_pair, has_array_tag_pair, has_legacy_pair, raw_array_tag_pair
 from fiberhmm.inference.chimeras import is_marked_chimera
 
 from fiberhmm.cli.common import (
@@ -415,7 +415,15 @@ def _make_payload(read, mode=None, input_molecular_frame=True) -> dict:
         # >= 2.13.2, whose legacy tags are molecular too.
         read_frame = True
     tags = {}
-    for t in ('MM', 'Mm', 'ML', 'Ml', 'ns', 'nl', 'as', 'al', 'nq', 'st', 'MA'):
+    # Legacy footprint pairs follow the shared array-pair rule: a scalar or
+    # string tag (Dorado's ns:i) or unequal lengths make the pair absent.
+    for start_tag, length_tag in (('ns', 'nl'), ('as', 'al')):
+        pair = raw_array_tag_pair(read, start_tag, length_tag)
+        if pair is not None:
+            tags[start_tag], tags[length_tag] = pair
+    if 'ns' in tags and read.has_tag('nq'):
+        tags['nq'] = read.get_tag('nq')
+    for t in ('MM', 'Mm', 'ML', 'Ml', 'st', 'MA'):
         if read.has_tag(t):
             val = read.get_tag(t)
             if t in ('ML', 'Ml'):
@@ -588,16 +596,9 @@ def _process_nuc_payload_record(read, payload, nuc_cfg) -> tuple:
     else:
         v2_short_count = 0
 
-    try:
-        ns_raw = read.get_tag('ns')
-        nl_raw = read.get_tag('nl')
-    except KeyError:
-        ns_raw, nl_raw = (), ()
-    try:
-        as_raw = read.get_tag('as')
-        al_raw = read.get_tag('al')
-    except KeyError:
-        as_raw, al_raw = (), ()
+    # Shared array-pair rule: a scalar/string tag or unequal lengths = absent.
+    ns_raw, nl_raw = array_tag_pair(read, 'ns', 'nl') or ((), ())
+    as_raw, al_raw = array_tag_pair(read, 'as', 'al') or ((), ())
 
     if len(ns_raw) == 0 and len(as_raw) == 0:
         return (None, None, None, None, None), stats
@@ -1114,9 +1115,9 @@ def _estimate_phase_nrl_from_tags(path, nuc_min_size, sample_target=20000):
     bam = pysam.AlignmentFile(path, 'rb', check_sq=False)
     try:
         for read in bam:
-            if read.has_tag('ns') and read.has_tag('nl'):
-                ns = list(read.get_tag('ns'))
-                nl = list(read.get_tag('nl'))
+            pair = array_tag_pair(read, 'ns', 'nl')
+            if pair is not None:
+                ns, nl = pair
             else:
                 # fibertools >= 0.13 keeps nucleosomes only in Ma, and
                 # --no-legacy-tags output only in FiberHMM's MA. Spacing is

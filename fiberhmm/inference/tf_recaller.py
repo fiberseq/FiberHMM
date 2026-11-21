@@ -1137,16 +1137,11 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
     Pass the wrong value and reverse-strand calls get mis-placed (they land on
     accessible m6A-rich DNA -- e.g. open promoters fill with spurious nuc).
     """
-    try:
-        ns_raw = read.get_tag('ns')
-        nl_raw = read.get_tag('nl')
-    except KeyError:
-        ns_raw, nl_raw = (), ()
-    try:
-        as_raw = read.get_tag('as')
-        al_raw = read.get_tag('al')
-    except KeyError:
-        as_raw, al_raw = (), ()
+    # The shared array-pair rule (fiberhmm.io.legacy_tags): a scalar or string
+    # tag (Dorado's ns:i signal count) or unequal lengths make the pair absent.
+    from fiberhmm.io.legacy_tags import array_tag_pair
+    ns_raw, nl_raw = array_tag_pair(read, 'ns', 'nl') or ((), ())
+    as_raw, al_raw = array_tag_pair(read, 'as', 'al') or ((), ())
 
     if len(ns_raw) == 0 and len(as_raw) == 0:
         return [], [], []

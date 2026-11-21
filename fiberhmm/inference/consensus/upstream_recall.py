@@ -32,7 +32,13 @@ def legacy_tag_intervals(read, start_tag, length_tag, legacy_annotation_frame):
         return []  # Absent feature; scaffold equality below still rejects any disagreement.
     if not has_start or not has_length:
         raise ValueError('Missing original nuc/MSP annotation tags')
-    starts, lengths = read.get_tag(start_tag), read.get_tag(length_tag)
+    from ...io.legacy_tags import array_tag_pair
+    pair = array_tag_pair(read, start_tag, length_tag)
+    if pair is None:
+        # Consensus replay stays strict: a present but malformed pair (unequal
+        # lengths, non-integer arrays) is an error, not silently truncated.
+        raise ValueError('Original nuc/MSP annotation tags are not an integer array pair of equal length')
+    starts, lengths = pair
     if legacy_annotation_frame == 'molecular':
         starts, lengths = flip_intervals_to_seq(starts, lengths, read)
     return [(int(a), int(a+b)) for a,b in zip(starts,lengths)]
