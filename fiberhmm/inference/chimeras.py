@@ -149,6 +149,10 @@ def _error_masked_query_positions(read, error_mask):
         lo = int(np.searchsorted(ordered, start))
         if lo >= ordered.size or ordered[lo] >= end:
             return set()
+    # Same query coordinates as the event scan (get_daf_positions strips CIGAR
+    # 'P' on a copy; pysam's aligned pairs would shift every later base).
+    from fiberhmm.daf.encoder import _without_cigar_padding
+    read = _without_cigar_padding(read)
     arrays = matched_base_arrays(read)
     if arrays is not None:
         qpos, rpos = arrays[0], arrays[1]
