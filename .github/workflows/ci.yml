@@ -17,6 +17,11 @@ env:
   FIBERHMM_NO_UPDATE_CHECK: "1"
   OPENBLAS_NUM_THREADS: "1"
   PYTHONUNBUFFERED: "1"
+  # Linux jobs use a pinned minimap2 release binary, not the distribution
+  # package: Ubuntu 24.04's minimap2 is 2.27, whose --MD writes no MD tag.
+  MINIMAP2_VERSION: "2.30"
+  MINIMAP2_SHA256: "b4c0677f282f448dac7bc1cd2fe5a45d12cb07a8b1edc316a45a26bbf75b7f07"
+  MINIMAP2_227_SHA256: "a8971db6fbde47bdb4cab505dc2c1b099c77c2343e80d9549ed9b39a99867a60"
 
 jobs:
   test:
@@ -40,11 +45,17 @@ jobs:
           cache-dependency-path: pyproject.toml
       # The fiberhmm-pipeline end-to-end tests need minimap2 and the samtools
       # tests need samtools; without them those tests skip.
-      - name: Install minimap2 and samtools (Linux)
+      - name: Install pinned minimap2 and samtools (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y minimap2 samtools
+          sudo apt-get install -y samtools
+          tarball="minimap2-${MINIMAP2_VERSION}_x64-linux.tar.bz2"
+          curl -fsSL -o "$RUNNER_TEMP/$tarball" \
+            "https://github.com/lh3/minimap2/releases/download/v${MINIMAP2_VERSION}/$tarball"
+          echo "$MINIMAP2_SHA256  $RUNNER_TEMP/$tarball" | sha256sum -c -
+          tar -xjf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/minimap2-${MINIMAP2_VERSION}_x64-linux" >> "$GITHUB_PATH"
       - name: Install minimap2 and samtools (macOS)
         if: runner.os == 'macOS'
         run: brew install minimap2 samtools
@@ -92,11 +103,17 @@ jobs:
           print(wheel, sorted(tops))
           EOF
       # The installed-script run below aligns with minimap2 (fiberhmm-pipeline).
-      - name: Install minimap2 and samtools (Linux)
+      - name: Install pinned minimap2 and samtools (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y minimap2 samtools
+          sudo apt-get install -y samtools
+          tarball="minimap2-${MINIMAP2_VERSION}_x64-linux.tar.bz2"
+          curl -fsSL -o "$RUNNER_TEMP/$tarball" \
+            "https://github.com/lh3/minimap2/releases/download/v${MINIMAP2_VERSION}/$tarball"
+          echo "$MINIMAP2_SHA256  $RUNNER_TEMP/$tarball" | sha256sum -c -
+          tar -xjf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/minimap2-${MINIMAP2_VERSION}_x64-linux" >> "$GITHUB_PATH"
       - name: Install minimap2 and samtools (macOS)
         if: runner.os == 'macOS'
         run: brew install minimap2 samtools
@@ -130,3 +147,18 @@ jobs:
         run: |
           "$RUNNER_TEMP/venv/bin/python" -I "$GITHUB_WORKSPACE/tools/ci/installed_scripts_smoke.py" \
             --bin "$RUNNER_TEMP/venv/bin" --workdir "$RUNNER_TEMP/installed-smoke"
+      - name: Run installed fiberhmm-pipeline under minimap2 2.27 (Linux)
+        # minimap2 2.27 (the Ubuntu 24.04 package) answers --MD with a cs tag and
+        # no MD; fiberhmm-pipeline must compute MD from the reference itself.
+        if: runner.os == 'Linux'
+        working-directory: ${{ runner.temp }}
+        run: |
+          tarball="minimap2-2.27_x64-linux.tar.bz2"
+          curl -fsSL -o "$RUNNER_TEMP/$tarball" \
+            "https://github.com/lh3/minimap2/releases/download/v2.27/$tarball"
+          echo "$MINIMAP2_227_SHA256  $RUNNER_TEMP/$tarball" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/mm227" && tar -xjf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP/mm227"
+          export PATH="$RUNNER_TEMP/mm227/minimap2-2.27_x64-linux:$PATH"
+          minimap2 --version
+          "$RUNNER_TEMP/venv/bin/python" -I "$GITHUB_WORKSPACE/tools/ci/installed_scripts_smoke.py" \
+            --bin "$RUNNER_TEMP/venv/bin" --workdir "$RUNNER_TEMP/installed-smoke-mm227"
