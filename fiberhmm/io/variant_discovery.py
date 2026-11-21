@@ -194,25 +194,37 @@ def check_pool_headers(bams: Sequence[str]) -> List[Tuple[str, int]]:
     return list(first or [])
 
 
-def resolve_read_groups(bams: Sequence[str], options: DiscoveryOptions) -> Optional[frozenset]:
-    """Read-group IDs discovery keeps (None: every read)."""
+def resolve_read_groups(bams: Sequence[str], options: DiscoveryOptions
+                        ) -> Optional[Tuple[frozenset, ...]]:
+    """Per BAM (in ``bams`` order), the read-group IDs discovery keeps; None
+    when every read is kept. RG IDs are local to a BAM, so ``rg_sample`` is
+    resolved against each BAM's own @RG lines."""
+    if not options.read_groups and options.rg_sample is None:
+        return None
     wanted = set(options.read_groups)
-    if options.rg_sample is not None:
-        matched = set()
-        for path in bams:
-            with pysam.AlignmentFile(path, "rb", check_sq=False) as bam:
-                for rg in bam.header.to_dict().get("RG", []) or []:
-                    if str(rg.get("SM")) == options.rg_sample:
-                        matched.add(str(rg.get("ID")))
-        if not matched:
-            raise VariantDiscoveryError(
-                f"no @RG with SM:{options.rg_sample} in the pooled BAMs")
-        wanted = (wanted & matched) if wanted else matched
-        if not wanted:
-            raise VariantDiscoveryError(
-                "the --variants-read-groups IDs have no read group with "
-                f"SM:{options.rg_sample}")
-    return frozenset(wanted) if wanted else None
+    out = []
+    for path in bams:
+        with pysam.AlignmentFile(path, "rb", check_sq=False) as bam:
+            rgs = bam.header.to_dict().get("RG", []) or []
+        ids = {str(rg.get("ID")) for rg in rgs}
+        if options.rg_sample is not None:
+            ids = {str(rg.get("ID")) for rg in rgs if str(rg.get("SM")) == options.rg_sample}
+        if wanted:
+            ids &= wanted
+        out.append(frozenset(ids))
+    if not any(out):
+        what = []
+        if options.rg_sample is not None:
+            what.append(f"SM:{options.rg_sample}")
+        if wanted:
+            what.append("ID " + ",".join(sorted(wanted)))
+        raise VariantDiscoveryError(
+            f"no @RG with {' and '.join(what)} in the pooled BAMs")
+    return tuple(out)
+
+
+def _rg_of(read_groups, k: int) -> Optional[frozenset]:
+    return None if read_groups is None else read_groups[k]
 
 
 def _sniff_daf_reads(path: str, n: int = 200) -> bool:
@@ -273,6 +285,14 @@ def detect_platform(bam_path: str) -> str:
     return "unknown"
 
 
+def _circular_lengths(bam_path: str) -> Dict[str, int]:
+    """``{contig: length}`` of the header's ``TP:circular`` contigs."""
+    with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
+        sqs = bam.header.to_dict().get("SQ", []) or []
+    return {sq["SN"]: int(sq["LN"]) for sq in sqs
+            if str(sq.get("TP", "")).lower() == "circular"}
+
+
 def homopolymer_active(params: PileupParams, platform: str) -> bool:
     if params.homopolymer == "on":
         return True
@@ -325,7 +345,7 @@ def _file_identity(path: str, header_md5: bool = True) -> dict:
 
 def cache_material(bams: Sequence[str], windows: Sequence[Tuple[str, int, int]],
                    caller: str, options: DiscoveryOptions,
-                   read_groups: Optional[frozenset], platform: str) -> dict:
+                   read_groups, platform: str) -> dict:
     """Everything that decides the discovered VCF (hashed into the key)."""
     from fiberhmm import __version__
     params = (dataclasses.asdict(options.pileup) if caller == "pileup"
@@ -340,9 +360,12 @@ def cache_material(bams: Sequence[str], windows: Sequence[Tuple[str, int, int]],
         "fiberhmm_version": __version__,
         "caller": caller,
         "parameters": params,
-        "inputs": sorted((_file_identity(p) for p in bams),
+        # Each input with the read groups kept from it (RG IDs are per BAM).
+        "inputs": sorted(({**_file_identity(p),
+                           "read_groups": (sorted(read_groups[k]) if read_groups is not None
+                                           else None)}
+                          for k, p in enumerate(bams)),
                          key=lambda d: json.dumps(d, sort_keys=True)),
-        "read_groups": sorted(read_groups) if read_groups else None,
         "regions": [list(w) for w in windows],
         "reference": reference,
         "chunk_bp": int(options.chunk_bp),
@@ -482,19 +505,35 @@ def _m6a_query_positions(read, threshold: int) -> set:
     return out
 
 
+def _fold(positions: np.ndarray, length: int):
+    """Positions folded onto a circular contig, first occurrence of each
+    (a read that runs round the origin counts a position once); returns
+    ``(folded, index into the input)``."""
+    folded = positions % length
+    _u, first = np.unique(folded, return_index=True)
+    first.sort()
+    return folded[first], first
+
+
 def pileup_chunk(chrom: str, lo: int, hi: int, bams: Sequence[str],
-                 params: PileupParams, read_groups: Optional[frozenset] = None,
+                 params: PileupParams, read_groups=None,
                  reference: Optional[str] = None,
-                 homopolymer: bool = False) -> Tuple[List[dict], dict]:
+                 homopolymer: bool = False,
+                 circular_length: Optional[int] = None) -> Tuple[List[dict], dict]:
     """Candidate SNVs at ``[lo, hi)`` of ``chrom`` from every read that
-    overlaps the chunk; ``(records, stats)``."""
+    overlaps the chunk; ``(records, stats)``.
+
+    ``read_groups``: per-BAM RG sets (:func:`resolve_read_groups`) or None.
+    On a circular contig of ``circular_length`` every read of the contig is
+    read and its coordinates are folded onto the contig, each position
+    counted once per read."""
     w_lo = max(0, lo - _MARGIN)
     w_hi = hi + _MARGIN
     L = w_hi - w_lo
     counts = np.zeros(L * 8, dtype=np.int64)     # pos, base(4), strand(2)
     dels = np.zeros(L, dtype=np.int64)
     votes = np.zeros(L * 4, dtype=np.int64)      # reference base votes
-    stats = {"reads": 0, "reads_no_bases": 0}
+    stats = {"reads": 0, "reads_no_bases": 0, "reads_no_quals": 0}
     batch_c: List[np.ndarray] = []
     batch_v: List[np.ndarray] = []
     batch_n = 0
@@ -510,14 +549,16 @@ def pileup_chunk(chrom: str, lo: int, hi: int, bams: Sequence[str],
             batch_v.clear()
         batch_n = 0
 
-    for path in bams:
+    for k, path in enumerate(bams):
+        rg = _rg_of(read_groups, k)
         with pysam.AlignmentFile(path, "rb") as bam:
             try:
-                reads = bam.fetch(chrom, lo, hi)
+                reads = (bam.fetch(chrom) if circular_length
+                         else bam.fetch(chrom, lo, hi))
             except ValueError:
                 continue
             for read in reads:
-                if not _keep_read(read, params.min_mapq, read_groups):
+                if not _keep_read(read, params.min_mapq, rg):
                     continue
                 seq = read.query_sequence
                 quals = read.query_qualities
@@ -525,8 +566,17 @@ def pileup_chunk(chrom: str, lo: int, hi: int, bams: Sequence[str],
                 if arrays is None:
                     stats["reads_no_bases"] += 1
                     continue
+                has_quals = quals is not None and len(quals) == len(seq)
+                if not has_quals and params.min_baseq > 0:
+                    # No qualities: no base can pass a quality floor.
+                    stats["reads_no_quals"] += 1
+                    continue
                 stats["reads"] += 1
                 qpos, rpos, is_eq, del_rpos = arrays
+                if circular_length:
+                    rpos, keep = _fold(rpos, circular_length)
+                    qpos, is_eq = qpos[keep], is_eq[keep]
+                    del_rpos = _fold(del_rpos, circular_length)[0]
                 inside = (rpos >= w_lo) & (rpos < w_hi)
                 qpos, rpos, is_eq = qpos[inside], rpos[inside], is_eq[inside]
                 codes = _BASE_INDEX[np.frombuffer(seq.encode("ascii", "replace"), dtype=np.uint8)[qpos]]
@@ -535,6 +585,9 @@ def pileup_chunk(chrom: str, lo: int, hi: int, bams: Sequence[str],
                         m = matched_base_arrays(read, seq)
                         if m is not None:
                             _mq, mr, mref, _mquery = m
+                            if circular_length:
+                                mr, keep = _fold(mr, circular_length)
+                                mref = mref[keep]
                             sel = (mr >= w_lo) & (mr < w_hi)
                             rc = _BASE_INDEX[mref[sel]]
                             ok = rc < 4
@@ -544,7 +597,7 @@ def pileup_chunk(chrom: str, lo: int, hi: int, bams: Sequence[str],
                         ok = eqc < 4
                         batch_v.append((rpos[is_eq][ok] - w_lo) * 4 + eqc[ok])
                 good = codes < 4
-                if quals is not None and len(quals) == len(seq):
+                if has_quals:
                     good &= np.asarray(quals, dtype=np.int64)[qpos] >= params.min_baseq
                 strand = 1 if read.is_reverse else 0
                 batch_c.append((rpos[good] - w_lo) * 8 + codes[good].astype(np.int64) * 2 + strand)
@@ -613,15 +666,17 @@ def pileup_chunk(chrom: str, lo: int, hi: int, bams: Sequence[str],
                 "ad": (ref_f + ref_r, n_alt), "dp": n_dp,
             })
     if params.mod_filter and records:
-        _mod_pass(records, chrom, bams, params, read_groups)
+        _mod_pass(records, chrom, bams, params, read_groups, circular_length)
     stats["candidates"] = len(records)
     return records, stats
 
 
 def _mod_pass(records: List[dict], chrom: str, bams: Sequence[str],
-              params: PileupParams, read_groups: Optional[frozenset]) -> None:
+              params: PileupParams, read_groups=None,
+              circular_length: Optional[int] = None) -> None:
     """Methylation fraction of REF reads at A/T candidates; FILTER
-    ModArtifact where it is high and the alternate fraction low."""
+    ModArtifact where it is high and the alternate fraction low. Uses the
+    same read and base-quality rules as the counting pass."""
     targets = {rec["pos0"]: rec for rec in records if rec["ref"] in "AT"}
     if not targets:
         return
@@ -630,27 +685,37 @@ def _mod_pass(records: List[dict], chrom: str, bams: Sequence[str],
     called = dict.fromkeys(targets, 0)
     any_mm = False
     positions = np.array(sorted(targets), dtype=np.int64)
-    for path in bams:
+    for k, path in enumerate(bams):
+        rg = _rg_of(read_groups, k)
         with pysam.AlignmentFile(path, "rb") as bam:
             try:
-                reads = bam.fetch(chrom, lo, hi)
+                reads = bam.fetch(chrom) if circular_length else bam.fetch(chrom, lo, hi)
             except ValueError:
                 continue
             for read in reads:
-                if not _keep_read(read, params.min_mapq, read_groups):
+                if not _keep_read(read, params.min_mapq, rg):
                     continue
                 if not read.has_tag("MM") and not read.has_tag("Mm"):
                     continue
-                arrays = _aligned_arrays(read) if read.query_sequence else None
+                seq = read.query_sequence
+                arrays = _aligned_arrays(read) if seq else None
                 if arrays is None:
                     continue
+                quals = read.query_qualities
+                has_quals = quals is not None and len(quals) == len(seq)
+                if not has_quals and params.min_baseq > 0:
+                    continue
                 qpos, rpos = arrays[0], arrays[1]
+                if circular_length:
+                    rpos, keep = _fold(rpos, circular_length)
+                    qpos = qpos[keep]
                 hit = np.isin(rpos, positions)
+                if has_quals:
+                    hit &= np.asarray(quals, dtype=np.int64)[qpos] >= params.min_baseq
                 if not hit.any():
                     continue
                 any_mm = True
                 mods = _m6a_query_positions(read, params.mod_prob_threshold)
-                seq = read.query_sequence
                 for q, p in zip(qpos[hit].tolist(), rpos[hit].tolist()):
                     if seq[q].upper() == targets[p]["ref"]:
                         ref_reads[p] += 1
@@ -672,27 +737,31 @@ def _mod_pass(records: List[dict], chrom: str, bams: Sequence[str],
 # ---------------------------------------------------------------------------
 
 def daf_chunk(chrom: str, lo: int, hi: int, bams: Sequence[str], params: DafScreenParams,
-              read_groups: Optional[frozenset], reference: Optional[str],
-              work_dir: str) -> Tuple[List[dict], dict]:
+              read_groups, reference: Optional[str],
+              work_dir: str, circular_length: Optional[int] = None) -> Tuple[List[dict], dict]:
     """DAF SNP screen (``all_snvs``) on the reads overlapping the chunk;
-    calls at ``[lo, hi)`` only."""
+    calls at ``[lo, hi)`` only. On a circular contig every read of the
+    contig is screened (the screen folds reads through the origin)."""
     from fiberhmm.daf.snps import call_opposite_conversion_snps
     os.makedirs(work_dir, exist_ok=True)
-    fd, tmp_bam = tempfile.mkstemp(prefix=f"chunk_{chrom}_{lo}_", suffix=".bam", dir=work_dir)
+    fd, tmp_bam = tempfile.mkstemp(prefix=f"chunk_{_safe_token(chrom)}_{lo}_", suffix=".bam",
+                                   dir=work_dir)
     os.close(fd)
     n = 0
     try:
         with pysam.AlignmentFile(bams[0], "rb") as first:
             header = first.header
         with pysam.AlignmentFile(tmp_bam, "wb", header=header) as out:
-            for path in bams:
+            for k, path in enumerate(bams):
+                rg = _rg_of(read_groups, k)
                 with pysam.AlignmentFile(path, "rb") as bam:
                     try:
-                        reads = bam.fetch(chrom, lo, hi)
+                        reads = (bam.fetch(chrom) if circular_length
+                                 else bam.fetch(chrom, lo, hi))
                     except ValueError:
                         continue
                     for read in reads:
-                        if not _keep_read(read, params.min_mapq, read_groups):
+                        if not _keep_read(read, params.min_mapq, rg):
                             continue
                         out.write(read)
                         n += 1
@@ -749,23 +818,30 @@ def daf_chunk(chrom: str, lo: int, hi: int, bams: Sequence[str], params: DafScre
 # ---------------------------------------------------------------------------
 
 def _chunk_name(chunk: Tuple[str, int, int]) -> str:
+    """Collision-free part name (contig names may differ only in characters
+    a file name cannot keep)."""
     c, s, e = chunk
-    return f"{_safe_token(c)}_{s}_{e}"
+    digest = hashlib.sha1(f"{c}\t{s}\t{e}".encode()).hexdigest()[:16]
+    return f"{_safe_token(c)[:40]}_{s}_{e}_{digest}"
+
+
+def _part_path(parts_dir: str, chunk) -> str:
+    return os.path.join(parts_dir, _chunk_name(chunk) + ".jsonl")
 
 
 def _run_chunk(task) -> Tuple[Tuple[str, int, int], dict]:
-    chunk, caller, bams, options, read_groups, homopolymer, parts_dir = task
+    chunk, caller, bams, options, read_groups, homopolymer, parts_dir, circ = task
     chrom, lo, hi = chunk
     pysam.set_verbosity(0)
     if caller == "pileup":
         records, stats = pileup_chunk(chrom, lo, hi, bams, options.pileup, read_groups,
-                                      options.reference, homopolymer)
+                                      options.reference, homopolymer, circ)
     else:
         records, stats = daf_chunk(chrom, lo, hi, bams, options.daf, read_groups,
-                                   options.reference, parts_dir)
-    path = os.path.join(parts_dir, _chunk_name(chunk) + ".jsonl")
-    tmp = path + ".tmp"
-    with open(tmp, "w") as handle:
+                                   options.reference, parts_dir, circ)
+    path = _part_path(parts_dir, chunk)
+    fd, tmp = tempfile.mkstemp(prefix=".part_", suffix=".tmp", dir=parts_dir)
+    with os.fdopen(fd, "w") as handle:
         handle.write(json.dumps({"chunk": list(chunk), "stats": stats}) + "\n")
         for rec in records:
             handle.write(json.dumps(rec) + "\n")
@@ -777,6 +853,16 @@ def _read_part(path: str) -> Tuple[dict, List[dict]]:
     with open(path) as handle:
         head = json.loads(handle.readline())
         return head, [json.loads(line) for line in handle if line.strip()]
+
+
+def _part_done(parts_dir: str, chunk) -> bool:
+    """A finished part whose recorded chunk is this chunk."""
+    try:
+        with open(_part_path(parts_dir, chunk)) as handle:
+            head = json.loads(handle.readline())
+        return head.get("chunk") == list(chunk)
+    except (OSError, ValueError):
+        return False
 
 
 _INFO_HEADERS = {
@@ -828,7 +914,9 @@ def write_vcf(records: List[dict], path: str, contigs: Sequence[Tuple[str, int]]
     lines.append('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype estimated from AF (screen estimate, not a genotyper call)">')
     lines.append('##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Depth">')
     lines.append('##FORMAT=<ID=AD,Number=R,Type=Integer,Description="REF and ALT depth">')
-    lines.append("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t" + _safe_token(sample))
+    # Any VCF sample name but whitespace (column separators) is kept as given.
+    lines.append("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t"
+                 + (re.sub(r"\s+", "_", str(sample)) or "sample"))
     body = []
     for rec in records:
         info = ";".join(f"{k}={v}" for k, v in rec["info"].items())
@@ -892,22 +980,92 @@ def discover_variants(input_bam: str, options: DiscoveryOptions,
 
     material = cache_material(bams, windows, caller, options, read_groups, platform)
     key = cache_key(material)
-    sample = options.sample_name or (
-        os.path.basename(input_bam)[:-4] if input_bam.endswith(".bam")
-        else os.path.basename(input_bam))
-    if len(bams) > 1 and not options.sample_name:
-        sample = sample + "_pool"
+    def stem(path):
+        name = os.path.basename(path)
+        return name[:-4] if name.endswith(".bam") else name
+    if options.sample_name:
+        sample = options.sample_name
+    elif len(bams) > 1:
+        # The same for every BAM of the pool, whichever one is -i.
+        sample = min(stem(p) for p in bams) + "_pool"
+    else:
+        sample = stem(input_bam)
     cache_dir = options.cache_dir or default_cache_dir or os.path.dirname(os.path.abspath(input_bam))
     os.makedirs(cache_dir, exist_ok=True)
     vcf, sidecar, parts_dir = cache_paths(cache_dir, sample, key)
 
-    if usable_cached_vcf(vcf, sidecar, key):
+    def reuse():
         with open(sidecar) as handle:
             meta = json.load(handle)
         log(f"[variants] reusing cached VCF {vcf} (key {key[:12]}, caller={caller})")
         return DiscoveryResult(vcf, key, caller, reason, True, sidecar,
                                int(meta.get("n_records", 0)), int(meta.get("n_pass", 0)))
 
+    if usable_cached_vcf(vcf, sidecar, key):
+        return reuse()
+    lock = parts_dir + ".lock"
+    _acquire_lock(lock, log)
+    try:
+        # Another run with the same key may have finished while we waited.
+        if usable_cached_vcf(vcf, sidecar, key):
+            return reuse()
+        return _build(input_bam, options, bams, contigs, contig_names, windows, read_groups,
+                      caller, reason, platform, homopolymer, material, key, sample,
+                      vcf, sidecar, parts_dir, log)
+    finally:
+        try:
+            os.remove(lock)
+        except OSError:
+            pass
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _acquire_lock(lock: str, log, poll: float = 2.0) -> None:
+    """One discovery per key at a time: wait for a live holder, take over a
+    stale lock (holder process gone on this host)."""
+    import socket
+    import time
+    host = socket.gethostname()
+    warned = False
+    while True:
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                with open(lock) as handle:
+                    holder_host, _, holder_pid = handle.read().strip().partition(":")
+                stale = holder_host == host and not _pid_alive(int(holder_pid))
+            except (OSError, ValueError):
+                stale = False  # being written: wait
+            if stale:
+                log(f"[variants] removing stale lock {lock}")
+                try:
+                    os.remove(lock)
+                except OSError:
+                    pass
+                continue
+            if not warned:
+                log(f"[variants] another run is discovering with this key ({lock}); waiting")
+                warned = True
+            time.sleep(poll)
+            continue
+        with os.fdopen(fd, "w") as handle:
+            handle.write(f"{host}:{os.getpid()}")
+        return
+
+
+def _build(input_bam, options, bams, contigs, contig_names, windows, read_groups, caller,
+           reason, platform, homopolymer, material, key, sample, vcf, sidecar, parts_dir,
+           log) -> DiscoveryResult:
     log(f"[variants] building VCF (key {key[:12]}): caller={caller} ({reason}); "
         f"{len(bams)} BAM(s), {len(windows)} window(s)"
         + (f", homopolymer filter on (platform {platform})" if homopolymer else
@@ -925,14 +1083,12 @@ def discover_variants(input_bam: str, options: DiscoveryOptions,
                 occupied.update(contig_names)
     chunks = [c for c in discovery_chunks(windows, options.chunk_bp) if c[0] in occupied]
     step = max(1, len(chunks) // 10)
-    todo = []
-    for chunk in chunks:
-        part = os.path.join(parts_dir, _chunk_name(chunk) + ".jsonl")
-        if not os.path.exists(part):
-            todo.append(chunk)
+    todo = [chunk for chunk in chunks if not _part_done(parts_dir, chunk)]
     if len(todo) < len(chunks):
         log(f"[variants] resuming: {len(chunks) - len(todo)}/{len(chunks)} chunks already done")
-    tasks = [(c, caller, tuple(bams), options, read_groups, homopolymer, parts_dir) for c in todo]
+    circular = _circular_lengths(bams[0])
+    tasks = [(c, caller, tuple(bams), options, read_groups, homopolymer, parts_dir,
+              circular.get(c[0])) for c in todo]
     done = len(chunks) - len(todo)
     if tasks:
         if options.cores > 1 and len(tasks) > 1:
@@ -951,7 +1107,10 @@ def discover_variants(input_bam: str, options: DiscoveryOptions,
     records: List[dict] = []
     totals: Dict[str, int] = {}
     for chunk in chunks:
-        head, recs = _read_part(os.path.join(parts_dir, _chunk_name(chunk) + ".jsonl"))
+        head, recs = _read_part(_part_path(parts_dir, chunk))
+        if head.get("chunk") != list(chunk):
+            raise VariantDiscoveryError(f"discovery part for {chunk} is not that chunk; "
+                                        f"remove {parts_dir} and rerun")
         records.extend(recs)
         for k, v in (head.get("stats") or {}).items():
             totals[k] = totals.get(k, 0) + int(v)
@@ -980,8 +1139,9 @@ def discover_variants(input_bam: str, options: DiscoveryOptions,
         "material": material,
         "created_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
     }
-    tmp = sidecar + ".tmp"
-    with open(tmp, "w") as handle:
+    fd, tmp = tempfile.mkstemp(prefix=".fhvar_", suffix=".json.tmp",
+                               dir=os.path.dirname(os.path.abspath(sidecar)))
+    with os.fdopen(fd, "w") as handle:
         json.dump(meta, handle, indent=2, sort_keys=True)
         handle.write("\n")
     os.replace(tmp, sidecar)
@@ -998,7 +1158,8 @@ def place_beside(vcf: str, out_dir: str) -> str:
         return vcf
     # Data first, index second (copy2 keeps mtimes: the index stays newer).
     for src, dst in ((vcf, target), (vcf + ".tbi", target + ".tbi")):
-        tmp = dst + ".tmp"
+        fd, tmp = tempfile.mkstemp(prefix=".fhvar_", suffix=".tmp", dir=out_dir)
+        os.close(fd)
         shutil.copy2(src, tmp)
         os.replace(tmp, dst)
     return target

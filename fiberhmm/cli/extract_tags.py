@@ -601,11 +601,15 @@ def plan_extract_regions(input_bam: str, region_size: int, skip_scaffolds: bool,
     the region its alignment starts in). With windows (``--region`` /
     ``--regions-bed``) the merged windows on selected contigs are split into
     ``region_size`` pieces; the first piece of each window also takes the
-    reads that start before the window, so every read overlapping a window is
-    written once.
+    reads that start before the window but not before the end of the
+    previous window (``left_open[(chrom, start)]``, -1 for the first), so
+    every alignment overlapping the windows is written once, by the first
+    window it overlaps.
     """
+    if int(region_size) <= 0:
+        raise RegionPlanError("--region-size must be a positive number of bp")
     if windows is None:
-        return _get_genome_regions(input_bam, region_size, skip_scaffolds, chroms), frozenset()
+        return _get_genome_regions(input_bam, region_size, skip_scaffolds, chroms), {}
     from fiberhmm.inference.region_planning import _selected
     from fiberhmm.io.variant_discovery import merge_windows
     with pysam.AlignmentFile(input_bam, 'rb', check_sq=False) as bam:
@@ -615,12 +619,17 @@ def plan_extract_regions(input_bam: str, region_size: int, skip_scaffolds: bool,
     if not merged:
         raise RegionPlanError("no genomic regions to process: --region/--regions-bed "
                               "left nothing on the selected contigs")
-    regions, left_open = [], set()
+    regions, left_open = [], {}
+    prev_end = {}
     for chrom, s, e in merged:
-        left_open.add((chrom, s))
+        # A read starting before this window belongs here only when it does
+        # not overlap the previous window on the contig (it is written
+        # there), so a read spanning two windows is written once.
+        left_open[(chrom, s)] = prev_end.get(chrom, -1)
+        prev_end[chrom] = e
         for a in range(s, e, int(region_size)):
             regions.append((chrom, a, min(e, a + int(region_size))))
-    return regions, frozenset(left_open)
+    return regions, left_open
 
 
 def resolve_discovered_variants(input_bam: str, discovery=None, *, regions=None,
@@ -694,7 +703,8 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
         sv_min_clip = int(params.get('sv_min_clip', 100))
         # The first region of a --region window also takes the reads that
         # start before it (they overlap the window).
-        left_open = (chrom, start) in (params.get('left_open') or ())
+        left_open_from = (params.get('left_open') or {}).get((chrom, start))
+        left_open = left_open_from is not None
         want_sv = 'sv' in extract_types
         want_var = 'var' in extract_types and variant_options is not None
         site_window = None
@@ -742,7 +752,8 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                         continue
                     if read.reference_start >= end:
                         continue
-                    if read.reference_start < start and not left_open:
+                    if read.reference_start < start and (
+                            not left_open or read.reference_start < left_open_from):
                         continue
                     if read.mapping_quality < min_mapq:
                         continue

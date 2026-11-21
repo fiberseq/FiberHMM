@@ -391,7 +391,7 @@ def test_interrupted_run_resumes(fiberseq, tmp_path):
     _vcf, _side, parts = vd.cache_paths(str(tmp_path), "fs", key)
     os.makedirs(parts)
     chunk = vd.discovery_chunks(windows, 5000)[0]
-    vd._run_chunk((chunk, "pileup", tuple(bams), opts, None, False, parts))
+    vd._run_chunk((chunk, "pileup", tuple(bams), opts, None, False, parts, None))
     lines = []
     result = discover_variants(bam, opts, log=lines.append)
     assert result.key == key
@@ -626,3 +626,115 @@ print(json.dumps({"type": detect_bigbed_autosql_type(var), "n_rows": len(rows),
     assert set(got["sites"]) == set(snvs)
     assert got["vcf"].endswith(vd.VCF_SUFFIX)
     assert set(got["alleles"]) == set(snvs)
+
+
+# ---------------------------------------------------------------------------
+# audit follow-ups
+# ---------------------------------------------------------------------------
+
+def test_read_group_ids_are_per_bam(tmp_path):
+    """The same RG ID in two pooled BAMs can belong to different samples."""
+    ref = _reference(seed=81)
+    site = 7000
+    alt = {"A": "G", "C": "A", "G": "T", "T": "C"}[ref[site]]
+    a = write_bam(tmp_path / "a.bam", ref, simulate(ref, {}, seed=17, rg_ids=("rg1",)),
+                  header=_header(rgs=[("rg1", "alpha")]))
+    b = write_bam(tmp_path / "b.bam", ref,
+                  simulate(ref, {site: (alt, 1.0)}, seed=18, rg_ids=("rg1",)),
+                  header=_header(rgs=[("rg1", "beta")]))
+    alpha = _discover(a, tmp_path / "x", pool=(b,), rg_sample="alpha")
+    beta = _discover(a, tmp_path / "x", pool=(b,), rg_sample="beta")
+    assert set(vcf_records(alpha.vcf)) == set()
+    assert set(vcf_records(beta.vcf)) == {site}
+    assert alpha.key != beta.key
+
+
+def test_read_spanning_two_windows_is_written_once(fiberseq, tmp_path):
+    _ref, _snvs, bam, _ = fiberseq
+    out = tmp_path / "sv.bed"
+    extract_tags.extract_tags_parallel(
+        bam, {"sv": str(out)}, ["sv"], n_cores=2, region_size=700,
+        sv_min_clip=0, sv_min_len=10**9,
+        regions=[(CHROM, 5000, 5100), (CHROM, 5600, 5700), (CHROM, 9000, 9100)])
+    names = [r[3] for r in _bed_rows(out)]
+    assert len(names) == len(set(names))
+    with pysam.AlignmentFile(bam) as handle:
+        want = {r.query_name for w in ((5000, 5100), (5600, 5700), (9000, 9100))
+                for r in handle.fetch(CHROM, *w)}
+    # sv_min_clip=0 writes a clip event at each end of every read.
+    assert set(names) == want
+
+
+def test_region_size_must_be_positive(fiberseq):
+    _ref, _snvs, bam, _ = fiberseq
+    with pytest.raises(extract_tags.RegionPlanError):
+        extract_tags.plan_extract_regions(bam, 0, False, None, [(CHROM, 0, 100)])
+
+
+def test_circular_contig_reads_through_the_origin(tmp_path):
+    rng = random.Random(91)
+    length = 3000
+    ref = "".join(rng.choice("ACGT") for _ in range(length))
+    site = 20
+    alt = {"A": "G", "C": "A", "G": "T", "T": "C"}[ref[site]]
+    doubled = ref + ref
+    hdr = pysam.AlignmentHeader.from_dict({
+        "HD": {"VN": "1.6", "SO": "coordinate"},
+        "SQ": [{"SN": CHROM, "LN": length, "TP": "circular"}],
+        "RG": [{"ID": "rg1", "SM": "s1", "PL": "PACBIO"}]})
+    records = []
+    for i in range(40):
+        start = rng.randrange(length - 800, length - 100)   # all run through the origin
+        seq = list(doubled[start:start + 1000])
+        if i % 2 == 0:
+            seq[site + length - start] = alt
+        records.append((f"c{i}", start, "".join(seq), i % 4 < 2, "rg1", []))
+    unsorted = str(tmp_path / "c.unsorted.bam")
+    with pysam.AlignmentFile(unsorted, "wb", header=hdr) as out:
+        for name, start, seq, reverse, rg, _m in sorted(records, key=lambda r: r[1]):
+            a = pysam.AlignedSegment(hdr)
+            a.query_name, a.query_sequence, a.flag = name, seq, 16 if reverse else 0
+            a.reference_id, a.reference_start, a.mapping_quality = 0, start, 60
+            a.cigartuples = [(0, len(seq))]
+            a.query_qualities = pysam.qualitystring_to_array("?" * len(seq))
+            a.set_tag("MD", _md(seq, doubled[start:start + len(seq)]))
+            a.set_tag("RG", rg)
+            out.write(a)
+    bam = str(tmp_path / "c.bam")
+    pysam.sort("-o", bam, unsorted)
+    pysam.index(bam)
+    got = vcf_records(_discover(bam, tmp_path / "p", chunk_bp=1000).vcf)
+    assert set(got) == {site} and got[site][1] == alt
+
+
+def test_chunk_part_names_do_not_collide():
+    assert vd._chunk_name(("chr.a", 0, 1000)) != vd._chunk_name(("chr_a", 0, 1000))
+
+
+def test_reads_without_qualities_pass_no_quality_floor(tmp_path):
+    ref = _reference(seed=95)
+    snvs = {6000: ({"A": "G", "C": "A", "G": "T", "T": "C"}[ref[6000]], 0.5)}
+    reads = simulate(ref, snvs, seed=19)
+    bam = write_bam(tmp_path / "q.bam", ref, reads)
+    noq = str(tmp_path / "noq.bam")
+    with pysam.AlignmentFile(bam) as src, pysam.AlignmentFile(noq, "wb", template=src) as dst:
+        for read in src:
+            read.query_qualities = None
+            dst.write(read)
+    pysam.index(noq)
+    assert vcf_records(_discover(noq, tmp_path / "a").vcf) == {}
+    floor0 = _discover(noq, tmp_path / "b", pileup=PileupParams(min_baseq=0))
+    assert set(vcf_records(floor0.vcf)) == {6000}
+
+
+def test_pool_name_and_sample_name(tmp_path):
+    ref = _reference(seed=97)
+    reads = simulate(ref, {}, seed=20, n_reads=200)
+    a = write_bam(tmp_path / "a.bam", ref, reads[::2])
+    b = write_bam(tmp_path / "b.bam", ref, reads[1::2])
+    first = _discover(b, tmp_path / "c", pool=(a,))
+    assert os.path.basename(first.vcf).startswith("a_pool.")
+    assert _discover(a, tmp_path / "c", pool=(b,)).reused
+    named = _discover(a, tmp_path / "d", sample_name="HG002.1")
+    with pysam.VariantFile(named.vcf) as vcf:
+        assert list(vcf.header.samples) == ["HG002.1"]
