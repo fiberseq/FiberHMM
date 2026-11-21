@@ -72,6 +72,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--prob-threshold` | — | ML threshold override, 0-255 (default: chemistry preset). |
 | `--use-m5c` / `--no-use-m5c` | auto | DddA CpG-aware calling: CpGs masked in the first-pass HMM and recall outside ddda_ucg islands (default: on for ddda). |
 | `--cpg-mask-policy` | — | DddA CpG mask policy for the HMM and recall (default unmethylated-only). Choices: `unmethylated-only`, `methylated-only`. |
+| `--legacy-tags` | off | Passed to fiberhmm-call: also write legacy ns/nl/nq, as/al beside MA/AQ (fibertools &lt;= 0.12, old scripts). Default: MA/AQ only. |
 | `--call-args` | — | Other fiberhmm-call options, quoted as one string (e.g. --call-args "--with-scores --min-llr 6"). |
 | `--call-mode` | `auto` | auto (default): fiberhmm-call's resumable region-parallel mode for genome-scale data (&gt;=20,000 reads over at least --cores regions), streaming for targeted runs (one amplicon or plasmid), which it calls faster. Choices: `auto`, `streaming`, `resumable`. |
 | `--no-qc` | off | Skip fiberhmm-qc. |
@@ -125,7 +126,8 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--emission-uplift` | — | Emission power transform. Default: enzyme preset. |
 | `--use-m5c` / `--no-use-m5c` | auto | DddA CpG-aware calling: CpG observations are excluded from the first-pass HMM and from nucleosome and TF recall, except inside confident unmethylated island calls (MA ddda_ucg from fiberhmm-tag-m5c) the input already carries. The same mask applies in fiberhmm-apply, -posteriors and -pair/-merge. Default: on for --enzyme ddda, off otherwise; --no-use-m5c for an ablation. |
 | `--cpg-mask-policy` | — | With CpG-aware calling (HMM and recall): keep CpGs only inside ddda_ucg islands (default unmethylated-only), or mask only ddda_mcg spans (methylated-only, the former behaviour). DddA only; ignored with a warning otherwise. Choices: `unmethylated-only`, `methylated-only`. |
-| `--no-legacy-tags` | off | Skip ns/nl/as/al, emit only MA/AQ. |
+| `--legacy-tags` | off | Also write the legacy ns/nl/nq (nucleosomes) and as/al (MSPs) tags beside MA/AQ, for fibertools &lt;= 0.12 and old scripts. Default: MA/AQ only (FiberHMM, fibertools &gt;= 0.13 and FiberBrowser read MA); legacy tags on rewritten records are removed. |
+| `--no-legacy-tags` | off | Deprecated no-op: MA-only output is the default. |
 | `--downstream-compat` | off | Skip MA/AQ; write TF calls into legacy ns/nl track. |
 | `--recall-nucs` / `--no-recall-nucs` | auto | Split over-merged nucleosomes + resolve platform-aware edges (emits nuc.QQQ) and promote nucleosome-sized TF leaks to nuc. ON by default for all enzymes (DddA uses phase-aware radial inference, others the accessible-cut Kadane split). Use --no-recall-nucs for baseline HMM nucleosomes (nuc.Q). |
 | `--split-min-llr` | `4.0` | Min accessible-run LLR to split a nucleosome; for DddA, the molecule-local linker-residue configuration LLR (default 4.0). |
@@ -224,7 +226,9 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--daf-mask-unaligned` / `--no-daf-mask-unaligned` | on | DAF only: treat insertion and soft-clip bases as no evidence and leave unaligned stretches of &gt;= 50 bp uncalled (default on, as in fiberhmm-call). |
 | `--use-m5c` / `--no-use-m5c` | auto | DddA CpG-aware calling, as in fiberhmm-call: CpG observations are hidden from the HMM except inside confident unmethylated islands (MA ddda_ucg from fiberhmm-tag-m5c) the input carries. Default: on for --enzyme ddda, off otherwise. |
 | `--cpg-mask-policy` | — | With CpG-aware calling: keep CpGs only inside ddda_ucg islands (default unmethylated-only), or mask only ddda_mcg spans (methylated-only). DddA only; ignored with a warning otherwise. Choices: `unmethylated-only`, `methylated-only`. |
-| `--harmonize-legacy-tags` | off | Write ns/nl as the nucleosomes that MA would hold (footprints outside MSPs), so legacy tags tile with as/al like fiberhmm-call output. Default: ns/nl list every HMM footprint, which fiberhmm-recall-tfs/-nucs need; they refuse harmonized input. |
+| `--legacy-tags` | off | Also write the legacy ns/nl/nq (nucleosomes) and as/al (MSPs) tags beside MA/AQ, for fibertools &lt;= 0.12 and old scripts. Default: MA/AQ only (FiberHMM, fibertools &gt;= 0.13 and FiberBrowser read MA); legacy tags on rewritten records are removed. |
+| `--no-legacy-tags` | off | Deprecated no-op: MA-only output is the default. |
+| `--harmonize-legacy-tags` | off | Implies --legacy-tags. Write ns/nl as the nucleosomes that MA would hold (footprints outside MSPs), so legacy tags tile with as/al like fiberhmm-call output. Default (--legacy-tags): ns/nl list every HMM footprint, which fiberhmm-recall-tfs/-nucs need; they refuse harmonized input. |
 
 ## fiberhmm-recall-tfs
 
@@ -250,7 +254,8 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--cpg-mask-policy` | — | CpG-aware policy: retain CpGs only inside confident unmethylated islands (default unmethylated-only), or reproduce the former behavior that masks only ddda_mcg spans. DddA only; ignored with a warning otherwise. Choices: `unmethylated-only`, `methylated-only`. |
 | `--unify-threshold` | `90` | v2 nucs with nl &lt; this are scanned + may be demoted to tf+ if overlapped by a recaller call (default 90) |
 | `--input-frame` | `auto` | Coordinate frame of the input ns/nl/as/al tags. "auto" (default) follows the @PG PP chain: the last footprint writer decides (fibertools predict-m6a/add-nucleosomes/fire -&gt; molecular; FiberHMM call/apply/recall -&gt; molecular when declared coord=molecular, else query); no writer -&gt; molecular if coord=molecular is declared, else query (FiberHMM &lt;= 2.12); a header with no writer and no declaration (stripped @PG) is read as query, except reads whose MA has a "." nuc/msp/tf group (molecular). Merged histories whose writers disagree, with no declaration, stop the run at the first read with these tags. A wrong frame mirrors reverse-strand calls. fibertools Ma tags are always molecular. Choices: `auto`, `molecular`, `query`. |
-| `--no-legacy-tags` | off | Skip refreshed ns/nl/as/al -- emit only MA/AQ. |
+| `--legacy-tags` | off | Also write the legacy ns/nl/nq (nucleosomes) and as/al (MSPs) tags beside MA/AQ, for fibertools &lt;= 0.12 and old scripts. Default: MA/AQ only (FiberHMM, fibertools &gt;= 0.13 and FiberBrowser read MA); legacy tags on rewritten records are removed. |
+| `--no-legacy-tags` | off | Deprecated no-op: MA-only output is the default. |
 | `--downstream-compat` | off | Downstream-compatibility mode: skip MA/AQ entirely and write TF calls INTO the legacy ns/nl tag alongside nucleosomes (sorted by start). Use for older tools that do not understand the Molecular-annotation spec. Loses per-TF quality scoring (tq/el/er) -- positions and lengths only. |
 | `-c` / `--cores` | `1` | Worker processes (0 = all CPUs; default 1). |
 | `--chunk-size` | `1024` | Reads per worker chunk (default 1024). Larger values reduce IPC overhead; decrease if RAM is constrained (each chunk holds reads in memory). |
@@ -288,7 +293,8 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--cpg-mask-policy` | — | CpG-aware policy: retain CpGs only inside confident unmethylated islands (default unmethylated-only), or reproduce the former behavior that masks only ddda_mcg spans. DddA only; ignored with a warning otherwise. Choices: `unmethylated-only`, `methylated-only`. |
 | `--unify-threshold` | `90` | v2 nucs with nl &lt; this are scanned + may be demoted to tf+ if overlapped by a recaller call (default 90) |
 | `--input-frame` | `auto` | Coordinate frame of the input ns/nl/as/al tags. "auto" (default) follows the @PG PP chain: the last footprint writer decides (fibertools predict-m6a/add-nucleosomes/fire -&gt; molecular; FiberHMM call/apply/recall -&gt; molecular when declared coord=molecular, else query); no writer -&gt; molecular if coord=molecular is declared, else query (FiberHMM &lt;= 2.12); a header with no writer and no declaration (stripped @PG) is read as query, except reads whose MA has a "." nuc/msp/tf group (molecular). Merged histories whose writers disagree, with no declaration, stop the run at the first read with these tags. A wrong frame mirrors reverse-strand calls. fibertools Ma tags are always molecular. Choices: `auto`, `molecular`, `query`. |
-| `--no-legacy-tags` | off | Skip refreshed ns/nl/as/al -- emit only MA/AQ. |
+| `--legacy-tags` | off | Also write the legacy ns/nl/nq (nucleosomes) and as/al (MSPs) tags beside MA/AQ, for fibertools &lt;= 0.12 and old scripts. Default: MA/AQ only (FiberHMM, fibertools &gt;= 0.13 and FiberBrowser read MA); legacy tags on rewritten records are removed. |
+| `--no-legacy-tags` | off | Deprecated no-op: MA-only output is the default. |
 | `--downstream-compat` | off | Downstream-compatibility mode: skip MA/AQ entirely and write TF calls INTO the legacy ns/nl tag alongside nucleosomes (sorted by start). Use for older tools that do not understand the Molecular-annotation spec. Loses per-TF quality scoring (tq/el/er) -- positions and lengths only. |
 | `-c` / `--cores` | `1` | Worker processes (0 = all CPUs; default 1). |
 | `--chunk-size` | `1024` | Reads per worker chunk (default 1024). Larger values reduce IPC overhead; decrease if RAM is constrained (each chunk holds reads in memory). |
@@ -462,7 +468,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `-i` / `--input` | required | BAM from fiberhmm-pair (mt/mp tags) |
 | `-o` / `--output` | required | Output consensus BAM (sorted + indexed) |
 | `--pairs-only` | off | Emit only consensus reads (default: also pass through unmerged reads) |
-| `--recall` | off | Re-call footprints on each both-strand consensus read (HMM, nucleosome and TF recall over both strands; writes ns/nl/as/al + MA nuc/msp/tf). Reads the deam+/deam- regime and uses C and G targets jointly. |
+| `--recall` | off | Re-call footprints on each both-strand consensus read (HMM, nucleosome and TF recall over both strands; writes MA nuc/msp/tf, plus ns/nl/as/al with --legacy-tags). Reads the deam+/deam- regime and uses C and G targets jointly. |
 | `--enzyme` | `ddda` | Model preset for --recall (default ddda) |
 | `--ddda-derived-tf-max-edge-gap` | `12` | With --recall, require TF calls exposed solely by DddA radial nucleosome refinement to have a deamination hit within BP on both sides (default 12; -1 disables). |
 | `--use-m5c` / `--no-use-m5c` | auto | With --recall: DddA CpG-aware calling, as in fiberhmm-call (CpGs excluded from the joint HMM and from recall except inside the source reads' ddda_ucg islands). Default: on for --enzyme ddda. |
@@ -471,6 +477,8 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--io-threads` | `4` | htslib compression threads (default 4) |
 | `--daf-mask-runs` | — | Thin DAF targets in same-strand runs of &gt;= N original C (CT) or G (GA) bases (N=2: CC/GG and longer). Default: 2 with keep-one for DddA (duplex-validated), off otherwise; 0 disables. |
 | `--daf-run-policy` | `keep-one` | With --daf-mask-runs: keep each run's 5'-most target (default) or drop the run. Choices: `keep-one`, `drop`. |
+| `--legacy-tags` | off | Also write the legacy ns/nl/nq (nucleosomes) and as/al (MSPs) tags beside MA/AQ, for fibertools &lt;= 0.12 and old scripts. Default: MA/AQ only (FiberHMM, fibertools &gt;= 0.13 and FiberBrowser read MA); legacy tags on rewritten records are removed. |
+| `--no-legacy-tags` | off | Deprecated no-op: MA-only output is the default. |
 
 ## fiberhmm-lift
 

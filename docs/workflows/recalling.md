@@ -19,9 +19,11 @@ For DddA output of `fiberhmm-call`, use `fiberhmm-call` again instead (see
 | `fiberhmm-recall-nucs` | nucleosome recall, MSP re-derivation, then TF recall and promotion (same as `fiberhmm-recall-tfs --recall-nucs`) |
 
 Both rebuild each read's observations from its own `MM`/`ML` (or DAF
-evidence) and sequence, and take the HMM footprints from the input's
-`ns`/`nl`/`as`/`al`, or from its `MA` when the legacy tags are absent
-(`--no-legacy-tags` output, fibertools `Ma`). On `fiberhmm-apply` output,
+evidence) and sequence, and take the HMM footprints from the input's `MA`
+`nuc`/`msp` groups (else fibertools `Ma`); the legacy `ns`/`nl`/`as`/`al`
+are read only when a record has no such group. Legacy tags that disagree
+with `MA` (for example call's, left beside an `MA` that a later run
+refreshed) are ignored. On `fiberhmm-apply` output,
 `fiberhmm-recall-nucs` gives the same footprint tags as `fiberhmm-call` with
 matching options.
 
@@ -41,8 +43,9 @@ fiberhmm-recall-nucs -i out/apply/hia5_pacbio_footprints.bam -o out/apply.recall
 [recall_tfs] processed 300 reads; 300 carried v2 tags; ... TF calls emitted; ... v2 short nucs demoted to tf+
 ```
 
-The input needs `ns`/`nl` that list every HMM footprint, which is the
-`fiberhmm-apply` default. Output of `fiberhmm-apply --harmonize-legacy-tags`
+On `fiberhmm-apply` output the recallers read the `MA` nucleosomes (the
+footprints outside MSPs); with `fiberhmm-apply --legacy-tags` output they read
+the same `MA`, since it is present. Output of `fiberhmm-apply --harmonize-legacy-tags`
 holds only the `MA`-view nucleosomes in `ns`/`nl` and marks each such read
 with `hl:i:1`; both recallers stop at the first read with that tag:
 
@@ -93,7 +96,8 @@ turn on CpG-aware recall automatically; add `--use-m5c`.
 ## What is kept and what is regenerated
 
 - Regenerated: `nuc` (from `recall-nucs`; `recall-tfs` passes nucleosomes
-  through), `msp`, `tf`, and the legacy tags (unless `--no-legacy-tags`).
+  through), `msp`, `tf`, and, with `--legacy-tags`, the legacy tags (without
+it, legacy tags on rewritten records are removed).
 - Kept unchanged, with their quality bytes: any other `MA` group, for example
   `ddda_mcg`/`ddda_ucg` and the `deam+`/`deam-` coverage of a merged duplex.
 - Short HMM footprints (`nl` < `--unify-threshold`) that a recaller call

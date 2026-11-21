@@ -263,7 +263,7 @@ set from the resolved enzyme and platform. `--no-qc` skips it,
 
 | Content | Where |
 |---|---|
-| Calls | `ns`/`nl`, `as`/`al`, `nq`, and `MA`/`AQ` (`nuc`, `msp`, `tf`); see [Annotations](../concepts/annotations.md) |
+| Calls | `MA`/`AQ` (`nuc`, `msp`, `tf`); `ns`/`nl`, `as`/`al`, `nq` too with `--legacy-tags`; see [Annotations](../concepts/annotations.md) |
 | Provenance | `@PG` with the resolved settings in `DS` (for example `mode=`, `enzyme=`, `prob_threshold=`, `primary_only=`, `recall_nucs=`, `dedup=`, `daf_snp_mask=`, `daf_run_mask=`, `cpg_mask=`, `hmm_cpg_mask=`), and `@CO fiberhmm:coord=molecular` (calls are in the molecular frame; see [Coordinates](../concepts/coordinates.md)) |
 | Chemistry | [`@CO FIBERHMM-CHEMISTRY:v1:`](../reference/headers.md#fiberhmm-chemistry) |
 | Layer list | [`@CO MA-TYPES:v1:nuc,msp,tf`](../reference/headers.md#ma-types) |
@@ -271,7 +271,11 @@ set from the resolved enzyme and platform. `--no-qc` skips it,
 
 Tag options:
 
-- `--no-legacy-tags`: write only `MA`/`AQ`, not `ns`/`nl`/`as`/`al`.
+- `--legacy-tags`: also write the legacy `ns`/`nl`/`nq` and `as`/`al`, for
+  fibertools ≤ 0.12 (`ft fire` 0.12 and older needs `as`/`al`) and old
+  scripts. Since 3.3.0 the default is `MA`/`AQ` only, which FiberHMM,
+  fibertools 0.13+ and FiberBrowser read; `--no-legacy-tags` is a
+  deprecated no-op.
 - `--downstream-compat`: put TF calls into `ns`/`nl` and write no
   `MA`/`AQ`/`AN`, for tools that read only legacy tags.
 - `--scores` (alias `--with-scores`): with `--no-recall-nucs`, write the HMM
@@ -291,7 +295,8 @@ stops with the first tracebacks and writes no output.
 ## `fiberhmm-apply`: HMM only
 
 `fiberhmm-apply` runs only the HMM (step 2): nucleosome and MSP calls in
-`ns`/`nl`/`as`/`al`, no TF recall, no `MA`. It is useful for inspecting the
+`MA` (`nuc` = the footprints outside MSPs, `msp`), no TF recall. With
+`--legacy-tags` it also writes `ns`/`nl` (every HMM footprint) and `as`/`al`. It is useful for inspecting the
 raw HMM, for a staged workflow, or with `fiberhmm-recall-tfs`/`-recall-nucs`
 afterwards ([Re-calling](recalling.md)).
 
@@ -312,8 +317,8 @@ BAM index: out/apply/hia5_pacbio_footprints.bam.bai
 - DAF and DddA options match `fiberhmm-call`: `--daf-mask-runs`,
   `--daf-run-policy`, `--daf-mask-unaligned`, and the first-pass CpG mask
   (`--use-m5c`/`--no-use-m5c`, `--cpg-mask-policy`; on for DddA).
-- By default `ns`/`nl` list every HMM footprint, which the recall tools
-  need. `--harmonize-legacy-tags` writes `ns`/`nl` as the nucleosomes `MA`
+- With `--legacy-tags`, `ns`/`nl` list every HMM footprint.
+  `--harmonize-legacy-tags` (implies `--legacy-tags`) writes `ns`/`nl` as the nucleosomes `MA`
   would hold (footprints outside MSPs), so the legacy tags tile with
   `as`/`al` like `fiberhmm-call` output; each such read carries `hl:i:1`,
   and `fiberhmm-recall-tfs`/`-recall-nucs` refuse it

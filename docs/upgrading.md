@@ -9,6 +9,20 @@ lists what 2.x users need to act on. The full list of changes is in the
 pip install --upgrade fiberhmm      # Python 3.10 to 3.14
 ```
 
+## Legacy tags are no longer written by default (3.3)
+
+Since 3.3.0, `fiberhmm-call`, `-apply`, `-recall-tfs`, `-recall-nucs`,
+`-merge --recall` and `-pipeline` write calls only to `MA`/`AQ`/`AN`, not to
+the legacy `ns`/`nl`/`nq` and `as`/`al`, and they remove legacy tags from the
+records they rewrite. FiberHMM, fibertools 0.13+ (`ft fire`, `ft extract`,
+`ft pileup`, `ft qc`, `ft center`, `ft validate`) and FiberBrowser read `MA`.
+Pass `--legacy-tags` for fibertools ≤ 0.12 (its `ft fire` needs `as`/`al`)
+or scripts that read `ns`/`nl`; `fiberhmm-pipeline --legacy-tags` passes it
+to `fiberhmm-call`. `--no-legacy-tags` is accepted as a deprecated no-op.
+Every FiberHMM reader takes nucleosome and MSP calls from `MA` first and
+reads the legacy tags only when a record has no `MA`/`Ma` `nuc` or `msp`
+group, so older BAMs with legacy tags only still work.
+
 ## Check which outputs need re-running
 
 `fiberhmm-check` reads what each output records about how it was made and

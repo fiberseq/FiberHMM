@@ -7,16 +7,21 @@ written 1-based). The meaning of the scores is explained in
 
 ## Footprint calls
 
-Written by `fiberhmm-call`, `fiberhmm-apply` (legacy tags, plus `MA`
-`nuc`/`msp` groups on reads that already carry DddA island groups),
+Written by `fiberhmm-call`, `fiberhmm-apply`,
 `fiberhmm-recall-tfs`/`-recall-nucs`, and the joint recall of
-`fiberhmm-pair`/`fiberhmm-merge --recall`.
+`fiberhmm-pair`/`fiberhmm-merge --recall`. Since 3.3.0 they write `MA`/`AQ`
+(and `AN`) only; the legacy `ns`/`nl`/`nq` and `as`/`al` are written only
+with `--legacy-tags`, for fibertools ≤ 0.12 and old scripts. FiberHMM,
+fibertools 0.13+ and FiberBrowser read `MA`. Every FiberHMM reader takes
+nucleosome and MSP calls from `MA` (else fibertools `Ma`) and reads the
+legacy tags only when a record has no `nuc`/`msp` group
+([Shared defaults](shared-defaults.md)).
 
 | Tag | Type | Content |
 |---|---|---|
-| `ns` / `nl` | `B:I` | nucleosome starts / lengths; with `--downstream-compat` also TF calls |
-| `as` / `al` | `B:I` | MSP starts / lengths (`fiberhmm-apply --no-msps` omits them) |
-| `nq` | `B:C` | one byte per `ns` entry: with nucleosome recall the LLR ×10 (0 = unresolved); otherwise the HMM posterior mean ×255 (`--scores`), the input's `nq`, or 0 |
+| `ns` / `nl` | `B:I` | with `--legacy-tags`: nucleosome starts / lengths; with `--downstream-compat` also TF calls |
+| `as` / `al` | `B:I` | with `--legacy-tags`: MSP starts / lengths (`fiberhmm-apply --no-msps` omits them) |
+| `nq` | `B:C` | with `--legacy-tags`, one byte per `ns` entry: with nucleosome recall the LLR ×10 (0 = unresolved); otherwise the HMM posterior mean ×255 (`--scores`), the input's `nq`, or 0 |
 | `MA` | `Z` | molecular annotations (groups below) |
 | `AQ` | `B:C` | quality bytes of every `MA` annotation, in `MA` order |
 | `AN` | `Z` | one name per `MA` annotation (`.` for unnamed); written when a call wraps a circular origin (`fhw_*`), for strand-rescue roles, consensus class tokens, or when preserved groups carry names |
@@ -35,8 +40,10 @@ always molecular frame) as input; it never writes them, and a command that
 copies them into `MA` removes them. See
 [Coordinate frames](../concepts/coordinates.md#fibertools-ma-tags).
 
-`--no-legacy-tags` writes only `MA`/`AQ` (existing legacy tags are left as
-they were); `--downstream-compat` writes TF calls into `ns`/`nl` and no
+Without `--legacy-tags` (the default) a run writes only `MA`/`AQ` and removes
+any `ns`/`nl`/`nq`/`as`/`al`/`aq` from the records it rewrites, so stale
+legacy tags never sit beside a new `MA`; `--no-legacy-tags` is accepted as a
+deprecated no-op. `--downstream-compat` writes TF calls into `ns`/`nl` and no
 `MA`/`AQ`/`AN`. Records a run skips are written without this run's call tags;
 DddA island groups are kept.
 
