@@ -392,3 +392,32 @@ def test_replaying_masked_evidence_requires_native_replay():
         prepare_sources(data, parse_options(options))
     # Unmasked saved evidence still replays with the BAM's own calls.
     assert prepare_sources(payload(), parse_options(options))
+
+
+@pytest.mark.parametrize('duplex', [False, True])
+def test_mask_positions_skip_cigar_padding(duplex):
+    # P consumes neither query nor reference; pysam's aligned pairs shift the
+    # query index after it, which would mask the neighbouring base instead.
+    read, hit, miss = read_with_variant('CT', 'ry')
+    read.cigarstring = '60M1P140M'
+    if duplex:
+        read.set_tag('cs', 'ct;ga')
+        read.set_tag('MA', '200;deam+:1-200;deam-:1-200;msp.:1-200')
+    with daf_snp_mask_scope({'chr1': frozenset({100 + hit, 100 + miss, 100 + 199})}):
+        masked, _ = hard_observations(read, 'daf', 'daf', 3, None)
+    with daf_snp_mask_scope({}):
+        plain, _ = hard_observations(read, 'daf', 'daf', 3, None)
+    unknown = lambda obs: {int(q) for q in np.flatnonzero(np.asarray(obs) == 8193)}
+    # Exactly the masked bases become unknown (neighbour contexts may change).
+    assert {hit, miss} <= unknown(masked) - unknown(plain) <= {hit, miss, 199}
+
+
+def test_masked_query_positions_follow_every_cigar_operation():
+    from fiberhmm.inference.consensus.snp_mask import masked_query_positions
+    read, _, _ = read_with_variant('CT', 'ry')
+    read.cigarstring = '5H3S10M2I4M1P3D5N6M5H'
+    # Query: 3 S, 10 M (ref 100-109), 2 I, 4 M (ref 110-113), 3 D + 5 N (ref
+    # 114-121), 6 M (ref 122-127, query 19-24).
+    read.query_sequence = 'A' * 25
+    assert masked_query_positions(read, {100, 109, 110, 113, 115, 122, 127}) == {3, 12, 15, 18, 19, 24}
+    assert masked_query_positions(read, set()) == set()

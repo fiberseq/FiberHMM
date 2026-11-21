@@ -922,10 +922,9 @@ def extract_modification_calls(read, mode: str, context_size: int = 3,
         if excluded_reference_positions:
             # Exclude both converted and unconverted alleles, before strand
             # detection and encoding. A masked target is unknown, not protected.
-            unaligned = set(unaligned) | {
-                q for q, r in read.get_aligned_pairs()
-                if q is not None and r in excluded_reference_positions
-            }
+            from fiberhmm.inference.consensus.snp_mask import masked_query_positions
+            unaligned = set(unaligned) | masked_query_positions(
+                read, excluded_reference_positions)
 
     def merge_insert(mods, strand_tag):
         # Insert-consensus deaminations replace the inserted bases' own marks

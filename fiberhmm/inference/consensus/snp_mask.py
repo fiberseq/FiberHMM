@@ -41,3 +41,28 @@ def prepare_mask_option(values, path=None, *, replay=False):
         raise ValueError('DAF SNP masking requires BAM input; --evidence/--resume already fixes the observations. Rebuild evidence from BAM with --daf-snp-mask')
     _, receipt = read_mask(path)
     values['input']['daf_snp_mask'] = receipt['path']
+
+
+def masked_query_positions(read, sites):
+    """Query positions aligned to reference ``sites``, walking the CIGAR.
+
+    pysam's ``get_aligned_pairs()`` advances the query index on ``P``
+    (padding) operations, shifting every later position by one; padding
+    consumes neither query nor reference here.
+    """
+    if not sites:
+        return set()
+    cigar = getattr(read, 'cigartuples', None)
+    if not cigar:
+        return set()
+    q, r, out = 0, int(read.reference_start), set()
+    for op, length in cigar:
+        if op in (0, 7, 8):        # M, =, X
+            out.update(q + i for i in range(length) if r + i in sites)
+            q += length; r += length
+        elif op in (1, 4):         # I, S
+            q += length
+        elif op in (2, 3):         # D, N
+            r += length
+        # H (5) and P (6) consume neither.
+    return out
