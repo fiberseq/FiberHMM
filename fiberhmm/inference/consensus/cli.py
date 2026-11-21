@@ -239,6 +239,9 @@ def _main(argv=None):
     with single_threaded_blas():
         if args.evidence or resume:
             payload=read_json(resume/'evidence.json.gz' if resume else args.evidence)
+            from .bam import check_saved_evidence
+            try: check_saved_evidence(payload,options)
+            except ValueError as error: p.exit(2,f'{p.prog}: error: {error}\n')
             count=1;jobs=iter([('analysis',payload,out)])
         else:
             if args.bed: windows=load_bed(args.bed,pooled=args.pool_loci)

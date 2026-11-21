@@ -19,15 +19,19 @@ MOLECULE_RECALL_FAILURES = ('Upstream TF overlaps a final nucleosome',
 def recall_hia5_alignment(read, unit, model, strand_mode, mode, context_size,
                           probability_threshold, minimum_llr, *,
                           minimum_opportunities=3, split_minimum_llr=4.,
-                          maximum_alignment_gap_bp=0, legacy_annotation_frame='disabled',minimum_nfr_length=0):
+                          maximum_alignment_gap_bp=0, legacy_annotation_frame='disabled',minimum_nfr_length=0,
+                          nuc_recall_policy='auto'):
     from ..strand_rescue import hard_observations, cigar_to_query_ref
     from ..tf_recaller import build_llr_tables
-    from ..fused_stages import _build_fused_recall_result_with_nucs
+    from ..fused_stages import _build_fused_recall_result_with_nucs, resolve_nuc_recall_policy
     from ...daf.m5c import ma_intervals
     from ...io.ma_tags import fibertools_ma_intervals, flip_intervals_to_seq
     if mode not in ('pacbio-fiber', 'nanopore-fiber'):
         raise ValueError('This upstream recall adapter is restricted to Hia5')
-    settings=dict(split_minimum_llr=split_minimum_llr,split_minimum_opportunities=3,
+    # The nucleosome policy fiberhmm-call resolves for this platform, recorded
+    # in the settings so saved evidence says how it was replayed.
+    nuc_recall_policy=resolve_nuc_recall_policy(nuc_recall_policy,mode)
+    settings=dict(split_minimum_llr=split_minimum_llr,split_minimum_opportunities=3,nuc_recall_policy=nuc_recall_policy,
         nuc_min_size=85,unify_threshold=90,minimum_llr=minimum_llr,minimum_opportunities=minimum_opportunities,
         maximum_alignment_gap_bp=maximum_alignment_gap_bp,minimum_nfr_length=minimum_nfr_length,
         phase_prior=False,query_coordinate_replay=True,motif_or_family_informed=False)
@@ -81,7 +85,7 @@ def recall_hia5_alignment(read, unit, model, strand_mode, mode, context_size,
              **{'as':[a for a,b in msps],'al':[b-a for a,b in msps]}),
         hit,miss,min_llr=minimum_llr,min_opps=minimum_opportunities,unify_threshold=90,
         split_min_llr=split_minimum_llr,split_min_opps=3,nuc_min_size=85,msp_min_size=0,
-        phase_nrl=0,nuc_llr_hit=hit,nuc_llr_miss=miss)
+        phase_nrl=0,nuc_recall_policy=nuc_recall_policy,nuc_llr_hit=hit,nuc_llr_miss=miss)
     recalled_nucs=projected([(a,a+b) for a,b in zip(result['ns'],result['nl'])])
     recalled_msps=projected([(a,a+b) for a,b in zip(result['as'],result['al'])])
     domains=merged(unit['aligned_blocks']);calls=[];excluded=[]

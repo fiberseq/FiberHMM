@@ -9,6 +9,9 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field, fields
 import math
 
+# The DddA CpG mask policies of fiberhmm-call/-recall-tfs; the first is their default.
+from fiberhmm.inference.tf_recaller import CPG_MASK_POLICIES
+
 
 def control(default, label, help, minimum=None, maximum=None, step=None, choices=None):
     return field(default=default, metadata=dict(label=label, help=help,
@@ -20,7 +23,8 @@ class InputOptions:
     daf_snp_mask: str = control('', 'DAF SNP mask BED', 'Optional reference-coordinate BED of sites excluded from DAF evidence and native replay. Reuse the BED from fiberhmm-call or fiberhmm-daf-snps. Applies to BAM preparation only; saved evidence already fixes its observations.')
     legacy_hia5_annotation_frame: str = control('disabled', 'Legacy Hia5 MSP/nucleosome tag frame', 'Only for BAMs without MA/Ma: explicitly declare whether as/al and ns/nl coordinates use stored SEQ or molecular orientation. Disabled uses molecular when the header shows fibertools wrote the tags (a fibertools nucleosome command with no later FiberHMM caller), otherwise stops; it never guesses or flips REV from the data. The verified ind 2–4 h input uses seq.', choices=['disabled','seq','molecular'])
     correct_native: bool = control(True, "Replay corrected native TF decoder", "Re-score fixed MSPs with the multi-interval decoder. Original BAM calls remain untouched in the native layer.")
-    ddda_m5c_correction: bool = control(True, "Honor DddA mCG substrate annotations", "Use the production DddA mCG rate correction at tagged CpGs, in native replay and every downstream lattice score. Untagged observations are unchanged.")
+    ddda_m5c_correction: bool = control(True, "DddA CpG-aware scoring (as fiberhmm-call)", "Treat DddA CpGs exactly as fiberhmm-call and fiberhmm-recall-tfs do, in native replay and every downstream lattice score: CpG observations named by the CpG mask policy carry no evidence and no opportunity. Off scores every CpG at the ordinary rates (methylated CpGs then read as protection).")
+    ddda_cpg_mask_policy: str = control(CPG_MASK_POLICIES[0], "DddA CpG mask policy", "Unmethylated-only (the production default, as fiberhmm-call --cpg-mask-policy) excludes every CpG except inside confidently unmethylated ddda_ucg islands written by fiberhmm-tag-m5c; without those annotations every CpG is excluded. Methylated-only is the pre-3.0 policy that excluded CpGs only inside ddda_mcg intervals.", choices=list(CPG_MASK_POLICIES))
     minimum_mapq: int = control(0, "Minimum alignment MAPQ", "Input evidence filter, applied before within-strand duplicate collapse.", 0, 255, 1)
     minimum_nfr_length: int = control(0, "Minimum MSP length (bp; 0 = all)", "Search every supplied MSP by default. The native LLR and opportunity minimum, not a 150-bp accessible-patch gate, determine detection. A positive value explicitly restricts the search.", 0, 100000, 1)
     native_minimum_opportunities: int = control(3, "Native decoder minimum opportunities", "Actual observed opportunities required for corrected native seeds; independent of the CR and strict-rescue gates.", 1, 100, 1)
@@ -32,6 +36,7 @@ class InputOptions:
     molecule_min_jaccard: float = control(.95, "Same-strand duplicate Jaccard", "Collapse amplification copies within a chemical strand. Does not pair complementary strands.", 0, 1, .01)
     evidence_pad_bp: int = control(-1, "Evidence pad (bp; -1 = whole read)", "Memory control. Each loaded read, and the analysis copy of saved evidence, keeps only the calls, MSPs, nucleosomes, aligned blocks and m6A fingerprint that overlap the window plus this pad; a call that crosses the pad boundary is kept whole, never clipped or dropped. Native replay still decodes the whole alignment, and its calls are cropped by the same rule. Lattice positions are always limited to the window; DAF duplicate fingerprints always stay whole-read. -1 (the library and FiberBrowser default) keeps whole-read geometry; the fiberhmm-consensus command line defaults to 250 (--evidence-pad).", -1, 1000000, 50)
     molecule_min_deam: int = control(10, "Minimum duplicate fingerprint hits", "Below this number, do not assert amplification identity from a sparse pattern.", 1, 100000, 1)
+    molecule_max_end_diff_bp: int = control(-1, "Duplicate endpoint check (bp; −1 = off)", "Off (the default): same-strand reads collapse on the whole-read deamination-set Jaccard alone, so truncated copies of one template still collapse. A value ≥ 0 adds the fiberhmm-dedup endpoint check (its default is 50 bp): reads whose alignment starts or ends differ by more never collapse.", -1, 100000, 1)
 
 
 @dataclass

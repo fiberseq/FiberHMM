@@ -2,7 +2,7 @@
 from __future__ import annotations
 import numpy as np
 from .. import strand_boundary_normalization as sbn
-from ..tf_recaller import build_conditional_hit_tables
+from ..tf_recaller import CPG_MASK_POLICIES, build_conditional_hit_tables
 from .artifacts import digest
 from .geometry import merged
 
@@ -61,22 +61,32 @@ def evidence_unit(read, model, dataset_id, source_members, start, end, *, datase
             complementary_strands_paired=bool(read.duplex_sources)))
 
 
-def m5c_query_mask(read, length):
-    """The same SEQ-frame DddA mCG annotation used by production TF recall."""
-    mask=np.zeros(length,dtype=bool)
-    if read.has_tag('MA'):
-        from ...daf.m5c import ma_intervals
-        from ...io.ma_tags import DDDA_MCG_FEATURE
-        for a,b in ma_intervals(read,DDDA_MCG_FEATURE):
-            mask[max(0,a):min(length,b)]=True
-    return mask
+def m5c_query_mask(read, length, policy=CPG_MASK_POLICIES[0]):
+    """SEQ-frame DddA CpG mask of production TF recall (``True`` = CpG excluded).
+
+    This is :func:`fiberhmm.inference.tf_recaller.build_cpg_mask`, the mask
+    ``fiberhmm-call``, ``-recall-tfs``, ``-pair`` and ``-merge`` decode with. Under
+    the production ``unmethylated-only`` policy every CpG is excluded except
+    inside the read's confidently unmethylated ``ddda_ucg`` islands (written by
+    ``fiberhmm-tag-m5c``); a read without those annotations has every CpG
+    excluded. ``methylated-only`` is the pre-3.0 policy (exclude only inside
+    ``ddda_mcg``), kept for comparison runs."""
+    from ..tf_recaller import build_cpg_mask
+    return build_cpg_mask(read, int(length), policy)
 
 
-def condition_unit_on_m5c(read,unit):
-    """Remove methylated-island CpGs from the native opportunity lattice."""
+def condition_unit_on_m5c(read, unit, policy=CPG_MASK_POLICIES[0]):
+    """Remove the CpG opportunities production recall excludes from the native lattice.
+
+    Production decoding gives an excluded CpG no likelihood and no opportunity
+    (the shipped DddA models carry no calibrated methylated-CpG emissions), so
+    the lattice EM scores must not see it either."""
     from ..strand_rescue import cigar_to_query_ref
+    from ..tf_recaller import read_cpg_intervals
     refs=np.asarray(cigar_to_query_ref(read))
-    mask=m5c_query_mask(read,len(refs))
+    mask=m5c_query_mask(read,len(refs),policy)
+    # Whether fiberhmm-tag-m5c gave this molecule unmethylated islands, whose CpGs stay scored.
+    unit['provenance']['ddda_ucg_islands']=len(read_cpg_intervals(read)['ucg'])
     cpg=((np.asarray(unit['contexts'])%64)//16)==3
     observed_mask=np.isin(unit['positions'],refs[mask & (refs>=0)]) & cpg
     if observed_mask.any():
@@ -124,7 +134,7 @@ def called_circular(header):
 def replay_alignment(read, unit, model, strand_mode, mode, context_size,
                      probability_threshold, minimum_llr, minimum_opportunities=3,
                      minimum_nfr_length=0, use_m5c=False, maximum_alignment_gap_bp=0,
-                     circular=False):
+                     circular=False, cpg_mask_policy=CPG_MASK_POLICIES[0]):
     """Replay the installed corrected decoder on the ACTUAL query observations.
 
     No reconstruction of insertions or missing observations from reference bases.
@@ -139,7 +149,9 @@ def replay_alignment(read, unit, model, strand_mode, mode, context_size,
     # Never hand a refs-derived out-of-bounds interval to numba.
     usable=min(len(obs),len(refs));obs=obs[:usable];refs=refs[:usable]
     hit, miss = build_llr_tables(model)
-    mask=m5c_query_mask(read,usable) if use_m5c else None
+    # DddA CpG handling exactly as production recall: the shared mask, scored
+    # with the neutral methylated-CpG tables (no evidence, no opportunity).
+    mask=m5c_query_mask(read,usable,cpg_mask_policy) if use_m5c else None
     m5c_hit,m5c_miss=build_m5c_llr_tables(model) if mask is not None else (None,None)
     # An insertion may split get_blocks() into adjacent reference intervals.
     # Their union is continuous reference coverage, not an unobserved gap.

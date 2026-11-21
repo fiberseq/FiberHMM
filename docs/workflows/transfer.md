@@ -118,6 +118,8 @@ Catalog positions are coordinates in the source frame.
 - `--evidence` must share that frame (same region start and end), for example
   evidence saved by `fiberhmm-consensus` for the same region or the same
   oriented pool.
+  DddA evidence must have been prepared with the catalog run's CpG policy;
+  evidence written before 3.3.0 is refused (re-extract it from the BAMs).
 - `--bam` with `--bed` needs BED6 windows of the frame's width with an
   explicit `+` or `-` strand. Each window is loaded with the shared BAM loader
   and mapped into the frame: the BED start (on `+`) or end (on `-`) goes to

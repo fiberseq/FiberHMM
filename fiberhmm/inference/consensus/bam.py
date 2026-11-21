@@ -273,6 +273,53 @@ def _dataset_daf_run_mask(chemistry, options, label, ds=None):
     return calls
 
 
+def dataset_preparations(payload):
+    """``(dataset_id, chemistry, model_manifest)`` of every BAM preparation behind ``payload``.
+
+    One per stratum; pooled CL-CR evidence adds one per window and dataset
+    (``pooling.window_preparation``), since its strata keep only the first
+    window's manifest."""
+    strata = list(payload.get('strata') or ())
+    chemistry = {s.get('dataset_id'): s.get('chemistry') for s in strata}
+    rows = [(s.get('dataset_id'), s.get('chemistry'), s.get('model_manifest') or {}) for s in strata]
+    for item in (payload.get('pooling') or {}).get('window_preparation') or ():
+        rows.append((item.get('dataset_id'), chemistry.get(item.get('dataset_id')), item.get('model') or {}))
+    return rows
+
+
+def check_saved_evidence(payload, options):
+    """Refuse saved evidence prepared under other replay policies than this run's.
+
+    Evidence (``--evidence``, ``--resume``, transfer) carries lattices and
+    native calls that were already conditioned. DddA CpG handling must be the
+    one this run asks for (the production mask, ``model_manifest.cpg_mask_policy``),
+    and the Hia5 Nanopore replay must have used the nucleosome policy
+    fiberhmm-call resolves for Nanopore (``resolve_nuc_recall_policy``).
+    Evidence written before FiberHMM 3.3.0 records no CpG policy (it used the
+    methylated-only rule); reload it from the BAMs. Unrecorded Hia5 replay
+    policies were conservative, which is still fiberhmm-call's default.
+    Strata without the BAM loader's receipt (``model_manifest`` with the
+    emission digest; hand-built payloads) are taken as given."""
+    from fiberhmm.inference.fused_stages import resolve_nuc_recall_policy
+    for label, chemistry, manifest in dataset_preparations(payload):
+        if 'emissions_sha256' not in manifest:
+            continue
+        if chemistry == 'ddda':
+            expected = options['input'].ddda_cpg_mask_policy if options['input'].ddda_m5c_correction else 'off'
+            recorded = manifest.get('cpg_mask_policy')
+            if recorded != expected:
+                raise ValueError(f'{label}: saved DddA evidence was prepared with CpG policy '
+                    f'{recorded or "unrecorded (FiberHMM before 3.3.0: methylated-only)"}, this run asks for {expected}. '
+                    'Reload the evidence from the BAMs (or set input.ddda_cpg_mask_policy / ddda_m5c_correction to match).')
+        if chemistry == 'hia5-nanopore' and manifest.get('upstream_nuc_tf_recall'):
+            recorded = (manifest.get('upstream_nuc_tf_settings') or {}).get('nuc_recall_policy') or 'conservative'
+            expected = resolve_nuc_recall_policy('auto', 'nanopore-fiber')
+            if recorded != expected:
+                raise ValueError(f'{label}: saved Hia5 Nanopore evidence was replayed with the {recorded} '
+                    f'nucleosome policy, not the {expected} policy fiberhmm-call uses for Nanopore. '
+                    'Reload the evidence from the BAMs.')
+
+
 def _load_payload(state,request,options,progress, *, loader_sampling=None):
     from .loader_sampling import load_sampled, policy
     sampling = loader_sampling if loader_sampling is not None else policy(options)
@@ -318,8 +365,9 @@ def _load_payload_once(state,request,options,progress):
                 raise ValueError('Paired source reads are not independent molecules. Run fiberhmm-pair (pair -> merge -> recall) before population consensus; if pairs failed to merge, --pairs-only excludes those unresolved pairs.')
             for read in reads:_prefix_library(read,dsid)
             if chemistry in ('ddda','dddb'):
+                end_diff=options['input'].molecule_max_end_diff_bp
                 representatives,collapse=runtime['collapse'](reads,min_jaccard=options['input'].molecule_min_jaccard,
-                    min_deam=options['input'].molecule_min_deam)
+                    min_deam=options['input'].molecule_min_deam,**({'max_end_diff':end_diff} if end_diff>=0 else {}))
             else:
                 representatives=reads;collapse=dict(raw_reads=len(reads),analyzed_molecules=len(reads),duplicate_reads_collapsed=0)
             projections=_projection_members(reads,representatives,exact_records=True)
@@ -328,6 +376,7 @@ def _load_payload_once(state,request,options,progress):
             units=[evidence_unit(read,model,dsid,projections.get(_projection_member_key(read),[]),start,end,dataset_ordinal=ordinal)
                    for read in representatives]
             use_m5c=chemistry=='ddda' and options['input'].ddda_m5c_correction
+            cpg_policy=options['input'].ddda_cpg_mask_policy
             if use_m5c and ds.data_type!='bam' and ds.available_layers.get('ddda_mcg'):
                 raise ValueError('Tagged DddA mCG conditioning currently needs BAM query coordinates; use BAM or explicitly disable that input option')
             minimum_llr=None
@@ -378,7 +427,7 @@ def _load_payload_once(state,request,options,progress):
                             # Identical SAM records may be distinct retained evidence
                             # units. Replay every unit; never collapse them in this lookup.
                             for read,u in lookup[key]:
-                                if use_m5c:condition_unit_on_m5c(alignment,u)
+                                if use_m5c:condition_unit_on_m5c(alignment,u,cpg_policy)
                                 if options['input'].correct_native:
                                     if options['cr'].engine in STAGED_LIKE and chemistry.startswith('hia5') and options['families'].recall_hia5_nucleosomes:
                                         from fiberhmm.inference.consensus.upstream_recall import (recall_hia5_alignment,install_recall,
@@ -406,7 +455,7 @@ def _load_payload_once(state,request,options,progress):
                                             minimum_nfr_length=options['input'].minimum_nfr_length,boundary_clipping_is_scope_not_quality=True)
                                     calls=replay_alignment(alignment,replay_unit,model,preset['strand_mode'],mode,context_size,preset.get('prob_threshold'),
                                         minimum_llr,minimum_opportunities=options['input'].native_minimum_opportunities,
-                                        minimum_nfr_length=options['input'].minimum_nfr_length,use_m5c=use_m5c,
+                                        minimum_nfr_length=options['input'].minimum_nfr_length,use_m5c=use_m5c,cpg_mask_policy=cpg_policy,
                                         maximum_alignment_gap_bp=int(getattr(options['input'],'native_maximum_alignment_gap_bp',0)),
                                         circular=circular_calls)
                                     u['native_multi_interval_calls']=calls;u['native_multi_interval_tf_intervals']=[c['interval'] for c in calls]
@@ -452,6 +501,10 @@ def _load_payload_once(state,request,options,progress):
                     native_minimum_opportunities=options['input'].native_minimum_opportunities,
                     upstream_nuc_tf_recall=any('upstream_nuc_tf_recall' in u for u in units),
                     upstream_nuc_tf_settings=next((u['upstream_nuc_tf_recall']['settings'] for u in units if 'upstream_nuc_tf_recall' in u),None),
-                    m5c_conditioned_opportunities=sum(u['provenance'].get('native_m5c_conditioned_opportunities',0) for u in units)),
+                    # DddA only, so DddB/Hia5 manifests (and their digests) are unchanged.
+                    **(dict(cpg_mask_policy=cpg_policy if use_m5c else 'off',
+                            ddda_ucg_molecules=sum(bool(u['provenance'].get('ddda_ucg_islands')) for u in units))
+                       if chemistry=='ddda' else {}),
+                    m5c_conditioned_opportunities=sum(u['provenance'].get('native_m5c_excluded_opportunities',0) for u in units)),
                 evidence_units=dict(**collapse,physical_duplex_independence_established=bool(units) and all(u.get('physical_source_names') for u in units),joint_duplex_units=sum(bool(u.get('physical_source_names')) for u in units)),load=diagnostics))
     return dict(region=dict(chrom=chrom,start=start,end=end),strata=strata)

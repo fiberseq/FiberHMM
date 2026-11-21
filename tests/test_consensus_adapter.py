@@ -46,7 +46,7 @@ def test_m5c_conditioning_matches_native_tables_only_at_tagged_cpgs(monkeypatch)
     monkeypatch.setattr(adapter,'m5c_query_mask',lambda *_:np.array([True,True,False,False,False,True]))
     u=dict(positions=list(range(100,106)),hits=[0,1,0,1,0,1],contexts=[48,0,48,0,48,48],p_accessible=[.9]*6,
         p_protected=[.1]*6,provenance={})
-    adapter.condition_unit_on_m5c(object(),u)
+    adapter.condition_unit_on_m5c(SimpleNamespace(has_tag=lambda _:False),u)  # no MA: no tag-m5c islands
     assert u['positions']==[101,102,103,104]
     assert u['hits']==[1,0,1,0]
     assert u['contexts']==[0,48,0,48]
@@ -60,7 +60,7 @@ def test_native_replay_honors_m5c_tables(monkeypatch):
     obs=np.full(20,4097+48,dtype=np.int32)
     monkeypatch.setattr(strand_rescue,'hard_observations',lambda *_:(obs,'CT'))
     monkeypatch.setattr(strand_rescue,'cigar_to_query_ref',lambda _:np.arange(20)+100)
-    monkeypatch.setattr(adapter,'m5c_query_mask',lambda _,length:np.ones(length,bool))
+    monkeypatch.setattr(adapter,'m5c_query_mask',lambda _,length,*policy:np.ones(length,bool))
     regular=tf_recaller.build_llr_tables(model())[1][48]*20
     conditioned=tf_recaller.build_m5c_llr_tables(model())[1][48]*20
     threshold=(regular+conditioned)/2

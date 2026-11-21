@@ -2,6 +2,28 @@
 
 ## 3.3.0 (unreleased)
 
+### Changed
+
+- **DddA consensus numbers change** because `fiberhmm-consensus` now scores
+  DddA CpGs with the same unmethylated-only CpG mask as `fiberhmm-call`.
+  Earlier versions excluded CpGs only inside methylated islands
+  (`ddda_mcg`), so on accessible DNA a methylated CpG that DddA cannot
+  deaminate read as protection. Now every DddA CpG carries no evidence and
+  no opportunity, in native replay and in every lattice score, except inside
+  the confidently unmethylated islands (`ddda_ucg`) written by
+  `fiberhmm-tag-m5c`. Classes, their prevalence and the member calls of DddA
+  datasets move. DddB and Hia5 evidence is unchanged (apart from the tag fixes
+  below), but in a run that analyses them together with DddA their rows follow
+  the shared classes. At an unmethylated CpG island whose BAM carries no
+  `ddda_ucg` islands, many DddA classes disappear, because their CpG evidence
+  is now neutral; run `fiberhmm-tag-m5c` first to keep it. Saved DddA
+  evidence from earlier versions (`--evidence`, `--resume`,
+  `fiberhmm-transfer --evidence`) is refused with a message to re-extract it
+  from the BAMs.
+  `input.ddda_cpg_mask_policy` (default `unmethylated-only`, as
+  `fiberhmm-call --cpg-mask-policy`) selects the policy; `methylated-only`
+  reproduces the earlier rule for comparison.
+
 ### Added
 
 - `fiberhmm-consensus` and BAM-based `fiberhmm-transfer` accept
@@ -19,6 +41,15 @@
 - Staged transfer manifests record each mask's SHA-256 and site count
   (`daf_snp_masks`), not only its path. Frozen class catalogues record the
   source run's label rule (`provenance.source_label_semantics`).
+- A consensus run whose DddA data carries no `fiberhmm-tag-m5c` unmethylated
+  islands warns that every CpG observation was neutral, and names the
+  remedy (run `fiberhmm-tag-m5c` on the BAM first, so CpG-island loci keep
+  their CpG evidence). The manifest records `cpg_mask_policy` and
+  `ddda_ucg_molecules` for each DddA dataset.
+- `input.molecule_max_end_diff_bp` (default -1 = off) adds the
+  `fiberhmm-dedup` endpoint check (50 bp in `fiberhmm-dedup`) to consensus
+  DAF duplicate collapse. Off keeps the earlier behaviour, where truncated
+  copies of one template still collapse.
 
 ### Fixed
 
@@ -39,6 +70,16 @@
   lattice.
 - Consensus mask positions follow the CIGAR exactly; a `P` operation no
   longer shifts later positions by one.
+- Consensus and strand rescue read the legacy `Mm`/`Ml` modification tags
+  that older basecallers and modkit versions write, as `fiberhmm-call` does.
+  Such Hia5 datasets used to load with no molecules.
+- An empty `ML` (or `MM`) tag means no modification calls, as in
+  `fiberhmm-call`, instead of a read with every target base unmodified.
+- The consensus Hia5 replay resolves its nucleosome recall policy with
+  `fiberhmm-call`'s resolver (conservative on every platform) and records it
+  in the manifest. Replay output is unchanged.
+- The saved-evidence check and the CpG warning read every window of pooled
+  (`--pool-loci`) evidence, not only the first.
 
 ## 3.2.1
 

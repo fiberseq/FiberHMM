@@ -679,6 +679,24 @@ def parse_mm_tag_query_positions(mm_tag: str, ml_tag,
                            prob_threshold, mode, debug=debug)[0]
 
 
+def mm_ml_tags(read):
+    """``(MM, ML)`` of ``read``, or ``(None, None)`` when it carries no calls.
+
+    Accepts the legacy ``Mm``/``Ml`` spellings that older basecallers and
+    modkit versions write, exactly as ``fiberhmm-call`` does; the uppercase
+    tag wins when both are present. As in ``fiberhmm-call``, an empty ``MM``
+    or ``ML`` means no modification calls (no observations), not a read whose
+    every base is unmodified.
+    """
+    mm = read.get_tag('MM') if read.has_tag('MM') else (
+        read.get_tag('Mm') if read.has_tag('Mm') else None)
+    ml = read.get_tag('ML') if read.has_tag('ML') else (
+        read.get_tag('Ml') if read.has_tag('Ml') else None)
+    if not mm or ml is None or len(ml) == 0:
+        return None, None
+    return mm, ml
+
+
 def mm_applicable(read) -> bool:
     """Whether ``read``'s MM/ML can be walked against its stored SEQ.
 

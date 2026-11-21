@@ -69,6 +69,15 @@ site at 10,040 with occupancy 0.7 and a 16 bp site at 10,110 with occupancy
   at most `compute.maximum_region_bp` (50 kb).
 - `--evidence evidence.json.gz` or `--resume RUN_DIR` replays saved evidence
   (below).
+- **DddA CpGs** are scored as `fiberhmm-call` scores them: with the default
+  `unmethylated-only` CpG mask (`input.ddda_cpg_mask_policy`, the same policy
+  as `fiberhmm-call --cpg-mask-policy`), a CpG observation carries no evidence
+  and no opportunity unless it lies inside a confidently unmethylated island
+  (`ddda_ucg`) written by `fiberhmm-tag-m5c`. Without those annotations every
+  DddA CpG is neutral and the run says so in its data warnings; at CpG-island
+  loci such as active promoters, run `fiberhmm-tag-m5c` on the BAM first.
+  `methylated-only` reproduces the rule of FiberHMM before 3.3.0 (exclude CpGs
+  only inside `ddda_mcg`); `input.ddda_m5c_correction: false` scores every CpG.
 
 By default every molecule is used, and there is no cap on the number of
 classes. For deep data (thousands of reads per site),
@@ -335,9 +344,7 @@ thresholds is found under any order; one close to them (a rare footprint, or
 two geometries a few bp apart) may appear under some orders and not others.
 On the 4 kb NAPA promoter window of FiberBrowser's demo (DddA-seq, hg38,
 chr19:47514000-47518000, the window of the example below) the default order
-finds 19 supported classes; other
-orders find between 14 and 19, and `--robust 2` (like `--robust 4`) marks 12
-of the 19 robust.
+finds 16 supported classes, and `--robust 2` marks 6 of the 16 robust.
 
 **`--robust N` marks which classes survive reordering.** It reruns discovery
 and scoring under N other deterministic read orders and adds two columns to
@@ -457,7 +464,10 @@ fit it, or refuses to start.
 
 `--evidence evidence.json.gz` or `--resume RUN_DIR` reruns an analysis on
 saved evidence, for example with different `--parameters`, without reading
-the BAMs again. `--resume` takes one window or pooled run directory, not a
+the BAMs again. Saved evidence keeps the DddA CpG policy it was prepared
+with; evidence whose policy differs from the run's (including all DddA
+evidence written before 3.3.0) is refused, so re-extract it from the BAMs.
+`--resume` takes one window or pooled run directory, not a
 multi-window parent (to finish an interrupted multi-window run, use
 [`--continue`](#long-runs-and-resuming)). The recaller runs in one pass, so `--stop-after`,
 `--start-at`, `--consolidation-bp` and `--cache` (staged-engine options) are

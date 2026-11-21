@@ -37,6 +37,7 @@ from fiberhmm.cli.extract_tags import (
 from fiberhmm.core.bam_reader import (
     cigar_to_query_ref,
     encode_from_query_sequence,
+    mm_ml_tags,
     parse_mm_tag_query_calls,
 )
 from fiberhmm.inference.tf_recaller import (
@@ -1243,11 +1244,12 @@ def hard_observations(
                 return None
         strand = "CT" if symbol == "+" else "GA"
     else:
-        if not read.has_tag("MM") or not read.has_tag("ML"):
+        mm_tag, ml_tag = mm_ml_tags(read)
+        if mm_tag is None:
             return None
         modification_positions, unknown_positions = parse_mm_tag_query_calls(
-            read.get_tag("MM"),
-            read.get_tag("ML"),
+            mm_tag,
+            ml_tag,
             sequence,
             bool(read.is_reverse),
             prob_threshold=int(prob_threshold if prob_threshold is not None else 125),
@@ -1921,8 +1923,15 @@ def collapse_amplified_reads(
     *,
     min_jaccard: float = 0.95,
     min_deam: int = 10,
+    max_end_diff: Optional[int] = None,
 ) -> Tuple[List[ReadEvidence], dict]:
-    """Collapse DAF PCR families separately within every input BAM."""
+    """Collapse DAF PCR families separately within every input BAM.
+
+    Reads collapse on whole-read deamination-set Jaccard alone by default, so
+    truncated copies of one template still collapse. ``max_end_diff`` (bp)
+    adds the endpoint check ``fiberhmm-dedup`` applies (its default is 50):
+    reads whose alignment starts or ends differ by more never collapse.
+    """
     groups: Dict[str, List[ReadEvidence]] = {}
     for read in reads:
         groups.setdefault(str(read.library_id or ""), []).append(read)
@@ -1944,8 +1953,13 @@ def collapse_amplified_reads(
             else:
                 position_sets.append(positions)
                 group_keys.append((read.strand,))
+        endpoints = None
+        if max_end_diff is not None and int(max_end_diff) >= 0:
+            endpoints = [(int(read.ref_start), int(read.ref_end)) for read in group]
         labels = cluster_reads(
-            position_sets, group_keys, min_jaccard, 32, 8, 7
+            position_sets, group_keys, min_jaccard, 32, 8, 7,
+            endpoints=endpoints,
+            max_end_diff=int(max_end_diff) if endpoints is not None else 50,
         )
         best_by_cluster: Dict[int, int] = {}
         cluster_sizes: Dict[int, int] = {}
