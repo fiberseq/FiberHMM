@@ -289,18 +289,13 @@ def _parse_footprints_from_bam_read(read, molecular=True):
 
     footprint_mask = np.zeros(seq_len, dtype=bool)
 
-    ns_tag = nl_tag = None
-    try:
-        if read.has_tag('ns'):
-            ns_tag = read.get_tag('ns')
-        if read.has_tag('nl'):
-            nl_tag = read.get_tag('nl')
-    except KeyError:
-        pass
+    # The shared array-pair rule: a scalar (Dorado's ns:i), a string or
+    # unequal lengths mean no legacy calls.
+    from fiberhmm.io.legacy_tags import array_tag_pair
+    pair = array_tag_pair(read, 'ns', 'nl')
 
-    if ns_tag is not None and nl_tag is not None:
-        starts = list(ns_tag) if hasattr(ns_tag, '__iter__') else [ns_tag]
-        lengths = list(nl_tag) if hasattr(nl_tag, '__iter__') else [nl_tag]
+    if pair is not None:
+        starts, lengths = pair
         # molecular frame -> SEQ/query coords for the per-base scan below
         if molecular:
             starts, lengths = flip_intervals_to_seq(starts, lengths, read)

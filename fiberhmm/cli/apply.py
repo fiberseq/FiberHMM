@@ -10,6 +10,7 @@ import sys
 
 import pandas as pd
 
+from fiberhmm import defaults as _D
 from fiberhmm.cli.common import (
     add_edge_trim_args,
     add_filter_args,
@@ -105,7 +106,8 @@ Examples:
             action.help = argparse.SUPPRESS
 
     # Filtering
-    add_filter_args(parser, min_mapq=0, prob_threshold=None, min_read_length=1000)
+    add_filter_args(parser, min_mapq=_D.MIN_MAPQ, prob_threshold=None,
+                    min_read_length=_D.MIN_READ_LENGTH)
     parser.add_argument('-t', '--train-reads', default=None,
                         help='TSV file of read IDs used in training (to exclude)')
     # Parsed-but-never-implemented options, kept only so old command lines get
@@ -122,7 +124,7 @@ Examples:
                              'fails unless --no-process-unmapped is given.')
 
     # Processing
-    add_edge_trim_args(parser, default=10)
+    add_edge_trim_args(parser, default=_D.EDGE_TRIM)
     parser.add_argument('-r', '--circular', action='store_true',
                         help='Enable circular mode (tiles reads 3x)')
 
@@ -134,12 +136,12 @@ Examples:
                              'fibertools FIRE).')
     parser.add_argument('--scores-db', action='store_true',
                         help=argparse.SUPPRESS)
-    parser.add_argument('--msp-min-size', type=int, default=0,
+    parser.add_argument('--msp-min-size', type=int, default=_D.MSP_MIN_SIZE,
                         help='Minimum size for MSP regions in bp. Default 0 '
                              '(emit every accessible run; matches fibertools, '
                              'which does not impose an MSP size filter at this '
                              'stage). Pass a positive value to filter.')
-    parser.add_argument('--nuc-min-size', type=int, default=85,
+    parser.add_argument('--nuc-min-size', type=int, default=_D.NUC_MIN_SIZE,
                         help='Minimum footprint size (bp) to count as nucleosome-sized '
                              'for MSP boundary detection. Only footprints >= this size '
                              'split MSPs; smaller footprints are absorbed (default: 85)')

@@ -12,6 +12,8 @@ import warnings
 from dataclasses import asdict, dataclass, field, fields
 from typing import Optional, Tuple
 
+from fiberhmm import defaults as _shared_defaults
+
 
 #: parameters still accepted but ignored (from_dict resets them to the default)
 DEPRECATED_NOOP = frozenset({'named_min_posterior'})
@@ -25,7 +27,7 @@ class NucParams:
     #: observation mode; None = from the BAM's chemistry declaration.
     mode: Optional[str] = None
     #: bases masked at each read end by the encoder (as the caller does).
-    edge_trim: int = 10
+    edge_trim: int = _shared_defaults.EDGE_TRIM
 
     # --- density (NUC 3.1) ----------------------------------------------------
     #: MSP sites dropped at each MSP end when measuring lambda_acc: the caller

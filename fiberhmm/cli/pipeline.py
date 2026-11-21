@@ -49,6 +49,7 @@ import argparse
 import shlex
 import sys
 
+from fiberhmm import defaults as _shared_defaults
 from fiberhmm.cli.common import add_version_args
 
 
@@ -130,7 +131,8 @@ def build_parser() -> argparse.ArgumentParser:
     call = p.add_argument_group("calling (passed to fiberhmm-call; defaults are "
                                 "fiberhmm-call's)")
     call.add_argument("--min-read-length", type=int, default=None,
-                      help="Minimum aligned read length to call (default 1000).")
+                      help="Minimum read length to call: the full SEQ, soft clips "
+                           "included (DAF: the aligned length). Default 1000.")
     call.add_argument("--dedup", choices=["auto", "on", "off"], default="auto",
                       help="DAF PCR-duplicate detection (default auto: on for file "
                            "input).")
@@ -166,7 +168,7 @@ def build_parser() -> argparse.ArgumentParser:
                            "--no-chimera-filter means --chimeras keep. "
                            "An explicit --chimeras takes precedence.")
     call.add_argument("--alignments", choices=["primary", "primary-supplementary", "all"],
-                      default="primary-supplementary",
+                      default=_shared_defaults.ALIGNMENTS,
                       help="Alignment records to keep and call (default "
                            "primary-supplementary: a read's primary and supplementary "
                            "records, i.e. both sides of a split alignment, on linear "

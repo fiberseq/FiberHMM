@@ -45,6 +45,16 @@
   `ft extract` reports one as `fire_qual`.
 - Consensus export, `fiberhmm-tag-m5c` and `fiberhmm-scan` copy a fibertools
   `Ma` into `MA` as before, and now remove `Ma`/`Aq`/`An` after the copy.
+- `fiberhmm-call` and `fiberhmm-pipeline` help: `--min-read-length` counts the
+  full read sequence including soft clips (DAF: the aligned length), not the
+  aligned length.
+- The call defaults shared by every tool (MAPQ, read length, alignment set,
+  ML threshold, edge trim, CpG and run masks, footprint sizes, recall,
+  chimera and duplicate settings) are defined once, in `fiberhmm/defaults.py`.
+  A test checks every command's options, resolvers, engine function defaults
+  and parameter classes against it; tools that differ on purpose are listed
+  with the reason. No default output changes. The docs list them under
+  Reference > Shared defaults.
 
 ### Added
 
@@ -163,6 +173,33 @@
   in the manifest. Replay output is unchanged.
 - The saved-evidence check and the CpG warning read every window of pooled
   (`--pool-loci`) evidence, not only the first.
+- `fiberhmm-consensus`, `fiberhmm-transfer`, `fiberhmm-nfr` and
+  `fiberhmm-scan` no longer stop on a Hia5 read without `MA` that carries
+  Dorado's scalar `ns:i` (a signal sample count; for example a read
+  `fiberhmm-call` left uncalled for being shorter than 1000 bp). As in
+  `fiberhmm-call`, extract, scan and QC, a scalar or string `ns`/`nl`/`as`/`al`
+  tag is not a legacy footprint call. Corrupt integer pairs (a missing partner,
+  unequal lengths) still stop the run.
+- `fiberhmm-recall-tfs`/`-recall-nucs` recall reads whose footprints are only
+  in `MA` (`fiberhmm-call --no-legacy-tags`, fibertools `Ma`) on Dorado BAMs.
+  Dorado's scalar `ns:i` used to hide the `MA` footprints, so each such read
+  failed and was written back unrecalled.
+- `fiberhmm-tag-m5c`/`-call-m5c` (legacy nucleosome/MSP fallback) and
+  `fiberhmm-utils transfer` read `ns`/`nl` and `as`/`al` with the same
+  array-pair rule: a scalar pair no longer crashes or becomes one interval, a
+  string is no longer read character by character, and unequal lengths are no
+  calls instead of a silently truncated list.
+- `fiberhmm-scan --modules nuc` and the `fiberhmm.nuc` API decode marks with
+  the `--prob-threshold` and `--edge-trim` the BAM's `fiberhmm-call` record
+  shows, as nucleosome recall replay already did. Before, a call run with a
+  non-default threshold or edge trim was decoded at the chemistry default and
+  10 bp.
+- `fiberhmm-posteriors` with a custom `-m` on a BAM that declares DddA now
+  applies the DddA CpG mask and keep-one run thinning, as `fiberhmm-call` and
+  `fiberhmm-apply` do on the same input. The Python API
+  `export_posteriors_from_bam` resolves the ML threshold like the command line
+  (248 for Hia5 Nanopore, from `enzyme`/`seq` or the BAM's declaration; new
+  `seq` argument) instead of always using 128.
 
 ## 3.2.1
 

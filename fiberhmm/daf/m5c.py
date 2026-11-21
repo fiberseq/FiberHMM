@@ -17,6 +17,7 @@ from typing import Iterable, Sequence
 
 import numpy as np
 
+from fiberhmm.io.legacy_tags import array_tag_pair
 from fiberhmm.io.ma_tags import (
     DDDA_MCG_FEATURE,
     DDDA_MCG_HEMI_FEATURE,
@@ -1042,9 +1043,9 @@ def collect_read_observations(read, fasta, chrom: str | None = None,
     excluded = np.zeros(len(sequence), dtype=bool)
     nuc_intervals = (ma_intervals(read, "nuc", input_molecular_frame)
                      if read.has_tag("MA") else [])
-    if not nuc_intervals and read.has_tag("ns") and read.has_tag("nl"):
-        starts = read.get_tag("ns")
-        lengths = read.get_tag("nl")
+    legacy_nucs = None if nuc_intervals else array_tag_pair(read, "ns", "nl")
+    if legacy_nucs is not None:
+        starts, lengths = legacy_nucs
         if _legacy_molecular(read, input_molecular_frame):
             from fiberhmm.io.ma_tags import flip_intervals_to_seq
             starts, lengths = flip_intervals_to_seq(starts, lengths, read)
@@ -1112,9 +1113,9 @@ def _interval_mask(length: int, intervals: Sequence[tuple[int, int]]) -> np.ndar
 def _nucleosome_intervals_seq(read, input_molecular_frame: bool) -> list[tuple[int, int]]:
     intervals = (ma_intervals(read, "nuc", input_molecular_frame)
                  if read.has_tag("MA") else [])
-    if not intervals and read.has_tag("ns") and read.has_tag("nl"):
-        starts = read.get_tag("ns")
-        lengths = read.get_tag("nl")
+    legacy_nucs = None if intervals else array_tag_pair(read, "ns", "nl")
+    if legacy_nucs is not None:
+        starts, lengths = legacy_nucs
         if _legacy_molecular(read, input_molecular_frame):
             from fiberhmm.io.ma_tags import flip_intervals_to_seq
             starts, lengths = flip_intervals_to_seq(starts, lengths, read)
@@ -1939,9 +1940,10 @@ def _initial_msp_intervals_seq(read, input_molecular_frame: bool) -> list[tuple[
     """Return initial MSPs in SEQ coordinates from MA or legacy as/al tags."""
     intervals = (ma_intervals(read, "msp", input_molecular_frame)
                  if read.has_tag("MA") else [])
-    if intervals or not (read.has_tag("as") and read.has_tag("al")):
+    legacy_msps = None if intervals else array_tag_pair(read, "as", "al")
+    if legacy_msps is None:
         return intervals
-    starts, lengths = list(read.get_tag("as")), list(read.get_tag("al"))
+    starts, lengths = legacy_msps
     if _legacy_molecular(read, input_molecular_frame):
         from fiberhmm.io.ma_tags import flip_intervals_to_seq
         starts, lengths = flip_intervals_to_seq(starts, lengths, read)

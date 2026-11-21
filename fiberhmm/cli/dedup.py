@@ -35,6 +35,7 @@ from typing import List, Optional
 import numpy as np
 import pysam
 
+from fiberhmm import defaults as _D
 from fiberhmm.models import DEFAULT_PROB_THRESHOLD
 from fiberhmm.cli.extract_tags import _build_query_to_ref, _deam_positions_list
 
@@ -235,9 +236,9 @@ def _dedup_output_header(header, *, min_jaccard, min_deam, ignore_strand,
     })
 
 
-def run_dedup(in_bam, out_bam, min_jaccard=0.95, min_deam=10, ignore_strand=False,
+def run_dedup(in_bam, out_bam, min_jaccard=_D.DEDUP_MIN_JACCARD, min_deam=_D.DEDUP_MIN_DEAM, ignore_strand=False,
               k=32, bands=8, seed=7, collapse=True, prob_threshold=0,
-              stats_tsv=None, io_threads=4, max_end_diff=50):
+              stats_tsv=None, io_threads=4, max_end_diff=_D.DEDUP_MAX_END_DIFF):
     from fiberhmm.io.annotation_frame import warn_if_frames_unverifiable
     warn_if_frames_unverifiable(str(in_bam) if in_bam is not None else None)
     t0 = time.time()
@@ -443,7 +444,7 @@ Examples:
     )
     parser.add_argument('-i', '--input', required=True, help='Input DAF-seq BAM (indexed not required)')
     parser.add_argument('-o', '--output', required=True, help='Output BAM')
-    parser.add_argument('--min-jaccard', type=float, default=0.95,
+    parser.add_argument('--min-jaccard', type=float, default=_D.DEDUP_MIN_JACCARD,
                         help='Min deamination-set Jaccard to call two reads the same '
                              'molecule (default 0.95). Use 0.90 for optional more '
                              'aggressive matching; lower thresholds can merge '
@@ -453,10 +454,10 @@ Examples:
                              'duplicate flag on non-representatives and di/ds cluster '
                              'tags on every member of a duplicate cluster. '
                              'Default: collapse each cluster to one representative read.')
-    parser.add_argument('--min-deam', type=int, default=10,
+    parser.add_argument('--min-deam', type=int, default=_D.DEDUP_MIN_DEAM,
                         help='Reads with fewer than this many deamination calls are '
                              'not fingerprintable; passed through untouched (default 10).')
-    parser.add_argument('--max-end-diff', type=int, default=50,
+    parser.add_argument('--max-end-diff', type=int, default=_D.DEDUP_MAX_END_DIFF,
                         help='Maximum difference at both aligned reference ends for '
                              'two reads to be duplicates (default 50 bp).')
     parser.add_argument('--ignore-strand', action='store_true',

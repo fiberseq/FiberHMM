@@ -310,8 +310,16 @@ class DecodeContext(FrameContext):
         if self.mode is None:
             raise ValueError('cannot tell the observation mode from the BAM header (no chemistry '
                              'declaration or FiberHMM call record); pass NucParams(mode=...)')
+        # The ML threshold and edge trim the call used (its recorded
+        # --prob-threshold / --edge-trim, as CallerSettings.from_header reads
+        # them), so marks and informative sites are the ones the caller saw.
+        recorded_threshold, recorded_trim = recorded_call_threshold_trim(header)
         self.mark_threshold = resolve_prob_threshold(
-            params.mark_threshold, chem['enzyme'], chem['platform'])
+            params.mark_threshold if params.mark_threshold is not None else recorded_threshold,
+            chem['enzyme'], chem['platform'])
+        self.edge_trim = int(params.edge_trim)
+        if recorded_trim is not None and params.edge_trim == DEFAULT_PARAMS.edge_trim:
+            self.edge_trim = recorded_trim
         from fiberhmm.daf.replay import EvidenceReplay
         self.evidence = EvidenceReplay(header, self.mode)
         # DAF: the call's same-strand run mask and DddA CpG policy, so marks and
@@ -338,6 +346,27 @@ def _cl_option(toks, *names) -> Optional[str]:
             if t.startswith(n + '='):
                 return t.split('=', 1)[1]
     return None
+
+
+def recorded_call_threshold_trim(header) -> Tuple[Optional[int], Optional[int]]:
+    """``(--prob-threshold, --edge-trim)`` from the header's last fiberhmm-call
+    command line; None for an option it did not give (or no call record)."""
+    import shlex
+    pg = _last_call_record(header)
+    if pg is None:
+        return None, None
+    try:
+        toks = shlex.split(str(pg.get('CL', '')))
+    except ValueError:
+        toks = str(pg.get('CL', '')).split()
+    out = []
+    for name in ('--prob-threshold', '--edge-trim'):
+        value = _cl_option(toks, name)
+        try:
+            out.append(None if value is None else int(value))
+        except ValueError:
+            out.append(None)
+    return out[0], out[1]
 
 
 def recorded_call_masks(header, enzyme: Optional[str], mode: Optional[str]):
@@ -510,7 +539,7 @@ def decode_record(read, ctx: DecodeContext) -> Tuple[Optional[NucMolecule], str]
     strand = fr.get('_daf_strand') or '.'
     def _encode():
         return encode_from_query_sequence(
-            fr['query_sequence'], fr['m6a_query_positions'], ctx.params.edge_trim,
+            fr['query_sequence'], fr['m6a_query_positions'], ctx.edge_trim,
             mode=mode, strand=strand, context_size=3,
             is_reverse=bool(read.is_reverse),
             unknown_positions=fr.get('unknown_query_positions'))

@@ -54,6 +54,8 @@ import sys
 from collections import deque, namedtuple
 
 import pysam
+from fiberhmm import defaults as _D
+from fiberhmm.io.legacy_tags import has_array_tag_pair, has_legacy_pair
 from fiberhmm.inference.chimeras import is_marked_chimera
 
 from fiberhmm.cli.common import (
@@ -340,7 +342,9 @@ def _annotation_footprints_as_legacy_tags(read, input_molecular_frame=True) -> d
     Circular reads' MA pieces are used as linear pieces, like their legacy
     tags.
     """
-    if read.has_tag('ns') or read.has_tag('as'):
+    # A scalar or string tag (Dorado's ns:i signal count) is not a legacy
+    # call (fiberhmm.io.legacy_tags) and must not hide the MA footprints.
+    if has_array_tag_pair(read, 'ns', 'nl') or has_array_tag_pair(read, 'as', 'al'):
         return {}
     ma = fibertools_ma_intervals(read)
     ma_molecular = True
@@ -395,8 +399,7 @@ def _make_payload(read, mode=None, input_molecular_frame=True) -> dict:
     bytes is a straight memcpy vs. pickling a Python list.
     parse_mm_tag_query_positions accepts bytes directly via np.frombuffer.
     """
-    if input_molecular_frame is None and any(
-            read.has_tag(t) for t in ('ns', 'nl', 'as', 'al')):
+    if input_molecular_frame is None and has_legacy_pair(read):
         raise SystemExit("error: " + ambiguous_frame_message(
             _UNDECIDED_FRAME['reason'] or 'the header does not decide it'))
     read_frame = input_molecular_frame
@@ -944,7 +947,7 @@ def parse_args(default_recall_nucs: bool = False):
                    help='DAF only: re-encode insertions carried by enough reads '
                         'against their deamination-aware consensus, as in '
                         'fiberhmm-call (default auto: file input).')
-    p.add_argument('--daf-insert-min-carriers', type=int, default=20,
+    p.add_argument('--daf-insert-min-carriers', type=int, default=_D.DAF_INSERT_MIN_CARRIERS,
                    help='Carriers an insertion needs for --daf-insert-consensus '
                         '(default 20).')
     p.add_argument('--min-llr', type=float, default=None,
@@ -956,7 +959,7 @@ def parse_args(default_recall_nucs: bool = False):
                         'Nanopore (--seq nanopore, or the input\'s declared '
                         f'chemistry), {RECALL_PROB_THRESHOLD} otherwise. R/Y- and '
                         'MD-encoded DAF input is binary and ignores it.')
-    p.add_argument('--min-opps', type=int, default=3,
+    p.add_argument('--min-opps', type=int, default=_D.MIN_OPPS,
                    help='Min informative target positions per call (default 3)')
     p.add_argument('--emission-uplift', type=float, default=None,
                    help='Power transform on emission probabilities. Default 1.0 '
@@ -973,7 +976,7 @@ def parse_args(default_recall_nucs: bool = False):
                         'unmethylated islands (default unmethylated-only), or '
                         'reproduce the former behavior that masks only ddda_mcg '
                         'spans. DddA only; ignored with a warning otherwise.')
-    p.add_argument('--unify-threshold', type=int, default=90,
+    p.add_argument('--unify-threshold', type=int, default=_D.UNIFY_THRESHOLD,
                    help='v2 nucs with nl < this are scanned + may be demoted '
                         'to tf+ if overlapped by a recaller call (default 90)')
     p.add_argument('--input-frame', choices=['auto', 'molecular', 'query'],
@@ -1027,15 +1030,15 @@ def parse_args(default_recall_nucs: bool = False):
                      default=default_recall_nucs,
                      help='Enable nucleosome recall before TF recall. '
                           '(Default on for fiberhmm-recall-nucs.)')
-    nuc.add_argument('--split-min-llr', type=float, default=4.0,
+    nuc.add_argument('--split-min-llr', type=float, default=_D.SPLIT_MIN_LLR,
                      help='Min accessible-cut LLR to split a footprint; for '
                           'DddA, the molecule-local linker-residue '
                           'configuration LLR (default 4.0)')
-    nuc.add_argument('--split-min-opps', type=int, default=3,
+    nuc.add_argument('--split-min-opps', type=int, default=_D.SPLIT_MIN_OPPS,
                      help='Min informative positions for a split cut or DddA '
                           'linker residue (default 3)')
     nuc.add_argument(
-        '--ddda-derived-tf-max-edge-gap', type=int, default=12, metavar='BP',
+        '--ddda-derived-tf-max-edge-gap', type=int, default=_D.DDDA_DERIVED_TF_MAX_EDGE_GAP, metavar='BP',
         help='DddA phase-aware radial recall only: require TF scan space opened solely by '
              'nucleosome refinement to have a deamination hit within BP on '
              'both sides (default 12; -1 disables).',
@@ -1045,10 +1048,10 @@ def parse_args(default_recall_nucs: bool = False):
         choices=['auto', 'conservative', 'topology'],
         default='auto',
         help=argparse.SUPPRESS)  # retired experimental mode (3.0); kept only to reproduce earlier calls
-    nuc.add_argument('--nuc-min-size', type=int, default=85,
+    nuc.add_argument('--nuc-min-size', type=int, default=_D.NUC_MIN_SIZE,
                      help='Min refined nucleosome size; smaller footprints are '
                           'demoted to accessible/MSP (default 85)')
-    nuc.add_argument('--msp-min-size', type=int, default=0,
+    nuc.add_argument('--msp-min-size', type=int, default=_D.MSP_MIN_SIZE,
                      help='Min re-derived MSP size to keep (default 0)')
     nuc.add_argument('--phase-nrl', default='off',
                      help=argparse.SUPPRESS)  # retired experimental mode (3.0); kept only to reproduce earlier calls

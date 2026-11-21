@@ -57,7 +57,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--hard-clip` | off | Hard-clip unaligned read arms on every contig (the earlier ddda/dddb default). |
 | `--no-origin-merge` | off | Do not join the two pieces of reads that run through the origin of a circular reference (keep the primary piece). |
 | `--aligner` | `auto` | The minimap2 program on PATH or the mappy module (default: auto, program first). Choices: `auto`, `minimap2`, `mappy`. |
-| `--min-read-length` | — | Minimum aligned read length to call (default 1000). |
+| `--min-read-length` | — | Minimum read length to call: the full SEQ, soft clips included (DAF: the aligned length). Default 1000. |
 | `--dedup` | `auto` | DAF PCR-duplicate detection (default auto: on for file input). Choices: `auto`, `on`, `off`. |
 | `--dedup-mode` | `flag` | flag (default): mark duplicates 0x400 and keep them; collapse: keep one read per duplicate cluster. Choices: `flag`, `collapse`. |
 | `--snp-screen` | `auto` | DAF recurrent-SNP screen and mask (default auto: after a depth preflight). Choices: `auto`, `on`, `off`. |
@@ -110,7 +110,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--edge-trim` | `10` | Bases to mask at edges (default 10) |
 | `--min-mapq` | `0` | Min mapping quality (default 0) |
 | `--prob-threshold` | — | Min MM/ML modification probability 0-255. Default: chemistry preset -- 248 for Hia5 Nanopore (--seq nanopore, given or detected), 128 otherwise. R/Y- and MD-encoded DAF input is binary and ignores it. |
-| `--min-read-length` | `1000` | Min aligned read length (default 1000 — matches fiberhmm-apply) |
+| `--min-read-length` | `1000` | Min read length: the full SEQ, soft clips included (DAF with --daf-mask-unaligned: the aligned length). Default 1000, as fiberhmm-apply. |
 | `--msp-min-size` | `0` | Min MSP size (default 0) |
 | `--nuc-min-size` | `85` | Min footprint size to count as nucleosome (default 85) |
 | `--with-scores` / `--scores` | off | Write the HMM posterior-mean nq score of baseline nucleosomes (with --no-recall-nucs; nucleosome recall writes its own LLR-based nq). No aq is written. --scores is the fiberhmm-apply spelling. |
