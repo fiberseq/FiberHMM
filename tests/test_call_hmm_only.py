@@ -127,6 +127,10 @@ def test_hmm_only_ma_is_the_full_hmm_call_set(tmp_path, demo, chem):
     assert pg['PN'] == 'fiberhmm-call'
     assert {'hmm_only=on', 'recall_nucs=False', 'tf_recall=off', 'nuc_min_size=85',
             'msps=hmm', 'coord=molecular'} <= set(tokens)
+    with pysam.AlignmentFile(str(out)) as bam:
+        (chemistry,) = [c for c in bam.header.to_dict()['CO'] if 'FIBERHMM-CHEMISTRY' in c]
+    # No recall pass ran, so no recall table is declared.
+    assert 'apply_sha256=' in chemistry and 'recall_sha256=' not in chemistry
     calls = _calls(out)
     assert sum(len(c['tf']) for c in calls.values()) > 0
     for name, call in calls.items():

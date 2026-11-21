@@ -15,7 +15,8 @@
   `nuc` held only the footprints outside MSPs. `--legacy-tags` adds
   `ns`/`nl` = `nuc` and `as`/`al` = `msp`. The `@PG` record is
   `fiberhmm-call`'s, with `hmm_only=on recall_nucs=False tf_recall=off
-  nuc_min_size=N msps=hmm|kept` in `DS`. recall-tfs/-nucs and the
+  nuc_min_size=N msps=hmm|kept` in `DS`, and its `FIBERHMM-CHEMISTRY`
+  declares the apply table only (no recall pass ran). recall-tfs/-nucs and the
   `fiberhmm-tag-m5c` accessibility mask read the `nuc` + `tf` groups of an
   hmm-only call (latest FiberHMM footprint writer in the header) as the HMM
   footprints, so `--hmm-only` then `fiberhmm-recall-nucs` reproduces

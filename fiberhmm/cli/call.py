@@ -1844,7 +1844,8 @@ def _main(args):
             apply_model_path,
             # The recall pass reuses the apply table when no separate recall
             # table is resolved: record the table it actually read.
-            recall_model_path or apply_model_path,
+            # --hmm-only runs no recall pass: no recall table is declared.
+            None if args.hmm_only else (recall_model_path or apply_model_path),
             nuc_profile_identity,
             nuc_profile_sha256,
             nuc_model_path=nuc_model_path,
