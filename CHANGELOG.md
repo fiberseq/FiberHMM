@@ -12,9 +12,14 @@
   no opportunity, in native replay and in every lattice score, except inside
   the confidently unmethylated islands (`ddda_ucg`) written by
   `fiberhmm-tag-m5c`. Classes, their prevalence and the member calls of DddA
-  datasets move; DddB and Hia5 results do not. Saved DddA evidence from earlier
-  versions (`--evidence`, `--resume`, `fiberhmm-transfer --evidence`) is
-  refused with a message to re-extract it from the BAMs.
+  datasets move. DddB and Hia5 evidence is unchanged (apart from the tag fixes
+  below), but in a run that analyses them together with DddA their rows follow
+  the shared classes. At an unmethylated CpG island whose BAM carries no
+  `ddda_ucg` islands, many DddA classes disappear, because their CpG evidence
+  is now neutral; run `fiberhmm-tag-m5c` first to keep it. Saved DddA
+  evidence from earlier versions (`--evidence`, `--resume`,
+  `fiberhmm-transfer --evidence`) is refused with a message to re-extract it
+  from the BAMs.
   `input.ddda_cpg_mask_policy` (default `unmethylated-only`, as
   `fiberhmm-call --cpg-mask-policy`) selects the policy; `methylated-only`
   reproduces the earlier rule for comparison.
