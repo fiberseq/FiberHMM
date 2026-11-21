@@ -437,3 +437,16 @@ def test_staged_transfer_manifest_keeps_mask_digest(tmp_path):
     assert receipt['sha256'] == sha256(mask.read_bytes()).hexdigest() and receipt['sites'] == 1
     transfer(['--models', str(model), '--bam', str(bam), '--bed', str(bed), '--no-bam', '--output', str(tmp_path / 'plain')])
     assert 'daf_snp_masks' not in read_json(tmp_path / 'plain' / 'manifest.json')
+
+
+def test_mask_is_parsed_once_per_content_and_refingerprinted_each_read(tmp_path):
+    from fiberhmm.inference.consensus.snp_mask import read_mask
+    mask = tmp_path / 'snps.bed'; mask.write_text('chr1\t161\t163\n')
+    first, receipt = read_mask(mask)
+    again, receipt_again = read_mask(mask)
+    assert again is first and receipt_again == receipt and receipt['sites'] == 2
+    receipt_again['sites'] = 0
+    assert read_mask(mask)[1]['sites'] == 2
+    mask.write_text('chr1\t165\t166\n')
+    changed, changed_receipt = read_mask(mask)
+    assert changed == {'chr1': frozenset({165})} and changed_receipt['sha256'] != receipt['sha256']

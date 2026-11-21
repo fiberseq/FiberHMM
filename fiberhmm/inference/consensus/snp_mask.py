@@ -3,12 +3,30 @@ from pathlib import Path
 import hashlib
 
 
+# Parsed masks per process, keyed by (path, SHA-256): each window re-reads and
+# re-fingerprints the BED, but parses its intervals only once per content.
+_PARSED = {}
+_PARSED_LIMIT = 4
+
+
 def read_mask(path):
     """Read and fingerprint the same bytes; BED intervals are 0-based half-open."""
     if not path:
         return {}, None
     path = Path(path).expanduser().resolve()
     raw = path.read_bytes()
+    key = (str(path), hashlib.sha256(raw).hexdigest())
+    cached = _PARSED.get(key)
+    if cached is None:
+        cached = _parse(path, raw, key[1])
+        if len(_PARSED) >= _PARSED_LIMIT:
+            _PARSED.pop(next(iter(_PARSED)))
+        _PARSED[key] = cached
+    mask, receipt = cached
+    return mask, dict(receipt)
+
+
+def _parse(path, raw, sha256):
     mask = {}
     for number, line in enumerate(raw.decode('utf-8').splitlines(), 1):
         if not line.strip() or line.startswith(('#', 'track ', 'browser ')):
@@ -23,7 +41,7 @@ def read_mask(path):
             raise ValueError(f'{path}:{number}: invalid SNP mask BED interval (expected CHROM START END, 0 <= START < END)') from None
         mask.setdefault(chrom, set()).update(range(start, end))
     mask = {chrom: frozenset(sites) for chrom, sites in mask.items()}
-    return mask, dict(path=str(path), sha256=hashlib.sha256(raw).hexdigest(),
+    return mask, dict(path=str(path), sha256=sha256,
                       sites=sum(map(len, mask.values())), contigs=len(mask),
                       policy='exclude_observations')
 
