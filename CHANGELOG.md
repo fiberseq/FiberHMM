@@ -1,5 +1,45 @@
 # Changelog
 
+## 3.3.0 (unreleased)
+
+### Added
+
+- `fiberhmm-consensus` and BAM-based `fiberhmm-transfer` accept
+  `--daf-snp-mask BED` (`input.daf_snp_mask`) to exclude SNP positions from
+  DAF evidence and native replay. Converted and unconverted masked sites
+  are unknown observations, including on merged duplexes. The mask is
+  recorded in evidence metadata and checked by `--continue`; frozen
+  transfer requires an explicit target mask, and saved-evidence replay
+  cannot change its mask. Previously a mask used by `fiberhmm-call` was not
+  reapplied when consensus reconstructed observations from the BAM.
+- Consensus/transfer class tables include span and flank opportunity counts
+  and expected information in both accessible/protected directions on scored
+  molecules. A new comparison guide explains strand eligibility, matched
+  source models, variant handling, and limitations of differential counts.
+- Staged transfer manifests record each mask's SHA-256 and site count
+  (`daf_snp_masks`), not only its path. Frozen class catalogues record the
+  source run's label rule (`provenance.source_label_semantics`).
+
+### Fixed
+
+- Lattice-recaller BF labels now use direct log-likelihood ratios against
+  the fitted alternative mixture. Clipping posterior odds could erase strong
+  evidence when EM weights approached zero or one. EM estimates and scientific
+  thresholds are unchanged; affected labels, molecule edges and label-gated
+  tiers can change. Manifests record `label_semantics=likelihood_ratio_v2`.
+- Explicit DAF SNP masks remove duplex conversion calls before context
+  restoration and adjacent-target thinning, matching single-strand behavior.
+  Masked MD extraction also invalidates cached strand decisions.
+- With `--daf-snp-mask`, a read whose chemical strand can no longer be
+  decided once masked sites are removed (an R/Y read without an `st` tag, or
+  an MM-tagged read, whose only marks were masked) is skipped instead of
+  being scored as GA. Unmasked runs are unchanged.
+- Replaying saved masked evidence with `input.correct_native=false` is
+  refused: it would combine the BAM's unmasked TF calls with the masked
+  lattice.
+- Consensus mask positions follow the CIGAR exactly; a `P` operation no
+  longer shifts later positions by one.
+
 ## 3.2.1
 
 ### Fixed

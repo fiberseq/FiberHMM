@@ -6,6 +6,11 @@ discovering or fitting classes again: new datasets at the same locus, or
 other loci aligned to the same frame with oriented BED windows. It works for
 both consensus engines.
 
+For haplotype or sample comparisons, read
+[Comparing haplotypes and samples](consensus-comparisons.md). A shared catalogue
+does not by itself equalize sensitivity or guarantee identical per-channel
+boxes and learned spots; source mapping and target opportunities matter.
+
 ## Two steps
 
 ```bash
@@ -123,6 +128,21 @@ Nothing is inferred: no motif search, offset search or resizing. Choose
 anchors that make biological sense and the same assembly. Each BED window is
 its own analysis with its own prevalences; to pool target loci, prepare
 pooled evidence in the same oriented frame and pass `--evidence`.
+
+### Target DAF SNP masks
+
+For BAM input, `--daf-snp-mask BED` excludes target SNP sites from DAF
+observations and native TF replay, just as in
+[consensus](consensus.md#optional-daf-snp-masking). The equivalent preparation
+parameter is `input.daf_snp_mask`. Supply genomic BED coordinates and BAM
+contig names; masking happens before oriented-window transport.
+
+A source run's SNP BED is **not inherited** by transfer: it belongs to the
+source genome/locus and may not apply to the target. Pass the appropriate
+target BED explicitly, including for self-application of a masked run.
+The target mask is recorded in preparation parameters and prepared-evidence
+model metadata. `--evidence` preserves its existing observations and rejects
+a newly requested mask; `--freeze-run` accepts no `--daf-snp-mask` option.
 
 ### Training molecules
 

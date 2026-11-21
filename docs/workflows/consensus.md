@@ -94,6 +94,46 @@ analysis. `--evidence-pad full` keeps whole-read geometry (memory then grows
 with read length: about 280 KB per 30 kb read). The Python API and FiberBrowser
 keep whole reads unless a pad is passed (`input.evidence_pad_bp`, default -1).
 
+## Optional DAF SNP masking
+
+Consensus reconstructs observations from the BAM; an earlier SNP-masked
+`fiberhmm-call` does **not** permanently mask its sequence or `MD` tag.
+To exclude those variants during consensus, explicitly reuse the SNP BED:
+
+```bash
+fiberhmm-consensus --bam out/sample.calls.bam --region chr1:10000-10500 \
+    --daf-snp-mask out/qc/sample.calls.daf_snps.bed --output out/classes
+```
+
+`--daf-snp-mask BED` (also `input.daf_snp_mask` in `--parameters`) is opt-in.
+It accepts the BED produced by `fiberhmm-call`, `fiberhmm-daf-snps`, or a
+reviewed variant mask; consensus does not call SNPs itself. Coordinates must
+be **0-based, half-open genomic coordinates**, with contig names matching
+the BAM. The mask applies to every DAF dataset in the run, before any pooled
+window orientation. Hia5 observations are unaffected.
+
+Both converted and unconverted observations at masked coordinates are excluded
+from hit/miss scoring at those coordinates. The same mask
+is used for duplicate fingerprints, the scoring lattices and native TF
+replay, including paired duplex observations. It does not refit the input
+BAM's HMM/MSP scaffold or change the source BAM. A read whose chemical
+strand can no longer be decided after masking (an R/Y read without an `st`
+tag, or an MM-tagged read, whose only marks were masked) is skipped. Native
+replay must be on (`input.correct_native=true`), also when masked saved
+evidence is replayed. For haplotype comparisons, use a common,
+reviewed mask on both haplotypes. A point mask does not make neighboring
+contexts or run-thinning decisions invariant to the site's allele or
+conversion state. Inspect and test a common expanded context/run mask for
+allelic interpretation; see [comparison guidance](consensus-comparisons.md#keep-the-compared-class-definitions-and-observations-comparable).
+Excluding more sites can reduce resolution.
+
+The prepared evidence and dataset model metadata record the mask path,
+SHA-256, unique site count and exclusion policy. `--continue` checks the
+mask file's identity as well as the other inputs. `--evidence`/`--resume`
+reuse already prepared observations and cannot accept a new mask; rebuild
+from BAM to change it. Saved masked evidence can be replayed without the
+original BED. BAM-based [transfer](transfer.md) needs an explicit target mask.
+
 ## How the lattice recaller works
 
 The default engine, the **lattice recaller** (`cr.engine=lattice_recaller`),
@@ -154,10 +194,17 @@ each class is then scored on each channel.
    least `support_minimum_lower_bound` (0.02). A channel **resolves** a class
    when the expected evidence per molecule over the class span reaches
    `resolution_nats` (5); an unresolved estimate is reported but flagged.
-5. **Per-molecule labels.** A molecule is a `member` when its posterior odds
-   exceed the class's prior odds by `bf_threshold` (3), a `non_member` below
-   the inverse, and otherwise `abstain`. Prevalence comes from EM and does
-   not use the labels.
+5. **Per-molecule labels.** A molecule is a `member` when its class likelihood
+   exceeds that of the fitted alternative mixture by `bf_threshold` (3), a
+   `non_member` below the inverse, and otherwise `abstain`. The ratio is
+   computed directly in log space so rounding of near-zero or near-one
+   posteriors cannot erase the evidence. Prevalence comes from EM and does
+   not use the labels. A BF-based member need not have a high posterior.
+
+For differential binding, see
+[Comparing haplotypes and samples](consensus-comparisons.md): strand eligibility,
+variant masks, opportunity diagnostics, matched source models and the limits
+of hard counts and fitted prevalence.
 
 The run's mode is always CR: classes are shared by construction, and no SR
 boundary normalization or XCR relationship graph is computed (`sr.enabled`

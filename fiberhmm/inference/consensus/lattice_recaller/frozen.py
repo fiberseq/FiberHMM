@@ -114,6 +114,8 @@ def freeze_run(run_dir, output):
                 provenance=dict(source_run=str(root.resolve()), source_manifest_sha256=digest(manifest), input_digest=manifest.get('input_digest'),
                                 source_mode=manifest.get('mode'), source_seconds=manifest.get('seconds'),
                                 source_implementation_sha256=manifest.get('implementation_sha256'),   # the recaller receipt does not record it
+                                # Label rule of the source run's molecules.tsv (absent: clipped posterior odds, before 3.3.0).
+                                source_label_semantics=(manifest.get('recaller') or {}).get('label_semantics'),
                                 freeze_code=code_identity()),   # no timestamp: re-freezing a run gives the same digest
                 score_semantics='EM prevalence over fixed classes, broader protection, other shape and accessible; three-way per-molecule labels; '
                                 'geometry and learned spots fixed, prevalence re-estimated on the target molecules')
@@ -186,8 +188,9 @@ def score_channel(units, gs, f, opt, fixed):
             wf, _ = Mo.em(tr); wd, _ = Mo.em(np.delete(tr, c, axis=1))
             gain += Mo.loglik(te, wf) - Mo.loglik(np.delete(te, c, axis=1), wd)
         gains.append(gain)
-    return dict(w=w, P=P, units=keep, spots=prof, support_gain=gains, resolution=info, n=len(M), gs=gs, edges=list(fixed['edges']),
-                tiers=Mo.prevalence_tiers(sc.keep, P, w, gs, prof, opt.bf_threshold),
+    log_bfs = Mo.log_bayes_factors(M, w)
+    return dict(w=w, P=P, log_bf=log_bfs, units=keep, spots=prof, support_gain=gains, resolution=info, n=len(M), gs=gs, edges=list(fixed['edges']),
+                tiers=Mo.prevalence_tiers(sc.keep, P, w, gs, prof, opt.bf_threshold, log_bfs),
                 calls=[dict(classes=[Mo.molecule_edges(it, c, gs[c], prof[c]) for c in range(len(gs))], broader=it['broader'],
                             tiers=Mo.molecule_tiers(u, gs, prof))
                        for it, u in zip(sc.items, sc.keep)])
@@ -243,7 +246,7 @@ class FrozenClasses:
                     discovery='disabled: classes, tiles, per-channel edge boxes and learned spots are fixed by the catalog',
                     recomputed='EM prevalence and posteriors, per-molecule labels, edges and tiers, held-out support, resolution, '
                                'unknown-state accessible fraction (and efficiency when enabled) from the target molecules',
-                    spot_precision=cat['spot_precision'], dataset_map=self.dataset_map,
+                    spot_precision=cat['spot_precision'], dataset_map=self.dataset_map, label_semantics=Mo.LABEL_SEMANTICS,
                     channel_map={k: self.channel_map[k] for k in sorted(self.channel_map)},
                     excluded_training_molecules=len(self.exclusions), apply_code=code_identity())
 
@@ -254,6 +257,9 @@ def transfer_options(catalog, strata, overrides=None, cores=None):
     from ..parameters import parse_options, saved_parameters
     from ...depth_cap import NAMES
     values = saved_parameters(catalog['parameters'])
+    # A source BED is a preparation input in its original genomic frame, not
+    # portable class geometry. Targets must explicitly supply their own mask.
+    values.setdefault('input', {}).pop('daf_snp_mask', None)
     for group, settings in (overrides or {}).items():
         sampling_only = group == 'recaller' and not (set(settings) - set(NAMES))
         if group not in OVERRIDABLE_GROUPS and not sampling_only:

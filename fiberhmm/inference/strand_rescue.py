@@ -1213,14 +1213,34 @@ def hard_observations(
         if read.is_reverse:
             raise ValueError('Joint duplex evidence requires the forward reference-frame merge output')
         conv,ct,ga=decode_ry_consensus(sequence)
-        return encode_daf_both_strand(conv,ct,ga,*masks,edge_trim=10,context_size=context_size), 'BOTH'
+        from .engine import _daf_reference_mask
+        from .consensus.snp_mask import masked_query_positions
+        excluded = masked_query_positions(read, _daf_reference_mask(read))
+        # As in single-strand extraction, remove converted SNPs before context
+        # restoration and adjacent-target thinning, not only after encoding.
+        ct, ga = set(ct) - excluded, set(ga) - excluded
+        observations = encode_daf_both_strand(conv,ct,ga,*masks,edge_trim=10,context_size=context_size)
+        for q in excluded:
+            observations[q] = 2 * 4 ** (2 * context_size) + 1
+        return observations, 'BOTH'
     # Bases an MM '?' entry leaves unlisted carry no call: they are encoded
     # non-target (as in fiberhmm-call), not as misses.
     if strand_mode == "daf":
-        extracted = extract_modification_calls(read, "daf", context_size)
+        from .engine import _daf_reference_mask
+        snp_sites = _daf_reference_mask(read)
+        extracted = extract_modification_calls(read, "daf", context_size,
+            **({'excluded_reference_positions': snp_sites} if snp_sites else {}))
         if extracted is None:
             return None
         modification_positions, symbol, sequence, unknown_positions = extracted
+        if symbol not in ("+", "-") and snp_sites:
+            # The SNP mask removed the marks that decided this read's chemical
+            # strand. Skip it as unusable instead of falling back to GA (which
+            # would score its Gs as unconverted targets). Reads whose strand
+            # was already undecidable without the mask keep the GA fallback.
+            unmasked = extract_modification_calls(read, "daf", context_size)
+            if unmasked is not None and unmasked[1] in ("+", "-"):
+                return None
         strand = "CT" if symbol == "+" else "GA"
     else:
         if not read.has_tag("MM") or not read.has_tag("ML"):

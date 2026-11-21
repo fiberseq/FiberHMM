@@ -287,6 +287,9 @@ def _load_payload_once(state,request,options,progress):
     from fiberhmm.inference.consensus.adapter import evidence_unit,replay_alignment,condition_unit_on_m5c
     from fiberhmm.inference.tf_recaller import ENZYME_PRESETS
     runtime=loader_runtime();strata=[];start,end=request['start'],request['end'];chrom=request['chrom']
+    from .snp_mask import read_mask
+    from fiberhmm.inference.engine import daf_snp_mask_scope
+    snp_mask,snp_receipt=read_mask(options['input'].daf_snp_mask)
     for ordinal,dsid in enumerate(request['dataset_ids']):
         ds=state.get_dataset(dsid)
         chemistry=request.get('chemistry_overrides',{}).get(dsid) or getattr(ds,'family_scan_chemistry',None)
@@ -297,7 +300,9 @@ def _load_payload_once(state,request,options,progress):
         # DddA/DddB loads and concurrent Browser jobs cannot leak into each other.
         mask=_dataset_daf_run_mask(chemistry,options,ds.label,ds)
         from fiberhmm.core.bam_reader import daf_run_mask_scope
-        with daf_run_mask_scope(*mask):
+        if snp_receipt and chemistry in ('ddda','dddb') and not options['input'].correct_native:
+            raise ValueError('DAF SNP masking requires input.correct_native=true so discovery calls and scoring use the same observations')
+        with daf_run_mask_scope(*mask), daf_snp_mask_scope(snp_mask if chemistry in ('ddda','dddb') else {}):
             from fiberhmm.inference.consensus.progress import report
             report(progress,'loading',f'{ds.label}: loading '+('sampled' if '_read_names' in request else 'all')+f' regional observations ({chemistry})',dataset_id=dsid)
             reads,model,preset,diagnostics=_load_dataset_evidence(state,dsid,chemistry,chrom=chrom,
@@ -434,6 +439,7 @@ def _load_payload_once(state,request,options,progress):
             from fiberhmm.core.bam_reader import daf_run_mask_min_length,daf_run_mask_policy
             strata.append(dict(dataset_id=dsid,stratum_id=dsid,chemistry=chemistry,units=units,
                 model_manifest=dict(preset=chemistry,emissions_sha256=model_hash,efficiency_scaling=False,
+                    **(dict(daf_snp_mask=snp_receipt) if snp_receipt and chemistry in ('ddda','dddb') else {}),
                     # Recorded only when the mask is on, so unmasked input digests
                     # (and family tokens) match runs made before the option existed.
                     **(dict(daf_run_mask_min_length=daf_run_mask_min_length(),daf_run_mask_policy=daf_run_mask_policy())

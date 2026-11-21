@@ -16,6 +16,9 @@ import math
 
 import numpy as np
 
+EM_WEIGHT_FLOOR = 1e-12
+LABEL_SEMANTICS = 'likelihood_ratio_v2'
+
 
 def _hash2(uid):
     return int(hashlib.sha1(uid.encode()).hexdigest(), 16) % 2
@@ -25,21 +28,43 @@ def em(M, iters=1000):
     """Mixture weights and posteriors for a molecules x hypotheses log-likelihood matrix."""
     k = M.shape[1]; w = np.full(k, 1/k)
     for _ in range(iters):
-        A = M + np.log(np.maximum(w, 1e-12)); A -= A.max(1, keepdims=True); P = np.exp(A); P /= P.sum(1, keepdims=True); nw = P.mean(0)
+        A = M + np.log(np.maximum(w, EM_WEIGHT_FLOOR)); A -= A.max(1, keepdims=True); P = np.exp(A); P /= P.sum(1, keepdims=True); nw = P.mean(0)
         if np.abs(nw - w).max() < 1e-8:
             w = nw; break
         w = nw
-    A = M + np.log(np.maximum(w, 1e-12)); A -= A.max(1, keepdims=True); P = np.exp(A); P /= P.sum(1, keepdims=True)
+    A = M + np.log(np.maximum(w, EM_WEIGHT_FLOOR)); A -= A.max(1, keepdims=True); P = np.exp(A); P /= P.sum(1, keepdims=True)
     return w, P
 
 
 def loglik(M, w):
-    X = M + np.log(np.maximum(w, 1e-12)); m = X.max(1)
+    X = M + np.log(np.maximum(w, EM_WEIGHT_FLOOR)); m = X.max(1)
     return float(np.sum(m + np.log(np.exp(X - m[:, None]).sum(1))))
 
 
 def _logsumexp(v):
     m = v.max(); return float(m + math.log(np.exp(v - m).sum()))
+
+
+def log_bayes_factors(M, w):
+    """Class likelihood / fitted mixture of all other hypotheses, in log space.
+
+    Use the same weight floor as EM, normalizing the alternatives by their own
+    sum. Subtracting clipped posterior/prior odds loses evidence when either
+    rounds to zero or one. Prefix/suffix sums avoid that subtraction, including
+    when one hypothesis dominates, in O(molecules * hypotheses) work.
+    """
+    logw = np.log(np.maximum(w, EM_WEIGHT_FLOOR))
+    if M.ndim != 2 or M.shape[1] < 2 or logw.shape != (M.shape[1],):
+        raise ValueError('Bayes factors require a matrix and at least two hypothesis weights')
+    X = M + logw
+    def excluding_each(X):
+        left = np.logaddexp.accumulate(X, axis=-1)
+        right = np.logaddexp.accumulate(X[..., ::-1], axis=-1)[..., ::-1]
+        out = np.empty_like(X)
+        out[..., 0], out[..., -1] = right[..., 1], left[..., -2]
+        out[..., 1:-1] = np.logaddexp(left[..., :-2], right[..., 2:])
+        return out
+    return M - (excluding_each(X) - excluding_each(logw))
 
 
 def _prepare(u, gs, f, opt):
@@ -408,7 +433,7 @@ def tier_match(u, g, spots=()):
     return 'loose', (max(a, s0), min(b, s1), tuple(g['L']), tuple(g['R']))
 
 
-def prevalence_tiers(units, P, w, gs, prof, bf_threshold):
+def prevalence_tiers(units, P, w, gs, prof, bf_threshold, log_bfs=None):
     """Three prevalences per class, conservative to loose: core (the class itself: both edges fit); edge (plus
     non-member molecules with a clean core whose protected run lines up with a class edge); loose (plus non-member
     molecules with a clean core under any protection).
@@ -422,8 +447,8 @@ def prevalence_tiers(units, P, w, gs, prof, bf_threshold):
     for c, g in enumerate(gs):
         spots = set((prof[c] or {}).keys()) if prof else set()
         e = l = 0.
-        for u, pc in zip(units, P[:, c]):
-            if label(pc, w[c], bf_threshold)[0] == 'member':
+        for i, (u, pc) in enumerate(zip(units, P[:, c])):
+            if label(pc, w[c], bf_threshold, log_bf=None if log_bfs is None else log_bfs[i, c])[0] == 'member':
                 continue
             m = tier_match(u, g, spots)
             if m:
@@ -447,6 +472,29 @@ def expected_evidence(units, g, margin=30):
         m = (u['pos'] >= a0) & (u['pos'] < b0); pa, pp = u['pa'][m], u['pp'][m]
         vals.append(float(np.sum(pa*np.log(pa/pp) + (1 - pa)*np.log((1 - pa)/(1 - pp)))))
     return float(np.median(vals)) if vals else 0.
+
+
+def opportunity_diagnostics(units, g, opt):
+    """Substrate summaries on the actual scored denominator, without reading hits.
+
+    KL uses supplied accessible/protected rates at every span site, including
+    spot positions without their learned rates. Accessible rates may already
+    include calibration from channel-level marks. These summaries describe
+    interior opportunity, not edge identifiability or empirical calibration.
+    Existing resolution_nats uses a different (30-bp spanning) denominator.
+    """
+    values = {k: [] for k in ('median_span_opportunities', 'median_left_flank_opportunities',
+                             'median_right_flank_opportunities', 'scored_span_accessible_nats',
+                             'scored_span_protected_nats')}
+    for u in units:
+        p = u['pos']; span = (p >= g['span'][0]) & (p < g['span'][1])
+        values['median_span_opportunities'].append(int(span.sum()))
+        values['median_left_flank_opportunities'].append(int(((p >= g['L'][0] - opt.flank_bp) & (p < g['L'][0])).sum()))
+        values['median_right_flank_opportunities'].append(int(((p >= g['R'][1]) & (p < g['R'][1] + opt.flank_bp)).sum()))
+        pa, pp = u['pa'][span], u['pp'][span]
+        for key, a, b in (('scored_span_accessible_nats', pa, pp), ('scored_span_protected_nats', pp, pa)):
+            values[key].append(float(np.sum(a*np.log(a/b) + (1-a)*np.log((1-a)/(1-b)))))
+    return {k: float(np.median(v)) if v else None for k, v in values.items()}
 
 
 def wilson_lo(k, n, z=1.96):
@@ -485,16 +533,23 @@ def fit_channel(units, gs, f, opt):
             wf, _ = em(tr); wd, _ = em(np.delete(tr, c, axis=1))
             gain += loglik(te, wf) - loglik(np.delete(te, c, axis=1), wd)
         gains.append(gain)
-    return dict(w=w, P=P, units=keep, spots=[{int(x): prof[c][x] for x in sorted(acc[c])} for c in range(len(gs))],
-                support_gain=gains, resolution=info, n=len(M), gs=gs, edges=edges, tiers=prevalence_tiers(sc.keep, P, w, gs, prof, opt.bf_threshold),
+    log_bfs = log_bayes_factors(M, w)
+    return dict(w=w, P=P, log_bf=log_bfs, units=keep, spots=[{int(x): prof[c][x] for x in sorted(acc[c])} for c in range(len(gs))],
+                support_gain=gains, resolution=info, n=len(M), gs=gs, edges=edges, tiers=prevalence_tiers(sc.keep, P, w, gs, prof, opt.bf_threshold, log_bfs),
                 # Per molecule (aligned with P / units): its own edges for each class, and its best broader stretch.
                 calls=[dict(classes=[molecule_edges(it, c, gs[c], prof[c]) for c in range(len(gs))], broader=it['broader'],
                             tiers=molecule_tiers(u, gs, prof))
                        for it, u in zip(sc.items, sc.keep)])
 
 
-def label(posterior, weight, bf):
-    """Three-way per-molecule label: posterior odds over prior odds against the rest of the mixture."""
-    post = min(max(float(posterior), 1e-12), 1 - 1e-12); prior = math.log(max(weight, 1e-12)/max(1 - weight, 1e-12))
-    lbf = math.log(post/(1 - post)) - prior; t = math.log(bf)
+def label(posterior, weight, bf, *, log_bf=None):
+    """Three-way evidence label; production callers supply the stable likelihood ratio.
+
+    The posterior-odds fallback preserves the legacy helper API, but cannot
+    recover evidence lost to rounding at mixture boundaries.
+    """
+    if log_bf is None:
+        post = min(max(float(posterior), 1e-12), 1 - 1e-12); prior = math.log(max(weight, 1e-12)/max(1 - weight, 1e-12))
+        log_bf = math.log(post/(1 - post)) - prior
+    lbf = float(log_bf); t = math.log(bf)
     return ('member' if lbf >= t else 'non_member' if lbf <= -t else 'abstain'), lbf

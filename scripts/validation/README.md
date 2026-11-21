@@ -1,5 +1,7 @@
 # DAF SNP threshold validation
 
+For conditional consensus/haplotype sensitivity tests, see [Consensus comparison validation](consensus-comparisons.md).
+
 `validate_daf_snp_downsampling.py` calibrates the optional FiberHMM DAF SNP
 mask by thinning bidirectionally classified fiber evidence over a prespecified
 coverage ladder. It writes compact, paper-ready TSVs, a run manifest with input

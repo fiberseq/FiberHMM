@@ -886,6 +886,7 @@ def extract_modifications(read, mode: str, context_size: int = 3,
 
 def extract_modification_calls(read, mode: str, context_size: int = 3,
                                prob_threshold: int = RECALL_PROB_THRESHOLD,
+                               *, excluded_reference_positions=None,
                                ) -> Optional[Tuple[set, str, str, set]]:
     """Pull (mod_positions, strand, sequence, unknown_positions) for a read.
 
@@ -894,9 +895,10 @@ def extract_modification_calls(read, mode: str, context_size: int = 3,
     :func:`encode_from_query_sequence` as ``unknown_positions`` so they are
     non-target rather than misses. In DAF mode they also include the
     read's CIGAR insertion and soft-clip bases (no reference counterpart, so
-    no deamination evidence; skipped when the unaligned mask is off). Empty
-    for fully aligned R/Y, MD and fully listed (``.``/unflagged) MM data,
-    whose encoding is therefore unchanged.
+    no deamination evidence; skipped when the unaligned mask is off) and any
+    supplied ``excluded_reference_positions`` (reference SNP sites). Without
+    these exclusions, fully aligned R/Y, MD and fully listed
+    (``.``/unflagged) MM data have no unknown positions.
 
     Returns None if the read can't be processed (no MM tag, no sequence).
     Uses the manual MM/ML parser instead of pysam.modified_bases (the
@@ -917,6 +919,12 @@ def extract_modification_calls(read, mode: str, context_size: int = 3,
         if unaligned is None:
             from fiberhmm.inference.engine import daf_unaligned_without_evidence
             unaligned = daf_unaligned_without_evidence(read)
+        if excluded_reference_positions:
+            # Exclude both converted and unconverted alleles, before strand
+            # detection and encoding. A masked target is unknown, not protected.
+            from fiberhmm.inference.consensus.snp_mask import masked_query_positions
+            unaligned = set(unaligned) | masked_query_positions(
+                read, excluded_reference_positions)
 
     def merge_insert(mods, strand_tag):
         # Insert-consensus deaminations replace the inserted bases' own marks
@@ -948,10 +956,13 @@ def extract_modification_calls(read, mode: str, context_size: int = 3,
         ml_tag = []
     if not mm_tag or not ml_tag:
         if mode == 'daf':
-            md_result = getattr(read, '_daf_md_result', None)
+            # Cached strand selection predates this caller's reference mask.
+            # Recompute from MD when applying exclusions, including strand
+            # detection after removing conversion-like SNPs.
+            md_result = None if excluded_reference_positions else getattr(read, '_daf_md_result', None)
             if md_result is None and hasattr(read, 'get_aligned_pairs'):
                 from fiberhmm.daf.encoder import get_daf_positions
-                md_result = get_daf_positions(read)
+                md_result = get_daf_positions(read, excluded_reference_positions=excluded_reference_positions) if excluded_reference_positions else get_daf_positions(read)
             if md_result is None:
                 from fiberhmm.inference.engine import _insert_evidence_strand
                 fallback = _insert_evidence_strand(read)
@@ -959,6 +970,7 @@ def extract_modification_calls(read, mode: str, context_size: int = 3,
                     md_result = ([], [], fallback)
             if md_result is not None:
                 ct_pos, ga_pos, strand_tag = md_result
+                ct_pos, ga_pos = set(ct_pos) - unaligned, set(ga_pos) - unaligned
                 if strand_tag == 'CT':
                     return (merge_insert(ct_pos, 'CT'), '+', seq.upper(),
                             set(unaligned))
