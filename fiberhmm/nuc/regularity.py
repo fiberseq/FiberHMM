@@ -197,6 +197,25 @@ def _bands(window_bp: int, nfft: int, band: Tuple[int, int], ref: Tuple[int, int
     return np.hanning(window_bp), in_band, in_ref, band_periods
 
 
+#: Rows per FFT block. Each block is transformed single-threaded, so the
+#: result does not depend on ``workers`` (pocketfft's own threading splits
+#: rows differently per thread count, which moved the last bits on some CPUs).
+_FFT_ROWS = 64
+
+
+def _rfft_rows(x: np.ndarray, nfft: int, workers: int) -> np.ndarray:
+    """``rfft(x, nfft, axis=1)``, bit-identical for every ``workers`` value:
+    fixed row blocks, each with ``workers=1``, run on up to ``workers`` threads."""
+    blocks = [x[i:i + _FFT_ROWS] for i in range(0, len(x), _FFT_ROWS)]
+    if workers is None or workers <= 1 or len(blocks) <= 1:
+        parts = [rfft(b, nfft, axis=1, workers=1) for b in blocks]
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(int(workers), len(blocks))) as pool:
+            parts = list(pool.map(lambda b: rfft(b, nfft, axis=1, workers=1), blocks))
+    return np.concatenate(parts, axis=0) if parts else rfft(x, nfft, axis=1, workers=1)
+
+
 def spectral_scores(X: np.ndarray, params: RegularityParams = DEFAULT_REGULARITY,
                     keep: Optional[np.ndarray] = None, *, workers: int = 1,
                     cut: bool = False) -> Tuple[np.ndarray, np.ndarray]:
@@ -226,7 +245,7 @@ def spectral_scores(X: np.ndarray, params: RegularityParams = DEFAULT_REGULARITY
             mu = (x * k).sum(axis=1) / np.maximum(nk, 1)
             x = np.where(k, x, mu[:, None])
         x = (x - x.mean(axis=1, keepdims=True)) * taper
-        P = np.abs(rfft(x, params.nfft, axis=1, workers=workers)) ** 2
+        P = np.abs(_rfft_rows(x, params.nfft, workers)) ** 2
         ref = np.median(P[:, in_ref], axis=1)
         bandP = P[:, in_band]
         j = np.argmax(bandP, axis=1)
