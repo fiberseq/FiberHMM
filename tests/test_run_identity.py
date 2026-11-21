@@ -63,7 +63,7 @@ def test_declaration_is_backward_compatible_for_header_readers(monkeypatch):
             path, path),
     }
     header = output_header_with_provenance({"HD": {"VN": "1.6"}}, record)
-    (comment,) = [c for c in header.to_dict()["CO"]]
+    (comment,) = [c for c in header.to_dict()["CO"] if c.startswith("FIBERHMM-CHEMISTRY:")]
     assert comment.startswith(
         "FIBERHMM-CHEMISTRY:v1:assay=fiber-seq;enzyme=hia5;platform=nanopore;"
         "mode=nanopore-fiber;")

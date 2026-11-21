@@ -356,6 +356,34 @@ def header_has_coord_marker(header) -> bool:
     )
 
 
+# File-level annotation contract (FiberBrowser keys off the exact line). v2:
+# FiberHMM writes no MSP quality score (no aq, no MA msp quality), so any MSP
+# quality in the file is fibertools FIRE; a writer that changes a record's MSPs
+# leaves no fibertools Ma/Aq/An or legacy aq derived from the old ones; carried
+# fire groups were revalidated against the record's MSPs.
+ANNOTATION_CONTRACT_PREFIX = "FIBERHMM-ANNOTATION-CONTRACT:"
+ANNOTATION_CONTRACT_V2 = ANNOTATION_CONTRACT_PREFIX + "v2"
+
+
+def append_annotation_contract(header):
+    """``header`` with exactly one ``@CO FIBERHMM-ANNOTATION-CONTRACT:v2``
+    line (idempotent; replaces any other version of the line)."""
+    d = _header_to_dict(header)
+    comments = [c for c in d.get('CO', [])
+                if not str(c).startswith(ANNOTATION_CONTRACT_PREFIX)]
+    comments.append(ANNOTATION_CONTRACT_V2)
+    d['CO'] = comments
+    return pysam.AlignmentHeader.from_dict(d)
+
+
+def header_annotation_contract(header) -> Optional[str]:
+    """The declared annotation contract version (e.g. ``'v2'``), or None."""
+    for comment in _header_to_dict(header).get('CO', []):
+        if str(comment).startswith(ANNOTATION_CONTRACT_PREFIX):
+            return str(comment)[len(ANNOTATION_CONTRACT_PREFIX):]
+    return None
+
+
 # Chemistry-profile resolution shared by consensus refinement.
 # Profiles consensus has native-replay presets and emission tables for.
 CONSENSUS_CHEMISTRY_PROFILES = ("ddda", "dddb", "hia5-pacbio", "hia5-nanopore")
