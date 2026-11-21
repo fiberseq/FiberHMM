@@ -297,9 +297,7 @@ thresholds is found under any order; one close to them (a rare footprint, or
 two geometries a few bp apart) may appear under some orders and not others.
 On the 4 kb NAPA promoter window of FiberBrowser's demo (DddA-seq, hg38,
 chr19:47514000-47518000, the window of the example below) the default order
-finds 19 supported classes; other
-orders find between 14 and 19, and `--robust 2` (like `--robust 4`) marks 12
-of the 19 robust.
+finds 16 supported classes, and `--robust 2` marks 6 of the 16 robust.
 
 **`--robust N` marks which classes survive reordering.** It reruns discovery
 and scoring under N other deterministic read orders and adds two columns to
