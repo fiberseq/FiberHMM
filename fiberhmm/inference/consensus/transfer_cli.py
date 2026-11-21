@@ -110,7 +110,8 @@ def _main(argv=None):
         payload=read_json(args.evidence) if w is None else pool_payloads([load_bam_payload(datasets,dict(chrom=w['chrom'],start=w['start'],end=w['end']),options,progress)], [w])
         if w is None:
             from .bam import check_saved_evidence
-            check_saved_evidence(payload,options)
+            try: check_saved_evidence(payload,options)
+            except ValueError as error: parser.exit(2,f'{parser.prog}: error: {error}\n')
         if w is not None and bundle['region'][0]:
             from .regions import orient_unit
             offset=bundle['region'][0]
@@ -213,7 +214,9 @@ def _apply_recaller(args,parser,out,progress,model_path):
     from .execution import single_threaded_blas, shared_worker_pool
     if args.evidence:
         from .bam import check_saved_evidence
-        payload=read_json(args.evidence);check_saved_evidence(payload,F.transfer_options(catalog,[],overrides,1))
+        payload=read_json(args.evidence)
+        try: check_saved_evidence(payload,F.transfer_options(catalog,[],overrides,1))
+        except ValueError as error: parser.exit(2,f'{parser.prog}: error: {error}\n')
         count=1; jobs=iter([(None,payload)])
     else:
         from .regions import load_bed,pool_payloads

@@ -174,15 +174,17 @@ def test_saved_ddda_evidence_must_match_the_requested_cpg_policy():
     check_saved_evidence(dict(strata=[dict(dataset_id='d', chemistry='ddda', units=[])]), default)
 
 
-def test_consensus_cli_refuses_pre_fix_ddda_evidence(tmp_path):
+def test_consensus_cli_refuses_pre_fix_ddda_evidence(tmp_path, capsys):
     from fiberhmm.inference.consensus.artifacts import write_json
     from fiberhmm.inference.consensus.cli import main
     path = tmp_path / 'evidence.json.gz'
     payload = saved()
     payload['region'] = dict(chrom='chr1', start=0, end=100)
     write_json(path, payload)
-    with pytest.raises(ValueError, match='CpG policy'):
+    with pytest.raises(SystemExit) as stop:
         main(['--evidence', str(path), '--output', str(tmp_path / 'out'), '--no-bam'])
+    assert stop.value.code == 2
+    assert 'CpG policy' in capsys.readouterr().err
 
 
 @pytest.mark.parametrize('annotation,islands', [('none', 0), ('mcg_only', 0), ('ucg_island', 1)])
