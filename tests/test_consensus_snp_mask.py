@@ -437,6 +437,15 @@ def test_replaying_pooled_evidence_with_any_masked_window_requires_native_replay
     assert prepare_sources(pooled_windows(set()), parse_options(options))
 
 
+def test_consensus_run_refuses_pooled_masked_window_without_native_replay(tmp_path):
+    # The staged engine is the one that accepts input.correct_native=false.
+    from test_staged_families import parameters
+    from fiberhmm.inference.consensus.workflow import run_workflow
+    options = parameters()
+    with pytest.raises(ValueError, match='DAF SNP mask.*input.correct_native=true'):
+        run_workflow(pooled_windows({'w2'}), options, tmp_path)
+
+
 @pytest.mark.parametrize('duplex', [False, True])
 def test_mask_positions_skip_cigar_padding(duplex):
     # P consumes neither query nor reference; pysam's aligned pairs shift the
@@ -642,3 +651,53 @@ def test_loader_skips_md_read_whose_only_conversion_is_masked(tmp_path):
         'only_masked_conversion': 'CT', 'many_conversions': 'CT'}
     assert strands(load_bam_payload(datasets, region, parse_options({'input': {'daf_snp_mask': str(mask)}}))) == {
         'many_conversions': 'CT'}
+
+
+def test_loader_reads_padded_md_record_with_methylation_tags(tmp_path):
+    from fiberhmm.io.bam_header import append_chemistry
+    header = pysam.AlignmentHeader.from_dict(dict(HD={'VN': '1.6', 'SO': 'coordinate'}, SQ=[{'SN': 'chr1', 'LN': 1000}]))
+    # DddB: every C of the ACGT test reference is a CpG, which DddA scoring excludes.
+    header = append_chemistry(header, dict(assay='daf', enzyme='dddb', platform='pacbio', mode='daf'))
+    source, hit, miss = md_read_with_methylation_tags()
+    bam = tmp_path / 'input.bam'
+    with pysam.AlignmentFile(str(bam), 'wb', header=header) as handle:
+        for name, cigar in (('padded', '60M1P140M'), ('unpadded', '200M')):
+            r = pysam.AlignedSegment(header); r.query_name = name; r.query_sequence = source.query_sequence
+            r.reference_id = 0; r.reference_start = 100 if name == 'padded' else 300
+            r.mapping_quality = 60; r.cigarstring = cigar
+            for tag in ('MD', 'MM', 'ML'):
+                r.set_tag(tag, source.get_tag(tag))
+            r.set_tag('MA', '200;msp.:1-200')
+            handle.write(r)
+    pysam.index(str(bam))
+    mask = tmp_path / 'snps.bed'; mask.write_text(f'chr1\t{100 + hit}\t{101 + hit}\n')
+    datasets = [dict(dataset_id='d', paths=[str(bam)])]
+    region = dict(chrom='chr1', start=100, end=500)
+    def units(values):
+        payload = load_bam_payload(datasets, region, parse_options(values))
+        return {u['read_name']: u for u in payload['strata'][0]['units']}
+    plain = units({})
+    masked = units({'input': {'daf_snp_mask': str(mask)}})
+    for loaded in (plain, masked):
+        assert loaded['padded']['strand'] == loaded['unpadded']['strand'] == 'CT'
+    # The same evidence at both loci (relative to the read start), before masking.
+    def hits(unit, start):
+        return {p - start for p, h in zip(unit['positions'], unit['hits']) if h}
+    assert hits(plain['padded'], 100) == hits(plain['unpadded'], 300)
+    assert hit in hits(plain['padded'], 100)
+    assert hit not in hits(masked['padded'], 100) and hit not in {p - 100 for p in masked['padded']['positions']}
+
+
+def test_reference_fasta_comparison_skips_cigar_padding():
+    from fiberhmm.daf.encoder import get_daf_positions
+
+    class Reference:
+        def fetch(self, chrom, start, end):
+            return ('N' * 100 + 'ACGT' * 50 + 'N' * 700)[start:end]
+
+    read, _, _ = md_read_with_methylation_tags()
+    read.set_tag('MD', None)
+    expected = get_daf_positions(read, ref_fasta=Reference())
+    assert expected is not None and expected[2] == 'CT'
+    read.cigarstring = '60M1P140M'
+    assert get_daf_positions(read, ref_fasta=Reference()) == expected
