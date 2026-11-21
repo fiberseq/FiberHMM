@@ -823,3 +823,19 @@ def test_daf_fasta_fallback_reads_through_a_circular_origin(tmp_path):
         pairs = _aligned_pairs(read, handle)
     assert pairs is not None and len(pairs) == 100
     assert all(base == seq[q] for q, _r, base in pairs)
+
+
+def _holds_inode(fd, inode):
+    try:
+        return os.fstat(fd).st_ino == inode
+    except OSError:
+        return False
+
+
+def test_discovery_workers_do_not_inherit_the_key_lock(tmp_path):
+    path = str(tmp_path / "k.lock")
+    with vd._key_lock(path, _quiet) as fd:
+        if fd is None:
+            pytest.skip("no fcntl")
+        with vd._worker_pool(1) as pool:
+            assert pool.submit(_holds_inode, fd, os.stat(path).st_ino).result() is False

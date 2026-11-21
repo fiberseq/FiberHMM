@@ -1074,11 +1074,19 @@ def _key_lock(path: str, log):
             log(f"[variants] another run is discovering with this key ({path}); waiting")
             fcntl.flock(fd, fcntl.LOCK_EX)
         try:
-            yield
+            yield fd
         finally:
             fcntl.flock(fd, fcntl.LOCK_UN)
     finally:
         os.close(fd)
+
+
+def _worker_pool(n: int) -> ProcessPoolExecutor:
+    """Discovery workers, started with ``spawn``: a forked worker would
+    inherit the key lock's descriptor and, orphaned by a parent killed
+    mid-run, keep the lock and block every later run with that key."""
+    import multiprocessing
+    return ProcessPoolExecutor(max_workers=n, mp_context=multiprocessing.get_context("spawn"))
 
 
 def _build(input_bam, options, bams, contigs, contig_names, windows, read_groups, caller,
@@ -1110,7 +1118,7 @@ def _build(input_bam, options, bams, contigs, contig_names, windows, read_groups
     done = len(chunks) - len(todo)
     if tasks:
         if options.cores > 1 and len(tasks) > 1:
-            with ProcessPoolExecutor(max_workers=min(options.cores, len(tasks))) as pool:
+            with _worker_pool(min(options.cores, len(tasks))) as pool:
                 for _chunk, _stats in pool.map(_run_chunk, tasks):
                     done += 1
                     if done % step == 0 or done == len(chunks):
