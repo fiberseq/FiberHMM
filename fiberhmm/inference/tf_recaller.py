@@ -177,21 +177,66 @@ def cpg_mask_from_intervals(read_len: int, policy: str = "unmethylated-only",
     return mask
 
 
+def _fibertools_ma_cpg_intervals(read, feature: str) -> list:
+    """SEQ-frame intervals of one m5C feature in a fibertools ``Ma`` tag.
+
+    ``Ma`` is always molecular frame, so a reverse read's intervals are
+    flipped, as :func:`fiberhmm.daf.m5c.ma_strand_intervals` does for the
+    (always molecular) m5C groups of FiberHMM's ``MA``."""
+    from fiberhmm.daf.m5c import ma_group_feature
+    from fiberhmm.io.ma_tags import flip_interval_frame
+
+    read_length = read.query_length or len(read.query_sequence or "")
+    out = []
+    for group in str(read.get_tag('Ma')).split(';')[1:]:
+        head, sep, body = group.partition(':')
+        if not sep or ma_group_feature(head) != feature:
+            continue
+        for item in body.split(','):
+            if '-' not in item:
+                continue
+            one_based, size = (int(v) for v in item.split('-', 1))
+            start, length = one_based - 1, size
+            if read.is_reverse:
+                start, length = flip_interval_frame(start, length, read_length)
+            out.append((int(start), int(start + length)))
+    out.sort()
+    return out
+
+
 def read_cpg_intervals(read) -> dict:
-    """SEQ-frame ``ddda_ucg``/``ddda_mcg`` intervals carried by ``read``'s MA.
+    """SEQ-frame ``ddda_ucg``/``ddda_mcg`` intervals carried by ``read``.
 
-    Returns ``{'ucg': [...], 'mcg': [...]}`` (empty lists without MA). Small
-    and picklable, so pipelines can compute it in the main process and ship
-    it to workers that only see a slim payload.
+    The one accessor every calling path uses (region, streaming, recall,
+    replay), so they all see the same islands whatever the order of tag
+    stripping: FiberHMM's ``MA`` when present, else fibertools' (>= 0.13)
+    ``Ma`` (``ft fire`` moves every ``MA`` group into ``Ma``; molecular
+    frame), the precedence of :func:`fiberhmm.io.ma_tags.annotation_tags`
+    and :func:`fiberhmm.inference.read_filters.strip_stale_call_tags`.
+    A slim worker stub carrying intervals precomputed on the live read
+    (``cpg_intervals``) returns those.
+
+    Returns ``{'ucg': [...], 'mcg': [...]}`` (empty lists without either
+    tag). Small and picklable, so pipelines can compute it in the main
+    process and ship it to workers that only see a slim payload.
     """
-    if not read.has_tag('MA'):
-        return {'ucg': [], 'mcg': []}
-    from fiberhmm.daf.m5c import ma_intervals
+    precomputed = getattr(read, 'cpg_intervals', None)
+    if isinstance(precomputed, dict):
+        return {'ucg': list(precomputed.get('ucg', ())),
+                'mcg': list(precomputed.get('mcg', ()))}
+    if read.has_tag('MA'):
+        from fiberhmm.daf.m5c import ma_intervals
 
-    return {
-        'ucg': [tuple(map(int, iv)) for iv in ma_intervals(read, DDDA_UCG_FEATURE)],
-        'mcg': [tuple(map(int, iv)) for iv in ma_intervals(read, DDDA_MCG_FEATURE)],
-    }
+        return {
+            'ucg': [tuple(map(int, iv)) for iv in ma_intervals(read, DDDA_UCG_FEATURE)],
+            'mcg': [tuple(map(int, iv)) for iv in ma_intervals(read, DDDA_MCG_FEATURE)],
+        }
+    if read.has_tag('Ma'):
+        return {
+            'ucg': _fibertools_ma_cpg_intervals(read, DDDA_UCG_FEATURE),
+            'mcg': _fibertools_ma_cpg_intervals(read, DDDA_MCG_FEATURE),
+        }
+    return {'ucg': [], 'mcg': []}
 
 
 def build_cpg_mask(read, read_len: int,
