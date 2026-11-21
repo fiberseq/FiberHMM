@@ -114,6 +114,8 @@ def freeze_run(run_dir, output):
                 provenance=dict(source_run=str(root.resolve()), source_manifest_sha256=digest(manifest), input_digest=manifest.get('input_digest'),
                                 source_mode=manifest.get('mode'), source_seconds=manifest.get('seconds'),
                                 source_implementation_sha256=manifest.get('implementation_sha256'),   # the recaller receipt does not record it
+                                # Label rule of the source run's molecules.tsv (absent: clipped posterior odds, before 3.3.0).
+                                source_label_semantics=(manifest.get('recaller') or {}).get('label_semantics'),
                                 freeze_code=code_identity()),   # no timestamp: re-freezing a run gives the same digest
                 score_semantics='EM prevalence over fixed classes, broader protection, other shape and accessible; three-way per-molecule labels; '
                                 'geometry and learned spots fixed, prevalence re-estimated on the target molecules')

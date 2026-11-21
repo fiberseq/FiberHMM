@@ -69,6 +69,7 @@ def test_catalog_carries_geometry_spots_and_provenance(source):
     assert ct['classes']['class_001']['L'] == [row['L0'], row['L1']]
     prov = catalog['provenance']
     assert prov['input_digest'] == result['manifest']['input_digest'] and prov['freeze_code']['fiberhmm_version']
+    assert prov['source_label_semantics'] == 'likelihood_ratio_v2'
     assert catalog['tiles'] == result['manifest']['recaller']['tiles']
 
 
