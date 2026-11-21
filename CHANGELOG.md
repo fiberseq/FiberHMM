@@ -155,6 +155,16 @@
 
 ### Fixed
 
+- `fiberhmm-recall-tfs` no longer crashes (TypeError, no output) on a read
+  whose `ns` is a scalar (Dorado's `ns:i` signal count) beside an `nl` array.
+  Every reader of `ns`/`nl`/`as`/`al` now uses the shared array-pair rule
+  (`fiberhmm.io.legacy_tags`): recall, its worker payload and NRL estimate,
+  call statistics, the BED export, frame detection, scan peaks and the
+  consensus replay scaffold. A test fails if a module reads these tags raw.
+- `fiberhmm-scan --modules nuc` honours `--chemistry` (as fp and nfr do). On a
+  BAM whose header declares no chemistry, such as fibertools-only output, it
+  used to stop with a traceback; it now takes the observation mode and the
+  chemistry's ML threshold from `--chemistry`. Explicit nuc params still win.
 - `fiberhmm-recall-tfs`, `fiberhmm-recall-nucs`, `fiberhmm-consensus`,
   `fiberhmm-transfer` and `fiberhmm-strand-rescue` read DAF evidence in
   `fiberhmm-call`'s order: R/Y codes, then the reference comparison (`MD`),
