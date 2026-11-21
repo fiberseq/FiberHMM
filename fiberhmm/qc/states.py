@@ -469,6 +469,7 @@ def compute_state_rates(
     seed: int = 20260824,
     use_m5c: Optional[bool] = None,
     cpg_mask_policy: Optional[str] = None,
+    chimera_detector: Optional[dict] = None,
 ) -> tuple[dict, dict]:
     """In-MSP / outside-MSP modification rates of the sampled molecules.
 
@@ -476,6 +477,12 @@ def compute_state_rates(
     light call), ``tags`` (calls only) or ``light-call`` (always re-call).
     ``use_m5c``/``cpg_mask_policy`` resolve as in ``fiberhmm-call`` (on for
     DddA): the light call's HMM sees the same first-pass CpG mask.
+    ``chimera_detector`` (DAF): the strand-swap detector settings of the call
+    that wrote the BAM (keys of ``engine._DAF_CHIMERA_CFG``; ``error_mask``
+    is the chimera error-mask BED or None), applied during extraction only;
+    None keeps the process-wide settings. Chimeras are counted as unique
+    read names (unnamed records individually); duplicate-flagged names are
+    left out, as in :func:`fiberhmm.qc.core.analyze_sample`.
     Returns ``(report block, per-read arrays)``.
     """
     if terminal_policy not in TERMINAL_POLICIES:
@@ -510,9 +517,21 @@ def compute_state_rates(
     frames = tag_frames(header) if header is not None else {
         "MA": "seq", "legacy": None, "legacy_reason": "no header"}
     from fiberhmm.inference.chimeras import is_marked_chimera
-    marked_chimeras = sum(is_marked_chimera(read) for read in reads) if mode == 'daf' else 0
-    eligible = [read for read in reads if not getattr(read, "is_duplicate", False)
-                and (mode != 'daf' or not is_marked_chimera(read))]
+
+    def read_key(read, index):
+        name = getattr(read, "query_name", None)
+        return name if name not in (None, "*", "") else ("#record", index)
+
+    keys = [read_key(read, index) for index, read in enumerate(reads)]
+    duplicate_keys = {key for key, read in zip(keys, reads)
+                      if getattr(read, "is_duplicate", False)}
+    chimera_keys = ({key for key, read in zip(keys, reads) if is_marked_chimera(read)}
+                    if mode == 'daf' else set())
+    eligible_pairs = [(key, read) for key, read in zip(keys, reads)
+                      if not getattr(read, "is_duplicate", False)
+                      and (mode != 'daf' or not is_marked_chimera(read))]
+    eligible_keys = [key for key, _ in eligible_pairs]
+    eligible = [read for _, read in eligible_pairs]
     tagged = [msp_intervals_from_tags(read, frames) for read in eligible]
     n_tagged = sum(1 for item in tagged if item is not None)
     # fibertools' own calls (Ma without FiberHMM MA) are a different state
@@ -548,10 +567,15 @@ def compute_state_rates(
         block["definition"]["hmm_cpg_mask"] = light_cpg_policy or "off"
         order = _sample_order(eligible, seed)
         eligible = [eligible[index] for index in order]
+        eligible_keys = [eligible_keys[index] for index in order]
         tagged = [tagged[index] for index in order]
     block["definition"]["daf_run_mask"] = (
         (f">={run_mask[0]}/{run_mask[1]}" if run_mask[0] else "off")
         if mode == "daf" else None)
+    if mode == "daf":
+        block["definition"]["chimera_detector"] = (
+            dict(chimera_detector) if chimera_detector is not None
+            else "process settings (no fiberhmm-call @PG)")
 
     totals = dict(msp_events=0, msp_opps=0, out_events=0, out_opps=0,
                   msp_bp=0, total_bp=0, excluded_opps=0, all_events=0, all_opps=0)
@@ -560,7 +584,7 @@ def compute_state_rates(
     per_read_ratio_inputs: list[tuple] = []
     msp_fraction_per_read: list[float] = []
     counts = dict(reads_considered=0, reads_without_signal=0, reads_without_calls=0,
-                  reads_chimera_skipped=marked_chimeras, reads_mm_unreliable=0,
+                  reads_chimera_skipped=0, reads_mm_unreliable=0,
                   reads_single_segment=0, reads_used=0)
     light = {"reads_called": 0, "budget_reads": int(light_call_reads),
              "budget_seconds": float(light_call_seconds), "stopped_by": None,
@@ -578,8 +602,12 @@ def compute_state_rates(
         # drops masked events before the chimera filter, as calling does, and
         # the masked sites are also removed as opportunities below.
         stack.enter_context(engine.daf_snp_mask_scope(snp_mask or {}))
+        if mode == "daf" and chimera_detector is not None:
+            # The call's own detector (incl. its chimera error mask), so a
+            # read the call kept is not re-detected under other settings.
+            stack.enter_context(engine.daf_chimera_filter_scope(**chimera_detector))
 
-        for read, intervals in zip(eligible, tagged):
+        for key, read, intervals in zip(eligible_keys, eligible, tagged):
             if caller is not None:
                 if light["reads_called"] >= light_call_reads:
                     light["stopped_by"] = "read budget"
@@ -598,7 +626,7 @@ def compute_state_rates(
             fiber_read = engine._extract_fiber_read_from_pysam(
                 read, mode, prob_threshold, reference_handle)
             if fiber_read is engine.CHIMERA_SKIP:
-                counts["reads_chimera_skipped"] += 1
+                chimera_keys.add(key)
                 continue
             if fiber_read is None:
                 counts["reads_without_signal"] += 1
@@ -658,6 +686,7 @@ def compute_state_rates(
             per_read_ratio_inputs.append((m_events, m_opps, o_events, o_opps))
     if caller is not None:
         light["elapsed_seconds"] = round(float(clock() - started), 3)
+    counts["reads_chimera_skipped"] = len(chimera_keys - duplicate_keys)
 
     msp_rate = _rate(totals["msp_events"], totals["msp_opps"])
     out_rate = _rate(totals["out_events"], totals["out_opps"])

@@ -7,6 +7,13 @@ import os
 import numpy as np
 import pysam
 
+from fiberhmm.inference.chimeras import (
+    DEFAULT_MIN_BASEQ as _CHIMERA_MIN_BASEQ,
+    DEFAULT_MIN_SEG as _CHIMERA_MIN_SEG,
+    DEFAULT_MIN_SPAN as _CHIMERA_MIN_SPAN,
+    DEFAULT_MULTI_SWITCH as _CHIMERA_MULTI_SWITCH,
+    DEFAULT_PURITY as _CHIMERA_PURITY,
+)
 from fiberhmm.core.bam_reader import (
     ContextEncoder,
     daf_cpg_target_mask,
@@ -861,11 +868,11 @@ class _ApplyPayloadRead:
     """
     __slots__ = ('query_name', 'query_sequence', 'is_reverse', '_tags',
                  '_daf_md_result', '_daf_excluded_query_positions',
-                 '_no_call_blocks', '_daf_insert_mods')
+                 '_no_call_blocks', '_daf_insert_mods', '_daf_chimera')
 
     def __init__(self, query_name, query_sequence, is_reverse, tags,
                  daf_md_result=None, daf_excluded_query_positions=None,
-                 no_call_blocks=None, daf_insert_mods=None):
+                 no_call_blocks=None, daf_insert_mods=None, daf_chimera=None):
         self.query_name = query_name
         self.query_sequence = query_sequence
         self.is_reverse = is_reverse
@@ -876,6 +883,8 @@ class _ApplyPayloadRead:
         )
         self._no_call_blocks = list(no_call_blocks or ())
         self._daf_insert_mods = daf_insert_mods
+        # The chimera filter's decision on the live record (None: not made).
+        self._daf_chimera = daf_chimera
 
     def has_tag(self, t):
         return t in self._tags
@@ -963,6 +972,11 @@ def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None,
             if rest is not None:
                 payload['_daf_md_result'] = rest
 
+    if mode == 'daf' and _DAF_CHIMERA_CFG['filter']:
+        # The stub has no QUAL or alignment: decide on the live record.
+        from .chimeras import _is_chimeric
+        payload['_daf_chimera'] = bool(_is_chimeric(read, ref_fasta))
+
     no_call_blocks = read_no_call_blocks(read, mode)
     if no_call_blocks:
         payload['_no_call_blocks'] = no_call_blocks
@@ -1005,6 +1019,7 @@ def extract_fiber_read_from_payload(payload: dict, mode: str, prob_threshold: in
             ),
             no_call_blocks=payload.get('_no_call_blocks'),
             daf_insert_mods=payload.get('_daf_insert_mods'),
+            daf_chimera=payload.get('_daf_chimera'),
         ),
         mode, prob_threshold,
     )
@@ -1015,15 +1030,55 @@ def extract_fiber_read_from_payload(payload: dict, mode: str, prob_threshold: in
 # distinct sentinel (vs None) so workers can tally chimeras as their own skip
 # reason rather than folding them into "no_modifications".
 CHIMERA_SKIP = object()
-_DAF_CHIMERA_CFG = {'filter': True, 'min_seg': 5, 'purity': 0.8}
+_DAF_CHIMERA_CFG = {'filter': True, 'min_seg': _CHIMERA_MIN_SEG,
+                    'purity': _CHIMERA_PURITY, 'min_baseq': _CHIMERA_MIN_BASEQ,
+                    'min_span': _CHIMERA_MIN_SPAN,
+                    'multi_switch': _CHIMERA_MULTI_SWITCH, 'error_mask': None}
 
 
 def configure_daf_chimera_filter(filter_chimeras: bool = True,
-                                 min_seg: int = 5, purity: float = 0.8) -> None:
-    """Set the DAF chimera-filter policy for this process (worker init)."""
+                                 min_seg: int = _CHIMERA_MIN_SEG,
+                                 purity: float = _CHIMERA_PURITY,
+                                 min_baseq: int = _CHIMERA_MIN_BASEQ,
+                                 min_span: int = _CHIMERA_MIN_SPAN,
+                                 multi_switch: bool = _CHIMERA_MULTI_SWITCH,
+                                 error_mask=None) -> None:
+    """Set the DAF chimera-filter policy for this process (worker init).
+
+    ``error_mask``: the chimera-only error-mask BED (or None).
+    """
     _DAF_CHIMERA_CFG['filter'] = bool(filter_chimeras)
     _DAF_CHIMERA_CFG['min_seg'] = int(min_seg)
     _DAF_CHIMERA_CFG['purity'] = float(purity)
+    _DAF_CHIMERA_CFG['min_baseq'] = int(min_baseq)
+    _DAF_CHIMERA_CFG['min_span'] = int(min_span)
+    _DAF_CHIMERA_CFG['multi_switch'] = bool(multi_switch)
+    _DAF_CHIMERA_CFG['error_mask'] = str(error_mask) if error_mask else None
+
+
+def restore_daf_chimera_filter(config: dict) -> None:
+    """Restore every setting of a saved ``dict(_DAF_CHIMERA_CFG)`` snapshot."""
+    configure_daf_chimera_filter(
+        config['filter'], config['min_seg'], config['purity'],
+        min_baseq=config['min_baseq'], min_span=config['min_span'],
+        multi_switch=config['multi_switch'], error_mask=config['error_mask'])
+
+
+def daf_chimera_filter_scope(**settings):
+    """Context manager: apply chimera-filter ``settings`` (keys of
+    :data:`_DAF_CHIMERA_CFG`; omitted keys keep their value) and restore the
+    previous process-wide settings on exit."""
+    from contextlib import contextmanager
+
+    @contextmanager
+    def scope():
+        saved = dict(_DAF_CHIMERA_CFG)
+        restore_daf_chimera_filter({**saved, **settings})
+        try:
+            yield
+        finally:
+            restore_daf_chimera_filter(saved)
+    return scope()
 
 
 def _daf_raw_mismatch_lists(read, ref_fasta=None):
@@ -1055,16 +1110,34 @@ def _is_iupac_daf_chimera(read, query_sequence: str, excluded_query_positions,
 
     CT events are Y bases plus any raw C->T mismatches; GA events are R bases
     plus raw G->A mismatches (from MD/reference, when available). SNP-masked
-    positions are removed from both, matching the MD path.
+    positions are removed from both, matching the MD path; the chimera-only
+    filters (base quality, error mask) and the run's detector follow
+    (:func:`fiberhmm.inference.chimeras.engine_chimera_hit`).
     """
-    from fiberhmm.daf.encoder import is_daf_chimera
+    from .chimeras import engine_chimera_hit
+    decided = getattr(read, '_daf_chimera', None)
+    if decided is not None:
+        return bool(decided)
     min_seg = _DAF_CHIMERA_CFG['min_seg'] if min_seg is None else min_seg
-    purity = _DAF_CHIMERA_CFG['purity'] if purity is None else purity
+    events = _iupac_chimera_events(read, query_sequence, excluded_query_positions,
+                                   ref_fasta, min_seg=min_seg)
+    if events is None:
+        return False
+    return engine_chimera_hit(read, events[0], events[1])
+
+
+def _iupac_chimera_events(read, query_sequence: str, excluded_query_positions,
+                          ref_fasta=None, *, min_seg=0):
+    """Sorted (CT, GA) event query positions of an R/Y-encoded DAF read.
+
+    None when neither IUPAC flavour reaches ``min_seg`` events (no chimera
+    is possible then; the raw-mismatch lookup is skipped).
+    """
     seq_arr = np.frombuffer(query_sequence.upper().encode('ascii'), dtype=np.uint8)
     ct = set(np.flatnonzero(seq_arr == ord('Y')).tolist())
     ga = set(np.flatnonzero(seq_arr == ord('R')).tolist())
     if max(len(ct), len(ga)) < min_seg:
-        return False
+        return None
     rest = getattr(read, '_daf_md_result', None)
     if rest is None:
         rest = _daf_raw_mismatch_lists(read, ref_fasta)
@@ -1074,9 +1147,7 @@ def _is_iupac_daf_chimera(read, query_sequence: str, excluded_query_positions,
     if excluded_query_positions:
         ct.difference_update(excluded_query_positions)
         ga.difference_update(excluded_query_positions)
-    return is_daf_chimera(sorted(ct), sorted(ga),
-                          min_seg_events=min_seg,
-                          purity=purity)
+    return sorted(ct), sorted(ga)
 
 
 def _with_unknown(fiber_read: dict, unknown_positions, read=None) -> dict:
@@ -1161,10 +1232,8 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
             # segment and GA in another corrupts the single-strand assignment.
             # Drop it (returns a distinct sentinel so callers can report counts).
             if filter_chimeras:
-                from fiberhmm.daf.encoder import is_daf_chimera
-                if is_daf_chimera(ct_pos, ga_pos,
-                                  min_seg_events=_DAF_CHIMERA_CFG['min_seg'],
-                                  purity=_DAF_CHIMERA_CFG['purity']):
+                from .chimeras import engine_chimera_hit
+                if engine_chimera_hit(read, ct_pos, ga_pos):
                     return CHIMERA_SKIP
             mod_positions = set(ct_pos) if strand_tag == 'CT' else set(ga_pos)
             # SNP-masked sites are already out of the mismatch lists (they

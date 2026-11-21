@@ -333,6 +333,14 @@ def wrapped_reference_sites(read, sites):
 def _read_arrays(read, reference_handle=None):
     """Per-read ``(rpos, ref_codes, query_codes)`` arrays for the SNP screen.
 
+    :func:`_read_arrays_with_query` also returns the query positions."""
+    arrays = _read_arrays_with_query(read, reference_handle)
+    return None if arrays is None else arrays[1:]
+
+
+def _read_arrays_with_query(read, reference_handle=None):
+    """Per-read ``(qpos, rpos, ref_codes, query_codes)`` arrays for the SNP screen.
+
     Equivalent to the usable pairs of :func:`_profile` (same pairs, same
     order, same upper-cased bases); ``None`` exactly when ``_profile`` is.
     The vectorised MD path is used whenever it is exact; anything else
@@ -343,12 +351,13 @@ def _read_arrays(read, reference_handle=None):
     """
     arrays = matched_base_arrays(read)
     if arrays is not None:
-        _qpos, rpos, ref_codes, query_codes = arrays
-        return _on_contig(read, rpos, ref_codes, query_codes)
+        qpos, rpos, ref_codes, query_codes = arrays
+        return _on_contig(read, rpos, ref_codes, query_codes, qpos)
     profile = _profile(read, reference_handle)
     if profile is None:
         return None
     pairs = profile[2]
+    qpos = np.fromiter((pair[0] for pair in pairs), dtype=np.int64, count=len(pairs))
     rpos = np.fromiter((pair[1] for pair in pairs), dtype=np.int64, count=len(pairs))
     ref_codes = np.fromiter(
         (_base_code(pair[2]) for pair in pairs), dtype=np.int64, count=len(pairs)
@@ -356,19 +365,20 @@ def _read_arrays(read, reference_handle=None):
     query_codes = np.fromiter(
         (_base_code(pair[3]) for pair in pairs), dtype=np.int64, count=len(pairs)
     )
-    return _on_contig(read, rpos, ref_codes, query_codes)
+    return _on_contig(read, rpos, ref_codes, query_codes, qpos)
 
 
-def _on_contig(read, rpos, ref_codes, query_codes):
+def _on_contig(read, rpos, ref_codes, query_codes, qpos):
     """Aligned positions on the contig: past its end, ``p mod LN`` on a
     circular contig (every turn), dropped on a linear one."""
     length, circular = _past_end(read)
     if length is None:
-        return rpos, ref_codes, query_codes
+        return qpos, rpos, ref_codes, query_codes
     if circular:
-        return np.where(rpos >= length, rpos % length, rpos), ref_codes, query_codes
+        return (qpos, np.where(rpos >= length, rpos % length, rpos),
+                ref_codes, query_codes)
     keep = rpos < length
-    return rpos[keep], ref_codes[keep], query_codes[keep]
+    return qpos[keep], rpos[keep], ref_codes[keep], query_codes[keep]
 
 
 def _covers_a_turn_twice(read) -> bool:
@@ -639,6 +649,109 @@ def _renumber_amplicons(amplicons: list, calls: list) -> None:
         amplicon["amplicon_id"] = renamed[amplicon["amplicon_id"]]
 
 
+def _query_qualities(read):
+    """QUAL as an array, or None when the record has none."""
+    try:
+        quals = read.query_qualities
+    except (ValueError, TypeError):
+        return None
+    return None if quals is None else np.asarray(quals)
+
+
+def _error_mask_voter(read, arrays, detector):
+    """``(direction, good)`` of a chimera error-mask voter, else ``(None, None)``.
+
+    A voter is a clearly single-strand, non-chimeric fiber: >=
+    ``ERROR_MASK_VOTER_MIN_EVENTS`` events of one direction at purity >=
+    ``ERROR_MASK_VOTER_MIN_PURITY``, counting only events with base quality
+    >= ``ERROR_MASK_VOTER_MIN_BASEQ`` (15, fixed: independent of the
+    detector's ``min_baseq``; when QUAL is present), and not a chimera under
+    the run's detector on those events. ``good`` marks the
+    aligned bases with sufficient quality (all when there is no QUAL). The
+    SNP and error masks do not exist yet at this point, so the voter test
+    sees every event.
+    """
+    from fiberhmm.daf.encoder import is_daf_chimera
+    from fiberhmm.inference.chimeras import (
+        ERROR_MASK_VOTER_MIN_BASEQ,
+        ERROR_MASK_VOTER_MIN_EVENTS,
+        ERROR_MASK_VOTER_MIN_PURITY,
+    )
+
+    qpos, _rpos, ref_codes, query_codes = arrays
+    ct_mask, ga_mask = _conversion_masks(ref_codes, query_codes)
+    quals = _query_qualities(read)
+    min_baseq = ERROR_MASK_VOTER_MIN_BASEQ
+    if quals is not None and quals.size:
+        inside = (qpos >= 0) & (qpos < quals.size)
+        good = np.zeros(qpos.size, dtype=bool)
+        good[inside] = quals[qpos[inside]] >= min_baseq
+        ct_mask = ct_mask & good
+        ga_mask = ga_mask & good
+    else:
+        good = np.ones(qpos.size, dtype=bool)
+    direction = _dominant_direction(
+        int(np.count_nonzero(ct_mask)),
+        int(np.count_nonzero(ga_mask)),
+        ERROR_MASK_VOTER_MIN_EVENTS,
+        ERROR_MASK_VOTER_MIN_PURITY,
+    )
+    if direction is None:
+        return None, None
+    if is_daf_chimera(
+        qpos[ct_mask].tolist(), qpos[ga_mask].tolist(),
+        detector["min_seg"], detector["purity"],
+        min_span=detector["min_span"], multi_switch=detector["multi_switch"],
+    ):
+        return None, None
+    return direction, good
+
+
+def _binomial_survival(k: int, depth: int, rate: float) -> float:
+    """P(X >= k) for X ~ Binomial(depth, rate)."""
+    from scipy.stats import binom
+
+    return float(binom.sf(k - 1, depth, rate))
+
+
+def _error_mask_sites(error_stats, rejected, called) -> list:
+    """Sites passing the chimera error-mask gate, sorted by position."""
+    from fiberhmm.inference.chimeras import (
+        ERROR_MASK_BACKGROUND_RATE,
+        ERROR_MASK_MAX_PVALUE,
+        ERROR_MASK_MIN_DEPTH,
+        ERROR_MASK_MIN_FRACTION,
+        ERROR_MASK_MIN_MISMATCHES,
+    )
+
+    sites = []
+    for key in sorted(error_stats):
+        if key in rejected or key in called:
+            continue
+        chrom, position, reference = key
+        stats = error_stats[key]
+        depth = int(stats["opposite_depth"])
+        mismatches = int(stats["opposite_mismatches"])
+        if (depth < ERROR_MASK_MIN_DEPTH or mismatches < ERROR_MASK_MIN_MISMATCHES
+                or mismatches < ERROR_MASK_MIN_FRACTION * depth):
+            continue
+        p_value = _binomial_survival(mismatches, depth, ERROR_MASK_BACKGROUND_RATE)
+        if p_value >= ERROR_MASK_MAX_PVALUE:
+            continue
+        sites.append({
+            "chrom": chrom,
+            "position_0based": int(position),
+            "reference": reference,
+            "masked_event": "C>T" if reference == "C" else "G>A",
+            "voter_direction": "GA" if reference == "C" else "CT",
+            "voter_depth": depth,
+            "voter_mismatches": mismatches,
+            "fraction": mismatches / depth,
+            "p_value": p_value,
+        })
+    return sites
+
+
 def call_opposite_conversion_snps(
     input_path: str,
     min_fraction: float = DEFAULT_SNP_MIN_FRACTION,
@@ -653,6 +766,8 @@ def call_opposite_conversion_snps(
     profile_seed: int = _SITE_PROFILE_SEED,
     min_amplicon_reads: int = _AMPLICON_MIN_READS,
     all_snvs: bool = False,
+    chimera_error_mask: bool = False,
+    chimera_detector: Optional[dict] = None,
 ) -> dict:
     """Two-pass DAF SNP call using recurrent events on opposite-direction fibers.
 
@@ -672,6 +787,19 @@ def call_opposite_conversion_snps(
     ``other_snv_calls`` and written to the VCF only, never to the BED mask
     (deamination cannot create them). Pass 1 keeps a counter of every such
     mismatch, so memory grows with the sequencing-error load of the run.
+
+    With ``chimera_error_mask`` the same two passes also build the
+    chimera-only recurrent error mask (``payload['chimera_error_mask']``;
+    :func:`write_snp_outputs` writes it to its own BED/JSON, never into the
+    SNP BED). Its voters are clearly single-strand, non-chimeric fibers
+    (:func:`_error_mask_voter`, using ``chimera_detector``, by default
+    :func:`fiberhmm.inference.chimeras.detector_config`); a site is masked
+    from chimera events when, among voters of the opposite direction, it has
+    depth >= ``ERROR_MASK_MIN_DEPTH``, >= ``ERROR_MASK_MIN_MISMATCHES``
+    mismatching voters, a fraction >= ``ERROR_MASK_MIN_FRACTION`` and a
+    binomial survival P(X >= k | depth, ``ERROR_MASK_BACKGROUND_RATE``)
+    below ``ERROR_MASK_MAX_PVALUE`` (constants in
+    :mod:`fiberhmm.inference.chimeras`). Called SNP sites are not repeated.
     """
     if not 0 < min_fraction <= 1:
         raise ValueError("min_fraction must be in (0, 1]")
@@ -692,6 +820,12 @@ def call_opposite_conversion_snps(
     sampled_profile_sites: set[tuple[str, int, str]] = set()
     amplicon_bins: Counter = Counter()
     offered_sites = _OfferedSites()
+    error_counts: Counter = Counter()
+    detector = None
+    if chimera_error_mask:
+        from fiberhmm.inference.chimeras import detector_config
+
+        detector = dict(chimera_detector or detector_config())
     try:
         with pysam.AlignmentFile(input_path, "rb", check_sq=False) as bam:
             for read in bam.fetch(until_eof=True):
@@ -707,11 +841,21 @@ def call_opposite_conversion_snps(
                 amplicon_bins[
                     (read.reference_name, int(read.reference_start) // _AMPLICON_BIN_BP)
                 ] += 1
-                arrays = _read_arrays(read, reference_handle)
+                arrays = _read_arrays_with_query(read, reference_handle)
                 if arrays is None:
                     accounting["unusable_alignment_records"] += 1
                     continue
-                rpos, ref_codes, query_codes = arrays
+                if detector is not None:
+                    voter, good = _error_mask_voter(read, arrays, detector)
+                    if voter is not None:
+                        accounting[f"error_mask_{voter.lower()}_voters"] += 1
+                        _qpos, rpos, ref_codes, query_codes = arrays
+                        ct_mask, ga_mask = _conversion_masks(ref_codes, query_codes)
+                        opposite = (ga_mask if voter == "CT" else ct_mask) & good
+                        reference = "G" if voter == "CT" else "C"
+                        for position in set(rpos[opposite].tolist()):
+                            error_counts[(read.reference_name, position, reference)] += 1
+                rpos, ref_codes, query_codes = arrays[1:]
                 ct_mask, ga_mask = _conversion_masks(ref_codes, query_codes)
                 ct_positions = rpos[ct_mask].tolist()
                 ga_positions = rpos[ga_mask].tolist()
@@ -806,6 +950,29 @@ def call_opposite_conversion_snps(
         site_stats: dict[tuple[str, int, str], Counter] = defaultdict(Counter)
         site_accumulators: dict[str, _SiteAccumulator] = {}
         conflict_accumulators: dict[str, _SiteAccumulator] = {}
+        # Chimera error-mask candidates: >= ERROR_MASK_MIN_MISMATCHES voters
+        # in pass 1; pass 2 measures their voter depth (C before G on a
+        # position whose reads disagree, as for the SNP profile).
+        error_by_chrom = defaultdict(dict)
+        error_conflicted_by_chrom = defaultdict(dict)
+        if detector is not None:
+            from fiberhmm.inference.chimeras import ERROR_MASK_MIN_MISMATCHES
+
+            for chrom, position, reference in sorted(
+                key for key, count in error_counts.items()
+                if count >= ERROR_MASK_MIN_MISMATCHES
+            ):
+                target = error_by_chrom[chrom]
+                if position in target:
+                    target = error_conflicted_by_chrom[chrom]
+                target[position] = (
+                    reference,
+                    "T" if reference == "C" else "A",
+                    "CT" if reference == "C" else "GA",
+                )
+        error_stats: dict[tuple[str, int, str], Counter] = defaultdict(Counter)
+        error_accumulators: dict[str, _SiteAccumulator] = {}
+        error_conflict_accumulators: dict[str, _SiteAccumulator] = {}
         amplicon_groups = _discover_amplicon_groups(
             amplicon_bins, min_amplicon_reads
         )
@@ -840,12 +1007,33 @@ def call_opposite_conversion_snps(
                     endpoint_stats["total_reads"] += 1
                 chrom_sites = profiled_by_chrom.get(read.reference_name)
                 other_sites = other_sites_by_chrom.get(read.reference_name)
-                if not chrom_sites and not other_sites:
+                error_sites = error_by_chrom.get(read.reference_name)
+                if not chrom_sites and not other_sites and not error_sites:
                     continue
-                arrays = _read_arrays(read, reference_handle)
+                arrays = _read_arrays_with_query(read, reference_handle)
                 if arrays is None:
                     continue
-                rpos, ref_codes, query_codes = arrays
+                if error_sites:
+                    voter, good = _error_mask_voter(read, arrays, detector)
+                    if voter is not None:
+                        _qpos, rpos, ref_codes, query_codes = arrays
+                        chrom = read.reference_name
+                        for sites, accumulators in (
+                            (error_sites, error_accumulators),
+                            (error_conflicted_by_chrom.get(chrom),
+                             error_conflict_accumulators),
+                        ):
+                            if not sites:
+                                continue
+                            accumulator = accumulators.get(chrom)
+                            if accumulator is None:
+                                accumulator = accumulators[chrom] = _SiteAccumulator(sites)
+                            # Low-quality bases are neither depth nor events.
+                            accumulator.add_read(voter, rpos[good], ref_codes[good],
+                                                 query_codes[good])
+                if not chrom_sites and not other_sites:
+                    continue
+                rpos, ref_codes, query_codes = arrays[1:]
                 ct_mask, ga_mask = _conversion_masks(ref_codes, query_codes)
                 direction = _dominant_direction(
                     int(np.count_nonzero(ct_mask)),
@@ -879,6 +1067,9 @@ def call_opposite_conversion_snps(
             accumulator.export(chrom, site_stats)
         for chrom, accumulator in conflict_accumulators.items():
             accumulator.export(chrom, site_stats)
+        for accumulators in (error_accumulators, error_conflict_accumulators):
+            for chrom, accumulator in accumulators.items():
+                accumulator.export(chrom, error_stats)
     finally:
         if reference_handle is not None:
             reference_handle.close()
@@ -1083,6 +1274,38 @@ def call_opposite_conversion_snps(
             "n_called_other_snvs": len(other_calls),
             "other_snv_calls": other_calls,
         }
+    error_mask = None
+    if detector is not None:
+        from fiberhmm.inference import chimeras as _chimeras
+
+        error_rejected, _ = _resolve_reference_conflicts(error_stats)
+        error_sites = _error_mask_sites(error_stats, error_rejected, called_keys)
+        error_mask = {
+            "method": "chimera_recurrent_error_mask",
+            "use": "DAF strand-swap chimera detection only; never applied to calling",
+            "parameters": {
+                "voter_min_events": _chimeras.ERROR_MASK_VOTER_MIN_EVENTS,
+                "voter_min_purity": _chimeras.ERROR_MASK_VOTER_MIN_PURITY,
+                "voter_min_baseq": int(detector.get("min_baseq") or 0),
+                "voter_detector": {k: detector[k] for k in (
+                    "min_seg", "purity", "min_baseq", "min_span", "multi_switch")},
+                "min_depth": _chimeras.ERROR_MASK_MIN_DEPTH,
+                "min_mismatches": _chimeras.ERROR_MASK_MIN_MISMATCHES,
+                "min_fraction": _chimeras.ERROR_MASK_MIN_FRACTION,
+                "background_rate": _chimeras.ERROR_MASK_BACKGROUND_RATE,
+                "max_p_value": _chimeras.ERROR_MASK_MAX_PVALUE,
+                "min_mapq": min_mapq,
+            },
+            "accounting": {
+                "ct_voters": int(accounting.get("error_mask_ct_voters", 0)),
+                "ga_voters": int(accounting.get("error_mask_ga_voters", 0)),
+                "candidate_sites": int(sum(len(v) for v in error_by_chrom.values())),
+                "called_snp_sites_skipped": sum(
+                    1 for key in error_stats if key in called_keys),
+            },
+            "n_sites": len(error_sites),
+            "sites": error_sites,
+        }
     return {
         **extra,
         "schema_version": 3,
@@ -1117,6 +1340,7 @@ def call_opposite_conversion_snps(
         "amplicons": amplicons,
         "dominant_amplicon": dominant_amplicon,
         "calls": calls,
+        **({"chimera_error_mask": error_mask} if error_mask is not None else {}),
     }
 
 
@@ -1201,19 +1425,59 @@ def write_snp_outputs(payload: dict, output_prefix: str) -> dict:
                 f"{amplicon['total_aligned_reads']}\t"
                 f"{amplicon['n_called_snps']}\t{positions}\n"
             )
-    payload = {
-        **payload,
-        "outputs": {
-            "bed": str(bed_path.resolve()),
-            "vcf": str(vcf_path.resolve()),
-            "json": str(json_path.resolve()),
-            "amplicons_tsv": str(amplicon_path.resolve()),
-        },
+    outputs = {
+        "bed": str(bed_path.resolve()),
+        "vcf": str(vcf_path.resolve()),
+        "json": str(json_path.resolve()),
+        "amplicons_tsv": str(amplicon_path.resolve()),
     }
+    error_mask = payload.get("chimera_error_mask")
+    if error_mask is not None:
+        outputs.update(write_chimera_error_mask(error_mask, output_prefix))
+    payload = {**payload, "outputs": outputs}
+    # The chimera error mask has its own BED/JSON; the SNP report keeps only
+    # its summary.
+    report = dict(payload)
+    if error_mask is not None:
+        report["chimera_error_mask"] = {
+            key: value for key, value in error_mask.items() if key != "sites"}
     temporary = json_path.with_name(json_path.name + ".tmp")
-    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    temporary.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     os.replace(temporary, json_path)
     return payload
+
+
+def chimera_error_mask_paths(output_prefix: str) -> tuple:
+    """``(bed, json)`` of the chimera error mask next to the SNP outputs."""
+    prefix = str(output_prefix)
+    return (Path(prefix + ".chimera_error_mask.bed"),
+            Path(prefix + ".chimera_error_mask.json"))
+
+
+def write_chimera_error_mask(error_mask: dict, output_prefix: str) -> dict:
+    """Write the chimera-only error mask (BED and JSON); returns their paths.
+
+    Separate from ``<prefix>.bed`` (the SNP mask applied to calling): this
+    mask only removes events from the strand-swap chimera test.
+    """
+    bed_path, json_path = chimera_error_mask_paths(output_prefix)
+    bed_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = bed_path.with_name(bed_path.name + ".tmp")
+    with temporary.open("w") as handle:
+        handle.write("#chrom\tstart\tend\tmasked_event\tvoter_mismatches\t"
+                     "voter_depth\tfraction\tp_value\n")
+        for site in error_mask["sites"]:
+            handle.write(
+                f"{site['chrom']}\t{site['position_0based']}\t"
+                f"{site['position_0based'] + 1}\t{site['masked_event']}\t"
+                f"{site['voter_mismatches']}\t{site['voter_depth']}\t"
+                f"{site['fraction']:.6f}\t{site['p_value']:.3e}\n")
+    os.replace(temporary, bed_path)
+    temporary = json_path.with_name(json_path.name + ".tmp")
+    temporary.write_text(json.dumps(error_mask, indent=2, sort_keys=True) + "\n")
+    os.replace(temporary, json_path)
+    return {"chimera_error_mask_bed": str(bed_path.resolve()),
+            "chimera_error_mask_json": str(json_path.resolve())}
 
 
 def load_snp_mask(path: Optional[str]) -> dict[str, frozenset[int]]:
@@ -1244,6 +1508,8 @@ def mask_summary(path: Optional[str]) -> dict:
 
 __all__ = [
     "call_opposite_conversion_snps",
+    "chimera_error_mask_paths",
+    "write_chimera_error_mask",
     "load_snp_mask",
     "mask_summary",
     "write_snp_outputs",

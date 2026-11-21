@@ -124,14 +124,16 @@ def test_balanced_raw_chimera(tmp_path, reverse):
     assert get_daf_positions(read) is None  # ambiguous dominant strand
     ct, ga, _ = get_daf_positions(read, force_strand='CT')
     assert is_daf_chimera(ct, ga)
-    assert _is_chimeric(read, None)
+    # A 20-bp read: the 3.0.4 minimum span is off so the strand logic is tested.
+    from fiberhmm.inference.chimeras import detector_config
+    assert _is_chimeric(read, None, detector_config(min_span=0))
     source, target = tmp_path / 'raw.bam', tmp_path / 'out.bam'
     with pysam.AlignmentFile(source, 'wb', header=read.header) as out:
         out.write(read)
-    stats = prepare_chimeras(str(source), str(target))
+    stats = prepare_chimeras(str(source), str(target), min_span=0)
     assert stats['n_chimeric'] == 1
     assert records(target)[0].is_qcfail
-    prepare_chimeras(str(source), str(target), mode='remove')
+    prepare_chimeras(str(source), str(target), mode='remove', min_span=0)
     assert records(target) == []
 
 

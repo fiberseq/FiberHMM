@@ -164,7 +164,7 @@ class PipelineConfig:
 
     def resolved_chimeras(self) -> str:
         mode = self.chimeras or ('flag' if self.chimera_filter else 'keep')
-        if mode not in ('flag', 'remove', 'keep'):
+        if mode not in ('flag', 'remove', 'keep', 'split'):
             raise ValueError(f'Invalid chimera mode: {mode}')
         return mode
 
@@ -2032,8 +2032,26 @@ class Pipeline:
                    + (f", {summary['duplicate_flagged']} duplicate-flagged"
                       if summary["duplicate_flagged"] else ""))
         self.log(f"call: {message}")
+        self._chimera_warning()
         self.progress.step("call", "done", done=summary["records"],
                            total=summary["records"], unit="reads", message=message)
+
+    def _chimera_warning(self) -> None:
+        """Repeat fiberhmm-call's chimera warning (its stderr goes to the log)."""
+        if self.config.enzyme not in DAF_ENZYMES:
+            return
+        from fiberhmm.inference.chimeras import chimera_warning
+        report = os.path.join(os.path.dirname(self.called_bam), "qc",
+                              os.path.splitext(os.path.basename(self.called_bam))[0]
+                              + ".chimeras.json")
+        try:
+            with open(report, encoding="utf-8") as handle:
+                stats = json.load(handle).get("statistics") or {}
+        except (OSError, ValueError, AttributeError):
+            return
+        warning = chimera_warning(stats)
+        if warning:
+            self.log(f"call: {warning}", "warning")
 
     def step_qc(self) -> None:
         """``fiberhmm-qc`` on the called BAM. A QC failure never fails the run:

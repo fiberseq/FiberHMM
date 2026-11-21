@@ -315,3 +315,13 @@ def test_output_cannot_be_the_bundled_model(tmp_path, monkeypatch, capsys):
                     "-o", bundled, "--format", "tsv")
     assert code == 2 and "same file as --model" in capsys.readouterr().err
     assert bundled.read_text() == "{}"
+
+
+def test_output_cannot_be_the_chimera_error_mask(tmp_path, monkeypatch, capsys):
+    bam = _bam(tmp_path / "in.bam", [(0, 1_000)])
+    mask = tmp_path / "calls.daf_snps.chimera_error_mask.bed"
+    mask.write_text("chr1\t10\t11\tG>A\n")
+    code = _run_cli(monkeypatch, "-i", bam, "--enzyme", "hia5", "--seq", "pacbio",
+                    "--chimera-error-mask", mask, "-o", mask, "--format", "tsv")
+    assert code == 2 and "same file as --chimera-error-mask" in capsys.readouterr().err
+    assert mask.read_text() == "chr1\t10\t11\tG>A\n"
