@@ -11,6 +11,10 @@
   `fiberhmm-call`, extract, scan and QC, a scalar or string `ns`/`nl`/`as`/`al`
   tag is not a legacy footprint call. Corrupt integer pairs (a missing partner,
   unequal lengths) still stop the run.
+- `fiberhmm-recall-tfs`/`-recall-nucs` recall reads whose footprints are only
+  in `MA` (`fiberhmm-call --no-legacy-tags`, fibertools `Ma`) on Dorado BAMs.
+  Dorado's scalar `ns:i` used to hide the `MA` footprints, so each such read
+  failed and was written back unrecalled.
 - `fiberhmm-tag-m5c`/`-call-m5c` (legacy nucleosome/MSP fallback) and
   `fiberhmm-utils transfer` read `ns`/`nl` and `as`/`al` with the same
   array-pair rule: a scalar pair no longer crashes or becomes one interval, a
@@ -30,6 +34,9 @@
 
 ### Changed
 
+- `fiberhmm-call` and `fiberhmm-pipeline` help: `--min-read-length` counts the
+  full read sequence including soft clips (DAF: the aligned length), not the
+  aligned length.
 - The call defaults shared by every tool (MAPQ, read length, alignment set,
   ML threshold, edge trim, CpG and run masks, footprint sizes, recall,
   chimera and duplicate settings) are defined once, in `fiberhmm/defaults.py`.
