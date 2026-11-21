@@ -84,3 +84,22 @@ def test_generated_id_suffix_without_pn_is_read():
     h = _header_pgs({"ID": "fiberhmm-call.1", "CL": _CALL_CL})
     assert DecodeContext(h).edge_trim == 25
     assert CallerSettings.from_header(h).edge_trim == 25
+
+
+def test_an_explicit_edge_trim_of_10_wins_over_the_record():
+    """10 is the shared default, but given explicitly it is still honoured."""
+    h = _header(_CALL_CL)
+    assert DecodeContext(h, NucParams(edge_trim=10)).edge_trim == 10
+    assert DecodeContext(h, NucParams.from_dict({'edge_trim': 10})).edge_trim == 10
+    assert DecodeContext(h, NucParams(edge_trim=0)).edge_trim == 0
+
+
+def test_omitted_edge_trim_survives_a_round_trip():
+    """Unset stays unset through to_dict/from_dict (scan settings) and
+    pickling, so the recorded trim still applies."""
+    import json
+    import pickle
+    h = _header(_CALL_CL)
+    params = NucParams.from_dict(json.loads(json.dumps(NucParams().to_dict())))
+    assert DecodeContext(h, params).edge_trim == 25
+    assert DecodeContext(h, pickle.loads(pickle.dumps(NucParams()))).edge_trim == 25

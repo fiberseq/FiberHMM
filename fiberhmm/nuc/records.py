@@ -320,9 +320,13 @@ class DecodeContext(FrameContext):
         self.mark_threshold = resolve_prob_threshold(
             params.mark_threshold if params.mark_threshold is not None else recorded_threshold,
             chem['enzyme'], chem['platform'])
-        self.edge_trim = int(params.edge_trim)
-        if recorded_trim is not None and params.edge_trim == DEFAULT_PARAMS.edge_trim:
+        if params.edge_trim is not None:
+            self.edge_trim = int(params.edge_trim)
+        elif recorded_trim is not None:
             self.edge_trim = recorded_trim
+        else:
+            from fiberhmm import defaults as _defaults
+            self.edge_trim = int(_defaults.EDGE_TRIM)
         from fiberhmm.daf.replay import EvidenceReplay
         self.evidence = EvidenceReplay(header, self.mode)
         # DAF: the call's same-strand run mask and DddA CpG policy, so marks and

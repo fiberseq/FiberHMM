@@ -26,8 +26,10 @@ class NucParams:
     mark_threshold: Optional[int] = None
     #: observation mode; None = from the BAM's chemistry declaration.
     mode: Optional[str] = None
-    #: bases masked at each read end by the encoder (as the caller does).
-    edge_trim: int = _shared_defaults.EDGE_TRIM
+    #: bases masked at each read end by the encoder (as the caller does);
+    #: None = the call's recorded --edge-trim, else the shared default (10).
+    #: Any explicit value, 10 included, is used as given.
+    edge_trim: Optional[int] = None
 
     # --- density (NUC 3.1) ----------------------------------------------------
     #: MSP sites dropped at each MSP end when measuring lambda_acc: the caller
