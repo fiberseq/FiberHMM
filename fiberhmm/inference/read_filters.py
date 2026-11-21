@@ -325,6 +325,53 @@ def _strip_tag(read, tag: str) -> None:
             pass
 
 
+_AQ_AMBIGUITY_CACHE: dict = {}
+
+
+def header_aq_may_be_fiberhmm(header) -> bool:
+    """True when an ``aq`` in a file with this header may be FiberHMM's MSP
+    posterior rather than fibertools FIRE: the header has a ``fiberhmm-apply``
+    @PG (3.2.1 and older wrote ``aq`` with ``--scores``) and no
+    ``FIBERHMM-ANNOTATION-CONTRACT`` line."""
+    key = id(header)
+    hit = _AQ_AMBIGUITY_CACHE.get(key)
+    if hit is not None and hit[0] is header:
+        return hit[1]
+    from fiberhmm.io.bam_header import header_annotation_contract
+    data = header.to_dict() if hasattr(header, 'to_dict') else dict(header)
+    ambiguous = header_annotation_contract(data) is None and any(
+        'fiberhmm-apply' in (str(pg.get('PN', '')), str(pg.get('ID', '')).split('.')[0])
+        for pg in data.get('PG', []) or [])
+    if len(_AQ_AMBIGUITY_CACHE) > 64:
+        _AQ_AMBIGUITY_CACHE.clear()
+    _AQ_AMBIGUITY_CACHE[key] = (header, ambiguous)
+    return ambiguous
+
+
+def strip_ambiguous_aq(read) -> None:
+    """Remove an ``aq`` that may be an older FiberHMM's MSP posterior (see
+    :func:`header_aq_may_be_fiberhmm`), so a record a v2-contract writer passes
+    through unchanged carries no MSP score that is not fibertools FIRE."""
+    if not hasattr(read, 'has_tag') or not read.has_tag('aq'):
+        return
+    header = getattr(read, 'header', None)
+    if header is not None and header_aq_may_be_fiberhmm(header):
+        _strip_tag(read, 'aq')
+
+
+def _adopt_fibertools_ma(read) -> None:
+    """Take a fibertools ``Ma``/``Aq``/``An`` as the read's ``MA``/``AQ``/``AN``."""
+    read.set_tag("MA", str(read.get_tag("Ma")), value_type="Z")
+    if read.has_tag("Aq"):
+        read.set_tag("AQ", read.get_tag("Aq"))
+    else:
+        _strip_tag(read, "AQ")
+    if read.has_tag("An"):
+        read.set_tag("AN", str(read.get_tag("An")), value_type="Z")
+    else:
+        _strip_tag(read, "AN")
+
+
 def strip_stale_call_tags(read, *, legacy_tags=LEGACY_CALL_TAGS,
                           keep_m5c_groups: bool = True) -> None:
     """Remove annotations a previous call pass left on ``read``.
@@ -336,9 +383,12 @@ def strip_stale_call_tags(read, *, legacy_tags=LEGACY_CALL_TAGS,
     reduced exactly as the MA writer of the matching pipeline would reduce it:
     the fused call writer keeps DddA m5C groups (``keep_m5c_groups=True``),
     the legacy apply writer drops MA/AN/AQ wholesale (``False``).
-    fibertools' (>= 0.13) ``Ma/Aq/An`` are dropped wholesale: they hold the
-    footprints this run replaces (nuc/msp, plus FIRE built on those MSPs) and
-    never DddA m5C groups. Groups derived from the old calls (fiberhmm-scan's
+    fibertools' (>= 0.13) ``Ma/Aq/An`` never survive: ``ft fire`` moves every
+    group of an input ``MA`` into ``Ma`` (FiberHMM's nuc/msp/tf and any DddA
+    m5C groups), so a read without ``MA`` first has its ``Ma`` taken as its
+    ``MA`` (``Ma`` is molecular, the frame callers declare) and is then reduced
+    like any ``MA``; FIRE built on the replaced MSPs is dropped with them.
+    Groups derived from the old calls (fiberhmm-scan's
     ``nucsz``/``nucseg``/``nucmol``/``nucreg``, ``fpcls``, ``nfrvar``, ``nfrmol``) are
     always dropped: only m5C groups survive.
     """
@@ -346,6 +396,8 @@ def strip_stale_call_tags(read, *, legacy_tags=LEGACY_CALL_TAGS,
         return
     for tag in legacy_tags or ():
         _strip_tag(read, tag)
+    if keep_m5c_groups and not read.has_tag("MA") and read.has_tag("Ma"):
+        _adopt_fibertools_ma(read)
     for tag in ("Ma", "Aq", "An"):
         _strip_tag(read, tag)
     if "ns" in (legacy_tags or ()):

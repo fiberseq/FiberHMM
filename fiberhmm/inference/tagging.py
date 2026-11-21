@@ -102,7 +102,11 @@ def _harmonized_result(result: dict, write_msps: bool) -> dict:
 
 def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: bool = True,
                           harmonize: bool = False) -> None:
-    """Write legacy apply tags (`ns/nl/as/al`, optional `nq/aq`) in place.
+    """Write legacy apply tags (`ns/nl/as/al`, optional `nq`) in place.
+
+    No MSP score is written: ``with_scores`` adds the nucleosome ``nq`` only,
+    and any ``aq`` is removed when MSPs are written (an MSP quality in a
+    FiberHMM-written file is only ever fibertools FIRE).
 
     This intentionally preserves the compatibility apply behavior: a non-empty
     result writes only the tag groups that have calls, and skipped/empty reads
@@ -141,9 +145,8 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
     ns_s, ns_l, ns_sc = _to_molecular_legacy(
         result["ns"], result["nl"], result.get("ns_scores"),
         read, with_scores)
-    as_s, as_l, as_sc = _to_molecular_legacy(
-        result["as"], result["al"], result.get("as_scores"),
-        read, with_scores)
+    as_s, as_l, _ = _to_molecular_legacy(
+        result["as"], result["al"], None, read, False)
 
     if len(ns_s) > 0:
         if not harmonize and read.has_tag(HARMONIZED_LEGACY_TAG):
@@ -162,13 +165,13 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
     if write_msps and len(as_s) > 0:
         read.set_tag("as", _u32_bam_array(as_s))
         read.set_tag("al", _u32_bam_array(as_l))
-        if with_scores and as_sc is not None:
-            read.set_tag("aq", scores_to_u8(as_sc))
-        elif read.has_tag("aq"):
-            try:
-                read.set_tag("aq", None)
-            except Exception:
-                pass
+    if write_msps and read.has_tag("aq"):
+        # FiberHMM writes no MSP score (any MSP quality is fibertools FIRE),
+        # and an aq from an earlier run describes MSPs this run replaced.
+        try:
+            read.set_tag("aq", None)
+        except Exception:
+            pass
 
     if keeps_m5c:
         # The kept CpG-island groups make MA present, and MA is authoritative

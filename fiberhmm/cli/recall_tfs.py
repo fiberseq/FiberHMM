@@ -99,6 +99,7 @@ from fiberhmm.io.annotation_frame import (
 )
 from fiberhmm.io.bam_header import call_writer_header
 from fiberhmm.io.ma_tags import drop_derived_groups
+from fiberhmm.inference.read_filters import strip_ambiguous_aq
 from fiberhmm.io.ma_tags import (
     fibertools_ma_intervals,
     flip_intervals_to_seq,
@@ -786,6 +787,7 @@ def _single_thread_loop(bam_in, bam_out, _header_text,
         if result is not None:
             _apply_result(read, result, also_write_legacy, downstream_compat)
         drop_derived_groups(read)   # the header no longer declares them
+        strip_ambiguous_aq(read)    # the output declares annotation contract v2
         bam_out.write(read)
         n_reads += 1
         n_v2 += stats['v2']
@@ -838,6 +840,7 @@ def _parallel_loop(bam_in, bam_out, _header_text,
             if result is not None:
                 _apply_result(read, result, also_write_legacy, downstream_compat)
             drop_derived_groups(read)   # the header no longer declares them
+            strip_ambiguous_aq(read)    # the output declares annotation contract v2
             bam_out.write(read)
         n_reads += len(reads_chunk)
         n_v2 += stats['v2']

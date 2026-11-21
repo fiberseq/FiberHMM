@@ -312,9 +312,12 @@ def replace_scan_groups(read, groups: Mapping[str, Tuple[str, Sequence[Tuple[int
         for tag in ('MA', 'AQ', 'AN'):
             if read.has_tag(tag):
                 read.set_tag(tag, None)
-    if source == 'Ma':
-        # The MA written here carries the fibertools groups; FiberHMM's MA wins over Ma.
-        pass
+    if source == 'Ma' and kept_sections:
+        # The MA written here carries the fibertools groups (FiberHMM's MA wins
+        # over Ma): remove Ma/Aq/An so there is one source of truth.
+        for tag in FIBERTOOLS_ANNOTATION_TAGS:
+            if read.has_tag(tag):
+                read.set_tag(tag, None)
     return written
 
 

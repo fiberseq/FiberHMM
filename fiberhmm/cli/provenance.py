@@ -289,7 +289,11 @@ def output_header_with_provenance(input_header, pg_record):
     header. ``pg_record`` may carry :data:`REPLACE_CHEMISTRY_KEY` to replace
     the input's chemistry declarations instead of reconciling with them.
     """
-    from fiberhmm.io.bam_header import append_chemistry, append_pg_record
+    from fiberhmm.io.bam_header import (
+        append_annotation_contract,
+        append_chemistry,
+        append_pg_record,
+    )
 
     if not pg_record:
         return input_header
@@ -309,7 +313,8 @@ def output_header_with_provenance(input_header, pg_record):
         if replace:
             header = strip_chemistry_declarations(input_header)
     chemistry = record.pop("chemistry", None)
-    output = append_pg_record(header, record)
+    # Every producer here rewrites MSPs under the v2 annotation contract.
+    output = append_annotation_contract(append_pg_record(header, record))
     if not chemistry:
         return output
     # Link the declaration to the @PG line of this run (IDs are made unique

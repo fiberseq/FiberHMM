@@ -32,7 +32,7 @@ BAM (logged). Without a VCF, `--all` skips `var` with a one-line note.
 | Flag | File suffix | Source | Block score |
 |---|---|---|---|
 | `--nucleosome` | `_nucleosome` | `MA` `nuc` (or `ns`/`nl`) | `nq` |
-| `--msp` | `_msp` | `as`/`al` | `aq` |
+| `--msp` | `_msp` | `as`/`al` | `aq` (fibertools ≤ 0.12 FIRE; FiberHMM writes none) |
 | `--tf` | `_tf` | `MA` `tf.QQQ` with `tq` ≥ `--min-tq` (50) | `tq` |
 | `--m6a` | `_m6a` | `MM`/`ML` m6A at ML ≥ `-p` | ML |
 | `--m5c` | `_m5c` | DddA `ddda_mcg` spans, or native `MM`/`ML` 5mC | ML (0 for `ddda_mcg`) |

@@ -115,7 +115,10 @@ def test_recall_carry_over_matrix(case, reverse):
 
     read = _read(case, reverse)
     carry_to_molecular(read)        # what recall does before writing
-    write_ma_tags(read, L, [], [(50, 150)], [(0, 50)], nq_for_kept_nucs=[7],
+    # The recalled MSPs (SEQ frame) are exactly the FIRE elements, so the
+    # fire group stays valid and is carried (a stale one would be dropped).
+    msps = [_flip(*iv) if reverse else iv for iv, _q in FIRE]
+    write_ma_tags(read, L, [], [(50, 150)], msps, nq_for_kept_nucs=[7],
                   also_write_legacy=False)
 
     assert not any(read.has_tag(t) for t in ('Ma', 'Aq', 'An'))

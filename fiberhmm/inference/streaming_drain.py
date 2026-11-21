@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import numpy as np
 
-from fiberhmm.inference.read_filters import LEGACY_CALL_TAGS, strip_stale_call_tags
+from fiberhmm.inference.read_filters import (
+    LEGACY_CALL_TAGS,
+    strip_ambiguous_aq,
+    strip_stale_call_tags,
+)
 from fiberhmm.inference.streaming_workers import CHIMERA_RESULT
 from fiberhmm.inference.tagging import set_legacy_apply_tags, write_fused_recall_tags
 from fiberhmm.inference.worker_results import (
@@ -34,6 +38,7 @@ def strip_for_apply(read, write_msps: bool = True) -> None:
     from fiberhmm.io.frame_carry import carry_to_molecular
 
     carry_to_molecular(read)
+    strip_ambiguous_aq(read)
     strip_stale_call_tags(
         read, legacy_tags=apply_legacy_tags(write_msps), keep_m5c_groups=True,
     )
@@ -48,6 +53,7 @@ def strip_for_fused_call(read, also_write_legacy: bool = True) -> None:
 
     write_insert_evidence(read)
     carry_to_molecular(read)
+    strip_ambiguous_aq(read)
     strip_stale_call_tags(
         read,
         legacy_tags=LEGACY_CALL_TAGS if also_write_legacy else (),

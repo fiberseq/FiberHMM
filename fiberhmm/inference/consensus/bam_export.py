@@ -17,7 +17,7 @@ import tempfile
 import pysam
 
 from ...io.bam_header import append_ma_types, append_pg_record
-from ...io.ma_tags import annotation_tags, parse_aq_array, parse_ma_tag, parse_an_tag, format_an_tag, llr_to_tq
+from ...io.ma_tags import FIBERTOOLS_ANNOTATION_TAGS, annotation_tags, parse_aq_array, parse_ma_tag, parse_an_tag, format_an_tag, llr_to_tq
 from ..tf_family_ids import allocate_repeating_family_ids, TFFamilyInterval
 from ...io.output_files import mkstemp_shared
 from .artifacts import digest, write_json
@@ -331,6 +331,10 @@ def _append_annotations(read, rows, ma_frame='molecular'):
     read.set_tag('MA',old+';'+ ';'.join(suffix),value_type='Z')
     read.set_tag('AQ',array.array('B',aq))
     read.set_tag('AN',format_an_tag(names),value_type='Z')
+    if kind=='Ma':
+        # The copied groups now live in MA; one source of truth.
+        for tag in FIBERTOOLS_ANNOTATION_TAGS:
+            if read.has_tag(tag): read.set_tag(tag,None)
     return sum(len(values) for values in groups.values())
 
 

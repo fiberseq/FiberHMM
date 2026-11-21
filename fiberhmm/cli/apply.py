@@ -128,7 +128,10 @@ Examples:
 
     # Output format flags
     parser.add_argument('--scores', action='store_true',
-                        help='Compute per-footprint confidence scores (slower but more informative)')
+                        help='Write the HMM posterior-mean nq score of each footprint '
+                             '(slower). No MSP score is written: the MSP aq of '
+                             'earlier versions is deprecated (MSP quality is '
+                             'fibertools FIRE).')
     parser.add_argument('--scores-db', action='store_true',
                         help=argparse.SUPPRESS)
     parser.add_argument('--msp-min-size', type=int, default=0,
@@ -141,7 +144,7 @@ Examples:
                              'for MSP boundary detection. Only footprints >= this size '
                              'split MSPs; smaller footprints are absorbed (default: 85)')
     parser.add_argument('--no-msps', action='store_true',
-                        help='Do not write MSP tags (as/al/aq) to output BAM. '
+                        help='Do not write MSP tags (as/al) to output BAM. '
                              'Useful for Fiber-seq where MSPs are computed differently by fibertools')
 
     # QC and statistics
@@ -493,6 +496,10 @@ def _main(args):
 
     # Determine if we need scores
     with_scores = args.scores
+    if with_scores:
+        print("warning: fiberhmm-apply --scores no longer writes an MSP score "
+              "(aq); it writes the footprint nq only. MSP quality is fibertools "
+              "FIRE (ft fire).", file=sys.stderr)
 
     # Print settings
     mode_descs = {

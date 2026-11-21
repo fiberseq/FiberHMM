@@ -46,8 +46,9 @@ def test_harmonized_ns_is_the_ma_nucleosome_view():
     a, b = _legacy(raw), _legacy(harmonized)
     assert b['ns'] == [10, 260] and b['nl'] == [140, 120]
     assert b['nq'] == [a['nq'][0], a['nq'][2]]
-    for tag in ('as', 'al', 'aq'):
+    for tag in ('as', 'al'):
         assert a[tag] == b[tag]
+    assert 'aq' not in a and 'aq' not in b      # FiberHMM writes no MSP score
     assert not harmonized.has_tag('MA')
 
 

@@ -10,6 +10,7 @@ header lines. `@CO` lines are written as `@CO<TAB><text>`; pysam's
 | `@CO FIBERHMM-CHEMISTRY:v1:` | `call`, `apply`, `recall-tfs`/`-nucs`, `pair`/`merge` (joint recall) | authoritative chemistry of the calls, and the code and tables that made them |
 | `@CO MA-TYPES:v1:` | every command that writes `MA` | advisory list of `MA` group names |
 | `@CO fiberhmm:coord=molecular` | `call`, `apply`, `recall-tfs`/`-nucs` | coordinate-frame marker; the same runs also put `coord=molecular` in their `@PG DS`. `dedup`, `pair`, `merge`, `tag-m5c`, `call-m5c`, `tag-consensus` and `strand-rescue-annotate` put `coord=molecular` in their own `@PG DS` when the tags they carried over are molecular. See [Footprint-tag coordinate frame](footprint-tag-frame.md) |
+| `@CO FIBERHMM-ANNOTATION-CONTRACT:v2` | `call`, `apply`, `recall-tfs`/`-nucs`, `merge` | [annotation contract](#fiberhmm-annotation-contract): any MSP quality in the file is fibertools FIRE |
 | `@CO FIBERHMM-CONSENSUS-MA:v1:` | `consensus`, `transfer` | meaning of the consensus layers' bytes |
 | `@CO FIBERHMM-CONSENSUS-FAMILY:v1:` | `consensus`, `transfer` | one entry per class and layer |
 | `@CO FIBERHMM-STRAND-RESCUE:v6:` | `strand-rescue-annotate` | shadow-layer contract |
@@ -20,10 +21,11 @@ header lines. `@CO` lines are written as `@CO<TAB><text>`; pysam's
 Header lines are copied by `samtools` and most other tools, so they survive
 downstream processing unless a tool rewrites the header.
 
-A `fiberhmm-call` output adds its three `@CO` lines in this order:
+A `fiberhmm-call` output adds its four `@CO` lines in this order:
 
 ```text
 @CO	fiberhmm:coord=molecular
+@CO	FIBERHMM-ANNOTATION-CONTRACT:v2
 @CO	FIBERHMM-CHEMISTRY:v1:assay=daf;enzyme=ddda;platform=pacbio;mode=daf;apply_sha256=…;pg=fiberhmm-call;…
 @CO	MA-TYPES:v1:nuc,msp,tf
 ```
@@ -113,6 +115,43 @@ is given, which drops the input's declaration and writes this run's (see
 
 Python: `fiberhmm.io.bam_header.declared_chemistries(header)` returns the
 valid declarations as dictionaries.
+
+## FIBERHMM-ANNOTATION-CONTRACT
+
+```text
+@CO	FIBERHMM-ANNOTATION-CONTRACT:v2
+```
+
+Written once (never duplicated on re-runs) by the commands that rewrite MSPs:
+`fiberhmm-call`, `fiberhmm-apply`, `fiberhmm-recall-tfs`/`-recall-nucs` and
+`fiberhmm-merge`. It means:
+
+- **FiberHMM writes no MSP quality score**: no `aq`, and no quality bytes on
+  the `MA` `msp` group. Any MSP quality in the file is fibertools FIRE: a
+  `fire` group in `MA`/`Ma` (fibertools 0.13+), or an `aq` parallel to
+  `as`/`al` (fibertools 0.12 and older).
+- **Nothing derived from replaced MSPs survives.** A record whose MSPs a
+  FiberHMM command rewrote carries no fibertools `Ma`/`Aq`/`An` and no legacy
+  `aq`. Groups that are not calls (DddA m5C groups, other tools' layers) are
+  first copied into `MA`. Commands that copy `Ma` into `MA` without changing
+  the calls (`consensus` export, `tag-m5c`, `fiberhmm-scan`) remove `Ma`
+  after the copy.
+- **`fire` groups were revalidated.** A `fire` group carried into a new `MA`
+  is kept only when every element is exactly one of the record's MSPs;
+  otherwise it is dropped with its `AQ` bytes and `AN` names.
+
+Records a run writes without rewriting their MSPs (skipped or failed reads,
+`apply --no-msps`, unpaired reads in `merge`) keep their MSP tags; when the
+input has a `fiberhmm-apply` `@PG` and no contract line, their `aq` is
+removed, since it may be FiberHMM's.
+
+Files without the line come from FiberHMM 3.2.1 or older, where
+`fiberhmm-apply --scores` wrote its MSP posterior as `aq`; there an `aq`
+may be FiberHMM's rather than FIRE. Commands that do not rewrite MSPs
+(`dedup`, `lift`, `tag-m5c`, `consensus`, `scan`, …) do not add the line.
+
+Python: `fiberhmm.io.bam_header.header_annotation_contract(header)` returns
+`'v2'` or `None`.
 
 ## MA-TYPES
 

@@ -120,7 +120,8 @@ def test_changed_calls_make_the_groups_stale(tmp_path):
 
 def test_write_ma_tags_drops_call_derived_groups_and_keeps_others(tmp_path):
     from fiberhmm.inference.tf_recaller import write_ma_tags
-    keep = (('ddda_ucg.:5-20', ()), ('fire.Q:30-10', (77,)), ('fpcls.QQQ:100-50', (1, 200, 1)))
+    # The fire element is one of the written MSPs, so the group stays valid.
+    keep = (('ddda_ucg.:5-20', ()), ('fire.Q:1-400', (77,)), ('fpcls.QQQ:100-50', (1, 200, 1)))
     bam, read, mol, res = _annotated_read(tmp_path, False, keep)
     L = read.query_length
     write_ma_tags(read, L, [], [(400, 147)], [(0, 400), (547, L - 547)])
@@ -188,7 +189,7 @@ def annotated_bam(tmp_path_factory):
         ctx = DecodeContext(out.header)
         for pos, name, seq, nucs, msps, marks, rev in recs:
             r = make_record(out, name, seq, pos, nucs, msps, (), marks, reverse=rev,
-                            extra_groups=(('fire.Q:30-10', (77,)),))
+                            extra_groups=(('ext.Q:30-10', (77,)),))
             r.set_tag('ns', array.array('I', [s for s, _ in nucs]))
             r.set_tag('nl', array.array('I', [e - s for s, e in nucs]))
             mol, _ = decode_record(r, ctx)
@@ -230,7 +231,7 @@ def test_recall_drops_nuc_groups(annotated_bam, tmp_path, benchmark_model_path):
     _assert_no_nuc_groups(out)
     with pysam.AlignmentFile(str(out), check_sq=False) as bam:
         r = next(bam.fetch(until_eof=True))
-        assert 'fire.Q' in r.get_tag('MA')                    # other tools' layers survive
+        assert 'ext.Q' in r.get_tag('MA')                     # other tools' layers survive
 
 
 def test_apply_drops_nuc_groups(annotated_bam, tmp_path, benchmark_model_path):

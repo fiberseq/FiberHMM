@@ -315,7 +315,9 @@ BAM index: out/apply/hia5_pacbio_footprints.bam.bai
   `as`/`al` like `fiberhmm-call` output; each such read carries `hl:i:1`,
   and `fiberhmm-recall-tfs`/`-recall-nucs` refuse it
   ([Re-calling](recalling.md)).
-- `--scores` writes posterior-mean `nq`/`aq`; `--no-msps` omits `as`/`al`/`aq`;
+- `--scores` writes posterior-mean `nq` (no MSP score: since 3.3.0 it no
+  longer writes `aq` and warns once; MSP quality is fibertools FIRE);
+  `--no-msps` omits `as`/`al` (the input's MSP tags are kept);
   `--stats` samples reads for summary plots (needs `fiberhmm[plots]`);
   `--output-posteriors FILE` also exports HMM posteriors; `-t` excludes the
   read IDs a model was trained on.

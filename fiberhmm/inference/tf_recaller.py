@@ -1257,6 +1257,32 @@ def _preserved_ma_groups(read) -> Tuple[List[str], List[str], List[int]]:
     return kept_groups, kept_names, kept_aq
 
 
+def _drop_stale_fire_groups(groups, names, aq, msps):
+    """``(groups, names, aq)`` without ``fire`` groups that no longer describe
+    the record's MSPs.
+
+    A fibertools FIRE group is kept only when every element is exactly one of
+    ``msps`` (molecular ``(start, length)`` pairs, as written to the MA msp
+    group); otherwise the group goes, with its AN names and AQ bytes. FIRE
+    scores belong to the MSPs ``ft fire`` saw, so nothing derived from
+    replaced MSPs survives."""
+    msp_tokens = {f'{int(s) + 1}-{int(n)}' for s, n in msps}
+    kept_groups, kept_names, kept_aq = [], [], []
+    name_offset = aq_offset = 0
+    for group in groups:
+        feature, qual_spec = _ma_group_head(group)
+        items = [item for item in group.partition(':')[2].split(',') if item]
+        count = len(items)
+        n_bytes = len(qual_spec) * count
+        if feature != 'fire' or all(item in msp_tokens for item in items):
+            kept_groups.append(group)
+            kept_names.extend(names[name_offset:name_offset + count])
+            kept_aq.extend(aq[aq_offset:aq_offset + n_bytes])
+        name_offset += count
+        aq_offset += n_bytes
+    return kept_groups, kept_names, kept_aq
+
+
 def write_ma_tags(read, read_length: int,
                   tf_calls: Sequence[TFCall],
                   kept_nucs: Sequence[Tuple[int, int]],
@@ -1315,6 +1341,12 @@ def write_ma_tags(read, read_length: int,
     for tag in FIBERTOOLS_ANNOTATION_TAGS:
         if read.has_tag(tag):
             read.set_tag(tag, None)
+
+    # FiberHMM writes no MSP score; a legacy aq (fibertools <= 0.12 FIRE, or
+    # an older fiberhmm-apply --scores) scores MSPs this write replaces, even
+    # when the legacy as/al are left in place (also_write_legacy=False).
+    if read.has_tag('aq'):
+        read.set_tag('aq', None)
 
     # Default nq for kept nucs to 0 (sentinel for "unverified") if not provided.
     nq_values = list(nq_for_kept_nucs) if nq_for_kept_nucs is not None \
@@ -1406,6 +1438,15 @@ def write_ma_tags(read, read_length: int,
     ma_tfs, tf_names, tf_q_split, tf_split = split_named_intervals(
         tf_intervals, "tf", tf_q_rows,
     )
+    # A carried fibertools FIRE group survives only if it still describes
+    # exactly this record's MSPs (recall-tfs can leave them unchanged).
+    if any(_ma_group_head(group)[0] == 'fire' for group in preserved_groups):
+        preserved_groups, preserved_names, preserved_aq = _drop_stale_fire_groups(
+            preserved_groups, preserved_names, preserved_aq, ma_msps)
+        n_preserved = sum(
+            sum(bool(item) for item in group.partition(':')[2].split(','))
+            for group in preserved_groups
+        )
     needs_an = (nuc_split or msp_split or tf_split or
                 any(preserved_names))
 
@@ -1563,10 +1604,4 @@ def write_ma_tags(read, read_length: int,
                 read.set_tag('nq', None)
             except Exception:
                 pass
-        # Same for aq: stale per-msp qualities from input would mismatch
-        # the refreshed as/al length.
-        if a_s and read.has_tag('aq'):
-            try:
-                read.set_tag('aq', None)
-            except Exception:
-                pass
+

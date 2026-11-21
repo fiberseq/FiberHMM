@@ -204,10 +204,10 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--process-unmapped` / `--no-process-unmapped` | auto | Process unmapped reads that have sequences and modification tags. Default: automatic -- on for stdin, unindexed and unaligned (uBAM) input. A run that skips &gt;90% of records as unmapped fails unless --no-process-unmapped is given. |
 | `--edge-trim` / `-e` | `10` | Bases to trim from read edges (default: 10) |
 | `-r` / `--circular` | off | Enable circular mode (tiles reads 3x) |
-| `--scores` | off | Compute per-footprint confidence scores (slower but more informative) |
+| `--scores` | off | Write the HMM posterior-mean nq score of each footprint (slower). No MSP score is written: the MSP aq of earlier versions is deprecated (MSP quality is fibertools FIRE). |
 | `--msp-min-size` | `0` | Minimum size for MSP regions in bp. Default 0 (emit every accessible run; matches fibertools, which does not impose an MSP size filter at this stage). Pass a positive value to filter. |
 | `--nuc-min-size` | `85` | Minimum footprint size (bp) to count as nucleosome-sized for MSP boundary detection. Only footprints &gt;= this size split MSPs; smaller footprints are absorbed (default: 85) |
-| `--no-msps` | off | Do not write MSP tags (as/al/aq) to output BAM. Useful for Fiber-seq where MSPs are computed differently by fibertools |
+| `--no-msps` | off | Do not write MSP tags (as/al) to output BAM. Useful for Fiber-seq where MSPs are computed differently by fibertools |
 | `--stats` | off | Generate summary statistics and plots |
 | `--stats-sample` | `10000` | Number of reads to sample for statistics (default: 10000) |
 | `--stats-seed` | `42` | Random seed for sampling (default: 42) |

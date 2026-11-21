@@ -111,6 +111,7 @@ These now either work or stop with a clear message:
   about a quarter of TF calls); re-extract tracks made with 2.x.
 - `fiberhmm-apply --scores` writes MSP `aq` as mean P(accessible) ×255, as
   documented (2.x wrote P(footprint), so confident MSPs scored near 0).
+  From 3.3.0 it writes no MSP score at all; MSP quality is fibertools FIRE.
 - EcoGII and custom-enzyme BAMs are never scored with Hia5 emissions in
   consensus.
 
