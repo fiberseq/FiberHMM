@@ -14,7 +14,7 @@ every tag FiberHMM writes.
 | `ns` / `nl` | nucleosome starts and lengths (0-based, [molecular frame](coordinates.md)) |
 | `as` / `al` | MSP starts and lengths |
 | `nq` | one byte per nucleosome (below) |
-| `aq` | one byte per MSP: mean HMM posterior P(accessible) over the MSP ×255 (high = confidently accessible), only from `fiberhmm-apply --scores` |
+| `aq` | not written by FiberHMM. fibertools ≤ 0.12 `ft fire` writes its FIRE score here (one byte per MSP, 0 for MSPs that are not FIRE elements); fibertools 0.13+ writes a `fire` group in `Ma` instead. FiberHMM 3.2.1 and older wrote an HMM posterior here with `fiberhmm-apply --scores`; see [Header declarations](../reference/headers.md#fiberhmm-annotation-contract) |
 
 TF calls are **not** in `ns`/`nl` by default, only in `MA`/`AQ`. For a tool
 that reads only the legacy tags, `--downstream-compat` writes TF calls into

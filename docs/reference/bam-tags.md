@@ -17,14 +17,22 @@ Written by `fiberhmm-call`, `fiberhmm-apply` (legacy tags, plus `MA`
 | `ns` / `nl` | `B:I` | nucleosome starts / lengths; with `--downstream-compat` also TF calls |
 | `as` / `al` | `B:I` | MSP starts / lengths (`fiberhmm-apply --no-msps` omits them) |
 | `nq` | `B:C` | one byte per `ns` entry: with nucleosome recall the LLR ×10 (0 = unresolved); otherwise the HMM posterior mean ×255 (`--scores`), the input's `nq`, or 0 |
-| `aq` | `B:C` | one byte per MSP: mean HMM posterior P(accessible) over the MSP ×255 (high = confidently accessible); only `fiberhmm-apply --scores` |
 | `MA` | `Z` | molecular annotations (groups below) |
 | `AQ` | `B:C` | quality bytes of every `MA` annotation, in `MA` order |
 | `AN` | `Z` | one name per `MA` annotation (`.` for unnamed); written when a call wraps a circular origin (`fhw_*`), for strand-rescue roles, consensus class tokens, or when preserved groups carry names |
 | `hl` | `i` | `1` on reads written by `fiberhmm-apply --harmonize-legacy-tags` (opt-in): `ns`/`nl` hold only the nucleosomes of the `MA` view, not every HMM footprint, so `fiberhmm-recall-tfs`/`-nucs` refuse the read. A later run removes it only when it replaces `ns`/`nl` (call, apply, recall, duplex joint recall); a run that leaves `ns`/`nl` in place, such as an `MA`-only write, keeps it |
 
+FiberHMM writes no MSP quality score (since 3.3.0; `fiberhmm-apply --scores`
+used to write its MSP posterior as `aq`). An MSP quality is fibertools FIRE:
+the `fire` group of `Ma`/`MA`, or fibertools ≤ 0.12's `aq`. A command that
+rewrites MSPs removes any `aq` and fibertools `Ma`/`Aq`/`An` it finds,
+keeps `fire` groups only when they still match the MSPs exactly, and declares
+`@CO FIBERHMM-ANNOTATION-CONTRACT:v2`
+([Header declarations](headers.md#fiberhmm-annotation-contract)).
+
 FiberHMM also reads fibertools-rs 0.13+ `Ma`/`Aq`/`An` tags (same spec,
-always molecular frame) as input; it never writes them. See
+always molecular frame) as input; it never writes them, and a command that
+copies them into `MA` removes them. See
 [Coordinate frames](../concepts/coordinates.md#fibertools-ma-tags).
 
 `--no-legacy-tags` writes only `MA`/`AQ` (existing legacy tags are left as

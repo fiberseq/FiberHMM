@@ -1,5 +1,37 @@
 # Changelog
 
+## 3.3.0 (unreleased)
+
+### Changed
+
+- **FiberHMM writes no MSP quality score.** An MSP quality is fibertools
+  FIRE (`ft fire`): the `fire` group in `Ma`/`MA`, or fibertools ≤ 0.12's
+  `aq`. `fiberhmm-apply --scores` used to write its MSP posterior as `aq`,
+  the tag fibertools uses for FIRE. `--scores` is still accepted, still
+  writes the footprint `nq`, and prints a one-line warning that it writes no
+  MSP score. `fiberhmm-call --scores` never wrote one and is unchanged.
+- **No stale fibertools annotations after MSPs change.** `fiberhmm-call`,
+  `-apply`, `-recall-tfs`, `-recall-nucs` and `-merge` remove any legacy `aq`
+  and fibertools `Ma`/`Aq`/`An` from the records whose MSPs they rewrite, also
+  with `--no-legacy-tags`. `ft fire` 0.13 moves every `MA` group into `Ma`.
+  call and apply now keep a read's DddA m5C groups from that `Ma`, which they
+  used to drop with it.
+- **`fire` groups are revalidated.** Recall keeps a carried `fire` group only
+  if every element is still exactly one of the record's MSPs. Otherwise the
+  group is dropped with its `AQ` bytes and `AN` names.
+- Consensus export, `fiberhmm-tag-m5c` and `fiberhmm-scan` copy a fibertools
+  `Ma` into `MA` as before, and now remove `Ma`/`Aq`/`An` after the copy.
+
+### Added
+
+- `@CO FIBERHMM-ANNOTATION-CONTRACT:v2` in the header of every BAM written
+  by `fiberhmm-call`, `-apply`, `-recall-tfs`, `-recall-nucs` and `-merge`,
+  once per header. It declares that FiberHMM wrote no MSP quality score, that
+  records whose MSPs it rewrote carry no stale `Ma`/`Aq`/`An`/`aq`, and that
+  carried `fire` groups were revalidated. Any MSP quality in such a file is
+  therefore fibertools FIRE. See
+  [Header declarations](https://fiberseq.github.io/FiberHMM/reference/headers/#fiberhmm-annotation-contract).
+
 ## 3.2.1
 
 ### Fixed
