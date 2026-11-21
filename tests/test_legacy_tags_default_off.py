@@ -102,3 +102,30 @@ def test_extract_reads_ma_only_output_like_legacy_output(tmp_path):
                             for f in outdir.rglob('*') if f.is_file())
     assert beds['legacy'] and beds['legacy'] == beds['ma_only']
     assert any(text.strip() for _name, text in beds['legacy'])
+
+
+def test_apply_no_msps_keeps_ma_only_msps(tmp_path):
+    """apply --no-msps keeps a record's own MSPs when they are only in MA."""
+    from fiberhmm.io.footprint_calls import resolve_footprint_tags
+
+    ma_only = tmp_path / 'ma_only.bam'
+    with pysam.AlignmentFile(str(SRC)) as bam:
+        with pysam.AlignmentFile(str(ma_only), 'wb', header=bam.header) as out:
+            for r in bam:
+                for tag in LEGACY:
+                    r.set_tag(tag, None)
+                out.write(r)
+    pysam.index(str(ma_only))
+    with pysam.AlignmentFile(str(ma_only)) as bam:
+        before = {r.query_name: sorted(zip(*(lambda t: (t['as'], t['al']))(resolve_footprint_tags(r, True))))
+                  for r in bam}
+    _run(tmp_path, 'apply', 'main', '-i', str(ma_only), '-o', str(tmp_path / 'out'), '--enzyme', 'hia5',
+         '--seq', 'pacbio', '--force-seq', '--no-msps', '-c', '1')
+    with pysam.AlignmentFile(str(tmp_path / 'out' / 'ma_only_footprints.bam')) as bam:
+        reads = list(bam)
+    assert reads and all(not any(r.has_tag(t) for t in LEGACY) for r in reads)
+    for r in reads:
+        calls = resolve_footprint_tags(r, True)
+        assert calls['source'] == 'MA'
+        assert sorted(zip(calls['as'], calls['al'])) == before[r.query_name]
+

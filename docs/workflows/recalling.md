@@ -43,9 +43,11 @@ fiberhmm-recall-nucs -i out/apply/hia5_pacbio_footprints.bam -o out/apply.recall
 [recall_tfs] processed 300 reads; 300 carried v2 tags; ... TF calls emitted; ... v2 short nucs demoted to tf+
 ```
 
-On `fiberhmm-apply` output the recallers read the `MA` nucleosomes (the
-footprints outside MSPs); with `fiberhmm-apply --legacy-tags` output they read
-the same `MA`, since it is present. Output of `fiberhmm-apply --harmonize-legacy-tags`
+On default `fiberhmm-apply` output the recallers read the `MA` nucleosomes
+(the footprints outside MSPs). `fiberhmm-apply --legacy-tags` writes no `MA`
+(except on reads keeping DddA CpG islands), so the recallers read its
+`ns`/`nl`, which list every HMM footprint. `fiberhmm-recall-nucs` gives
+`fiberhmm-call`'s calls from either. Output of `fiberhmm-apply --harmonize-legacy-tags`
 holds only the `MA`-view nucleosomes in `ns`/`nl` and marks each such read
 with `hl:i:1`; both recallers stop at the first read with that tag:
 

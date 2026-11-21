@@ -67,7 +67,8 @@ LEGACY_PAIR_READERS = {
     'pipeline/runner.py': 'presence only (was the read called)',
     'scan/reads.py': 'presence only (was the read called), MA/Ma checked first',
     'cli/recall_tfs.py': 'presence only: legacy frame needed only without MA/Ma nuc/msp',
-    'scan/peaks_reads.py': "FiberBrowser loader parity (its tiles read legacy first); open question",
+    'scan/peaks_reads.py': ('exception: FiberBrowser loader parity (golden rows): legacy pairs only, an '
+                            'MA-only record is one neutral row; changes together with FiberBrowser'),
 }
 
 

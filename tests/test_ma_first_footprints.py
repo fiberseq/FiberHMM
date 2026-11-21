@@ -218,10 +218,10 @@ def _ma_nucs(read):
 
 def test_recall_tfs_after_recall_nucs_uses_the_nucleosomes_recall_nucs_wrote(tmp_path):
     nucs = tmp_path / 'nucs.bam'
-    _cli(tmp_path, 'main_recall_nucs', '-i', str(SRC), '-o', str(nucs), '--no-legacy-tags')
-    # recall-nucs refreshed MA only: the legacy tags beside it are call's. Make
-    # them unmistakably stale, then recall TFs from that BAM and from an
-    # MA-only copy.
+    _cli(tmp_path, 'main_recall_nucs', '-i', str(SRC), '-o', str(nucs))
+    # Put unmistakably stale legacy tags beside the MA recall-nucs wrote (as a
+    # 3.2 recall-nucs --no-legacy-tags left call's), then recall TFs from that
+    # BAM and from an MA-only copy.
     stale, ma_only = tmp_path / 'stale.bam', tmp_path / 'ma_only.bam'
     with pysam.AlignmentFile(str(nucs)) as bam:
         with pysam.AlignmentFile(str(stale), 'wb', header=bam.header) as a, \

@@ -40,6 +40,11 @@ def strip_for_apply(read, write_msps: bool = True) -> None:
 
     carry_to_molecular(read)
     strip_ambiguous_aq(read)
+    if not write_msps:
+        # --no-msps keeps the record's own MSPs, MA first: carried as as/al
+        # (molecular) through the strip below, which drops MA msp groups.
+        from fiberhmm.io.footprint_calls import carry_annotation_msps_as_legacy
+        carry_annotation_msps_as_legacy(read)
     strip_stale_call_tags(
         read, legacy_tags=apply_legacy_tags(write_msps), keep_m5c_groups=True,
     )

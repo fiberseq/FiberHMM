@@ -226,3 +226,31 @@ def _matching_legacy_nq(read, ns, nl):
         return None
     by_interval = dict(zip(zip(pair[0], pair[1]), scores))
     return [by_interval[(int(s), int(n))] for s, n in zip(ns, nl)]
+
+
+def carry_annotation_msps_as_legacy(read) -> bool:
+    """Write a read's MA/Ma ``msp`` calls as legacy ``as``/``al`` (molecular
+    frame), for a writer that keeps the record's own MSPs (``fiberhmm-apply
+    --no-msps``) but drops the MA footprint groups. A legacy ``aq`` (fibertools
+    FIRE) is kept only when the legacy pair already listed exactly those MSPs.
+    Returns whether the tags were written (False: MSPs not in MA/Ma)."""
+    from fiberhmm.io.legacy_tags import array_tag_pair
+
+    calls = resolve_footprint_tags(read, True)
+    if not calls or calls['source'] == 'legacy' or 'as' not in calls:
+        return False
+    starts = [int(s) for s in calls['as']]
+    lengths = [int(n) for n in calls['al']]
+    old = array_tag_pair(read, 'as', 'al')
+    same = old is not None and list(zip(old[0], old[1])) == list(zip(starts, lengths))
+    if not same:
+        if read.has_tag('aq'):
+            read.set_tag('aq', None)
+        if starts:
+            read.set_tag('as', array.array('I', starts))
+            read.set_tag('al', array.array('I', lengths))
+        else:
+            for tag in ('as', 'al'):
+                if read.has_tag(tag):
+                    read.set_tag(tag, None)
+    return True

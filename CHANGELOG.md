@@ -13,8 +13,10 @@
   passes it to call) writes them as before, for fibertools ≤ 0.12, whose
   `ft fire` needs `as/al`, and for scripts that read `ns/nl`.
   `--no-legacy-tags` is accepted as a deprecated no-op; `--downstream-compat`
-  is unchanged (legacy tags only). `fiberhmm-apply` now writes `MA` `nuc`
-  (the footprints outside MSPs) and `msp` on every called read;
+  is unchanged (legacy tags only). `fiberhmm-apply` without `--legacy-tags`
+  writes `MA` `nuc` (the footprints outside MSPs) and `msp` on every called
+  read (with it, legacy tags as before, and `MA` only on reads keeping DddA
+  CpG islands), and `--no-msps` keeps a record's MSPs from `MA` too;
   `--harmonize-legacy-tags` implies `--legacy-tags`. The default is
   `fiberhmm.defaults.WRITE_LEGACY_TAGS`, and `write_ma_tags` and the apply
   pipeline functions take it as their default too. Without legacy tags a
@@ -29,16 +31,17 @@
   MSPs from the legacy tags whenever they were present. Output from the
   standard pipeline, where call writes `MA` and legacy tags that agree, is
   unchanged. Two kinds of BAM recall differently: a BAM whose legacy tags are
-  stale against `MA` (for example recall-nucs `--no-legacy-tags` output,
-  which refreshes `MA` and leaves call's `ns/nl`) now follows `MA`; and
+  stale against `MA` (for example 3.2 recall-nucs `--no-legacy-tags` output,
+  which refreshed `MA` and left call's `ns/nl`) now follows `MA`; and
   calls in an `MA` that holds only an `msp` group no longer pick up
   nucleosomes from leftover `ns/nl`. `fiberhmm-apply` output carries an `MA`
   whose `nuc` lists only the footprints outside MSPs (on every called read
-  since 3.3.0, before only on reads keeping DddA CpG islands), so recall-tfs
-  on it now reads that view rather than every HMM footprint in `ns/nl`: TF
-  and MSP calls are unchanged, and short footprints inside MSPs that no TF
-  call overlaps are no longer kept as nucleosomes (1.6% of nucleosome calls
-  on the Hia5 PacBio demo data). An `MA` that holds only m5C or FIRE groups no
+  by default since 3.3.0, before only on reads keeping DddA CpG islands), so
+  recall-tfs on it now reads that view rather than every HMM footprint in
+  `ns/nl`: TF and MSP calls are unchanged, and short footprints inside MSPs
+  that no TF call overlaps are no longer kept as nucleosomes (1.6% of
+  nucleosome calls on the Hia5 PacBio demo data). recall-nucs on apply
+  output still gives exactly `fiberhmm-call`'s calls. An `MA` that holds only m5C or FIRE groups no
   longer hides legacy calls from the consensus loaders.
 - **DddA consensus numbers change** because `fiberhmm-consensus` now scores
   DddA CpGs with the same unmethylated-only CpG mask as `fiberhmm-call`.
