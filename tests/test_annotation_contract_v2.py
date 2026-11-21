@@ -164,6 +164,34 @@ def test_write_ma_tags_keeps_a_fire_group_that_matches_the_msps(reverse):
     assert not any(read.has_tag(t) for t in STALE)
 
 
+@pytest.mark.parametrize('reverse', [False, True])
+def test_write_ma_tags_fire_strand_must_match_the_msp_group(reverse):
+    """FiberHMM writes ``msp.``: a ``fire.`` group (what ft fire writes) can
+    match it, strand-qualified ``fire+``/``fire-`` groups cannot, even with
+    the same intervals. Elements compare as parsed numbers."""
+    read = _read(_header(), reverse=reverse)
+    seq_msps = [(900, 100), (600, 150)] if reverse else [(0, 100), (250, 150)]
+    read.set_tag('Ma', '1000;msp.:1-100,251-150;fire+Q:251-150;fire-Q:251-150;'
+                       'fire.Q:0251-150;deam+:11-5')
+    read.set_tag('Aq', array('B', [11, 22, 233]))
+    read.set_tag('An', 'a,b,fp,fm,f1,d1')
+    _write_ma(read, seq_msps)
+    heads = [g.partition(':')[0] for g in str(read.get_tag('MA')).split(';')[1:]]
+    assert 'fire.Q' in heads and 'fire+Q' not in heads and 'fire-Q' not in heads
+    aq = list(read.get_tag('AQ'))
+    assert aq[-1] == 233 and 11 not in aq and 22 not in aq
+    assert read.get_tag('AN').split(',')[-2:] == ['f1', 'd1']
+    assert not {'fp', 'fm'} & set(read.get_tag('AN').split(','))
+
+
+def test_write_ma_tags_drops_an_unparsable_fire_group():
+    read = _read(_header())
+    read.set_tag('Ma', '1000;msp.:1-100,251-150;fire.Q:251-1x0')
+    read.set_tag('Aq', array('B', [233]))
+    _write_ma(read, [(0, 100), (250, 150)])
+    assert 'fire' not in _groups(read)
+
+
 def test_write_ma_tags_drops_a_fire_group_whose_msps_changed():
     read = _read(_header())
     read.set_tag('Ma', '1000;msp.:1-100,251-150;fire.Q:251-150;deam+Q:11-5')

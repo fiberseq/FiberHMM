@@ -1302,24 +1302,50 @@ def _preserved_ma_groups(read) -> Tuple[List[str], List[str], List[int]]:
     return kept_groups, kept_names, kept_aq
 
 
-def _drop_stale_fire_groups(groups, names, aq, msps):
+def _ma_items(group: str):
+    """``[(start0, length), ...]`` of an MA group's elements, or ``None`` when
+    one does not parse as ``<1-based start>-<length>``."""
+    out = []
+    for item in group.partition(':')[2].split(','):
+        if not item:
+            continue
+        start, sep, length = item.partition('-')
+        try:
+            out.append((int(start) - 1, int(length)))
+        except ValueError:
+            return None
+        if not sep:
+            return None
+    return out
+
+
+def _drop_stale_fire_groups(groups, names, aq, msps, msp_strand: str = '.'):
     """``(groups, names, aq)`` without ``fire`` groups that no longer describe
     the record's MSPs.
 
-    A fibertools FIRE group is kept only when every element is exactly one of
-    ``msps`` (molecular ``(start, length)`` pairs, as written to the MA msp
-    group); otherwise the group goes, with its AN names and AQ bytes. FIRE
-    scores belong to the MSPs ``ft fire`` saw, so nothing derived from
-    replaced MSPs survives."""
-    msp_tokens = {f'{int(s) + 1}-{int(n)}' for s, n in msps}
+    A fibertools FIRE group is kept only when its strand qualifier equals the
+    MSP group's (``msp_strand``; FiberHMM writes ``msp.``, so ``fire.`` --
+    what ``ft fire`` writes -- can match and ``fire+``/``fire-`` cannot) and
+    every element, parsed and normalised, is exactly one of ``msps``
+    (molecular ``(start, length)`` pairs, as written to the MA msp group);
+    otherwise the group goes, with its AN names and AQ bytes. FIRE scores
+    belong to the MSPs ``ft fire`` saw, so nothing derived from replaced MSPs
+    survives."""
+    from fiberhmm.daf.m5c import ma_group_strand
+
+    msp_set = {(int(s), int(n)) for s, n in msps}
     kept_groups, kept_names, kept_aq = [], [], []
     name_offset = aq_offset = 0
     for group in groups:
         feature, qual_spec = _ma_group_head(group)
-        items = [item for item in group.partition(':')[2].split(',') if item]
-        count = len(items)
+        count = sum(bool(item) for item in group.partition(':')[2].split(','))
         n_bytes = len(qual_spec) * count
-        if feature != 'fire' or all(item in msp_tokens for item in items):
+        keep = True
+        if feature == 'fire':
+            items = _ma_items(group)
+            keep = (ma_group_strand(group) == msp_strand and items is not None
+                    and all(item in msp_set for item in items))
+        if keep:
             kept_groups.append(group)
             kept_names.extend(names[name_offset:name_offset + count])
             kept_aq.extend(aq[aq_offset:aq_offset + n_bytes])
