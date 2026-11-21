@@ -70,6 +70,13 @@ DAF_RUN_POLICY = "keep-one"
 #: Smallest footprint (bp) counted as a nucleosome.
 NUC_MIN_SIZE = 85
 
+#: Nucleosome cutoff of the accessibility views (fiberhmm-scan states, NFR and
+#: peaks, fiberhmm-nfr, nucleosome patches): footprints of at least this length
+#: count as nucleosomes, shorter ones as accessible (FiberBrowser's rule).
+#: A documented difference from NUC_MIN_SIZE; these tools must agree with
+#: each other.
+ACCESSIBILITY_NUC_MIN_BP = 90
+
 #: Smallest MSP (bp) written (0: all).
 MSP_MIN_SIZE = 0
 
@@ -159,29 +166,29 @@ ALLOWED_OVERRIDES = {
     ("fiberhmm.inference.parallel.process_bam_for_footprints", "min_read_length"): (0,
         "API: callers pass the resolved length"),
     ("fiberhmm.inference.parallel.process_bam_for_footprints", "primary_only"): (False,
-        "API: False is the 'all' spelling; owner decision pending (see audit)"),
+        "API: False is the older 'all' spelling (secondary records called); every in-repo caller passes the alignment set"),
     ("fiberhmm.inference.streaming_pipeline._process_bam_streaming_pipeline", "prob_threshold"): (0,
         "API: callers pass the resolved threshold"),
     ("fiberhmm.inference.streaming_pipeline._process_bam_streaming_pipeline", "min_read_length"): (0,
         "API: callers pass the resolved length"),
     ("fiberhmm.inference.streaming_pipeline._process_bam_streaming_pipeline", "primary_only"): (False,
-        "API: False is the 'all' spelling; owner decision pending (see audit)"),
+        "API: False is the older 'all' spelling (secondary records called); every in-repo caller passes the alignment set"),
     ("fiberhmm.inference.region_pipeline._process_bam_region_parallel", "prob_threshold"): (0,
         "API: callers pass the resolved threshold"),
     ("fiberhmm.inference.region_pipeline._process_bam_region_parallel", "min_read_length"): (0,
         "API: callers pass the resolved length"),
     ("fiberhmm.inference.region_pipeline._process_bam_region_parallel", "primary_only"): (False,
-        "API: False is the 'all' spelling; owner decision pending (see audit)"),
+        "API: False is the older 'all' spelling (secondary records called); every in-repo caller passes the alignment set"),
     ("fiberhmm.inference.streaming_pipeline._process_bam_streaming_pipeline_fused", "primary_only"): (False,
-        "API: False is the 'all' spelling; owner decision pending (see audit)"),
+        "API: False is the older 'all' spelling (secondary records called); every in-repo caller passes the alignment set"),
     ("fiberhmm.inference.region_pipeline._process_bam_region_parallel_fused", "primary_only"): (False,
-        "API: False is the 'all' spelling; owner decision pending (see audit)"),
+        "API: False is the older 'all' spelling (secondary records called); every in-repo caller passes the alignment set"),
     ("fiberhmm.inference.legacy_pipeline._process_bam_legacy_pipeline", "prob_threshold"): (0,
         "API: callers pass the resolved threshold"),
     ("fiberhmm.inference.legacy_pipeline._process_bam_legacy_pipeline", "min_read_length"): (0,
         "API: callers pass the resolved length"),
     ("fiberhmm.inference.legacy_pipeline._process_bam_legacy_pipeline", "primary_only"): (False,
-        "API: False is the 'all' spelling; owner decision pending (see audit)"),
+        "API: False is the older 'all' spelling (secondary records called); every in-repo caller passes the alignment set"),
     ("fiberhmm.inference.tf_recaller.extract_modification_calls", "context_size"): (3,
         "API: the bundled models' context size; recall passes the model's k"),
     ("fiberhmm.nuc.recall.CallerSettings", "daf_mask_runs"): (0,
@@ -197,7 +204,7 @@ ALLOWED_OVERRIDES = {
     ("fiberhmm.inference.read_filters.ReadFilterConfig", "min_read_length"): (0,
         "filter object: each pipeline passes the resolved length"),
     ("fiberhmm.inference.read_filters.ReadFilterConfig", "primary_only"): (False,
-        "False is the 'all' spelling; owner decision pending (see audit)"),
+        "False is the older 'all' spelling; every pipeline passes the alignment set"),
     ("fiberhmm.inference.tf_recaller.extract_modification_calls", "prob_threshold"): (REREAD_PROB_THRESHOLD,
         "recall's historical fallback (RECALL_PROB_THRESHOLD)"),
     ("fiberhmm.cli.dedup.run_dedup", "prob_threshold"): (0,

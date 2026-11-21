@@ -86,6 +86,63 @@ ALIASES = {
     ("fiberhmm-extract", "min_tq"): ("min_llr", int(D.MIN_LLR * 10)),
 }
 
+#: An unset (None) default is resolved at run time. Such a tool must use one
+#: of these shared resolvers (checked in its module source; their values are
+#: checked per chemistry in part 2) or be listed in PASSTHROUGH.
+RESOLVERS = {
+    "prob_threshold": ("resolve_prob_threshold", "resolve_input_prob_threshold",
+                       "default_prob_threshold", "default_qc_prob_threshold",
+                       "_resolve_call_prob_threshold"),
+    "cpg_mask_policy": ("resolve_cpg_mask_policy",),
+    "use_m5c": ("resolve_cpg_mask_policy",),
+    "daf_mask_runs": ("resolve_daf_run_mask", "apply_daf_run_mask_arguments",
+                      "default_daf_run_mask"),
+    "min_llr": ("ENZYME_PRESETS",),
+    "emission_uplift": ("ENZYME_PRESETS",),
+    "context_size": ("load_model_with_metadata", "model_context_size", "context_size_of"),
+    "primary_only": ("resolve_alignments",),
+}
+
+#: Module(s) whose source holds a console script's resolution code.
+TOOL_MODULES = {
+    "fiberhmm-apply": ("fiberhmm.cli.apply", "fiberhmm.cli.common"),
+    "fiberhmm-call": ("fiberhmm.cli.call",),
+    "fiberhmm-pair": ("fiberhmm.cli.pair", "fiberhmm.crossstrand.recall"),
+    "fiberhmm-merge": ("fiberhmm.cli.merge", "fiberhmm.crossstrand.recall"),
+    "fiberhmm-posteriors": ("fiberhmm.cli.export_posteriors", "fiberhmm.cli.common"),
+    "fiberhmm-recall-tfs": ("fiberhmm.cli.recall_tfs",),
+    "fiberhmm-recall-nucs": ("fiberhmm.cli.recall_tfs",),
+    "fiberhmm-extract": ("fiberhmm.cli.extract_tags",),
+    "fiberhmm-qc": ("fiberhmm.cli.qc", "fiberhmm.qc.core"),
+    "fiberhmm-consensus": ("fiberhmm.inference.consensus.bam",
+                           "fiberhmm.inference.consensus.cli"),
+    "fiberhmm-train": ("fiberhmm.cli.train", "fiberhmm.core.bam_reader"),
+    "fiberhmm-strand-rescue": ("fiberhmm.cli.strand_rescue",
+                               "fiberhmm.inference.strand_rescue"),
+}
+
+#: Unset defaults another component resolves; (tool, setting) -> reason.
+PASSTHROUGH = {
+    ("fiberhmm-pipeline", "prob_threshold"): "not passed: fiberhmm-call resolves it",
+    ("fiberhmm-pipeline", "cpg_mask_policy"): "not passed: fiberhmm-call resolves it",
+    ("fiberhmm-pipeline", "use_m5c"): "not passed: fiberhmm-call resolves it",
+    ("fiberhmm.pipeline.runner.PipelineConfig", "prob_threshold"): "not passed: fiberhmm-call resolves it",
+    ("fiberhmm.pipeline.runner.PipelineConfig", "cpg_mask_policy"): "not passed: fiberhmm-call resolves it",
+    ("fiberhmm.pipeline.runner.PipelineConfig", "use_m5c"): "not passed: fiberhmm-call resolves it",
+    ("fiberhmm.nuc.recall.CallerSettings", "cpg_mask_policy"): "from_header resolves it (part 2)",
+    ("fiberhmm-strand-rescue", "prob_threshold"): (
+        "the preset's threshold (strand_rescue.PRESETS; Hia5 Nanopore 248 checked in part 2); "
+        "DddA/DddB presets fall back to extract_modification_calls' pinned 125"),
+}
+for _api in ("fiberhmm.inference.parallel.process_bam_for_footprints",
+             "fiberhmm.inference.streaming_pipeline._process_bam_streaming_pipeline",
+             "fiberhmm.inference.streaming_pipeline._process_bam_streaming_pipeline_fused",
+             "fiberhmm.inference.region_pipeline._process_bam_region_parallel",
+             "fiberhmm.inference.region_pipeline._process_bam_region_parallel_fused",
+             "fiberhmm.inference.legacy_pipeline._process_bam_legacy_pipeline",
+             "fiberhmm.cli.export_posteriors.extract_posteriors_from_read"):
+    PASSTHROUGH[(_api, "cpg_mask_policy")] = "engine API: the calling command passes the resolved policy"
+
 # The 3.2.1 tree's recall table: fixed per enzyme by the shared preset.
 CHEMISTRIES = [("hia5", "pacbio"), ("hia5", "nanopore"), ("dddb", "nanopore"), ("ddda", "pacbio")]
 MODES = {("hia5", "pacbio"): "pacbio-fiber", ("hia5", "nanopore"): "nanopore-fiber",
@@ -104,6 +161,7 @@ class Report:
         self.overrides = dict(D.ALLOWED_OVERRIDES if overrides is None else overrides)
         self.problems = []
         self.visited = set()
+        self.none_passes = set()
 
     def check(self, tool, setting, actual, expected, none_ok=False):
         key = (tool, setting)
@@ -117,7 +175,10 @@ class Report:
                 return
             self.problems.append(f"{tool} {setting} = {actual!r}; override pins {pinned!r}")
             return
-        if _same(actual, expected) or (none_ok and actual is None):
+        if actual is None and setting.split(".")[-1] in RESOLVERS:
+            self.none_passes.add(key)  # resolved at run time: needs coverage
+            return
+        if _same(actual, expected):
             return
         self.problems.append(f"{tool} {setting} = {actual!r}; canonical {expected!r} "
                              "(fix it or add it to fiberhmm.defaults.ALLOWED_OVERRIDES)")
@@ -298,10 +359,40 @@ def check_resolvers(report):
 
 
 def _extract_threshold(enzyme, seq):
-    from fiberhmm.cli import extract_tags
-    from fiberhmm.models import default_prob_threshold
+    """fiberhmm-extract's own resolver on a BAM declaring the chemistry."""
+    import tempfile
 
-    return default_prob_threshold(enzyme, seq, extract_tags.EXTRACT_PROB_THRESHOLD)
+    from fiberhmm.cli import extract_tags
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = str(Path(tmp) / "declared.bam")
+        with pysam.AlignmentFile(path, "wb", header=_declared_header(enzyme, seq)):
+            pass
+        return extract_tags._default_extract_prob_threshold(path)
+
+
+def check_scan_constants(report):
+    """fiberhmm-scan's read policy and the accessibility nucleosome cutoff."""
+    from fiberhmm.inference.accessibility import gaps
+    from fiberhmm.nuc.patches import PatchParams
+    from fiberhmm.scan import peaks_core, peaks_reads, states
+    from fiberhmm.scan.modules import nfr
+    from fiberhmm.scan.reads import DEFAULT_READ_POLICY
+
+    filters = DEFAULT_READ_POLICY["filters"]
+    report.check("fiberhmm-scan", "read_policy.min_mapq", filters["min_mapq"], D.MIN_MAPQ)
+    report.check("fiberhmm-scan", "read_policy.alignments",
+                 (filters["secondary"], filters["supplementary"]),
+                 ("exclude", "include") if D.ALIGNMENTS == "primary-supplementary" else None)
+    for tool, value in (
+        ("fiberhmm.scan.states.NUC_MIN_BP", states.NUC_MIN_BP),
+        ("fiberhmm.scan.modules.nfr.NUC_MIN_BP", nfr.NUC_MIN_BP),
+        ("fiberhmm.scan.peaks_reads.SHORT_TERMINAL_FOOTPRINT_BP", peaks_reads.SHORT_TERMINAL_FOOTPRINT_BP),
+        ("fiberhmm.scan.peaks_core.SUBNUCLEOSOMAL_BP", peaks_core.SUBNUCLEOSOMAL_BP),
+        ("fiberhmm.inference.accessibility.gaps.NUC_MIN", gaps.NUC_MIN),
+        ("fiberhmm.nuc.patches.PatchParams.nuc_min_bp", PatchParams().nuc_min_bp),
+    ):
+        report.check(tool, "accessibility_nuc_min_bp", value, D.ACCESSIBILITY_NUC_MIN_BP)
 
 
 # ---------------------------------------------------------------------------
@@ -366,6 +457,7 @@ def run_all(monkeypatch, report):
     check_resolvers(report)
     check_signatures(report)
     check_dataclasses(report)
+    check_scan_constants(report)
     return report
 
 
@@ -376,6 +468,33 @@ def run_all(monkeypatch, report):
 def test_every_tool_default_matches_the_shared_value(monkeypatch):
     report = run_all(monkeypatch, Report())
     assert not report.problems, "\n".join(report.problems)
+
+
+def _module_sources(tool):
+    if tool in TOOL_MODULES:
+        names = TOOL_MODULES[tool]
+    else:  # a dotted Python object: its own module
+        names = (tool.rpartition(".")[0],)
+        if names[0].rpartition(".")[2][:1].isupper():
+            names = (names[0].rpartition(".")[0],)
+    return "\n".join(inspect.getsource(importlib.import_module(n)) for n in names)
+
+
+def test_unset_defaults_are_resolved_by_a_shared_resolver(monkeypatch):
+    report = run_all(monkeypatch, Report())
+    problems = []
+    for tool, setting in sorted(report.none_passes):
+        name = setting.split(".")[-1]
+        if (tool, setting) in PASSTHROUGH:
+            continue
+        if tool not in TOOL_MODULES and not tool.startswith("fiberhmm."):
+            problems.append(f"{tool} {setting}: unset default with no module mapping")
+            continue
+        source = _module_sources(tool)
+        if not any(resolver in source for resolver in RESOLVERS[name]):
+            problems.append(f"{tool} {setting}: unset default, but none of "
+                            f"{RESOLVERS[name]} is used (add PASSTHROUGH with a reason)")
+    assert not problems, "\n".join(problems)
 
 
 def test_no_stale_or_unknown_overrides(monkeypatch):
