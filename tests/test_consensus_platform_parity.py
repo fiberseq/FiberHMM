@@ -1,8 +1,10 @@
 """Consensus reads and replays each platform exactly as fiberhmm-call does.
 
 The Hia5 replay resolves its nucleosome recall policy with fiberhmm-call's own
-resolver (``auto`` is conservative on every platform) and records it.
+resolver (``auto`` is conservative on every platform) and records it, and
+legacy ``Mm``/``Ml`` modification tags are read as fiberhmm-call reads them.
 """
+import array
 from types import SimpleNamespace
 
 import numpy as np
@@ -90,3 +92,53 @@ def test_policy_resolution_is_shared_with_the_calling_commands():
     with pytest.raises(ValueError):
         resolve_nuc_recall_policy('aggressive', 'pacbio-fiber')
 
+
+def hia5_read(header, name, *, legacy_tags=False, reverse=False):
+    rng = np.random.default_rng(7)
+    seq = ''.join(rng.choice(list('ACGT'), size=300))
+    read = pysam.AlignedSegment(header)
+    read.query_name = name; read.query_sequence = seq
+    read.flag = 16 if reverse else 0
+    read.reference_id = 0; read.reference_start = 100; read.mapping_quality = 60
+    read.cigartuples = [(0, len(seq))]
+    adenines = [i for i, b in enumerate(seq) if b == 'A']
+    called = adenines[::3]
+    skips, last = [], -1
+    for index in called:
+        skips.append(sum(1 for a in adenines if last < a < index)); last = index
+    mm = 'A+a?,' + ','.join(map(str, skips)) + ';'
+    ml = [250 if k % 2 else 40 for k in range(len(called))]
+    read.set_tag('Mm' if legacy_tags else 'MM', mm, 'Z')
+    read.set_tag('Ml' if legacy_tags else 'ML', array.array('B', ml))
+    return read
+
+
+@pytest.mark.parametrize('reverse', [False, True])
+def test_hard_observations_read_legacy_mm_ml_like_fiberhmm_call(reverse):
+    header = pysam.AlignmentHeader.from_dict(dict(HD=dict(VN='1.6'), SQ=[dict(SN='chr1', LN=1000)]))
+    modern = strand_rescue.hard_observations(hia5_read(header, 'r', reverse=reverse), 'alignment', 'pacbio-fiber', 3, 125)
+    legacy = strand_rescue.hard_observations(hia5_read(header, 'r', legacy_tags=True, reverse=reverse),
+                                             'alignment', 'pacbio-fiber', 3, 125)
+    assert modern is not None and legacy is not None
+    np.testing.assert_array_equal(modern[0], legacy[0])
+    assert modern[1] == legacy[1]
+
+
+def test_region_loader_keeps_reads_with_legacy_mm_ml(tmp_path):
+    from fiberhmm.core.model_io import load_model_with_metadata
+    header = pysam.AlignmentHeader.from_dict(dict(HD=dict(VN='1.6', SO='coordinate'), SQ=[dict(SN='chr1', LN=1000)]))
+    model, context, mode = load_model_with_metadata(
+        strand_rescue.resolve_resource_path('fiberhmm/models/hia5_pacbio.json'))
+    hit, miss = build_llr_tables(model)
+    counts = {}
+    for legacy in (False, True):
+        path = tmp_path / f'legacy{legacy}.bam'
+        with pysam.AlignmentFile(str(path), 'wb', header=header) as out:
+            for i in range(4):
+                out.write(hia5_read(header, f'r{i}', legacy_tags=legacy, reverse=bool(i % 2)))
+        pysam.index(str(path))
+        reads = strand_rescue.load_region_evidence(
+            str(path), 'chr1', 100, 400, strand_mode='alignment', mode=mode, context_size=context,
+            prob_threshold=125, llr_hit=hit, llr_miss=miss, min_mapq=0, max_reads=0)
+        counts[legacy] = [(r.name, len(r.positions), int(np.sum(r.hits))) for r in reads]
+    assert counts[False] and counts[True] == counts[False]

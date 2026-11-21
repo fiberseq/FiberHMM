@@ -37,6 +37,7 @@ from fiberhmm.cli.extract_tags import (
 from fiberhmm.core.bam_reader import (
     cigar_to_query_ref,
     encode_from_query_sequence,
+    mm_ml_tags,
     parse_mm_tag_query_calls,
 )
 from fiberhmm.inference.tf_recaller import (
@@ -1223,11 +1224,12 @@ def hard_observations(
         modification_positions, symbol, sequence, unknown_positions = extracted
         strand = "CT" if symbol == "+" else "GA"
     else:
-        if not read.has_tag("MM") or not read.has_tag("ML"):
+        mm_tag, ml_tag = mm_ml_tags(read)
+        if mm_tag is None:
             return None
         modification_positions, unknown_positions = parse_mm_tag_query_calls(
-            read.get_tag("MM"),
-            read.get_tag("ML"),
+            mm_tag,
+            ml_tag,
             sequence,
             bool(read.is_reverse),
             prob_threshold=int(prob_threshold if prob_threshold is not None else 125),
