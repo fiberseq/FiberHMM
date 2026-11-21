@@ -55,6 +55,7 @@ from collections import deque, namedtuple
 
 import pysam
 from fiberhmm import defaults as _D
+from fiberhmm.io.legacy_tags import has_array_tag_pair, has_legacy_pair
 from fiberhmm.inference.chimeras import is_marked_chimera
 
 from fiberhmm.cli.common import (
@@ -340,7 +341,9 @@ def _annotation_footprints_as_legacy_tags(read, input_molecular_frame=True) -> d
     Circular reads' MA pieces are used as linear pieces, like their legacy
     tags.
     """
-    if read.has_tag('ns') or read.has_tag('as'):
+    # A scalar or string tag (Dorado's ns:i signal count) is not a legacy
+    # call (fiberhmm.io.legacy_tags) and must not hide the MA footprints.
+    if has_array_tag_pair(read, 'ns', 'nl') or has_array_tag_pair(read, 'as', 'al'):
         return {}
     ma = fibertools_ma_intervals(read)
     ma_molecular = True
@@ -395,8 +398,7 @@ def _make_payload(read, mode=None, input_molecular_frame=True) -> dict:
     bytes is a straight memcpy vs. pickling a Python list.
     parse_mm_tag_query_positions accepts bytes directly via np.frombuffer.
     """
-    if input_molecular_frame is None and any(
-            read.has_tag(t) for t in ('ns', 'nl', 'as', 'al')):
+    if input_molecular_frame is None and has_legacy_pair(read):
         raise SystemExit("error: " + ambiguous_frame_message(
             _UNDECIDED_FRAME['reason'] or 'the header does not decide it'))
     read_frame = input_molecular_frame

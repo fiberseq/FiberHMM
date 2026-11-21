@@ -126,3 +126,21 @@ def test_utils_transfer_reference_reader_follows_the_pair_rule(bad):
     r.set_tag("ns", array("i", [10])); r.set_tag("nl", array("i", [20]))
     mask = _parse_footprints_from_bam_read(r, molecular=False)
     assert mask.sum() == 20 and mask[10] and not mask[30]
+
+
+# --------------------------------------------------------------------------
+# fiberhmm-recall-tfs / -recall-nucs: MA-only footprints next to Dorado ns:i
+# --------------------------------------------------------------------------
+
+def test_recall_reads_ma_footprints_despite_a_scalar_ns():
+    from fiberhmm.cli.recall_tfs import _annotation_footprints_as_legacy_tags
+
+    r = _read()
+    r.set_tag("MA", "100;nuc.:11-20;msp.:41-15")
+    expected = {"ns": [10], "nl": [20], "as": [40], "al": [15]}
+    assert _annotation_footprints_as_legacy_tags(r, True) == expected
+    r.set_tag("ns", 5000, value_type="i")
+    assert _annotation_footprints_as_legacy_tags(r, True) == expected
+    # A real legacy pair still wins over MA.
+    r.set_tag("ns", array("i", [10])); r.set_tag("nl", array("i", [20]))
+    assert _annotation_footprints_as_legacy_tags(r, True) == {}
