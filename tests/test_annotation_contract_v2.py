@@ -286,3 +286,44 @@ def test_producer_header_carries_the_contract_once_on_rerun():
     first = output_header_with_provenance(_header(), record)
     second = output_header_with_provenance(first, record)
     assert second.to_dict()['CO'].count(ANNOTATION_CONTRACT_V2) == 1
+
+
+# --------------------------------------------------------------------------- #
+#  records passed through unchanged: an aq that may be FiberHMM's goes          #
+# --------------------------------------------------------------------------- #
+
+def test_aq_is_ambiguous_only_after_an_old_fiberhmm_apply_without_the_contract():
+    from fiberhmm.inference.read_filters import header_aq_may_be_fiberhmm
+    apply_pg = {'ID': 'fiberhmm-apply', 'PN': 'fiberhmm-apply', 'VN': '3.2.1'}
+    ft_pg = {'ID': 'ft.1', 'PN': 'fibertools-rs', 'VN': '0.6.2'}
+    assert header_aq_may_be_fiberhmm({'HD': {'VN': '1.6'}, 'PG': [apply_pg, ft_pg]})
+    assert not header_aq_may_be_fiberhmm({'HD': {'VN': '1.6'}, 'PG': [ft_pg]})
+    assert not header_aq_may_be_fiberhmm({'HD': {'VN': '1.6'}, 'PG': [apply_pg, ft_pg],
+                                          'CO': [ANNOTATION_CONTRACT_V2]})
+
+
+def _with_old_apply_pg(src, dst):
+    with pysam.AlignmentFile(str(src)) as bam:
+        header = bam.header.to_dict()
+        header['PG'] = [{'ID': 'fiberhmm-apply', 'PN': 'fiberhmm-apply', 'VN': '3.2.1'},
+                        *header['PG']]
+        with pysam.AlignmentFile(str(dst), 'wb', header=header) as out:
+            for read in bam:
+                out.write(read)
+    pysam.index(str(dst))
+
+
+@pytest.mark.parametrize('old_apply', [False, True])
+def test_apply_no_msps_keeps_fibertools_aq_but_not_an_ambiguous_one(tmp_path, old_apply):
+    src = FT062
+    if old_apply:
+        src = tmp_path / 'in.bam'
+        _with_old_apply_pg(FT062, src)
+    proc = _run('fiberhmm.cli.apply', '-i', src, '-o', tmp_path / 'out', '--enzyme', 'hia5',
+                '--seq', 'pacbio', '--force-seq', '--no-msps', '-c', '1')
+    assert proc.returncode == 0, proc.stderr
+    out = tmp_path / 'out' / (src.name.replace('.bam', '') + '_footprints.bam')
+    with pysam.AlignmentFile(str(out)) as bam:
+        reads = list(bam)
+    assert all(r.has_tag('as') for r in reads)            # --no-msps keeps the input's MSPs
+    assert all(r.has_tag('aq') != old_apply for r in reads)

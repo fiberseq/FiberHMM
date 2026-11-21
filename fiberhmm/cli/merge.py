@@ -44,6 +44,7 @@ from fiberhmm.crossstrand.recall import (
     recall_consensus_full,
 )
 from fiberhmm.inference.bam_output import atomic_output, temporary_output_path
+from fiberhmm.inference.read_filters import strip_ambiguous_aq
 from fiberhmm.io.bam_header import append_ma_types
 
 _TAG_SOURCES = 'cs'
@@ -323,6 +324,8 @@ def _run_merge_passes(bam, in_bam, out_bam, unsorted, header, prob_threshold,
                 # name would orphan them from a primary alignment.
                 if read.query_name in merged_names:
                     continue
+                # The output declares annotation contract v2.
+                strip_ambiguous_aq(read)
                 out.write(read)
                 n_passthrough += 1
     out.close()

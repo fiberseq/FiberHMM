@@ -21,10 +21,11 @@ header lines. `@CO` lines are written as `@CO<TAB><text>`; pysam's
 Header lines are copied by `samtools` and most other tools, so they survive
 downstream processing unless a tool rewrites the header.
 
-A `fiberhmm-call` output adds its three `@CO` lines in this order:
+A `fiberhmm-call` output adds its four `@CO` lines in this order:
 
 ```text
 @CO	fiberhmm:coord=molecular
+@CO	FIBERHMM-ANNOTATION-CONTRACT:v2
 @CO	FIBERHMM-CHEMISTRY:v1:assay=daf;enzyme=ddda;platform=pacbio;mode=daf;apply_sha256=…;pg=fiberhmm-call;…
 @CO	MA-TYPES:v1:nuc,msp,tf
 ```
@@ -139,11 +140,15 @@ Written once (never duplicated on re-runs) by the commands that rewrite MSPs:
   is kept only when every element is exactly one of the record's MSPs;
   otherwise it is dropped with its `AQ` bytes and `AN` names.
 
+Records a run writes without rewriting their MSPs (skipped or failed reads,
+`apply --no-msps`, unpaired reads in `merge`) keep their MSP tags; when the
+input has a `fiberhmm-apply` `@PG` and no contract line, their `aq` is
+removed, since it may be FiberHMM's.
+
 Files without the line come from FiberHMM 3.2.1 or older, where
 `fiberhmm-apply --scores` wrote its MSP posterior as `aq`; there an `aq`
-may be FiberHMM's rather than FIRE. Commands that copy records without
-rewriting MSPs (`dedup`, `lift`, `tag-m5c`, `consensus`, `samtools merge`)
-keep the line when the input has it and do not add it.
+may be FiberHMM's rather than FIRE. Commands that do not rewrite MSPs
+(`dedup`, `lift`, `tag-m5c`, `consensus`, `scan`, …) do not add the line.
 
 Python: `fiberhmm.io.bam_header.header_annotation_contract(header)` returns
 `'v2'` or `None`.

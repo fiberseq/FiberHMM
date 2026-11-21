@@ -325,6 +325,40 @@ def _strip_tag(read, tag: str) -> None:
             pass
 
 
+_AQ_AMBIGUITY_CACHE: dict = {}
+
+
+def header_aq_may_be_fiberhmm(header) -> bool:
+    """True when an ``aq`` in a file with this header may be FiberHMM's MSP
+    posterior rather than fibertools FIRE: the header has a ``fiberhmm-apply``
+    @PG (3.2.1 and older wrote ``aq`` with ``--scores``) and no
+    ``FIBERHMM-ANNOTATION-CONTRACT`` line."""
+    key = id(header)
+    hit = _AQ_AMBIGUITY_CACHE.get(key)
+    if hit is not None and hit[0] is header:
+        return hit[1]
+    from fiberhmm.io.bam_header import header_annotation_contract
+    data = header.to_dict() if hasattr(header, 'to_dict') else dict(header)
+    ambiguous = header_annotation_contract(data) is None and any(
+        'fiberhmm-apply' in (str(pg.get('PN', '')), str(pg.get('ID', '')).split('.')[0])
+        for pg in data.get('PG', []) or [])
+    if len(_AQ_AMBIGUITY_CACHE) > 64:
+        _AQ_AMBIGUITY_CACHE.clear()
+    _AQ_AMBIGUITY_CACHE[key] = (header, ambiguous)
+    return ambiguous
+
+
+def strip_ambiguous_aq(read) -> None:
+    """Remove an ``aq`` that may be an older FiberHMM's MSP posterior (see
+    :func:`header_aq_may_be_fiberhmm`), so a record a v2-contract writer passes
+    through unchanged carries no MSP score that is not fibertools FIRE."""
+    if not hasattr(read, 'has_tag') or not read.has_tag('aq'):
+        return
+    header = getattr(read, 'header', None)
+    if header is not None and header_aq_may_be_fiberhmm(header):
+        _strip_tag(read, 'aq')
+
+
 def _adopt_fibertools_ma(read) -> None:
     """Take a fibertools ``Ma``/``Aq``/``An`` as the read's ``MA``/``AQ``/``AN``."""
     read.set_tag("MA", str(read.get_tag("Ma")), value_type="Z")
