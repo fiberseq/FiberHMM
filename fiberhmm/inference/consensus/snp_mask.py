@@ -70,7 +70,7 @@ def masked_query_positions(read, sites):
     """
     if not sites:
         return set()
-    cigar = getattr(read, 'cigartuples', None)
+    cigar = read.cigartuples   # an object without a CIGAR must not go silently unmasked
     if not cigar:
         return set()
     q, r, out = 0, int(read.reference_start), set()

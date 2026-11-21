@@ -155,8 +155,8 @@ Inspect boundaries and competing broader/other-shape explanations directly.
 If the scientific question concerns binding within a specified accessible
 context, define that context explicitly and apply the same rule to numerator
 and denominator. `input.minimum_nfr_length` restricts native nomination/replay;
-it does not, by itself, redefine transfer's scored-molecule denominator as
-MSP150-only. Distinguish a fraction among all eligible spanning molecules
+it does not, by itself, restrict transfer's scored-molecule denominator to
+molecules with a minimum MSP length. Distinguish a fraction among all eligible spanning molecules
 from a fraction conditional on a chosen accessibility context.
 
 ## Validation before interpreting differential binding

@@ -16,6 +16,9 @@
   and expected information in both accessible/protected directions on scored
   molecules. A new comparison guide explains strand eligibility, matched
   source models, variant handling, and limitations of differential counts.
+- Staged transfer manifests record each mask's SHA-256 and site count
+  (`daf_snp_masks`), not only its path. Frozen class catalogues record the
+  source run's label rule (`provenance.source_label_semantics`).
 
 ### Fixed
 
@@ -36,9 +39,6 @@
   lattice.
 - Consensus mask positions follow the CIGAR exactly; a `P` operation no
   longer shifts later positions by one.
-- Staged transfer manifests record each mask's SHA-256 and site count
-  (`daf_snp_masks`), not only its path. Frozen class catalogues record the
-  source run's label rule (`provenance.source_label_semantics`).
 
 ## 3.2.1
 

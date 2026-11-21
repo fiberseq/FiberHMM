@@ -33,7 +33,7 @@ its significance.
   full inferential uncertainty. A calibrated differential model remains work
   beyond this patch. Permuting haplotype labels cannot validate allele-linked
   sensitivity because it mixes the two sequence/opportunity distributions.
-- Both-strand support is not an MSP150 context filter. `minimum_nfr_length`
+- Both-strand support is not a minimum-MSP-length context filter. `minimum_nfr_length`
   affects native nomination/replay, not the complete transfer denominator.
 - `fiberhmm-call` can screen conversion-like SNPs automatically when its depth
   preflight allows it; consensus itself does not call SNPs. Earlier masks did
@@ -174,6 +174,6 @@ definition was changed.
 
 Targeted tests cover the mask, label, diagnostic and transfer paths
 (`tests/test_consensus_snp_mask.py`,
-`tests/test_consensus_comparison_diagnostics.py`); the CLI-reference
-regeneration check and strict MkDocs build pass. The commands above reproduce
+`tests/test_consensus_comparison_diagnostics.py`) and the CLI-reference
+regeneration check pass. The commands above reproduce
 the simulations; large replicate outputs are not kept in the repository.
