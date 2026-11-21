@@ -962,3 +962,26 @@ def test_qc_does_not_report_a_missing_mask_the_call_never_applied(tmp_path, mask
     assert result['chimeras']['error_mask_restored'] == mask
     assert 'error_mask_not_restored' not in result['chimeras']
     assert 'error mask not restored' not in format_terminal(result)
+
+
+def test_error_mask_projection_skips_cigar_padding(tmp_path):
+    """A CIGAR 'P' must not shift error-mask query positions: the event scan
+    strips padding, so the mask projection has to use the same coordinates."""
+    from fiberhmm.inference.chimeras import _error_masked_query_positions
+    header = pysam.AlignmentHeader.from_dict({'SQ': [{'SN': 'chrP', 'LN': 10000}]})
+    mask = tmp_path / 'error_mask.bed'
+    mask.write_text('chrP\t1200\t1201\nchrP\t1500\t1501\nchrP\t1800\t1801\n')
+
+    def record(cigar):
+        read = pysam.AlignedSegment(header)
+        read.query_name = 'r'
+        read.query_sequence = 'A' * 1000
+        read.reference_id = 0
+        read.reference_start = 1000
+        read.cigarstring = cigar
+        return read
+
+    plain = _error_masked_query_positions(record('1000M'), str(mask))
+    padded = _error_masked_query_positions(record('400M10P600M'), str(mask))
+    assert plain == {200, 500, 800}
+    assert padded == plain

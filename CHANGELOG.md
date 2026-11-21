@@ -1,6 +1,6 @@
 # Changelog
 
-## 3.3.0 (unreleased)
+## 3.3.0
 
 ### Changed
 
@@ -45,7 +45,7 @@
   skipped and call-less reads included, as before; only DddA m5C groups stay
   (`call --no-legacy-tags` leaves a skipped read's legacy tags in place).
   `apply --no-msps` keeps the input's `as`/`al` and their fibertools `aq`, and
-  also writes those MSPs into `MA` when a read keeps DddA m5C groups. Records
+  also writes those MSPs into `MA` when a read it calls keeps DddA m5C groups. Records
   written without rewriting their MSPs (reads recall fails on, unpaired `merge`
   reads, and `apply --no-msps` output) lose an `aq` when the input has a
   `fiberhmm-apply` `@PG` and no contract line. Such an `aq` may be an older
