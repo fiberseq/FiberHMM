@@ -84,6 +84,9 @@ from fiberhmm.models import (
 from fiberhmm.models import get_model_path as _get_bundled_model
 
 
+from fiberhmm import defaults as _D  # noqa: E402  (shared call defaults)
+
+
 def parse_args():
     p = argparse.ArgumentParser(
         description=__doc__,
@@ -126,20 +129,20 @@ def parse_args():
     add_legacy_mode_override(p)
     p.add_argument('-k', '--context-size', type=int, default=None,
                    help='Context size override. Default: from model.')
-    p.add_argument('--edge-trim', type=int, default=10,
+    p.add_argument('--edge-trim', type=int, default=_D.EDGE_TRIM,
                    help='Bases to mask at edges (default 10)')
-    p.add_argument('--min-mapq', type=non_negative_int, default=0,
+    p.add_argument('--min-mapq', type=non_negative_int, default=_D.MIN_MAPQ,
                    help='Min mapping quality (default 0)')
     p.add_argument('--prob-threshold', type=ml_threshold, default=None,
                    help='Min MM/ML modification probability 0-255. Default: '
                         'chemistry preset -- 248 for Hia5 Nanopore (--seq '
                         'nanopore, given or detected), 128 otherwise. R/Y- and '
                         'MD-encoded DAF input is binary and ignores it.')
-    p.add_argument('--min-read-length', type=non_negative_int, default=1000,
+    p.add_argument('--min-read-length', type=non_negative_int, default=_D.MIN_READ_LENGTH,
                    help='Min aligned read length (default 1000 — matches fiberhmm-apply)')
-    p.add_argument('--msp-min-size', type=int, default=0,
+    p.add_argument('--msp-min-size', type=int, default=_D.MSP_MIN_SIZE,
                    help='Min MSP size (default 0)')
-    p.add_argument('--nuc-min-size', type=int, default=85,
+    p.add_argument('--nuc-min-size', type=int, default=_D.NUC_MIN_SIZE,
                    help='Min footprint size to count as nucleosome (default 85)')
     p.add_argument('--with-scores', '--scores', dest='with_scores',
                    action='store_true',
@@ -164,9 +167,9 @@ def parse_args():
     p.add_argument('--min-llr', type=float, default=None,
                    help='Native LLR cost per TF interval in joint decoding '
                         '(default: enzyme preset; not a calibrated FDR threshold).')
-    p.add_argument('--min-opps', type=int, default=3,
+    p.add_argument('--min-opps', type=int, default=_D.MIN_OPPS,
                    help='Min informative target positions per TF call (default 3).')
-    p.add_argument('--unify-threshold', type=int, default=90,
+    p.add_argument('--unify-threshold', type=int, default=_D.UNIFY_THRESHOLD,
                    help='v2 nucs with nl < this may be demoted to tf+ (default 90).')
     p.add_argument('--emission-uplift', type=float, default=None,
                    help='Emission power transform. Default: enzyme preset.')
@@ -200,17 +203,17 @@ def parse_args():
                         'enzymes (DddA uses phase-aware radial inference, others the '
                         'accessible-cut Kadane split). Use --no-recall-nucs for '
                         'baseline HMM nucleosomes (nuc.Q).')
-    p.add_argument('--split-min-llr', type=float, default=4.0,
+    p.add_argument('--split-min-llr', type=float, default=_D.SPLIT_MIN_LLR,
                    help='Min accessible-run LLR to split a nucleosome; for DddA, '
                         'the molecule-local linker-residue configuration LLR '
                         '(default 4.0).')
-    p.add_argument('--split-min-opps', type=int, default=3,
+    p.add_argument('--split-min-opps', type=int, default=_D.SPLIT_MIN_OPPS,
                    help='Min informative positions in a nucleosome-splitting cut '
                         'or DddA linker residue (default 3).')
     p.add_argument(
         '--ddda-derived-tf-max-edge-gap',
         type=int,
-        default=12,
+        default=_D.DDDA_DERIVED_TF_MAX_EDGE_GAP,
         metavar='BP',
         help='DddA phase-aware radial recall only: TF calls exposed solely by '
              'nucleosome refinement must have a deamination hit within BP on '
@@ -263,7 +266,7 @@ def parse_args():
                         'carrier\'s inserted bases against it; other insertions stay '
                         'masked. auto (default): on for file input with '
                         '--daf-mask-unaligned; off: mask only.')
-    p.add_argument('--daf-insert-min-carriers', type=int, default=20,
+    p.add_argument('--daf-insert-min-carriers', type=int, default=_D.DAF_INSERT_MIN_CARRIERS,
                    help='Carriers an insertion needs for --daf-insert-consensus '
                         '(default 20).')
     p.add_argument('--daf-snp-mask', default=None,
@@ -333,7 +336,7 @@ def parse_args():
                         'fiber-seq (hia5).')
     dedup_mode.add_argument('--no-dedup', dest='dedup', action='store_false',
                    help='Disable automatic DddA/DddB duplicate marking.')
-    p.add_argument('--dedup-min-jaccard', type=float, default=0.95,
+    p.add_argument('--dedup-min-jaccard', type=float, default=_D.DEDUP_MIN_JACCARD,
                    help='Deamination-set Jaccard threshold for --dedup '
                         '(default 0.95). Use 0.90 for optional more aggressive '
                         'matching; lower thresholds can merge distinct molecules.')
@@ -343,7 +346,7 @@ def parse_args():
     p.add_argument('--dedup-collapse', action='store_true',
                    help='With --dedup: destructively collapse each duplicate cluster '
                         'to one representative. Default: mark and retain all reads.')
-    p.add_argument('--dedup-min-deam', type=int, default=10,
+    p.add_argument('--dedup-min-deam', type=int, default=_D.DEDUP_MIN_DEAM,
                    help='With --dedup: reads with fewer deamination calls are '
                         'not fingerprinted and pass through (default 10).')
     p.add_argument('--dedup-prob-threshold', type=int, default=None,
@@ -354,7 +357,7 @@ def parse_args():
                    help='With --dedup: cluster reads across deamination '
                         'flavours (C->T with G->A reads). Default: only reads '
                         'of the same flavour can be duplicates.')
-    p.add_argument('--dedup-max-end-diff', type=int, default=50,
+    p.add_argument('--dedup-max-end-diff', type=int, default=_D.DEDUP_MAX_END_DIFF,
                    help='With --dedup: maximum difference at both aligned reference '
                         'ends for duplicate matching (default 50 bp).')
     p.add_argument('--dedup-stats-tsv', default=None,
@@ -380,7 +383,7 @@ def parse_args():
                    help='Target random-window QC sample size (default 2000).')
     p.add_argument('--qc-seed', type=int, default=20260824,
                    help='Deterministic QC sampler seed (default 20260824).')
-    p.add_argument('--qc-min-mapq', type=int, default=0,
+    p.add_argument('--qc-min-mapq', type=int, default=_D.MIN_MAPQ,
                    help='Minimum mapping quality for the QC sample (default: 0, no filtering).')
     p.add_argument('--qc-output-prefix', default=None,
                    help='QC output prefix (default: qc/<BAM stem> beside output BAM).')

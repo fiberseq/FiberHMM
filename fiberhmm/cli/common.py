@@ -183,10 +183,13 @@ def refuse_model_enzyme_assay_conflict(model_mode, enzyme, seq, model_path, *,
     sys.exit(2)
 
 
+from fiberhmm import defaults as _shared_defaults  # noqa: E402
+
+
 def add_filter_args(parser: argparse.ArgumentParser,
-                    min_mapq: int = 0,
-                    prob_threshold: Optional[int] = 128,
-                    min_read_length: int = 1000) -> None:
+                    min_mapq: int = _shared_defaults.MIN_MAPQ,
+                    prob_threshold: Optional[int] = _shared_defaults.PROB_THRESHOLD,
+                    min_read_length: int = _shared_defaults.MIN_READ_LENGTH) -> None:
     """Add read filtering arguments (--min-mapq, --prob-threshold, --min-read-length).
 
     ``prob_threshold=None`` makes the default chemistry-dependent (resolved by

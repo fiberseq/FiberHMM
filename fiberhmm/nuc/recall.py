@@ -28,6 +28,8 @@ from typing import Optional
 
 import numpy as np
 
+from fiberhmm import defaults as _D
+
 N_CTX = 4096
 UNMETH_OFFSET = 4097
 
@@ -41,19 +43,19 @@ class CallerSettings:
     recall_model: Optional[str] = None
     nuc_model: Optional[str] = None
     nuc_profile: Optional[str] = None
-    min_llr: float = 5.0
-    min_opps: int = 3
-    unify_threshold: int = 90
-    emission_uplift: float = 1.0
+    min_llr: float = _D.MIN_LLR
+    min_opps: int = _D.MIN_OPPS
+    unify_threshold: int = _D.UNIFY_THRESHOLD
+    emission_uplift: float = _D.EMISSION_UPLIFT
     recall_nucs: bool = True
-    split_min_llr: float = 4.0
-    split_min_opps: int = 3
+    split_min_llr: float = _D.SPLIT_MIN_LLR
+    split_min_opps: int = _D.SPLIT_MIN_OPPS
     nuc_recall_policy: str = 'conservative'
-    nuc_min_size: int = 85
-    msp_min_size: int = 0
+    nuc_min_size: int = _D.NUC_MIN_SIZE
+    msp_min_size: int = _D.MSP_MIN_SIZE
     phase_nrl: int = 0
-    edge_trim: int = 10
-    prob_threshold: int = 128
+    edge_trim: int = _D.EDGE_TRIM
+    prob_threshold: int = _D.PROB_THRESHOLD
     derived_tf_max_edge_ambiguity: Optional[int] = None
     #: DddA CpG-aware calling policy (None = off), as fiberhmm-call resolves it
     cpg_mask_policy: Optional[str] = None

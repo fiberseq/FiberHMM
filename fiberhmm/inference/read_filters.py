@@ -62,8 +62,10 @@ def new_skip_counts() -> dict:
 # are alternative placements of the same bases and stay uncalled. ``primary``
 # is the earlier 3.0 behaviour (--primary), ``all`` calls every record
 # (--no-primary).
+from fiberhmm import defaults as _shared_defaults  # noqa: E402
+
 ALIGNMENT_SETS = ("primary", "primary-supplementary", "all")
-DEFAULT_ALIGNMENTS = "primary-supplementary"
+DEFAULT_ALIGNMENTS = _shared_defaults.ALIGNMENTS
 
 
 def resolve_alignments(value) -> str:

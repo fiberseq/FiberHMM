@@ -232,19 +232,20 @@ def get_model_path(enzyme: str, tool: str = 'recall', seq: str | None = None) ->
 # Per-chemistry default ML threshold
 # ---------------------------------------------------------------------------
 
+from fiberhmm import defaults as _shared_defaults  # noqa: E402
+
 #: Default minimum ML probability (0-255) for calling from MM/ML, used by
 #: ``fiberhmm-call`` and ``fiberhmm-apply`` and by the DAF tools
 #: (``fiberhmm-dedup``/``-pair``/``-merge``) for MM/ML-native dU calls.
-DEFAULT_PROB_THRESHOLD = 128
+DEFAULT_PROB_THRESHOLD = _shared_defaults.PROB_THRESHOLD
 
 #: Chemistry-specific overrides of that default, keyed by (enzyme, platform).
 #: Nanopore Hia5 m6A is a strict hard-call assay: Dorado's m6A ML values are
 #: only reliable near the top of the scale, and the bundled Hia5 Nanopore QC
 #: reference (``fiberhmm/qc/references.json``) and the strand-rescue
 #: ``hia5-nanopore`` preset are calibrated at 248.
-PROB_THRESHOLD_OVERRIDES: dict[tuple[str, str], int] = {
-    ('hia5', 'nanopore'): 248,
-}
+PROB_THRESHOLD_OVERRIDES: dict[tuple[str, str], int] = (
+    _shared_defaults.PROB_THRESHOLD_OVERRIDES)
 
 
 def default_prob_threshold(

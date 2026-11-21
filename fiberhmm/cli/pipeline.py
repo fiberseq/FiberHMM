@@ -49,6 +49,7 @@ import argparse
 import shlex
 import sys
 
+from fiberhmm import defaults as _shared_defaults
 from fiberhmm.cli.common import add_version_args
 
 
@@ -156,7 +157,7 @@ def build_parser() -> argparse.ArgumentParser:
                            "--no-chimera-filter means --chimeras keep. "
                            "An explicit --chimeras takes precedence.")
     call.add_argument("--alignments", choices=["primary", "primary-supplementary", "all"],
-                      default="primary-supplementary",
+                      default=_shared_defaults.ALIGNMENTS,
                       help="Alignment records to keep and call (default "
                            "primary-supplementary: a read's primary and supplementary "
                            "records, i.e. both sides of a split alignment, on linear "

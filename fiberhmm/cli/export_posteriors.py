@@ -107,8 +107,10 @@ def _detect_format(output_path: str, format_arg: str) -> str:
 # reads), R/Y and MD DAF evidence, the DAF SNP mask, the chimera filter and
 # the DAF run mask all come from fiberhmm.inference.engine, so posteriors
 # describe exactly the observations fiberhmm-call decodes.
-DEFAULT_PROB_THRESHOLD = 128   # same as fiberhmm-call / fiberhmm-apply
-DEFAULT_EDGE_TRIM = 10         # same as fiberhmm-call / fiberhmm-apply
+from fiberhmm import defaults as _shared_defaults  # noqa: E402
+
+DEFAULT_PROB_THRESHOLD = _shared_defaults.PROB_THRESHOLD  # as fiberhmm-call / -apply
+DEFAULT_EDGE_TRIM = _shared_defaults.EDGE_TRIM            # as fiberhmm-call / -apply
 
 _SKIP_REASONS = ('filtered', 'mm_not_applicable', 'chimera', 'no_modifications',
                  'not_owned')

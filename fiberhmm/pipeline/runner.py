@@ -88,9 +88,11 @@ class PipelineCancelled(PipelineError):
         self.exit_code = 128 + int(signum)
 
 
+from fiberhmm import defaults as _shared_defaults  # noqa: E402
+
 # --min-mapq when neither given nor recorded by an earlier run in OUTDIR
 # (FiberHMM before 3.2.0: 20).
-DEFAULT_MIN_MAPQ = 0
+DEFAULT_MIN_MAPQ = _shared_defaults.MIN_MAPQ
 # Steps whose markers record min_mapq, in run order.
 _MAPQ_STEPS = ("align", "call", "qc", "tracks")
 
@@ -124,7 +126,7 @@ class PipelineConfig:
     chimera_filter: bool = True
     daf_mask_unaligned: bool = True  # DAF: insertion/soft-clip bases are no evidence
     # Records kept by the aligner step and called: see read_filters.ALIGNMENT_SETS.
-    alignments: str = "primary-supplementary"
+    alignments: str = _shared_defaults.ALIGNMENTS
     prob_threshold: Optional[int] = None
     use_m5c: Optional[bool] = None  # None: fiberhmm-call default (on for ddda)
     cpg_mask_policy: Optional[str] = None
@@ -217,7 +219,7 @@ class PipelineConfig:
             "enzyme": self.enzyme,
             "seq": self.resolved_seq() or "auto",
             "min_mapq": self.resolved_min_mapq(),
-            "min_read_length": self.min_read_length or 1000,
+            "min_read_length": self.min_read_length or _shared_defaults.MIN_READ_LENGTH,
             "dedup": self.dedup if daf else "off",
             "dedup_mode": self.dedup_mode if daf else None,
             "snp_screen": self.snp_screen if daf else "off",
@@ -1865,7 +1867,7 @@ class Pipeline:
             cmd += ["--seq", cfg.resolved_seq()]
         if cfg.min_read_length is not None:
             cmd += ["--min-read-length", str(cfg.min_read_length)]
-        if cfg.alignments != "primary-supplementary":
+        if cfg.alignments != _shared_defaults.ALIGNMENTS:
             cmd += ["--alignments", cfg.alignments]
         if cfg.prob_threshold is not None:
             cmd += ["--prob-threshold", str(cfg.prob_threshold)]
