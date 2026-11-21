@@ -32,6 +32,12 @@ Unmapped records (``--process-unmapped``) are never cut: they have no CIGAR
 or reference, so a piece could carry neither a position nor ``xb`` gaps,
 and the piece length filter counts aligned bases. A chimeric unmapped
 record stays whole and is flagged as in flag mode.
+
+Paired records (flag 0x1) are not cut either (the caller,
+:mod:`fiberhmm.inference.chimeras`, keeps them whole and flagged): pieces
+get new names, so the mate record would still point at a record that no
+longer exists, and a single streaming pass cannot rewrite the mate. Their
+pairing flags and mate fields are left as they were.
 """
 from __future__ import annotations
 

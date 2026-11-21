@@ -418,7 +418,11 @@ written:
   flagged as in flag mode. Unnamed records are not split. Unmapped records
   (`--process-unmapped`, or streamed input) are not split either: they have
   no CIGAR or reference position to cut, so a chimeric unmapped record is
-  kept whole and flagged (counted as `n_records_unmapped_kept_whole`). A
+  kept whole and flagged (counted as `n_records_unmapped_kept_whole`).
+  Paired records (flag 0x1, for example short-read pairs) are also kept
+  whole and flagged, with their pairing flags and mate fields unchanged
+  (`n_records_paired_kept_whole`): renamed pieces would leave the mate
+  pointing at a record that no longer exists. A
   piece that still shows a swap after cutting is flagged.
 - Each piece is called with its own strand. Split mode runs before the
   insert-consensus pre-pass, so pieces carry their own insertion evidence.

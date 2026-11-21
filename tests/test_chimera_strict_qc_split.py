@@ -969,3 +969,44 @@ def test_make_piece_refuses_a_cut_whose_cigar_would_not_match_seq():
     assert make_piece(read, hdr, 0, 2251, 0, None) is None
     assert make_piece(read, hdr, 2100, 4300, 1, None) is None
     assert make_piece(read, hdr, 0, 2000, 0, None) is not None
+
+
+def test_split_keeps_paired_chimeras_whole_and_flagged(tmp_path):
+    """Policy: a paired (0x1) chimeric record is not cut. It is written whole
+    with its pairing flags and mate fields, and flagged by name like an
+    unmapped chimera; an unpaired chimera beside it is still split."""
+    ref = reference()
+    hdr = header()
+    paired = make_read(hdr, ref, 'pair', 2000, [(0, 4000)], swap_at(4000), seed=1, flag=99)
+    mate = make_read(hdr, ref, 'pair', 9000, [(0, 1500)], clean('CT'), seed=3, flag=147)
+    for read, other in ((paired, mate), (mate, paired)):
+        read.next_reference_id = 0
+        read.next_reference_start = other.reference_start
+    paired.template_length = 8500
+    mate.template_length = -8500
+    single = make_read(hdr, ref, 'single', 2000, [(0, 4000)], swap_at(4000), seed=2)
+    bam = write_bam(tmp_path / 'in.bam', [paired, mate, single])
+    spool = tmp_path / 'spool.bam'
+    names = ChimeraDecisions()
+    stats = strict_prepare(bam, mode='split', spool_bam=str(spool),
+                           chimeric_names=names, min_baseq=0)
+    split = stats['split']
+    assert split['n_records_paired_kept_whole'] == 1
+    assert split['n_records_unmapped_kept_whole'] == 0
+    assert split['n_records_split'] == 1
+    assert 'pair' in names and 'single' in names
+    out = records(spool)
+    assert not any(r.query_name.startswith('pair/') for r in out)
+    kept = sorted((r for r in out if r.query_name == 'pair'), key=lambda r: r.flag)
+    assert [r.flag for r in kept] == [99, 147]
+    assert kept[0].query_sequence == paired.query_sequence
+    assert (kept[0].next_reference_id, kept[0].next_reference_start,
+            kept[0].template_length) == (0, 9000, 8500)
+    assert {r.query_name for r in out if r.query_name.startswith('single/')} == {
+        'single/c0', 'single/c1'}
+    for piece in (r for r in out if r.has_tag('xn')):
+        assert not piece.flag & (0x1 | 0x2 | 0x8 | 0x20 | 0x40 | 0x80)
+    # Flag mode marks both records of the pair.
+    marked = tmp_path / 'flag.bam'
+    strict_prepare(bam, str(marked), mode='flag', min_baseq=0)
+    assert all(is_marked_chimera(r) for r in records(marked) if r.query_name == 'pair')
