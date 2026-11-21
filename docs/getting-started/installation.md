@@ -84,6 +84,11 @@ sudo apt install minimap2              # Debian / Ubuntu
 pip install mappy                      # the Python module instead
 ```
 
+minimap2 2.28 or newer is recommended. Version 2.27 (the Ubuntu 24.04
+package) ignores `--MD`; `fiberhmm-pipeline` works around it by computing MD
+from the reference, but BAMs you align yourself with 2.27 carry no MD tags
+(see [Troubleshooting](../troubleshooting.md#daf-seq-calling-needs-deamination-calls)).
+
 ```bash
 # UCSC bedToBigBed on Linux (on a Mac use the macOSX.x86_64 build)
 wget https://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64/bedToBigBed

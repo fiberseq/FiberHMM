@@ -40,6 +40,7 @@ from fiberhmm.pipeline import aligner as mm2
 from fiberhmm.pipeline import basecall as bc
 from fiberhmm.pipeline.headers import carry_input_headers
 from fiberhmm.pipeline.circular import hard_clip, merge_origin_pieces
+from fiberhmm.pipeline.md_fill import MD_FIXED_MINIMAP2, MissingMdFiller, minimap2_md_broken
 from fiberhmm.pipeline.progress import (
     STATE_DIR,
     ProgressReporter,
@@ -1399,6 +1400,11 @@ class Pipeline:
         message = (f"{'built' if built else 'cached'} {self.index_path} "
                    f"({self.aligner.describe()}, {time.time() - t0:.1f} s)")
         self.log(f"index: {message}")
+        if self.aligner.kind == "minimap2" and minimap2_md_broken(self.aligner.version):
+            self.log(f"minimap2 {self.aligner.version} ignores --MD (a bug fixed in "
+                     f"minimap2 {MD_FIXED_MINIMAP2}); the pipeline computes MD tags from "
+                     f"the reference instead. Install minimap2 {MD_FIXED_MINIMAP2} or "
+                     "newer for BAMs you align yourself.", "warning")
         self.progress.step("index", "done", message=message)
 
     # -- align -----------------------------------------------------------------
@@ -1606,6 +1612,9 @@ class Pipeline:
             self.progress.step("align", "running", done=stats["reads"], unit="reads",
                                rate=rate, eta_s=eta)
 
+        # Records the aligner wrote without MD (minimap2 2.27 ignores --MD) get
+        # it from the reference: calling, the SNP screen and QC all read MD.
+        md_filler = MissingMdFiller(ref.fasta, sequences)
         ticker = mm2.progress_ticker(2.0, report)
         try:
             with pysam.AlignmentFile(unsorted, "wb", header=header,
@@ -1618,16 +1627,24 @@ class Pipeline:
                     name, read_group = feeder.restore(group[0].query_name)
                     for record in self._process_group(group, circular, sequences,
                                                       stats, name):
+                        md_filler(record)
                         record.set_tag("RG", read_group or self.sample, "Z")
                         out.write(record)
         except BaseException:
             ticker.set()
+            md_filler.close()
             if isinstance(stream, mm2.Minimap2Stream):
                 terminate_children()
             with contextlib.suppress(Exception):
                 stream.close()
             raise
         ticker.set()
+        md_filler.close()
+        if md_filler.filled:
+            stats["md_filled"] = md_filler.filled
+            self.log(f"align: {md_filler.filled} aligned records came back from "
+                     f"{self.aligner.describe() if self.aligner else 'the aligner'} "
+                     "without an MD tag; MD was computed from the reference", "warning")
         try:
             stream.close()
         except RuntimeError as exc:

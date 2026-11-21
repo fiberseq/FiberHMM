@@ -627,12 +627,14 @@ def _check_md_tag(inbam, ref_fasta, _log):
                 file=_log,
             )
         else:
+            from fiberhmm.pipeline.md_fill import minimap2_md_bug_note
             print(
                 "ERROR: MD tag not found in first reads and no --reference provided.\n"
                 "  Either:\n"
                 "    1. Re-align with 'minimap2 --MD ...' to include MD tags, or\n"
                 "    2. Run 'samtools calmd -b in.bam ref.fa > out.bam' to add MD tags, or\n"
-                "    3. Use '--reference ref.fa' to supply the reference FASTA.\n",
+                "    3. Use '--reference ref.fa' to supply the reference FASTA.\n"
+                + minimap2_md_bug_note(inbam.header),
                 file=_log,
             )
             _log.flush()

@@ -111,6 +111,13 @@ error: DAF-seq calling needs deamination calls, and none of the supported
 
 Align with `minimap2 --MD`, run `samtools calmd`, or pass `--reference`.
 
+minimap2 2.27 ignores `--MD`: it writes a `cs` tag and no `MD` tag (a bug
+fixed in 2.28; 2.27 is the version Ubuntu 24.04's `apt install minimap2`
+gives). When the BAM header shows minimap2 2.27, the error says so. Install
+minimap2 2.28 or newer for BAMs you align yourself (2.26 and earlier are not
+affected), or pass `--reference`. `fiberhmm-pipeline` is not affected: it
+computes MD from the reference for any record the aligner left without one.
+
 ### `--region-parallel needs a coordinate-sorted, indexed BAM`
 
 Index the BAM (`samtools index`), or drop `--region-parallel` to stream.

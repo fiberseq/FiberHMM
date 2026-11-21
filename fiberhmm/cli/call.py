@@ -589,8 +589,12 @@ def _check_daf_inputs(input_bam: str, reference: str = None,
     md_bad = 0
     md_total = 0
     checked = 0
+    md_missing = 0
+    bug_note = ""
     try:
         with pysam.AlignmentFile(input_bam, 'rb', check_sq=False) as bam:
+            from fiberhmm.pipeline.md_fill import minimap2_md_bug_note
+            bug_note = minimap2_md_bug_note(bam.header)
             for read in bam:
                 if read.is_unmapped or read.is_secondary or read.is_supplementary:
                     continue
@@ -602,6 +606,8 @@ def _check_daf_inputs(input_bam: str, reference: str = None,
                     md_total += 1
                     if not md_matches_cigar(read):
                         md_bad += 1
+                else:
+                    md_missing += 1
                 checked += 1
                 if checked >= n_sniff:
                     break
@@ -610,6 +616,11 @@ def _check_daf_inputs(input_bam: str, reference: str = None,
         return
 
     if has_ry or has_md or has_ref:
+        if bug_note and md_missing and not has_ry and not has_ref:
+            # Some reads carry MD (e.g. ones a pipeline rebuilt), the rest do not.
+            print(f"  NOTE: {md_missing}/{checked} of the sniffed reads have no MD tag;\n"
+                  "  those reads will be skipped in DAF mode.\n" + bug_note,
+                  file=sys.stderr)
         # Warn about stale MD only when we'll actually be relying on it
         # (no R/Y fast path available for these reads) AND some were bad.
         if md_bad and not has_ry and not has_ref:
@@ -636,7 +647,8 @@ def _check_daf_inputs(input_bam: str, reference: str = None,
         "    - a reference FASTA via --reference ref.fa\n"
         "\n"
         "  One of these is required for fiberhmm-call to locate C->T / G->A\n"
-        "  deamination sites. Without it every read would be silently skipped.\n",
+        "  deamination sites. Without it every read would be silently skipped.\n"
+        + (("\n" + bug_note) if bug_note else ""),
         file=sys.stderr,
     )
     sys.exit(2)
