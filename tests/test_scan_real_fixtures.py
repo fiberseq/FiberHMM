@@ -85,10 +85,32 @@ def test_nuc_molecule_spacing_on_the_regular_read(nuc_scan):
 @pytest.mark.parametrize('module', ['fp', 'nfr'])
 @pytest.mark.parametrize('bam', [FH300, FH321_FT13, FT13_ONLY], ids=['fiberhmm3.0.0', 'fiberhmm3.2.1+ft0.13', 'ft0.13-only'])
 def test_fp_and_nfr_read_every_real_layout(module, bam, tmp_path):
+    """Smoke: the module completes on each real layout and writes a unit row per read (two reads are too few for
+    classes or hits; the NFR values are compared across tools below)."""
     proc = _scan(bam, tmp_path / 'scan', module)
     assert proc.returncode == 0, proc.stderr[-3000:]
     summary = json.loads(proc.stdout.strip().splitlines()[-1])
     assert summary['status'] == 'complete' and summary['done'] == 1 and not summary['failed']
+    assert summary['tables'][f'{module}/units.tsv.bgz'] == 2
+
+
+def test_nfr_values_agree_between_fiberhmm_and_fibertools_calls_of_the_same_fibers(tmp_path):
+    """The FiberHMM 3.0.0 call and the fibertools 0.13 add-nucleosomes call of the same simulated fibers
+    (tests/fixtures/fibertools_frame/expected.json) give the same per-molecule NFR summary: openness, NFR count and
+    longest linker, on the forward and the reverse read."""
+    rows = {}
+    for name, bam in (('fiberhmm', FH300), ('fibertools', FT13_ONLY)):
+        out = tmp_path / name
+        proc = _scan(bam, out, 'nfr')
+        assert proc.returncode == 0, proc.stderr[-3000:]
+        rows[name] = {r['qname']: r for r in _table(out / 'nfr' / 'molecules.tsv.bgz')}
+    assert set(rows['fiberhmm']) == set(rows['fibertools']) == {'read_fwd', 'read_rev'}
+    for q in ('read_fwd', 'read_rev'):
+        a, b = rows['fiberhmm'][q], rows['fibertools'][q]
+        assert 0.3 < float(a['openness']) < 0.6, a['openness']
+        assert abs(float(a['openness']) - float(b['openness'])) < 0.02, (q, a['openness'], b['openness'])
+        assert abs(float(a['n_nfr']) - float(b['n_nfr'])) <= 1, (q, a['n_nfr'], b['n_nfr'])
+        assert abs(float(a['longest_linker']) - float(b['longest_linker'])) <= 10, (q, a['longest_linker'], b['longest_linker'])
 
 
 @pytest.mark.xfail(strict=True, reason=(
