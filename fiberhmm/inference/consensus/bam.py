@@ -484,7 +484,9 @@ def _load_payload_once(state,request,options,progress):
                     upstream_nuc_tf_recall=any('upstream_nuc_tf_recall' in u for u in units),
                     upstream_nuc_tf_settings=next((u['upstream_nuc_tf_recall']['settings'] for u in units if 'upstream_nuc_tf_recall' in u),None),
                     # DddA only, so DddB/Hia5 manifests (and their digests) are unchanged.
-                    **(dict(cpg_mask_policy=cpg_policy if use_m5c else 'off') if chemistry=='ddda' else {}),
+                    **(dict(cpg_mask_policy=cpg_policy if use_m5c else 'off',
+                            ddda_ucg_molecules=sum(bool(u['provenance'].get('ddda_ucg_islands')) for u in units))
+                       if chemistry=='ddda' else {}),
                     m5c_conditioned_opportunities=sum(u['provenance'].get('native_m5c_excluded_opportunities',0) for u in units)),
                 evidence_units=dict(**collapse,physical_duplex_independence_established=bool(units) and all(u.get('physical_source_names') for u in units),joint_duplex_units=sum(bool(u.get('physical_source_names')) for u in units)),load=diagnostics))
     return dict(region=dict(chrom=chrom,start=start,end=end),strata=strata)

@@ -183,3 +183,22 @@ def test_consensus_cli_refuses_pre_fix_ddda_evidence(tmp_path):
     write_json(path, payload)
     with pytest.raises(ValueError, match='CpG policy'):
         main(['--evidence', str(path), '--output', str(tmp_path / 'out'), '--no-bam'])
+
+
+@pytest.mark.parametrize('annotation,islands', [('none', 0), ('mcg_only', 0), ('ucg_island', 1)])
+def test_lattice_records_tag_m5c_islands(annotation, islands):
+    model, context, mode = ddda_model()
+    read = make_read(MA_TAGS[annotation])
+    _, unit = lattice_unit(read, context, mode)
+    adapter.condition_unit_on_m5c(read, unit)
+    assert unit['provenance']['ddda_ucg_islands'] == islands
+
+
+def test_run_warns_when_no_molecule_has_unmethylated_islands():
+    from fiberhmm.inference.consensus.lattice_recaller.workflow import cpg_policy_warnings
+    untagged = saved(cpg_mask_policy='unmethylated-only', m5c_conditioned_opportunities=1234, ddda_ucg_molecules=0)
+    warning, = cpg_policy_warnings(untagged)
+    assert 'fiberhmm-tag-m5c' in warning and '1,234' in warning
+    assert not cpg_policy_warnings(saved(cpg_mask_policy='unmethylated-only', m5c_conditioned_opportunities=1234,
+                                         ddda_ucg_molecules=7))
+    assert not cpg_policy_warnings(saved(cpg_mask_policy='off', m5c_conditioned_opportunities=0))

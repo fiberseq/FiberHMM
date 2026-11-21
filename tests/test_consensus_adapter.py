@@ -46,7 +46,7 @@ def test_m5c_conditioning_matches_native_tables_only_at_tagged_cpgs(monkeypatch)
     monkeypatch.setattr(adapter,'m5c_query_mask',lambda *_:np.array([True,True,False,False,False,True]))
     u=dict(positions=list(range(100,106)),hits=[0,1,0,1,0,1],contexts=[48,0,48,0,48,48],p_accessible=[.9]*6,
         p_protected=[.1]*6,provenance={})
-    adapter.condition_unit_on_m5c(object(),u)
+    adapter.condition_unit_on_m5c(SimpleNamespace(has_tag=lambda _:False),u)  # no MA: no tag-m5c islands
     assert u['positions']==[101,102,103,104]
     assert u['hits']==[1,0,1,0]
     assert u['contexts']==[0,48,0,48]

@@ -82,8 +82,11 @@ def condition_unit_on_m5c(read, unit, policy=CPG_MASK_POLICIES[0]):
     (the shipped DddA models carry no calibrated methylated-CpG emissions), so
     the lattice EM scores must not see it either."""
     from ..strand_rescue import cigar_to_query_ref
+    from ..tf_recaller import read_cpg_intervals
     refs=np.asarray(cigar_to_query_ref(read))
     mask=m5c_query_mask(read,len(refs),policy)
+    # Whether fiberhmm-tag-m5c gave this molecule unmethylated islands, whose CpGs stay scored.
+    unit['provenance']['ddda_ucg_islands']=len(read_cpg_intervals(read)['ucg'])
     cpg=((np.asarray(unit['contexts'])%64)//16)==3
     observed_mask=np.isin(unit['positions'],refs[mask & (refs>=0)]) & cpg
     if observed_mask.any():

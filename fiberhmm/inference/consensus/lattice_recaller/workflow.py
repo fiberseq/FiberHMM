@@ -26,6 +26,25 @@ from . import discovery as D, model as Mo, units as Un
 MODE = 'lattice_recaller'
 
 
+def cpg_policy_warnings(payload):
+    """Say when DddA CpGs were all neutral because no molecule carries tag-m5c islands.
+
+    Production recall (and so consensus) excludes every DddA CpG except inside
+    the ``ddda_ucg`` islands fiberhmm-tag-m5c writes. Without them, CpG-island
+    loci lose their CpG evidence; the result is correct for that input but the
+    user should know the remedy."""
+    out = []
+    for source in payload.get('strata') or ():
+        manifest = source.get('model_manifest') or {}
+        if (source.get('chemistry') == 'ddda' and manifest.get('cpg_mask_policy') == 'unmethylated-only'
+                and manifest.get('m5c_conditioned_opportunities') and not manifest.get('ddda_ucg_molecules')):
+            out.append(f"{source.get('dataset_id')}: no DddA molecule carries fiberhmm-tag-m5c unmethylated-island (ddda_ucg) "
+                       f"calls, so all {manifest['m5c_conditioned_opportunities']:,} CpG observations were neutral, as in "
+                       'fiberhmm-call. At CpG islands (e.g. active promoters) run fiberhmm-tag-m5c on the BAM first to keep '
+                       'the CpG evidence of unmethylated islands.')
+    return out
+
+
 def _run_all(fn, tasks, cores, done=None):
     """fn(*task) for every task, in task order; across processes when cores > 1 (results are deterministic, so the
     output does not depend on the worker count).
@@ -533,6 +552,7 @@ def run_lattice_recaller(payload, options, output_dir=None, progress=None, froze
     realized_mode = 'CR' if populated else 'no_evidence'
     if any(s['chemistry'] in ('ddda', 'dddb') and not s.get('evidence_units', {}).get('physical_duplex_independence_established') for s in sources):
         warnings.append('Physical duplex independence is not established by this workflow; strand evidence must not be counted as proven independent duplex molecules.')
+    warnings += cpg_policy_warnings(payload)
     status = {g['id']: 'supported' if any(r['class_id'] == g['id'] and r['supported'] for r in rows) else
               'unsupported' if any(r['class_id'] == g['id'] for r in rows) else 'unscored' for g in classes}
     receipt = dict(schema=SCHEMA, status='complete', cr_mode=MODE, region=region, parameters=options_dict(options), input_digest=before,
