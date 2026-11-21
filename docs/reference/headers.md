@@ -41,9 +41,17 @@ FiberHMM fused apply+recall; coord=molecular (ns/nl/as/al/MA in molecular origin
 `primary_only=on` only with `--alignments primary`. DAF runs record
 `daf_unaligned_mask=on|off` and
 `daf_insert_consensus=off|on/<used>of<clusters>/min<N>` (`n/a` outside DAF).
-`chimeras=flag|remove|keep` records the selected mode once. The legacy
+`chimeras=flag|remove|keep|split` records the selected mode once (`split`
+only with the strict detector). The legacy
 `chimera_filter` key stays `on` for flag/remove and `off` for keep. These
-settings only enable detection in DAF mode.
+settings only enable detection in DAF mode. A call made with the opt-in
+strict detector (`--chimera-detector strict`, 3.3.0) adds, after
+`chimera_purity`: `chimera_detector=strict`, `chimera_min_baseq`,
+`chimera_min_span`, `chimera_multi_switch=on|off`,
+`chimera_error_mask=on/<N>sites|off|unavailable|n/a` (`unavailable`:
+requested, but no SNP screen ran) and `chimera_duplicates_excluded=<N>`
+(duplicate-flagged reads not counted). A DS without `chimera_detector` is
+the standard detector, as in earlier releases.
 
 The recallers record the recall subset. Recall reads the input's `@PG` to
 warn when a SNP mask or reference used at calling time cannot be re-applied.

@@ -66,6 +66,10 @@ from fiberhmm.daf.snps import (
     DEFAULT_SNP_MIN_FRACTION,
     describe_snp_threshold_policy,
 )
+from fiberhmm.inference.chimeras import (
+    STANDARD_MIN_SEG, STANDARD_PURITY, STRICT_MIN_BASEQ, STRICT_MIN_SEG,
+    STRICT_MIN_SPAN, STRICT_PURITY,
+)
 from fiberhmm.inference.parallel import (
     _process_bam_region_parallel_fused,
     _process_bam_streaming_pipeline_fused,
@@ -226,20 +230,66 @@ def parse_args():
                    help=argparse.SUPPRESS)  # retired experimental mode (3.0); kept only to reproduce earlier calls
 
     # --- DAF chimera filter (mode=daf only) ---
-    p.add_argument('--chimeras', choices=['flag', 'remove', 'keep'], default='flag',
+    p.add_argument('--chimeras', choices=['flag', 'remove', 'keep', 'split'], default='flag',
                    help='DAF strand-swap chimeras: flag (default) retains reads '
                         'uncalled with SAM 0x200 and xc:Z:strand_swap; remove drops '
                         'all records of the read; keep disables detection and '
-                        'clears earlier FiberHMM chimera marks and attempts calls. '
+                        'clears earlier FiberHMM chimera marks and attempts calls; '
+                        'split (needs --chimera-detector strict) cuts each chimeric '
+                        'alignment at its breakpoint gaps into single-strand pieces, '
+                        'one per segment (<name>/c0, <name>/c1, ... from left to '
+                        'right; a read with several switches gives more than two; '
+                        'the gaps are dropped, pieces shorter than --min-read-length '
+                        'are dropped, MM/ML are re-indexed to each piece; unmapped '
+                        'records stay whole and flagged) that are called separately. '
                         'No strand-swap detection for m6A modes.')
     p.add_argument('--keep-chimeras', action='store_true',
                    help='Deprecated alias for --chimeras keep (DAF only).')
-    p.add_argument('--chimera-min-seg', type=int, default=5,
+    p.add_argument('--chimera-detector', choices=['standard', 'strict'],
+                   default='standard',
+                   help='DAF strand-swap chimera detector. standard (default): one '
+                        'CT/GA switch with --chimera-min-seg events per segment at '
+                        '--chimera-purity, every deamination counted (unchanged '
+                        'from 3.2.1). strict (opt-in): min_seg 10 and purity 0.9 '
+                        'by default, plus --chimera-min-baseq, --chimera-min-span, '
+                        '--chimera-multi-switch and --chimera-error-mask, '
+                        'duplicate-flagged reads not counted, a graded chimera row '
+                        'in QC, and --chimeras split.')
+    p.add_argument('--chimera-min-seg', type=int, default=STANDARD_MIN_SEG,
+                   action=_GivenOption,
                    help='DAF chimera: min same-strand deamination events per '
-                        'segment to call a swap (default 5).')
-    p.add_argument('--chimera-purity', type=float, default=0.8,
+                        f'segment to call a swap (default {STANDARD_MIN_SEG}; '
+                        f'{STRICT_MIN_SEG} with --chimera-detector strict).')
+    p.add_argument('--chimera-purity', type=float, default=STANDARD_PURITY,
+                   action=_GivenOption,
                    help='DAF chimera: min same-strand purity per segment '
-                        '(default 0.8).')
+                        f'(default {STANDARD_PURITY:g}; {STRICT_PURITY:g} with '
+                        '--chimera-detector strict).')
+    p.add_argument('--chimera-min-baseq', type=int, default=None,
+                   help='Strict DAF chimera detector only: deamination events count '
+                        'for the chimera test only with base quality >= this '
+                        f'(default {STRICT_MIN_BASEQ}; no effect on records without '
+                        'QUAL; 0 disables). Also anchors split-mode breakpoints. '
+                        'Calling is unaffected.')
+    p.add_argument('--chimera-min-span', type=int, default=None,
+                   help='Strict DAF chimera detector only: min span in query bp from '
+                        'the first to the last same-strand event of each segment '
+                        f'(default {STRICT_MIN_SPAN}; 0 disables).')
+    p.add_argument('--chimera-multi-switch', action=argparse.BooleanOptionalAction,
+                   default=None,
+                   help='Strict DAF chimera detector only: also detect reads with '
+                        'several switches (for example CT -> GA -> CT, an '
+                        'opposite-strand island), each segment passing the same '
+                        'rule; split mode cuts them into all their pieces '
+                        '(default on).')
+    p.add_argument('--chimera-error-mask', action=argparse.BooleanOptionalAction,
+                   default=None,
+                   help='Strict DAF chimera detector only: build a chimera-only mask '
+                        'of recurrent opposite-strand error sites during the DAF SNP '
+                        'screen and drop events there from the chimera test (default '
+                        'on; written to qc/<stem>.daf_snps.chimera_error_mask.bed/.json, '
+                        'never applied to calling). Needs the SNP screen: without it '
+                        'there is no error mask.')
     p.add_argument('--daf-mask-runs', type=int, default=None, metavar='N',
                    help='DAF only: thin targets lying in same-strand runs of >= N original C (CT) or G (GA) bases (CC/GG and longer at N=2; see --daf-run-policy). Adjacent conversions are coupled and do not follow the per-site emission model. Default: 2 with keep-one for --enzyme ddda (duplex-validated), off otherwise; 0 disables.')
     p.add_argument('--daf-run-policy', choices=['keep-one', 'drop'], default='keep-one',
@@ -427,9 +477,59 @@ def parse_args():
         if args.chimeras != 'flag' and args.chimeras != 'keep':
             p.error('--keep-chimeras conflicts with --chimeras remove')
         args.chimeras = 'keep'
+    _resolve_chimera_detector_args(p, args)
     if args.chimera_min_seg < 1 or not 0.5 < args.chimera_purity <= 1:
         p.error('--chimera-min-seg must be >= 1 and --chimera-purity in (0.5, 1]')
     return args
+
+
+class _GivenOption(argparse.Action):
+    """Store the value and remember that it was given, so the strict
+    detector can apply its own default when it was not."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        setattr(namespace, self.dest, values)
+        setattr(namespace, f'_given_{self.dest}', True)
+
+
+_STRICT_ONLY_CHIMERA_OPTIONS = (
+    ('chimera_min_baseq', '--chimera-min-baseq'),
+    ('chimera_min_span', '--chimera-min-span'),
+    ('chimera_multi_switch', '--[no-]chimera-multi-switch'),
+    ('chimera_error_mask', '--[no-]chimera-error-mask'),
+)
+
+
+def _resolve_chimera_detector_args(parser, args):
+    """Fill the chimera detector defaults of ``--chimera-detector``.
+
+    standard: min_seg/purity default 5/0.8; the strict-only options and
+    ``--chimeras split`` are refused. strict: the ``STRICT_*`` defaults.
+    """
+    from fiberhmm.inference.chimeras import (
+        STRICT_ERROR_MASK, STRICT_MULTI_SWITCH,
+    )
+    if args.chimera_detector == 'strict':
+        if not getattr(args, '_given_chimera_min_seg', False):
+            args.chimera_min_seg = STRICT_MIN_SEG
+        if not getattr(args, '_given_chimera_purity', False):
+            args.chimera_purity = STRICT_PURITY
+        defaults = dict(chimera_min_baseq=STRICT_MIN_BASEQ,
+                        chimera_min_span=STRICT_MIN_SPAN,
+                        chimera_multi_switch=STRICT_MULTI_SWITCH,
+                        chimera_error_mask=STRICT_ERROR_MASK)
+        for key, value in defaults.items():
+            if getattr(args, key) is None:
+                setattr(args, key, value)
+        if args.chimera_min_baseq < 0 or args.chimera_min_span < 0:
+            parser.error('--chimera-min-baseq and --chimera-min-span must be >= 0')
+        return
+    given = [flag for key, flag in _STRICT_ONLY_CHIMERA_OPTIONS
+             if getattr(args, key) is not None]
+    if given:
+        parser.error(f"{', '.join(given)} need --chimera-detector strict")
+    if args.chimeras == 'split':
+        parser.error('--chimeras split needs --chimera-detector strict')
 
 
 def _resolve_apply_model(args):
@@ -909,6 +1009,127 @@ def _validate_model_context(model_paths, k):
             sys.exit(2)
 
 
+def _strict_worker_kwargs(args, error_mask_info):
+    """Strict-detector worker settings ({} for the standard detector)."""
+    if args.chimera_detector != 'strict':
+        return {}
+    return dict(chimera_detector='strict',
+                chimera_min_baseq=args.chimera_min_baseq,
+                chimera_min_span=args.chimera_min_span,
+                chimera_multi_switch=args.chimera_multi_switch,
+                chimera_error_mask_path=(error_mask_info or {}).get('bed'))
+
+
+def _chimera_detector_args(args):
+    """The run's strict chimera detector settings (``detector_config`` keywords)."""
+    return dict(min_seg=args.chimera_min_seg, purity=args.chimera_purity,
+                min_baseq=args.chimera_min_baseq, min_span=args.chimera_min_span,
+                multi_switch=args.chimera_multi_switch)
+
+
+def _chimera_pass(args, mode, working_input, snp_mask_path, process_unmapped,
+                  stdout_mode, error_mask_info=None):
+    """DAF chimera decisions (and split pieces): (input, names, stats, tmpdir).
+
+    Only DAF flag/remove/split need a QNAME decision pass. In particular m6A
+    and keep retain the original working path without copying/scanning.
+    Keep still supplies an authoritative empty decision to consumers, which
+    clear old marks as they read each record. ``error_mask_info`` is the
+    chimera error-mask block (:func:`fiberhmm.inference.chimeras.error_mask_summary`);
+    its ``bed`` is applied to the chimera test.
+    """
+    chimera_tmpdir = None
+    if mode == 'daf' and args.chimera_detector != 'strict':
+        return _standard_chimera_pass(args, mode, working_input, snp_mask_path,
+                                      process_unmapped, stdout_mode)
+    if mode == 'daf' and args.chimeras != 'keep':
+        from fiberhmm.inference.chimeras import (
+            ChimeraDecisions, chimera_summary_lines, chimera_warning,
+            prepare_chimeras, seekable_input,
+        )
+        spool = None
+        # Split mode always writes the pieces to a private spool.
+        if args.chimeras == 'split' or not seekable_input(working_input):
+            import tempfile
+            from pathlib import Path
+            chimera_tmpdir = tempfile.TemporaryDirectory(
+                prefix='.fiberhmm_chimeras_',
+                dir=None if stdout_mode else str(Path(args.output).parent))
+            spool = str(Path(chimera_tmpdir.name) / 'source.bam')
+        chimeric_names = ChimeraDecisions()
+        chimera_stats = prepare_chimeras(
+            working_input, mode=args.chimeras, detector='strict',
+            **_chimera_detector_args(args),
+            error_mask=(error_mask_info or {}).get('bed'),
+            error_mask_info=error_mask_info,
+            prob_threshold=args.prob_threshold, reference=args.reference,
+            snp_mask=snp_mask_path, min_mapq=args.min_mapq,
+            min_read_length=args.min_read_length, process_unmapped=process_unmapped,
+            io_threads=args.io_threads, chimeric_names=chimeric_names,
+            spool_bam=spool, alignments=args.alignments)
+        if spool is not None:
+            working_input = spool
+        print(f"  DAF strand-swap chimeras: {chimera_stats['n_chimeric']:,} / "
+              f"{chimera_stats['n_reads_checked']:,} checked reads "
+              f"(mode={args.chimeras}; detector min_seg={args.chimera_min_seg}, "
+              f"purity={args.chimera_purity}; "
+              f"{chimera_stats['n_records_affected']:,} records)", file=sys.stderr)
+        for line in chimera_summary_lines(chimera_stats, indent='    ')[1:]:
+            print(line, file=sys.stderr)
+        warning = chimera_warning(chimera_stats)
+        if warning:
+            print(f"\n  {warning}\n", file=sys.stderr)
+        return working_input, chimeric_names, chimera_stats, chimera_tmpdir
+    if mode == 'daf':
+        from fiberhmm.inference.chimeras import empty_strict_chimera_stats
+        return working_input, set(), empty_strict_chimera_stats(
+            'keep', **_chimera_detector_args(args)), None
+    return working_input, None, None, None
+
+
+def _standard_chimera_pass(args, mode, working_input, snp_mask_path,
+                           process_unmapped, stdout_mode):
+    """The standard detector's decision pass (as in 3.2.1)."""
+    chimera_tmpdir = None
+    chimeric_names = None
+    chimera_stats = None
+    # Only DAF flag/remove need a QNAME decision pass. In particular m6A
+    # and keep retain the original working path without copying/scanning.
+    # Keep still supplies an authoritative empty decision to consumers,
+    # which clear old marks as they read each record.
+    if mode == 'daf' and args.chimeras != 'keep':
+        from fiberhmm.inference.chimeras import ChimeraDecisions, prepare_chimeras, seekable_input
+        spool = None
+        if not seekable_input(working_input):
+            import tempfile
+            from pathlib import Path
+            chimera_tmpdir = tempfile.TemporaryDirectory(
+                prefix='.fiberhmm_chimeras_',
+                dir=None if stdout_mode else str(Path(args.output).parent))
+            spool = str(Path(chimera_tmpdir.name) / 'source.bam')
+        chimeric_names = ChimeraDecisions()
+        chimera_stats = prepare_chimeras(
+            working_input, mode=args.chimeras,
+            min_seg=args.chimera_min_seg, purity=args.chimera_purity,
+            prob_threshold=args.prob_threshold, reference=args.reference,
+            snp_mask=snp_mask_path, min_mapq=args.min_mapq,
+            min_read_length=args.min_read_length, process_unmapped=process_unmapped,
+            io_threads=args.io_threads, chimeric_names=chimeric_names,
+            spool_bam=spool, alignments=args.alignments)
+        if spool is not None:
+            working_input = spool
+        print(f"  DAF strand-swap chimeras: {chimera_stats['n_chimeric']:,} / "
+              f"{chimera_stats['n_reads_checked']:,} checked reads "
+              f"(mode={args.chimeras}; "
+              f"{chimera_stats['n_records_affected']:,} records)", file=sys.stderr)
+    elif mode == 'daf':
+        from fiberhmm.inference.chimeras import empty_chimera_stats
+        chimeric_names = set()
+        chimera_stats = empty_chimera_stats('keep', args.chimera_min_seg,
+                                           args.chimera_purity)
+    return working_input, chimeric_names, chimera_stats, chimera_tmpdir
+
+
 def main():
     args = parse_args()
     from fiberhmm.inference.read_filters import MostlyUnmappedError
@@ -972,8 +1193,11 @@ def _refuse_call_path_aliases(args, apply_model_path=None, recall_model_path=Non
         if args.daf_call_snps or (args.daf_call_snps is None and args.daf_snp_mask is None
                                   and args.enzyme in ('ddda', 'dddb')):
             snp_prefix = args.daf_snp_output_prefix or f"{stem}.daf_snps"
+            suffixes = ('.bed', '.vcf', '.json', '.amplicons.tsv')
+            if args.chimera_detector == 'strict':
+                suffixes += ('.chimera_error_mask.bed', '.chimera_error_mask.json')
             outputs += [('--daf-snp-output-prefix', snp_prefix + suffix)
-                        for suffix in ('.bed', '.vcf', '.json', '.amplicons.tsv')]
+                        for suffix in suffixes]
         if args.qc:
             qc_prefix = args.qc_output_prefix or str(stem)
             outputs += [('--qc-output-prefix', qc_prefix + suffix)
@@ -1251,6 +1475,7 @@ def _main(args):
     chimera_stats = None
     chimeric_names = None
     chimera_filter_config = None
+    error_mask_info = None
     if mode == 'daf':
         from fiberhmm.inference import engine as _engine
         chimera_filter_config = dict(_engine._DAF_CHIMERA_CFG)
@@ -1281,6 +1506,14 @@ def _main(args):
         # the SNP caller ignores 0x400 records while FiberHMM still annotates them.
         run_snp_discovery = args.daf_call_snps is True
         snp_preflight = None
+        # Why this run has no chimera error mask (it needs the SNP screen).
+        error_mask_reason = None
+        if args.daf_snp_mask is not None:
+            error_mask_reason = 'no DAF SNP screen (user-supplied --daf-snp-mask)'
+        elif args.daf_call_snps is False:
+            error_mask_reason = 'no DAF SNP screen (--no-daf-call-snps)'
+        elif args.daf_call_snps is None and args.enzyme not in ('ddda', 'dddb'):
+            error_mask_reason = 'no automatic DAF SNP screen for this enzyme'
         auto_snp = (
             args.daf_call_snps is None
             and snp_mask_path is None
@@ -1294,6 +1527,8 @@ def _main(args):
                 min_local_depth=2 * args.daf_snp_min_depth,
             )
             run_snp_discovery = bool(snp_preflight['run'])
+            if not run_snp_discovery:
+                error_mask_reason = 'DAF SNP screen skipped (low-depth preflight)'
             if run_snp_discovery:
                 print(
                     "  automatic DAF SNP screen enabled: bounded preflight found "
@@ -1320,6 +1555,7 @@ def _main(args):
                     file=sys.stderr,
                 )
         elif auto_snp:
+            error_mask_reason = 'DAF SNP screen skipped (stdin/stdout)'
             print(
                 "  automatic DAF SNP screen skipped for stdin/stdout; use saved BAMs "
                 "or force --daf-call-snps with file input/output",
@@ -1331,8 +1567,14 @@ def _main(args):
 
             from fiberhmm.daf.snps import (
                 call_opposite_conversion_snps,
+                chimera_error_mask_paths,
                 write_snp_outputs,
             )
+            from fiberhmm.inference.chimeras import detector_config, error_mask_summary
+
+            strict_chimeras = args.chimera_detector == 'strict'
+            build_error_mask = bool(strict_chimeras and args.chimera_error_mask
+                                    and args.chimeras != 'keep')
 
             output_path = Path(args.output)
             snp_prefix = args.daf_snp_output_prefix or str(
@@ -1362,6 +1604,10 @@ def _main(args):
                 reference_fasta=args.reference,
                 min_amplicon_reads=args.daf_snp_min_amplicon_reads,
                 all_snvs=getattr(args, 'daf_snp_all_snvs', False),
+                # The chimera error mask is a strict-detector option only.
+                **(dict(chimera_error_mask=build_error_mask,
+                        chimera_detector=detector_config(**_chimera_detector_args(args)))
+                   if strict_chimeras else {}),
             )
             if dedup_tmp is not None:
                 snp_payload["input"] = str(Path(args.input).resolve())
@@ -1381,10 +1627,39 @@ def _main(args):
                 f"  DAF SNP mask: {snp_mask_sites:,} sites -> {snp_mask_path}",
                 file=sys.stderr,
             )
+            if build_error_mask:
+                error_mask_info = error_mask_summary(
+                    True, snp_payload['outputs']['chimera_error_mask_bed'],
+                    snp_payload['chimera_error_mask']['n_sites'])
+                print(
+                    f"  DAF chimera error mask (chimera test only): "
+                    f"{error_mask_info['n_sites']:,} sites -> {error_mask_info['bed']}",
+                    file=sys.stderr,
+                )
+            elif strict_chimeras:
+                # A mask from an earlier run at this prefix must not be
+                # mistaken for this run's.
+                for stale in chimera_error_mask_paths(snp_prefix):
+                    stale.unlink(missing_ok=True)
         elif snp_mask_path:
             from fiberhmm.daf.snps import mask_summary
 
             snp_mask_sites = mask_summary(snp_mask_path)['n_sites']
+
+        if (mode == 'daf' and args.chimera_detector == 'strict'
+                and error_mask_info is None):
+            from fiberhmm.inference.chimeras import error_mask_summary
+            error_mask_info = error_mask_summary(
+                bool(args.chimera_error_mask), None, 0, error_mask_reason)
+
+        # Split mode cuts chimeras before the insert-consensus pre-pass, so
+        # the pieces (new records) carry their own insertion evidence.
+        chimeras_prepared = False
+        if mode == 'daf' and args.chimeras == 'split':
+            working_input, chimeric_names, chimera_stats, chimera_tmpdir = \
+                _chimera_pass(args, mode, working_input, snp_mask_path,
+                              process_unmapped, stdout_mode, error_mask_info)
+            chimeras_prepared = True
 
         # DAF insert consensus pre-pass: evidence inside insertions carried by
         # enough reads (fiberhmm.daf.insert_consensus).
@@ -1429,40 +1704,10 @@ def _main(args):
         from fiberhmm.inference.engine import configure_daf_insert_evidence
         configure_daf_insert_evidence(insert_evidence_path)
 
-        # Only DAF flag/remove need a QNAME decision pass. In particular m6A
-        # and keep retain the original working path without copying/scanning.
-        # Keep still supplies an authoritative empty decision to consumers,
-        # which clear old marks as they read each record.
-        if mode == 'daf' and args.chimeras != 'keep':
-            from fiberhmm.inference.chimeras import ChimeraDecisions, prepare_chimeras, seekable_input
-            spool = None
-            if not seekable_input(working_input):
-                import tempfile
-                from pathlib import Path
-                chimera_tmpdir = tempfile.TemporaryDirectory(
-                    prefix='.fiberhmm_chimeras_',
-                    dir=None if stdout_mode else str(Path(args.output).parent))
-                spool = str(Path(chimera_tmpdir.name) / 'source.bam')
-            chimeric_names = ChimeraDecisions()
-            chimera_stats = prepare_chimeras(
-                working_input, mode=args.chimeras,
-                min_seg=args.chimera_min_seg, purity=args.chimera_purity,
-                prob_threshold=args.prob_threshold, reference=args.reference,
-                snp_mask=snp_mask_path, min_mapq=args.min_mapq,
-                min_read_length=args.min_read_length, process_unmapped=process_unmapped,
-                io_threads=args.io_threads, chimeric_names=chimeric_names,
-                spool_bam=spool, alignments=args.alignments)
-            if spool is not None:
-                working_input = spool
-            print(f"  DAF strand-swap chimeras: {chimera_stats['n_chimeric']:,} / "
-                  f"{chimera_stats['n_reads_checked']:,} checked reads "
-                  f"(mode={args.chimeras}; "
-                  f"{chimera_stats['n_records_affected']:,} records)", file=sys.stderr)
-        elif mode == 'daf':
-            from fiberhmm.inference.chimeras import empty_chimera_stats
-            chimeric_names = set()
-            chimera_stats = empty_chimera_stats('keep', args.chimera_min_seg,
-                                               args.chimera_purity)
+        if not chimeras_prepared:
+            working_input, chimeric_names, chimera_stats, chimera_tmpdir = \
+                _chimera_pass(args, mode, working_input, snp_mask_path,
+                              process_unmapped, stdout_mode, error_mask_info)
 
         # Pass 1 owns detection. Payload construction and worker extraction
         # must not repeat its mismatch walk on the surviving reads.
@@ -1501,6 +1746,24 @@ def _main(args):
                             f"/ends{args.dedup_max_end_diff}")
         unaligned_state = ('n/a' if mode != 'daf'
                            else ('on' if args.daf_mask_unaligned else 'off'))
+        if error_mask_info is None or args.chimeras == 'keep':
+            error_mask_state = 'n/a'
+        elif error_mask_info['applied']:
+            error_mask_state = f"on/{error_mask_info['n_sites']}sites"
+        else:
+            error_mask_state = 'off' if not error_mask_info['enabled'] else 'unavailable'
+        duplicates_state = ((chimera_stats or {}).get('n_duplicates_excluded', 'n/a')
+                            if mode == 'daf' and args.chimeras != 'keep' else 'n/a')
+        # The strict detector records itself and its settings in DS; a DS
+        # without chimera_detector= is the standard detector (as in 3.2.1).
+        strict_chimera_ds = (
+            f"chimera_detector=strict "
+            f"chimera_min_baseq={args.chimera_min_baseq} "
+            f"chimera_min_span={args.chimera_min_span} "
+            f"chimera_multi_switch={'on' if args.chimera_multi_switch else 'off'} "
+            f"chimera_error_mask={error_mask_state} "
+            f"chimera_duplicates_excluded={duplicates_state} "
+            if args.chimera_detector == 'strict' else '')
         if snp_mask_path:
             snp_state = f"on/{snp_mask_sites}sites"
         elif snp_preflight is not None and not snp_preflight['run']:
@@ -1551,6 +1814,7 @@ def _main(args):
                    f"{derived_tf_max_edge_ambiguity if derived_tf_max_edge_ambiguity is not None else 'off'} "
                    f"chimera_filter={chimera_filter_state} chimeras={chimera_state} "
                    f"chimera_min_seg={args.chimera_min_seg} chimera_purity={args.chimera_purity} "
+                   + strict_chimera_ds +
                    f"dedup={dedup_state} "
                    f"daf_snp_mask={snp_state} "
                    f"daf_unaligned_mask={unaligned_state} "
@@ -1670,6 +1934,7 @@ def _main(args):
                 filter_chimeras=False,
                 chimera_min_seg=args.chimera_min_seg,
                 chimera_purity=args.chimera_purity,
+                **_strict_worker_kwargs(args, error_mask_info),
                 phase_nrl=phase_nrl,
                 nuc_profile_path=nuc_profile_path,
                 nuc_model_path=nuc_model_path,
@@ -1727,6 +1992,7 @@ def _main(args):
                 filter_chimeras=False,
                 chimera_min_seg=args.chimera_min_seg,
                 chimera_purity=args.chimera_purity,
+                **_strict_worker_kwargs(args, error_mask_info),
                 phase_nrl=phase_nrl,
                 nuc_profile_path=nuc_profile_path,
                 nuc_model_path=nuc_model_path,
@@ -1858,9 +2124,7 @@ def _main(args):
         # Calling can run in-process beside QC or another caller. Its
         # decision-only pass must not leave detection disabled for them.
         if chimera_filter_config is not None:
-            _engine.configure_daf_chimera_filter(
-                chimera_filter_config['filter'], chimera_filter_config['min_seg'],
-                chimera_filter_config['purity'])
+            _engine.restore_daf_chimera_filter(chimera_filter_config)
         if chimera_tmpdir is not None:
             chimera_tmpdir.cleanup()
         _remove_dedup_temp(dedup_tmp)

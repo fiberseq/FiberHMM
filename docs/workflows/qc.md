@@ -122,6 +122,36 @@ with `plot: not written (install matplotlib)`.
   context. Marked chimeras are excluded from rate and footprint panels. TSV columns
   and a line beside the PDF/PNG duplication panel report the same counts.
   Detection is DAF-specific; m6A runs report mode `n/a`.
+- **DAF chimera row (strict detector only).** For a BAM called with the
+  opt-in `--chimera-detector strict` (recorded in the `@PG` DS and the
+  chimeras sidecar), the `chimeras` section also has a `grade` of
+  the chimera fraction (`status` PASS below 10%, WARN from 10%, with
+  `severity` `moderate` or, from 20%, `high`; INSUFFICIENT below 100
+  checked reads), a `regions` table (per-region counts and fractions; also
+  written to `<prefix>.qc.chimera_regions.tsv`), `split` statistics for
+  split mode and a fixed `note`: only opposite-strand chimeras are
+  detectable and same-strand chimeras are invisible, so with balanced
+  strands the unflagged reads still contain roughly as many undetected
+  chimeras as were flagged; read counts, occupancy and long-range results
+  from a library with many chimeras should be taken with caution.
+  Duplicate-flagged reads are not counted (`n_duplicates_excluded`), and the
+  section records the detector settings (`min_baseq`, `min_span`,
+  `multi_switch`) and the chimera `error_mask` block. The text summary prints a
+  chimera block and the PDF/PNG a coloured status box under the duplication
+  panel; TSV columns `chimeras_status`, `chimeras_severity` and
+  `chimeras_basis` follow the existing columns. The grade comes from the
+  call's full-run count when available; standalone QC of a flag-mode BAM
+  without the sidecar grades the flagged fraction of its sample. Remove and
+  split BAMs without their sidecar are not graded. The grade records the
+  settings that made the count (`min_seg`, `purity`) and its `basis`:
+  `default` for the strict defaults, `lenient` or `custom` otherwise, with a
+  `basis_note`. A chimera WARN turns an overall PASS
+  into WARN (`overall.warned_by: ["chimeras"]`); it never fails a sample and
+  is not part of the score, since flagged chimeras are excluded from calls.
+  Before measuring state-aware rates QC restores the call's strict detector
+  and its chimera error mask. BAMs called with the standard detector (the
+  default) get the chimera section, TSV columns, PDF/PNG line and verdict
+  of earlier releases, unchanged.
 
 If the run's ML threshold differs by more than 5 from the reference's
 calibration threshold, the rate score is capped at WARN and the mismatch is

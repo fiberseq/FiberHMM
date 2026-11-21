@@ -147,9 +147,19 @@ def build_parser() -> argparse.ArgumentParser:
                       help="DAF: treat insertion and soft-clip bases as no evidence "
                            "and leave unaligned stretches >= 50 bp uncalled "
                            "(default on).")
-    call.add_argument("--chimeras", choices=["flag", "remove", "keep"], default=None,
+    call.add_argument("--chimeras", choices=["flag", "remove", "keep", "split"], default=None,
                       help="DAF strand-swap chimeras: flag (default) retains reads "
-                           "marked and uncalled; remove drops them; keep disables detection.")
+                           "marked and uncalled; remove drops them; keep disables detection; "
+                           "split (needs --chimera-detector strict) cuts each chimeric "
+                           "alignment into single-strand pieces, one per segment "
+                           "(<name>/c0, <name>/c1, ...), that are called separately "
+                           "(see fiberhmm-call).")
+    call.add_argument("--chimera-detector", choices=["standard", "strict"], default=None,
+                      help="DAF strand-swap chimera detector (default standard, "
+                           "unchanged from 3.2.1). strict is opt-in: stricter "
+                           "per-segment rule, base-quality and span filters, several "
+                           "switches, a chimera-only error mask, a graded QC chimera "
+                           "row; needed for --chimeras split (see fiberhmm-call).")
     call.add_argument("--chimera-filter", action=argparse.BooleanOptionalAction,
                       default=True,
                       help="Legacy alias: --chimera-filter means --chimeras flag; "
@@ -256,7 +266,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def parse_args(argv=None):
-    return build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.chimeras == "split":
+        from fiberhmm.pipeline.runner import _call_arg_value
+        detector = (_call_arg_value(shlex.split(args.call_args or ""), "--chimera-detector")
+                    or args.chimera_detector)
+        if detector != "strict":
+            parser.error("--chimeras split needs --chimera-detector strict")
+    return args
 
 
 def config_from_args(args):
@@ -282,6 +300,7 @@ def config_from_args(args):
         snp_mask=args.snp_mask,
         chimera_filter=args.chimera_filter,
         chimeras=args.chimeras,
+        chimera_detector=args.chimera_detector,
         daf_mask_unaligned=args.daf_mask_unaligned,
         alignments=args.alignments,
         prob_threshold=args.prob_threshold,

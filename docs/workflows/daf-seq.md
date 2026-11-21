@@ -217,14 +217,18 @@ A read deaminated C→T in one segment and G→A in another is a strand-swap
 chimera. This detection is specific to DAF (DddA/DddB); m6A modes do not
 perform strand-swap detection. A segment needs at least `--chimera-min-seg`
 (5) same-flavour deaminations at `--chimera-purity` (0.8) or greater purity,
-using the same reference, SNP and unaligned-base masks as calling.
+using the same reference, SNP and unaligned-base masks as calling. This is
+the standard detector (`--chimera-detector standard`, the default), unchanged
+from 3.2.1. A stricter detector is available as an option; see
+[Strict detector (opt-in)](#strict-detector-opt-in).
 
 `fiberhmm-call --chimeras flag` is the default: retain the read uncalled,
 set SAM QC-fail `0x200`, and write the local tag `xc:Z:strand_swap` naming
 the reason. All supplementary and secondary records of that read receive
 the same mark. `--chimeras remove` drops all records of detected reads;
 `--chimeras keep` disables detection and attempts calls. `--keep-chimeras`
-is a deprecated alias for `--chimeras keep`.
+is a deprecated alias for `--chimeras keep`. `--chimeras split` needs the
+strict detector ([Split mode](#split-mode)).
 
 Re-running flag/remove clears earlier `xc:Z:strand_swap` marks and recomputes
 decisions using the run's alignment selection. Only the current run's decision
@@ -240,7 +244,7 @@ only stdin/non-seekable input is spooled. The caller applies the decisions
 to every record, including a supplementary record preceding its primary.
 m6A and keep mode bypass this pass entirely. Keep mode clears marks while
 reading records for NRL estimation and calling; m6A leaves them alone.
-`fiberhmm-pipeline` also accepts `--chimeras`; its legacy `--chimera-filter`
+`fiberhmm-pipeline` also accepts `--chimeras` and `--chimera-detector`; its legacy `--chimera-filter`
 and `--no-chimera-filter` map to flag and keep, respectively. Pipeline settings
 carry the exact effective mode in `call_args` so FiberBrowser re-calls preserve
 remove mode as well as flag and keep.
@@ -254,6 +258,173 @@ BAM for standalone QC to reproduce remove-mode counts. QC TSV and PDF/PNG
 report chimeras alongside PCR duplication.
 Without the sidecar, standalone QC with the default auto assay mode reports
 the DAF policy from the BAM header and the fraction of marked sampled reads.
+
+### Strict detector (opt-in)
+
+`--chimera-detector strict` selects a stricter detector. It is an option for
+evaluation; the standard detector stays the default, and calls made without
+this option are unchanged. The strict detector also enables the chimera-only
+error mask, leaves duplicate-flagged reads out of the count, grades the
+chimera fraction in QC and allows `--chimeras split`.
+`fiberhmm-export-posteriors` and `fiberhmm-pipeline` take the same option.
+
+The strict detector orders a read's deaminations
+along the query and looks for contiguous segments of alternating strand.
+Each segment needs:
+
+- at least `--chimera-min-seg` (default 10 with the strict detector) same-strand deaminations,
+- at `--chimera-purity` (default 0.9 with the strict detector) or greater purity,
+- a span of at least `--chimera-min-span` (default 200) query bp from its
+  first to its last same-strand deamination (0 disables), so a dense
+  cluster of mismatches from one misaligned stretch is not a segment.
+
+Only deaminations with base quality of at least `--chimera-min-baseq`
+(default 15) count when the record has QUAL; records without QUAL are not
+filtered, and 0 disables the filter. Low-quality basecalls are the main
+source of opposite-strand noise on nanopore reads. The detector uses the
+same reference, SNP and unaligned-base masks as calling, plus the
+chimera-only error mask described below. The base-quality filter and the
+error mask apply to the chimera test only; calling uses every deamination
+as before.
+
+A read with one switch (CT then GA) has two segments. With
+`--chimera-multi-switch` (default on) a read with several switches, such
+as an opposite-strand island inside a read (CT → GA → CT), is also a
+chimera when every segment passes the same rule; `--no-chimera-multi-switch`
+tests one switch only. These defaults are strict, so that a flagged read is
+unambiguous. One decision drives flag, remove and split, the count and the
+grade. The base-quality, span, several-switch and error-mask options are
+refused with the standard detector.
+
+#### Chimera error mask
+
+With the strict detector, some sites give recurrent opposite-strand mismatches on one strand only, for
+example nanopore miscalls in a sequence motif. The SNP screen does not mask
+them, because it requires support on both strands. When the
+[SNP screen](#snp-screening) runs for a strict call, its two passes also build a chimera-only
+error mask, with no extra pass over the BAM. Only clearly single-strand
+fibers vote: at least 10 deaminations of one strand at purity 0.92 or more,
+counting deaminations with base quality of at least 15 (fixed, independent
+of `--chimera-min-baseq`; records without QUAL are not filtered), and not
+chimeric under the run's detector. Chimeric fibers do not vote, so
+real accessible sites on chimeric reads are not masked. A site is masked
+for the opposite-strand event when, among voters of the other strand, it has
+
+- depth of at least 20 fibers,
+- at least 4 fibers with the opposite-strand mismatch,
+- a mismatch fraction of at least 0.05, and
+- a binomial survival P(X ≥ k | depth, p = 0.01) below 1e-4.
+
+The mask goes to `qc/<stem>.daf_snps.chimera_error_mask.bed` and `.json`,
+never into `<stem>.daf_snps.bed`, and is never applied to calling. Sites
+already called as SNPs are not repeated. Without the SNP screen (the
+low-depth preflight skipped it, stdin/stdout, `--no-daf-call-snps`, or a
+user-supplied `--daf-snp-mask`) there is no error mask; the chimeras sidecar
+records that and the reason, and the base-quality filter still applies.
+`--no-chimera-error-mask` turns the mask off.
+
+#### Strict counts, sidecar and QC
+
+With the strict detector, duplicate-flagged (`0x400`) reads are tested and marked like any
+read but are not counted: they are left out of `n_reads_checked`,
+`n_chimeric`, the fraction, the regions and the grade, and
+`n_duplicates_excluded` reports how many were left out (the standard
+detector counts them). The sidecar (`detector: strict`) and the
+`@PG` DS line (`chimera_detector=strict`) record the detector settings (`min_seg`, `purity`,
+`min_baseq`, `min_span`, `multi_switch`), the error mask (applied or not,
+number of sites, reason) and the duplicates left out. For a strict call, QC restores the call's detector from the
+`@PG` DS before measuring state-aware rates, with the call's chimera error
+mask: the BED named in the chimeras sidecar when that sidecar matches the
+BAM (this covers a custom `--daf-snp-output-prefix`), else through the SNP
+report or at `qc/<stem>.daf_snps.chimera_error_mask.bed`. When the call applied a mask
+that QC cannot find, the state block's `definition.chimera_error_mask` and
+the chimera block's `error_mask_restored` say `unavailable`. Chimeras
+skipped during state extraction are counted as unique read names, without
+duplicate-flagged reads, as in the chimera count.
+
+#### How many reads are chimeric
+
+Each run counts the reads the detector calls (`n_chimeric`, `fraction`).
+With the strict detector the fraction is graded: PASS below 10%, WARN from 10%, and WARN with
+severity `high` from 20%. At 10% or more `fiberhmm-call` and
+`fiberhmm-pipeline` print a `WARNING:` line on stderr (in the pipeline log
+too). The count, grade and a per-region table (reads grouped by the 10-kb
+start bin of their primary record; adjacent occupied bins form a region)
+are in `qc/<stem>.chimeras.json` and the QC report. A count made with
+non-default strict settings is graded as recorded, and the grade names its
+basis (`lenient` or `custom`, with a note). Standard-detector calls are not
+graded; their QC report is the 3.2.1 one.
+
+Opposite-strand chimeras are the only kind either detector can see. A chimera of
+two molecules deaminated on the same strand looks like an ordinary read.
+With balanced strands about half of all chimeras are same-strand, so the
+unflagged reads still contain roughly as many undetected chimeras as were
+flagged: at a flagged fraction of 10%, about one unflagged read in nine is
+still a chimera. Read counts, occupancy and long-range results
+(co-accessibility, phasing) from a library with many chimeras should be
+taken with caution. Every chimera report carries this note.
+
+#### Split mode
+
+`--chimeras split` is an option for recovering data from chimeric reads; it
+is not the default and needs `--chimera-detector strict` (the standard
+detector does not locate breakpoints). For each alignment record that is itself chimeric, the
+detector's best single switch gives a breakpoint gap: from the last
+event of the first segment's strand to the first event of the second
+segment's strand. Where the switch happened inside the gap is unknown, so
+the gap is dropped and the record is written as single-strand records. Each
+piece is tested again with its own deaminations and cut again while it is
+still chimeric; a read with several switches (found with
+`--chimera-multi-switch`) is cut at every switch. All valid pieces are
+written:
+
+- `<name>/c0`, `<name>/c1`, ... from left to right on the reference. The
+  first piece ends on its last own-strand event, the last piece starts on
+  its first own-strand event, and an interior piece runs from its first to
+  its last own-strand event. No piece ends in an event-free stretch made by
+  the cut, so the cut does not create footprints at the inner edges.
+  Breakpoints are anchored on deaminations that pass
+  `--chimera-min-baseq`, so a low-quality basecall inside the gap does not
+  extend a piece past the switch.
+- CIGAR, SEQ, QUAL and MD are cut together, `NM` is recomputed and the
+  reference start is adjusted. Outer soft and hard clips stay with their
+  piece.
+- Tags: `xc:Z:split`, `xi:i` (piece index, 0 to n-1 from left to right),
+  `xn:Z` (original read name) and `xb:B:i` (every breakpoint gap of the
+  original record as `[start, end)` pairs, 0-based on its reference, left to
+  right; piece `xi` lies between gap `xi`-1 and gap `xi`; a one-switch split
+  has one pair).
+  `RG`, `ds`, `di`, `qs`, `du`, `ch`, `rn` and `fn` are copied.
+  `MM`/`ML` (and the older `Mm`/`Ml`) are kept, re-indexed to the piece: the
+  calls inside the piece stay, skip counts are recomputed over the piece in
+  the read's original orientation (reverse-complemented for reverse-strand
+  records, for `+` and `-` entries alike), ML values follow their calls, and
+  each entry keeps its codes and `.`/`?` flag. `MM` without `ML` (ML is
+  optional) is re-indexed on its own. `MN` is set to the piece's
+  length. A piece of a hard-clipped record, or of one whose `MM`/`ML` do not
+  parse or do not match SEQ, gets no `MM`/`ML` (counted as
+  `n_pieces_modifications_dropped`). Every other position-dependent tag
+  (`SA`, the DAF strand tag `st`, earlier FiberHMM calls) is dropped.
+- Pieces keep the record's flags and are not QC-fail. Pieces shorter than
+  `--min-read-length` (aligned bases) are dropped and counted; a record with
+  no piece left is kept whole and flagged.
+- Other records of a chimeric read (supplementary or secondary records that
+  are not chimeric themselves, or are not selected by `--alignments`) are
+  flagged as in flag mode. Unnamed records are not split. Unmapped records
+  (`--process-unmapped`, or streamed input) are not split either: they have
+  no CIGAR or reference position to cut, so a chimeric unmapped record is
+  kept whole and flagged (counted as `n_records_unmapped_kept_whole`). A
+  piece that still shows a swap after cutting is flagged.
+- Each piece is called with its own strand. Split mode runs before the
+  insert-consensus pre-pass, so pieces carry their own insertion evidence.
+
+The pieces are written to a private temporary BAM (sorted and indexed when
+the input is coordinate-sorted). The chimeras sidecar and QC report list
+records split, records with several switches, pieces written, pieces
+dropped as too short, the fraction of chimeric bases kept, and the
+distributions of the reference gap and piece lengths. Caveats: the switch point is only bracketed, not found; two
+pieces of one read are two molecules of unknown relation (they may be PCR
+copies or unrelated fragments); and same-strand chimeras are not split.
 
 Extract, scan, nucleosome decoding, consensus/recall inputs and posterior export exclude `0x200` +
 `xc:Z:strand_swap` records by default. `fiberhmm-footprint-model` takes

@@ -150,7 +150,10 @@ class PipelineConfig:
     dorado_args: list[str] = field(default_factory=list)
     verbose: bool = False
     quiet: bool = False
-    chimeras: Optional[str] = None  # flag | remove | keep; None uses legacy bool
+    chimeras: Optional[str] = None  # flag | remove | keep | split; None uses legacy bool
+    # DAF chimera detector: None = fiberhmm-call's default (standard);
+    # "strict" opts in (needed for --chimeras split).
+    chimera_detector: Optional[str] = None
 
     def resolved_seq(self) -> Optional[str]:
         """The platform the run states: ``--seq``, or what the reads record.
@@ -164,9 +167,16 @@ class PipelineConfig:
 
     def resolved_chimeras(self) -> str:
         mode = self.chimeras or ('flag' if self.chimera_filter else 'keep')
-        if mode not in ('flag', 'remove', 'keep'):
+        if mode not in ('flag', 'remove', 'keep', 'split'):
             raise ValueError(f'Invalid chimera mode: {mode}')
+        if mode == 'split' and self.effective_chimera_detector() != 'strict':
+            raise ValueError('--chimeras split needs --chimera-detector strict')
         return mode
+
+    def effective_chimera_detector(self) -> str:
+        """The detector fiberhmm-call uses (--call-args come last and win)."""
+        return (_call_arg_value(self.call_args, '--chimera-detector')
+                or self.chimera_detector or 'standard')
 
     def effective_chimeras(self) -> str:
         # Extra caller arguments come last; the deprecated alias wins there.
@@ -213,6 +223,10 @@ class PipelineConfig:
         # on every generation (the mode itself is the same either way).
         if daf and not _call_arg_value(self.call_args, '--chimeras'):
             call_args.extend(['--chimeras', self.effective_chimeras()])
+        # Only a non-default detector is carried (standard runs record as 3.2.1).
+        if (daf and self.chimera_detector and self.chimera_detector != 'standard'
+                and not _call_arg_value(self.call_args, '--chimera-detector')):
+            call_args.extend(['--chimera-detector', self.chimera_detector])
         return {
             "enzyme": self.enzyme,
             "seq": self.resolved_seq() or "auto",
@@ -603,6 +617,17 @@ def call_supported_options() -> set[str]:
     return {flag for action in parser._actions for flag in action.option_strings}
 
 
+# Options whose default leaves a call unchanged (the opt-in strict chimera
+# detector, 3.3.0). Left out of call_parser_defaults at these defaults, so
+# a standard run's step identity is as before; a strict run is recorded
+# through its call arguments and the step's chimera_detector key.
+_IDENTITY_NEUTRAL_CALL_DEFAULTS = {
+    "chimera_detector": "standard", "chimera_min_baseq": None,
+    "chimera_min_span": None, "chimera_multi_switch": None,
+    "chimera_error_mask": None,
+}
+
+
 def call_parser_defaults() -> dict:
     """``fiberhmm-call``'s option defaults (dest -> default, JSON-safe), so a
     completed calling step is not reused after a FiberHMM default changes
@@ -614,6 +639,9 @@ def call_parser_defaults() -> dict:
     for action in parser._actions:
         dest = action.dest
         if not action.option_strings or dest in ("help", "version") or dest in out:
+            continue
+        if (dest in _IDENTITY_NEUTRAL_CALL_DEFAULTS
+                and parser.get_default(dest) == _IDENTITY_NEUTRAL_CALL_DEFAULTS[dest]):
             continue
         # One value per destination, as argparse resolves it: aliases such as
         # --primary/--no-primary (store_const, default None) share --alignments'
@@ -1820,6 +1848,8 @@ class Pipeline:
             "snp_mask": file_fingerprint(cfg.snp_mask, self.memo) if cfg.snp_mask else None,
             "chimera_filter": cfg.resolved_chimeras() != 'keep',
             "chimeras": cfg.resolved_chimeras(),
+            **({"chimera_detector": cfg.chimera_detector}
+               if cfg.chimera_detector not in (None, "standard") else {}),
             "daf_mask_unaligned": cfg.daf_mask_unaligned,
             "alignments": cfg.alignments,
             "prob_threshold": cfg.prob_threshold,
@@ -1878,6 +1908,8 @@ class Pipeline:
             if cfg.snp_mask:
                 cmd += ["--daf-snp-mask", os.path.abspath(cfg.snp_mask)]
             cmd += ["--chimeras", cfg.resolved_chimeras()]
+            if cfg.chimera_detector not in (None, "standard"):
+                cmd += ["--chimera-detector", cfg.chimera_detector]
             if not cfg.daf_mask_unaligned:
                 cmd.append("--no-daf-mask-unaligned")
         if cfg.enzyme == "ddda":
@@ -2032,8 +2064,26 @@ class Pipeline:
                    + (f", {summary['duplicate_flagged']} duplicate-flagged"
                       if summary["duplicate_flagged"] else ""))
         self.log(f"call: {message}")
+        self._chimera_warning()
         self.progress.step("call", "done", done=summary["records"],
                            total=summary["records"], unit="reads", message=message)
+
+    def _chimera_warning(self) -> None:
+        """Repeat fiberhmm-call's chimera warning (its stderr goes to the log)."""
+        if self.config.enzyme not in DAF_ENZYMES:
+            return
+        from fiberhmm.inference.chimeras import chimera_warning
+        report = os.path.join(os.path.dirname(self.called_bam), "qc",
+                              os.path.splitext(os.path.basename(self.called_bam))[0]
+                              + ".chimeras.json")
+        try:
+            with open(report, encoding="utf-8") as handle:
+                stats = json.load(handle).get("statistics") or {}
+        except (OSError, ValueError, AttributeError):
+            return
+        warning = chimera_warning(stats)
+        if warning:
+            self.log(f"call: {warning}", "warning")
 
     def step_qc(self) -> None:
         """``fiberhmm-qc`` on the called BAM. A QC failure never fails the run:

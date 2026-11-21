@@ -238,7 +238,10 @@ automatically; each has its own section in [DAF-seq](daf-seq.md):
    (`--chimeras flag` marks `0x200` + `xc:Z:strand_swap` and retains uncalled;
    `remove` drops all records of the read; `keep` disables detection;
    deprecated `--keep-chimeras` means `keep`; `--chimera-min-seg` 5 and
-   `--chimera-purity` 0.8 tune it) and
+   `--chimera-purity` 0.8 tune it; the opt-in
+   [strict detector](daf-seq.md#strict-detector-opt-in),
+   `--chimera-detector strict`, adds base-quality, span, several-switch and
+   error-mask filters, a QC grade and `--chimeras split`) and
    [adjacent-target thinning](daf-seq.md#adjacent-target-thinning)
    (`--daf-mask-runs`, default 2 with `--daf-run-policy keep-one` for DddA,
    off for DddB).

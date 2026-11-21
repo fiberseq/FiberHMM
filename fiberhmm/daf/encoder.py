@@ -25,6 +25,7 @@ from fiberhmm.daf.aligned_arrays import (
     md_reference_length,
 )
 from fiberhmm.inference.bam_output import _sort_and_index_bam, atomic_output
+from fiberhmm.inference.chimeras import STRICT_MIN_SEG, STRICT_PURITY
 
 # CIGAR op codes (from the BAM spec) that consume reference:
 #   M=0, D=2, N=3, =7, X=8. Of these, MD describes M/=/X/D only
@@ -306,6 +307,332 @@ def is_daf_chimera(ct_positions, ga_positions,
                 and ga_left >= purity * left_n and ct_right >= purity * right_n):
             return True
     return False
+
+
+def is_daf_chimera_strict(ct_positions, ga_positions,
+                          min_seg_events: int = STRICT_MIN_SEG,
+                          purity: float = STRICT_PURITY, *,
+                          min_span: int = 0, multi_switch: bool = False) -> bool:
+    """The strict detector's strand-swap test (``--chimera-detector strict``).
+
+    The same single-breakpoint scan as :func:`is_daf_chimera` (the
+    standard detector, which keeps its own code), plus the options below.
+
+    A clean DAF read is deaminated on ONE strand (C->T XOR G->A). A chimera
+    (template switch / merged molecule) "swaps" mid-read: a contiguous segment
+    of C->T deamination and a separate contiguous segment of G->A deamination.
+
+    Spatial test: order all deamination events by query position (CT=+1, GA=-1);
+    a chimera has a breakpoint splitting them into two segments that are each
+    >= ``purity`` pure for OPPOSITE strands, with >= ``min_seg_events`` dominant
+    events on each side. Scattered minority events (SNPs / sequencing error) do
+    not form a pure segment, so they are not flagged -- robust to the low
+    deamination rate of under-deaminating enzymes like DddB.
+
+    ``min_span`` (query bp, 0 = off) additionally requires each segment's
+    dominant events to span at least that many bases, first to last. With
+    ``multi_switch`` a read whose events cut into three or more alternating
+    segments that each pass the same rule (for example CT -> GA -> CT, an
+    opposite-strand island inside a read) is also a chimera
+    (:func:`daf_chimera_segments`). With (0, False) the test is the
+    single-breakpoint scan; :mod:`fiberhmm.inference.chimeras` passes the
+    run's settings.
+
+    Returns True if the read looks chimeric. Same-strand chimeras (two
+    molecules deaminated on the same strand) cannot be seen by this test.
+    """
+    if _chimera_scan(ct_positions, ga_positions, min_seg_events, purity,
+                     first_only=True, min_span=min_span) is not None:
+        return True
+    return bool(multi_switch) and _alternating_partition(
+        ct_positions, ga_positions, min_seg_events, purity, min_span) is not None
+
+
+def daf_chimera_split(ct_positions, ga_positions,
+                      min_seg_events: int = STRICT_MIN_SEG,
+                      purity: float = STRICT_PURITY, *, min_span: int = 0):
+    """The best single strand-swap split of a chimeric read, or None.
+
+    Uses the single-breakpoint test of :func:`is_daf_chimera_strict` (it returns
+    None exactly when that test fails). Among the qualifying breakpoints it
+    picks the one that assigns the most events to their segment's strand
+    (ties: the first). Returns a dict with ``left_strand``/``right_strand``
+    ('CT' or 'GA'), ``left_last`` (query position of the last left-strand
+    event in the left segment) and ``right_first`` (query position of the
+    first right-strand event in the right segment). The query interval
+    between them is the breakpoint gap, where the switch happened at an
+    unknown point.
+    """
+    return _chimera_scan(ct_positions, ga_positions, min_seg_events, purity,
+                         first_only=False, min_span=min_span)
+
+
+# Recursion limit of daf_chimera_segments (each level splits a piece again).
+_MAX_SPLIT_DEPTH = 16
+
+
+def daf_chimera_segments(ct_positions, ga_positions,
+                         min_seg_events: int = STRICT_MIN_SEG,
+                         purity: float = STRICT_PURITY, *,
+                         min_span: int = 0, multi_switch: bool = False):
+    """Every single-strand piece of a chimeric read, or None if not chimeric.
+
+    Returns ``{'pieces': [(lo, hi), ...], 'strands': [...]}``: query intervals
+    from left to right, ``lo``/``hi`` the first/last kept query position
+    (inclusive; None = the read's start/end). Consecutive pieces are
+    separated by a breakpoint gap ``(hi_t, lo_t+1)`` between the last
+    own-strand event of one piece and the first own-strand event of the
+    next, which belongs to neither piece.
+
+    The read is cut at its best single breakpoint (:func:`daf_chimera_split`)
+    or, failing that and with ``multi_switch``, at every switch of an
+    alternating partition. Each piece is then tested again with its own
+    events and cut again while it is still chimeric, so a read with several
+    switches yields all of its valid pieces. ``strands`` gives each piece's
+    dominant strand ('CT'/'GA'; None on a tie).
+    """
+    events = sorted([(int(p), 1) for p in ct_positions]
+                    + [(int(p), -1) for p in ga_positions])
+
+    def cuts_of(sub):
+        ct = [p for p, s in sub if s == 1]
+        ga = [p for p, s in sub if s == -1]
+        single = _chimera_scan(ct, ga, min_seg_events, purity,
+                               first_only=False, min_span=min_span)
+        if single is not None:
+            return [(single['left_last'], single['right_first'])]
+        if multi_switch:
+            return _alternating_partition(ct, ga, min_seg_events, purity, min_span)
+        return None
+
+    def pieces_of(sub, lo, hi, depth):
+        cuts = cuts_of(sub) if depth < _MAX_SPLIT_DEPTH else None
+        if not cuts:
+            return [(lo, hi)]
+        bounds = [lo] + [b for cut in cuts for b in cut] + [hi]
+        out = []
+        for start, end in zip(bounds[0::2], bounds[1::2]):
+            inner = [e for e in sub
+                     if (start is None or e[0] >= start)
+                     and (end is None or e[0] <= end)]
+            out.extend(pieces_of(inner, start, end, depth + 1))
+        return out
+
+    if cuts_of(events) is None:
+        return None
+    pieces = pieces_of(events, None, None, 0)
+    strands = []
+    for lo, hi in pieces:
+        net = sum(s for p, s in events
+                  if (lo is None or p >= lo) and (hi is None or p <= hi))
+        strands.append('CT' if net > 0 else 'GA' if net < 0 else None)
+    return {'pieces': pieces, 'strands': strands}
+
+
+def _purity_weights(purity):
+    """Integer weights ``(own, other)`` with own*d - other*o >= 0 exactly
+    when d / (d + o) >= purity (purity read as its shortest decimal)."""
+    from fractions import Fraction
+    fraction = Fraction(repr(float(purity))).limit_denominator(10 ** 9)
+    a, b = fraction.numerator, fraction.denominator
+    return b - a, a
+
+
+def _alternating_partition(ct_positions, ga_positions, min_seg, purity,
+                           min_span=0):
+    """Cuts of a partition of the events into >= 2 alternating segments.
+
+    Each segment must hold >= ``min_seg`` events of its strand at >=
+    ``purity`` and (``min_span`` > 0) span >= ``min_span`` query bp between
+    its first and last own-strand event. Returns the cuts as
+    ``[(left_last, right_first), ...]`` (query positions of the last
+    own-strand event before and the first own-strand event after each
+    switch), or None when no such partition exists.
+
+    Linear time: segment ``[i, j)`` is valid for strand ``s`` when
+    ``P_s[j] >= P_s[i]`` (the integer purity score of :func:`_purity_weights`)
+    and ``i <= I_s(j)``, where the count and span conditions bound ``i`` from
+    above by an index that never decreases with ``j``. A pointer sweep keeps
+    the minimum ``P_s[i]`` over admissible segment starts that end a valid
+    partition of the opposite strand.
+    """
+    nct, nga = len(ct_positions), len(ga_positions)
+    if min(nct, nga) < min_seg:
+        return None
+    events = sorted([(int(p), 1) for p in ct_positions]
+                    + [(int(p), -1) for p in ga_positions])
+    n = len(events)
+    if n < 2 * min_seg:
+        return None
+    own_w, other_w = _purity_weights(purity)
+    positions = [p for p, _ in events]
+    signs = [s for _, s in events]
+    INF = float('inf')
+    per = {}
+    for s in (1, -1):
+        cnt = [0] * (n + 1)
+        score = [0] * (n + 1)
+        for k in range(n):
+            mine = signs[k] == s
+            cnt[k + 1] = cnt[k] + mine
+            score[k + 1] = score[k] + (own_w if mine else -other_w)
+        first_from = [INF] * (n + 1)      # first own position at index >= i
+        for k in range(n - 1, -1, -1):
+            first_from[k] = positions[k] if signs[k] == s else first_from[k + 1]
+        last_before = [-INF] * (n + 1)    # last own position at index < j
+        for k in range(n):
+            last_before[k + 1] = positions[k] if signs[k] == s else last_before[k]
+        # Own-event index of each count, to turn the count bound into an index.
+        own_index = [k for k in range(n) if signs[k] == s]
+        per[s] = (cnt, score, first_from, last_before, own_index)
+
+    span = max(0, int(min_span))
+    one = {1: [False] * (n + 1), -1: [False] * (n + 1)}      # [0, j) one segment
+    many = {1: [False] * (n + 1), -1: [False] * (n + 1)}     # >= 2 segments
+    back = {1: [None] * (n + 1), -1: [None] * (n + 1)}
+    sweep = {s: {'ptr': 1, 'best': None, 'arg': None} for s in (1, -1)}
+
+    def bound(s, j):
+        """Largest admissible segment start for a strand-s segment ending at j."""
+        cnt, _score, first_from, last_before, own_index = per[s]
+        need = cnt[j] - min_seg          # own events allowed before the start
+        if need < 0:
+            return -1
+        # Start i must satisfy cnt[i] <= need: i <= index of own event #need.
+        i_count = own_index[need] if need < len(own_index) else n
+        if span <= 0:
+            return i_count
+        limit = last_before[j] - span
+        # Largest i with first_from[i] <= limit (first_from is nondecreasing).
+        lo, hi = 0, i_count
+        if first_from[0] > limit:
+            return -1
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if first_from[mid] <= limit:
+                lo = mid
+            else:
+                hi = mid - 1
+        return lo
+
+    for j in range(1, n + 1):
+        for s in (1, -1):
+            cnt, score, first_from, last_before, _ = per[s]
+            if cnt[j] < min_seg:
+                continue
+            limit = bound(s, j)
+            if limit < 0:
+                continue
+            if score[j] >= 0 and limit >= 0 and cnt[j] >= min_seg:
+                one[s][j] = True     # [0, j): start 0 is always admissible here
+            state = sweep[s]
+            while state['ptr'] <= min(limit, j - 1):
+                i = state['ptr']
+                if one[-s][i] or many[-s][i]:
+                    if state['best'] is None or score[i] < state['best']:
+                        state['best'], state['arg'] = score[i], i
+                state['ptr'] += 1
+            if state['best'] is not None and state['best'] <= score[j]:
+                many[s][j] = True
+                back[s][j] = state['arg']
+    end_strand = next((s for s in (1, -1) if many[s][n]), None)
+    if end_strand is None:
+        return None
+    # Walk back: segment boundaries from the right.
+    boundaries = []
+    s, j = end_strand, n
+    while True:
+        i = back[s][j] if many[s][j] else None
+        if i is None:
+            break
+        boundaries.append((i, s))       # segment [i, j) is strand s
+        s, j = -s, i
+        if one[s][j]:
+            break
+    cuts = []
+    for i, right in reversed(boundaries):
+        left = -right
+        left_last = max(positions[k] for k in range(i) if signs[k] == left)
+        right_first = min(positions[k] for k in range(i, n) if signs[k] == right)
+        cuts.append((left_last, right_first))
+    return cuts
+
+
+def _chimera_scan(ct_positions, ga_positions, min_seg_events, purity,
+                  first_only, min_span=0):
+    nct = len(ct_positions)
+    nga = len(ga_positions)
+    if min(nct, nga) < min_seg_events:
+        return None
+
+    events = sorted([(int(p), 1) for p in ct_positions]
+                    + [(int(p), -1) for p in ga_positions])
+    n = len(events)
+    if n < 2 * min_seg_events:
+        return None
+
+    span_ok = None
+    if min_span and min_span > 0:
+        # Dominant span of each side of breakpoint k, first to last
+        # own-strand event (query bp).
+        inf = float('inf')
+        first = {1: inf, -1: inf}
+        last = {1: -inf, -1: -inf}
+        for p, s in events:
+            first[s] = min(first[s], p)
+            last[s] = max(last[s], p)
+        last_before = {1: [-inf] * (n + 1), -1: [-inf] * (n + 1)}
+        first_from = {1: [inf] * (n + 1), -1: [inf] * (n + 1)}
+        for s in (1, -1):
+            for k in range(n):
+                last_before[s][k + 1] = (events[k][0] if events[k][1] == s
+                                         else last_before[s][k])
+            for k in range(n - 1, -1, -1):
+                first_from[s][k] = (events[k][0] if events[k][1] == s
+                                    else first_from[s][k + 1])
+
+        def span_ok(k, left):
+            right = -left
+            return (last_before[left][k] - first[left] >= min_span
+                    and last[right] - first_from[right][k] >= min_span)
+
+    best = None   # (assigned, k, orientation)
+    ct_left = 0
+    for k in range(1, n):                       # breakpoint: left=[0,k), right=[k,n)
+        if events[k - 1][1] == 1:
+            ct_left += 1
+        left_n = k
+        right_n = n - k
+        if left_n < min_seg_events or right_n < min_seg_events:
+            continue
+        ga_left = left_n - ct_left
+        ct_right = nct - ct_left
+        ga_right = nga - ga_left
+        # orientation A: CT segment then GA segment
+        if (ct_left >= min_seg_events and ga_right >= min_seg_events
+                and ct_left >= purity * left_n and ga_right >= purity * right_n
+                and (span_ok is None or span_ok(k, 1))):
+            if first_only:
+                return True
+            if best is None or ct_left + ga_right > best[0]:
+                best = (ct_left + ga_right, k, 'CT')
+        # orientation B: GA segment then CT segment
+        if (ga_left >= min_seg_events and ct_right >= min_seg_events
+                and ga_left >= purity * left_n and ct_right >= purity * right_n
+                and (span_ok is None or span_ok(k, -1))):
+            if first_only:
+                return True
+            if best is None or ga_left + ct_right > best[0]:
+                best = (ga_left + ct_right, k, 'GA')
+    if best is None:
+        return None
+    _, k, left = best
+    right = 'GA' if left == 'CT' else 'CT'
+    sign = 1 if left == 'CT' else -1
+    left_last = max(p for p, s in events[:k] if s == sign)
+    right_first = min(p for p, s in events[k:] if s == -sign)
+    return {'left_strand': left, 'right_strand': right,
+            'left_last': left_last, 'right_first': right_first}
 
 
 def encode_read_daf(

@@ -20,6 +20,11 @@ from fiberhmm.inference.engine import (
     make_apply_payload,
     read_cpg_ma_intervals,
 )
+from fiberhmm.inference.chimeras import (
+    STRICT_MIN_BASEQ,
+    STRICT_MIN_SPAN,
+    STRICT_MULTI_SWITCH,
+)
 from fiberhmm.inference.fused_stages import (
     apply_result_has_footprints,
     build_fused_recall_result,
@@ -58,6 +63,23 @@ _worker_recall_state = {}
 _REGION_NUC_PROFILE_CACHE: dict = {}
 
 
+def _configure_chimera_filter(params: dict) -> None:
+    """Every chimera detector setting of the run's ``params`` (worker init).
+
+    The strict-only keys are present only for ``--chimera-detector strict``.
+    """
+    configure_daf_chimera_filter(
+        params.get('filter_chimeras', True),
+        params.get('chimera_min_seg', 5),
+        params.get('chimera_purity', 0.8),
+        detector=params.get('chimera_detector', 'standard'),
+        min_baseq=params.get('chimera_min_baseq', STRICT_MIN_BASEQ),
+        min_span=params.get('chimera_min_span', STRICT_MIN_SPAN),
+        multi_switch=params.get('chimera_multi_switch', STRICT_MULTI_SWITCH),
+        error_mask=params.get('chimera_error_mask_path'),
+    )
+
+
 def _region_nuc_profile(path):
     """Load (and cache per worker) the DddA radial profile, or None."""
     if not path:
@@ -84,11 +106,7 @@ def _init_region_worker(model_path: str, params: dict):
         _worker_model = freeze_model_for_inference(load_model(model_path))
         _worker_region_params = params
 
-        configure_daf_chimera_filter(
-            params.get('filter_chimeras', True),
-            params.get('chimera_min_seg', 5),
-            params.get('chimera_purity', 0.8),
-        )
+        _configure_chimera_filter(params)
         configure_daf_snp_mask(params.get('daf_snp_mask_path'))
 
         # Warm up numba JIT.
@@ -579,11 +597,7 @@ def _init_fused_region_worker(
             _worker_recall_state['nuc_m5c_llr_hit'] = nuc_m5c_hit
             _worker_recall_state['nuc_m5c_llr_miss'] = nuc_m5c_miss
 
-    configure_daf_chimera_filter(
-        params.get('filter_chimeras', True),
-        params.get('chimera_min_seg', 5),
-        params.get('chimera_purity', 0.8),
-    )
+    _configure_chimera_filter(params)
     configure_daf_snp_mask(params.get('daf_snp_mask_path'))
     from fiberhmm.inference.engine import configure_daf_insert_evidence
     configure_daf_insert_evidence(params.get('daf_insert_evidence_path'))

@@ -1,0 +1,702 @@
+{
+ "calls.chimeras.json": {
+  "assay": {
+   "enzyme": "dddb",
+   "mode": "daf"
+  },
+  "schema_version": 1,
+  "statistics": {
+   "count_unit": "unique read names before removal; unnamed records counted individually",
+   "detected": true,
+   "fraction": 0.176470588,
+   "full_run": true,
+   "min_seg": 5,
+   "mode": "flag",
+   "n_chimeric": 18,
+   "n_reads_checked": 102,
+   "n_records_affected": 18,
+   "n_stale_marks_cleared": 0,
+   "purity": 0.8
+  }
+ },
+ "calls.daf_snps.json": {
+  "accounting": {
+   "ambiguous_direction_records": 18,
+   "ct_dominant_records": 40,
+   "ga_dominant_records": 40,
+   "records_examined_pass1": 102,
+   "records_examined_pass2": 102
+  },
+  "amplicons": [
+   {
+    "amplicon_id": "amplicon_1",
+    "chrom": "chrS",
+    "consensus_end_0based_exclusive": 4175,
+    "consensus_length_bp": 3000,
+    "consensus_start_0based": 1175,
+    "discovery_start_bin_reads": 98,
+    "endpoint_quantiles_0based": {
+     "end_q05": 4000,
+     "end_q95": 4320,
+     "start_q05": 1000,
+     "start_q95": 1320
+    },
+    "n_called_snps": 0,
+    "snp_positions": [],
+    "total_aligned_reads": 98
+   }
+  ],
+  "calls": [],
+  "dominant_amplicon": {
+   "chrom": "chrS",
+   "end_0based_exclusive": 4175,
+   "overlapping_dominant_fibers": 98,
+   "selection": "highest-coverage discovered amplicon with >= 20 aligned reads",
+   "start_0based": 1175
+  },
+  "input": "<tmp>/lib.bam",
+  "method": "bidirectional_recurrent_daf_snp",
+  "n_called_snps": 0,
+  "n_candidate_sites_after_min_alt": 0,
+  "n_discovered_amplicons": 1,
+  "n_profiled_sites": 1654,
+  "outputs": {
+   "amplicons_tsv": "<tmp>/qc/calls.daf_snps.amplicons.tsv",
+   "bed": "<tmp>/qc/calls.daf_snps.bed",
+   "json": "<tmp>/qc/calls.daf_snps.json",
+   "vcf": "<tmp>/qc/calls.daf_snps.vcf"
+  },
+  "parameters": {
+   "amplicon_start_bin_bp": 10000,
+   "bidirectional_support_required": true,
+   "min_alt_fibers": 5,
+   "min_amplicon_reads": 20,
+   "min_depth": 5,
+   "min_dominant_events": 5,
+   "min_dominant_purity": 0.8,
+   "min_fraction": 0.2,
+   "min_mapq": 0,
+   "site_profile_max_sites": 5000,
+   "site_profile_min_depth_per_direction": 3,
+   "site_profile_seed": 20260824
+  },
+  "preprocessing": {
+   "deduplication": "duplicate-flagged records excluded",
+   "max_end_diff_bp": 50,
+   "mode": "flagged",
+   "n_duplicates": 4
+  },
+  "schema_version": 3,
+  "site_distribution": {
+   "sha256": "703c919ffa0766fbc2e0cb3a0a93db428ed4a21a0fc323eb7c561e4c5a56ee6f"
+  },
+  "threshold_policy": {
+   "name": "bidirectional_five_fiber_v1",
+   "uses_validated_defaults": true,
+   "validated_defaults": {
+    "bidirectional_support_required": true,
+    "min_depth_each_direction": 5,
+    "min_fraction_each_direction": 0.2,
+    "min_mismatch_fibers_each_direction": 5
+   },
+   "validation": "scripts/validation/validate_daf_snp_downsampling.py"
+  }
+ },
+ "calls.dedup.json": {
+  "input": "<tmp>/lib.bam",
+  "method": "fiberhmm_deamination_fingerprint",
+  "output": "<tmp>/calls.bam",
+  "schema_version": 1,
+  "statistics": {
+   "cluster_size_histogram": {
+    "1": 94,
+    "2": 4
+   },
+   "duplication_pct": 3.92156863,
+   "largest_cluster": 2,
+   "max_end_diff_bp": 50,
+   "mode": "flagged",
+   "n_below_min_deam": 0,
+   "n_clusters": 98,
+   "n_duplicate_supplementary_records": 0,
+   "n_duplicates": 4,
+   "n_fingerprintable": 102,
+   "n_prior_marks_cleared": 0,
+   "n_singleton_molecules": 94,
+   "n_total": 102,
+   "n_unmapped": 0,
+   "n_written": 102
+  }
+ },
+ "calls.qc.json": {
+  "assay": {
+   "control_curve_schema_version": 2,
+   "enzyme": "dddb",
+   "mode": "daf",
+   "packaged_control_curve": true,
+   "probability_threshold": 128,
+   "reference_label": "Drosophila embryo DddB DAF-seq control",
+   "reference_profile": "dddb",
+   "reference_sources": [
+    "Drosophila embryo DddB DAF-seq control"
+   ]
+  },
+  "background": {
+   "metric": "median per-read outside-MSP rate",
+   "n_rate_reads": 0,
+   "note": "fewer than 20 reads with >= 50 opportunities in this compartment",
+   "pass_max": 0.0783034779,
+   "reference_median": 0.0652528982,
+   "reference_source": "tags",
+   "score": null,
+   "status": "INSUFFICIENT",
+   "value": null,
+   "warn_max": 0.0848287677
+  },
+  "chimeras": {
+   "count_unit": "unique read names before removal; unnamed records counted individually",
+   "detected": true,
+   "fraction": 0.176470588,
+   "full_run": true,
+   "full_run_statistics": {
+    "count_unit": "unique read names before removal; unnamed records counted individually",
+    "detected": true,
+    "fraction": 0.176470588,
+    "full_run": true,
+    "min_seg": 5,
+    "mode": "flag",
+    "n_chimeric": 18,
+    "n_reads_checked": 102,
+    "n_records_affected": 18,
+    "n_stale_marks_cleared": 0,
+    "purity": 0.8
+   },
+   "min_seg": 5,
+   "mode": "flag",
+   "n_chimeric": 18,
+   "n_reads_checked": 102,
+   "n_records_affected": 18,
+   "n_stale_marks_cleared": 0,
+   "purity": 0.8,
+   "run_report_path": "<tmp>/qc/calls.chimeras.json",
+   "sample": {
+    "count_unit": "unique read names in bounded sample; unnamed records counted individually",
+    "detected": true,
+    "fraction": 0.176470588,
+    "full_run": false,
+    "min_seg": 5,
+    "mode": "flag",
+    "n_chimeric": 18,
+    "n_reads_checked": 102,
+    "purity": 0.8,
+    "sampled_chimeric": 18
+   },
+   "sampled_chimeric": 18
+  },
+  "deduplication": {
+   "cluster_tagged_reads": 8,
+   "detected": true,
+   "duplicate_flagged_reads": 4,
+   "duplicate_fraction": 0.0392156863,
+   "duplicate_fraction_basis": "full pre-call PCR deduplication run",
+   "full_run": true,
+   "full_run_statistics": {
+    "largest_cluster": 2,
+    "n_below_min_deam": 0,
+    "n_clusters": 98,
+    "n_duplicates": 4,
+    "n_fingerprintable": 102,
+    "n_singleton_molecules": 94,
+    "n_total": 102,
+    "n_unmapped": 0,
+    "n_written": 102
+   },
+   "method": "fiberhmm_deamination_fingerprint",
+   "mode": "flagged",
+   "molecule_cluster_size_histogram": {
+    "1": 94,
+    "2": 4
+   },
+   "observed_duplicate_cluster_size_histogram": {
+    "1": 94,
+    "2": 4
+   },
+   "run_report_path": "<tmp>/qc/calls.dedup.json",
+   "sampled_reads": 102
+  },
+  "efficiency": {
+   "metric": "median per-read in-MSP rate",
+   "n_rate_reads": 80,
+   "note": "",
+   "pass_min": 0.316129032,
+   "reference_median": 0.39516129,
+   "reference_source": "tags",
+   "score": 84.316917,
+   "status": "PASS",
+   "value": 0.353845642,
+   "warn_min": 0.276612903
+  },
+  "footprints": {
+   "fraction_nucleosome_85_250_bp": 1.0,
+   "fraction_nucleosome_over_1000_bp": 0.0,
+   "fraction_nucleosome_over_300_bp": 0.0,
+   "median_nucleosome_bp": 95.0,
+   "median_tf_footprint_bp": 23.0,
+   "n_nucleosomes": 22,
+   "n_tagged_reads": 80,
+   "n_tf_footprints": 1621,
+   "q25_nucleosome_bp": 92.25,
+   "q25_tf_footprint_bp": 16.0,
+   "q75_nucleosome_bp": 111.25,
+   "q75_tf_footprint_bp": 33.0
+  },
+  "input": "<tmp>/calls.bam",
+  "outputs": {
+   "curves": "<tmp>/qc/calls.qc.curves.json",
+   "json": "<tmp>/qc/calls.qc.json",
+   "pdf": "<tmp>/qc/calls.qc.pdf",
+   "plot": "<tmp>/qc/calls.qc.png",
+   "tsv": "<tmp>/qc/calls.qc.tsv"
+  },
+  "overall": {
+   "components": [
+    "efficiency",
+    "periodicity"
+   ],
+   "score": 50.3488972,
+   "status": "FAIL",
+   "verdict_basis": "state-aware"
+  },
+  "periodicity": {
+   "autocorrelation_strength": 0.0243759386,
+   "n_informative_reads": 80,
+   "nrl_bp": 163,
+   "pair_distance_observations_le_1000": 1510657,
+   "reference_curve_correlation": 0.472076143,
+   "reference_pattern_amplitude_ratio": 0.240895255,
+   "score": 16.3808773,
+   "search_interval_bp": [
+    160,
+    220
+   ],
+   "status": "FAIL"
+  },
+  "sampling": {
+   "records_examined": 2652,
+   "requested_reads": 500,
+   "sampled_reads": 102,
+   "seed": 20260824,
+   "strategy": "indexed random windows (64 x 20,000 bp) + bounded fill",
+   "whole_bam_scanned": false,
+   "windows_examined": 64
+  },
+  "schema_minor_version": 1,
+  "schema_version": 1,
+  "signal": {
+   "aggregate_rate": 0.175972021,
+   "label": "deamination",
+   "mean_per_read_rate": 0.175970706,
+   "median_per_read_rate": 0.175503392,
+   "n_events": 21032,
+   "n_opportunities": 119519,
+   "n_rate_reads": 80,
+   "n_signal_reads": 80,
+   "note": "",
+   "p05_per_read_rate": 0.160578812,
+   "p95_per_read_rate": 0.190928255,
+   "q25_per_read_rate": 0.170556009,
+   "q75_per_read_rate": 0.181849156,
+   "score": 15.1001387,
+   "status": "FAIL"
+  },
+  "state_rates": {
+   "all_states": {
+    "aggregate_rate": 0.351951729,
+    "n_events": 20882,
+    "n_opportunities": 59332
+   },
+   "available": true,
+   "definition": {
+    "daf_run_mask": "off",
+    "edge_trim_bp": 10,
+    "min_msp_bp": 85,
+    "min_state_opportunities_per_read": 50,
+    "msp": "FiberHMM MSP of >= 85 bp",
+    "opportunities": "C (CT reads) or G (GA reads) targets on the deaminated strand, as encoded for calling (chemistry adjacent-run mask and SNP mask applied)",
+    "outside_msp": "every other base: nucleosomes, linkers and accessible gaps < 85 bp",
+    "probability_threshold": 128,
+    "terminal_segments": "cap"
+   },
+   "median_per_read_msp_length_fraction": 1.0,
+   "msp": {
+    "aggregate_rate": 0.354645229,
+    "aggregate_rate_wilson95": [
+     0.350687739,
+     0.358622714
+    ],
+    "mean_per_read_rate": 0.354687325,
+    "median_per_read_rate": 0.353845642,
+    "n_events": 19808,
+    "n_opportunities": 55853,
+    "n_rate_reads": 80,
+    "p05_per_read_rate": 0.323823736,
+    "p95_per_read_rate": 0.384007883,
+    "q25_per_read_rate": 0.342043162,
+    "q75_per_read_rate": 0.369123803
+   },
+   "msp_length_fraction": 0.990045833,
+   "msp_to_outside_ratio": 7.94727719,
+   "outside_msp": {
+    "aggregate_rate": 0.0446247465,
+    "aggregate_rate_wilson95": [
+     0.0296513936,
+     0.0666400603
+    ],
+    "mean_per_read_rate": null,
+    "median_per_read_rate": null,
+    "n_events": 22,
+    "n_opportunities": 493,
+    "n_rate_reads": 0,
+    "p05_per_read_rate": null,
+    "p95_per_read_rate": null,
+    "q25_per_read_rate": null,
+    "q75_per_read_rate": null
+   },
+   "reads": {
+    "reads_chimera_skipped": 18,
+    "reads_considered": 80,
+    "reads_mm_unreliable": 0,
+    "reads_single_segment": 60,
+    "reads_used": 80,
+    "reads_with_calls": 80,
+    "reads_without_calls": 0,
+    "reads_without_signal": 0
+   },
+   "reference": {
+    "all_states_rate": 0.0944063654,
+    "median_per_read_msp_length_fraction": 0.193292322,
+    "msp": {
+     "aggregate_rate": 0.396165837,
+     "n_events": 76750,
+     "n_opportunities": 193732,
+     "n_rate_reads": 615,
+     "probabilities": [
+      0.05,
+      0.25,
+      0.5,
+      0.75,
+      0.95
+     ],
+     "quantiles": [
+      0.251,
+      0.337521946,
+      0.39516129,
+      0.453807901,
+      0.537903438
+     ]
+    },
+    "msp_to_outside_ratio": 9.77581513,
+    "n_reads_used": 726,
+    "outside_msp": {
+     "aggregate_rate": 0.040525095,
+     "n_events": 43540,
+     "n_opportunities": 1074396,
+     "n_rate_reads": 726,
+     "probabilities": [
+      0.05,
+      0.25,
+      0.5,
+      0.75,
+      0.95
+     ],
+     "quantiles": [
+      0.0138113654,
+      0.0382740091,
+      0.0652528982,
+      0.0872084129,
+      0.114625624
+     ]
+    }
+   },
+   "source": "tags",
+   "tag_frames": {
+    "MA": "molecular",
+    "legacy": "molecular"
+   },
+   "tag_producer": {
+    "program": "fiberhmm-call"
+   },
+   "terminal_excluded_opportunities": 2986
+  },
+  "unaligned_masking": {
+   "fraction_unaligned": 0.0,
+   "n_reads": 80,
+   "n_reads_with_no_call_blocks": 0,
+   "n_reads_with_unaligned": 0,
+   "note": "insertion and soft-clip bases have no reference counterpart: fiberhmm-call encodes them as no evidence and leaves stretches >= 50 bp uncalled (--no-daf-mask-unaligned turns this off)",
+   "query_bases": 240000,
+   "unaligned_bases": 0
+  },
+  "variant_masking": {
+   "amplicons": [
+    {
+     "amplicon_id": "amplicon_1",
+     "chrom": "chrS",
+     "consensus_end_0based_exclusive": 4175,
+     "consensus_length_bp": 3000,
+     "consensus_start_0based": 1175,
+     "discovery_start_bin_reads": 98,
+     "endpoint_quantiles_0based": {
+      "end_q05": 4000,
+      "end_q95": 4320,
+      "start_q05": 1000,
+      "start_q95": 1320
+     },
+     "n_called_snps": 0,
+     "snp_positions": [],
+     "total_aligned_reads": 98
+    }
+   ],
+   "applied": true,
+   "caller_report_path": "<tmp>/qc/calls.daf_snps.json",
+   "dominant_amplicon": {
+    "chrom": "chrS",
+    "end_0based_exclusive": 4175,
+    "overlapping_dominant_fibers": 98,
+    "selection": "highest-coverage discovered amplicon with >= 20 aligned reads",
+    "start_0based": 1175
+   },
+   "mask_path": "<tmp>/qc/calls.daf_snps.bed",
+   "median_alternate_fraction": null,
+   "median_opposite_direction_depth": null,
+   "method": "bidirectional_recurrent_daf_snp",
+   "n_discovered_amplicons": 1,
+   "n_masked_sites": 0,
+   "n_profiled_sites": 1654,
+   "note": "MD tags preserved; masked sites were excluded only from DAF observations",
+   "parameters": {
+    "amplicon_start_bin_bp": 10000,
+    "bidirectional_support_required": true,
+    "min_alt_fibers": 5,
+    "min_amplicon_reads": 20,
+    "min_depth": 5,
+    "min_dominant_events": 5,
+    "min_dominant_purity": 0.8,
+    "min_fraction": 0.2,
+    "min_mapq": 0,
+    "site_profile_max_sites": 5000,
+    "site_profile_min_depth_per_direction": 3,
+    "site_profile_seed": 20260824
+   },
+   "screening_preflight": {
+    "eligible_reads": 102,
+    "estimated_genome_coverage": 25.5,
+    "max_alignment_start_bin_reads": 102,
+    "max_local_depth": 102,
+    "minimum_depth": 10,
+    "reason": "genome_coverage",
+    "records_examined": 102,
+    "run": true,
+    "supported_start_bin_fraction": 1.0
+   },
+   "threshold_policy": {
+    "name": "bidirectional_five_fiber_v1",
+    "uses_validated_defaults": true,
+    "validated_defaults": {
+     "bidirectional_support_required": true,
+     "min_depth_each_direction": 5,
+     "min_fraction_each_direction": 0.2,
+     "min_mismatch_fibers_each_direction": 5
+    },
+    "validation": "scripts/validation/validate_daf_snp_downsampling.py"
+   }
+  }
+ },
+ "calls.qc.tsv": [
+  "input\tmode\tenzyme\treference_profile\tsampled_reads\toverall_status\toverall_score\tsignal_status\tsignal_score\tmedian_signal_rate\tperiodicity_status\tperiodicity_score\tnrl_bp\tperiodicity_ac\tperiodicity_reference_correlation\tperiodicity_reference_pattern_amplitude_ratio\tn_nucleosomes\tmedian_nucleosome_bp\tfraction_nucleosome_85_250_bp\tfraction_nucleosome_over_300_bp\tfraction_nucleosome_over_1000_bp\tn_tf_footprints\tmedian_tf_footprint_bp\tdeduplication_detected\tdeduplication_mode\tchimeras_detected\tchimeras_mode\tchimeras_n_reads_checked\tchimeras_n_chimeric\tchimeras_fraction\tduplicate_fraction\tsnp_mask_applied\tn_masked_snp_sites\tn_discovered_amplicons\tstate_source\tefficiency_status\tefficiency_score\tbackground_status\tbackground_score\tmedian_msp_rate\tmedian_outside_msp_rate\taggregate_msp_rate\taggregate_outside_msp_rate\tmsp_events\tmsp_opportunities\toutside_msp_events\toutside_msp_opportunities\tall_states_rate\tmsp_to_outside_ratio\tmsp_length_fraction\tverdict_basis",
+  "<tmp>/calls.bam\tdaf\tdddb\tdddb\t102\tFAIL\t50.34889718499542\tFAIL\t15.100138697350054\t0.1755033915276446\tFAIL\t16.38087733584667\t163\t0.02437593855186198\t0.47207614254261177\t0.2408952549389216\t22\t95.0\t1.0\t0.0\t0.0\t1621\t23.0\tTrue\tflagged\tTrue\tflag\t102\t18\t0.17647058823529413\t0.0392156862745098\tTrue\t0\t1\ttags\tPASS\t84.31691703414417\tINSUFFICIENT\t\t0.3538456416490895\t\t0.35464522944156984\t0.04462474645030426\t19808\t55853\t22\t493\t0.35195172925234275\t7.947277187031543\t0.9900458333333333\tstate-aware"
+ ],
+ "header": {
+  "CO": [
+   "fiberhmm:coord=molecular",
+   "FIBERHMM-CHEMISTRY:v1:assay=daf;enzyme=dddb;platform=nanopore;mode=daf;apply_sha256=bfe6638f6aeacff4f917e468dbf216e629339524e5b2012be064f0886f54229f;fiberhmm_commit=<code>;fiberhmm_version=<code>;model=dddb_nanopore;pg=fiberhmm-call;recall_sha256=bfe6638f6aeacff4f917e468dbf216e629339524e5b2012be064f0886f54229f",
+   "MA-TYPES:v1:nuc,msp,tf"
+  ],
+  "HD": {
+   "SO": "coordinate",
+   "VN": "1.6"
+  },
+  "PG": [
+   {
+    "ID": "minimap2",
+    "PN": "minimap2",
+    "VN": "2.30"
+   },
+   {
+    "DS": "DAF duplicate marking; grouping=deamination_flavour min_jaccard=0.95 min_deam=10 max_end_diff=50 prob_threshold=128 mode=flag prior_marks=cleared",
+    "ID": "fiberhmm-dedup",
+    "PN": "fiberhmm-dedup",
+    "PP": "minimap2"
+   },
+   {
+    "DS": "FiberHMM fused apply+recall; coord=molecular (ns/nl/as/al/MA in molecular original-fiber coordinates); mode=daf enzyme=dddb prob_threshold=128 primary_only=off alignments=primary-supplementary tf_decoder=multi_interval_v1 tf_interval_penalty=5.0 recall_nucs=True nuc_recall_policy=conservative nuc_profile=off nuc_sha256=off phase_nrl=0 ddda_derived_tf_edge_gap=off chimera_filter=on chimeras=flag chimera_min_seg=5 chimera_purity=0.8 dedup=j0.95/mark/ends50 daf_snp_mask=on/0sites daf_unaligned_mask=on daf_insert_consensus=on/0of0/min20 daf_run_mask=off cpg_mask=off hmm_cpg_mask=off basecaller=unknown basecaller_version=unknown basecall_model=unknown modbase_models=unknown basecaller_sources=none daf_evidence=v1:eJyrVspNLM6OL81LzMlMz0tNUbIqKSpN1VEqzisoVrKqrq0FANQXDF8=",
+    "ID": "fiberhmm-call",
+    "PN": "fiberhmm-call",
+    "PP": "fiberhmm-dedup"
+   }
+  ],
+  "SQ": [
+   {
+    "LN": 12000,
+    "SN": "chrS"
+   }
+  ]
+ },
+ "qc_files": [
+  "calls.chimeras.json",
+  "calls.daf_snps.amplicons.tsv",
+  "calls.daf_snps.bed",
+  "calls.daf_snps.json",
+  "calls.daf_snps.vcf",
+  "calls.dedup.json",
+  "calls.insert_consensus.json",
+  "calls.qc.curves.json",
+  "calls.qc.json",
+  "calls.qc.pdf",
+  "calls.qc.png",
+  "calls.qc.tsv"
+ ],
+ "records": {
+  "duplicates": [
+   "copy000",
+   "copy001",
+   "copy002",
+   "copy003"
+  ],
+  "marked_chimeras": [
+   "strong000",
+   "strong001",
+   "strong002",
+   "strong003",
+   "strong004",
+   "strong005",
+   "strong006",
+   "strong007",
+   "strong008",
+   "strong009",
+   "weak000",
+   "weak001",
+   "weak002",
+   "weak003",
+   "weak004",
+   "weak005",
+   "weak006",
+   "weak007"
+  ],
+  "n": 102,
+  "sha256": [
+   "a32dc292e6633a98dc12f5c9544d87c3bd498e93dca4edf13cb705e70a1c5ae3",
+   "b7ffa687ee373de64e7fdf9ca58699eef218280a952ff2330aea9ac66d62a2e4",
+   "9f5b8996c7dcbe79697da7ec2f4250882a8af9d09c128a8ce0d8d7b9337b6e57",
+   "0917b81b07c59df4b8650ce2af5d06079b02951877e913ed91ff789f22542f93",
+   "12214d074ebb6956a53ebc212dd9f7a7edbfa680372ae90ccbe511eef41ea123",
+   "212e128d61b3a92af4cb7ec56764522796f55f3201b1259d5abb8a66b3db073a",
+   "20e8784f058d549e35dbdde26fa663d77897038f077e28a530a5c2edbf8045bb",
+   "c733ed3af9a96f4936ca6f118c88bda874d70994714558c0382b58a72d635b03",
+   "9f5dffa9f15c84578de0b7c0761357380925b1a5bb3d32320593781977772622",
+   "c9d8e789ebfff854f00c88f3ada37f56ef960cf87c0d12bbf22d6604dbb2c231",
+   "d172179459105db084d081f32e6608dbb5d03c1ecb6160019a01f114a91f8711",
+   "71bf7a8cc1c6bea2e3c0d646089e2d14fc338c8de7417d634e635e045a0b03ce",
+   "13685d661611dbb92ab24358db544f13de56f4179e9f6fa6209143a42a466b05",
+   "b667f0bf5bf6bc8be31787fe427ee5234aa13792c3ed4b127391147a76c3dfd3",
+   "15654170bc0ece94944b451c3c7e08f2056665a982a415892a467ec92a94f338",
+   "93f7d321947e873e4af26ff54a6e1627f3d20f38d8e2795a08db345a6d42d37e",
+   "bcb864c6f61065ac0f8a8d311751e4663a167d7e1f157886f249aa46abf31783",
+   "c8c909c6e270634f98a4ed147795d170ebb25b6c219ebb1031f410bc4f11106c",
+   "d86a0f364cee0b9c1a80d6081eba9f506ae6c2e4dd6337139350eeddc788714f",
+   "77f35dd39a76a1cdae4e95490d8e5308eeb9d615618c701b585f92e4f072308d",
+   "d27536d13d7a4a98b2f12cf92dd456c4636d8fa78db1f52e17281349ed6f17c5",
+   "2336e1bc7a061a478679285bda0838c31b247be864067ab4dd4ec29c5f488716",
+   "d7f6124505dd190614ca482f2f24b980a88464837d63ffe1c083b24f022d032b",
+   "b160eb6de99ede91a46d6401afaf8346b7095b4bb3a256ef1be160e22572361f",
+   "06039d05168d05e73934577d93cb7e0a287cc268b7d7b81f89959b2bee45a719",
+   "dcc3196a0dddc9d99f90b58a59f0219beb6be7959e9741af63b6fa9ba3537b6f",
+   "d4e324208bb66ec2544118a0d29905ec968f1029d3e706c8c8931ce3088c19b3",
+   "a9765f6e12d01e19f2fa811c5e2b83c6c019f5103e86b8c4f4a09d86e6629425",
+   "4a458a03095f1cdc0d427c9339e280e85d119ac5cc30b2d29356034134c0f44e",
+   "2e2e1c526823da7d084538c6a4f2f7a8a518581a84d70f08e2f8f96f3b0bb634",
+   "1b2a2dd3ad841e75ec042296346434369610f2c4aa5286c8d8be57ba97e0e911",
+   "5d8f3357af995ae8a5ff5ce4720a95233c98d7abebfe8fd302e1fbe80e50fb46",
+   "06403ccc8bfd702e3cbced5123430e2056c9570540003eaebf3d22a431423227",
+   "d5f7200c02e2df006bca5b531bb60195102c27c512475b57bca5abc9a45a0b1b",
+   "c585a3d8f1a44fe32520bc5d66ab432fe296f3d174f853d52fa9a35b4421e679",
+   "8f4dca4e1c8224c9b958a69db38c24a4eedc3bbf4e1b9e97f367b969796009cd",
+   "42a2e86e720afac7a85d0de7761e000a3f9b70be6ad8045f2230fcf91af766d9",
+   "6270ec6f3a038241d9b9e03c0c7fb6b80c02fb197a4b239dc5b109a84f5cd921",
+   "f4a0ce65385a218252e36eea082e1678167182c4728f80b9b718ab8a60374cc1",
+   "078126ee3776dd92081bf2bc07b8ee83630b5c7ac3d4548ffe9f64a6e65546f5",
+   "412738db630e36a8307b62a0d8abe296ddf3565277d0c858f28cfdd62965de1d",
+   "f59b1f5db42d43af817f7e3cc3e1dc23c9729b5fd96ee650bc8f555d45f20825",
+   "2cf9bbfe99b71a98b3e2e1d38f4bc1c3cbadb9bcd536c0452f716dd64fc23a99",
+   "2491d57622739c974d45185ba686111cf83023d2e107d83b097f3585e207a24c",
+   "94a643b1ea9502416f973982205724ff1a04b856cf02ab0ce81a959d53aff35a",
+   "35a3ab3d7ad48aaff1e62dd833776ddda1150ca0301299eb26b3f120d3d9cec5",
+   "c83925dd13cabd01b6cb48c5633974c73edac193cfe5f4e428394363ac905f55",
+   "3bc0c6bd96e82813f98510172b64604bbd9bdabe912702ebe97d5deebe55f12a",
+   "339156a23b360622cdb49d383a6260f4ff1130a577d1e3027bd340da4a096bc2",
+   "606d9be840654080a4c274d528ce91a2b33f1ae6c3c96b7dba446cfc370865c5",
+   "33c9b1cdde624d0746cad45ef0516b3cd2b717c0eb4dab44689b1c8833677d80",
+   "a970bd22dfc4f93df685d953400161de2eca7601866bb5c22c7949bfe6f91995",
+   "db30cf2a3f05fd9b460508f97c40fa2f3288b5030ae81e03bd686e0d280a2aa8",
+   "35f8af335adeecce98ac52f473bde7ef3699e89fd24f4a89a86ec13ea1fa2f6f",
+   "ba0ea3a404cee38882be578e676f972d41f84fc2a03f86feb2a7409dca4e897e",
+   "d1c25a74de6563e6a41c9c53bc93d5806dffbc15779611ace8e5dbc98cf8a470",
+   "8014a05e5e49e48bd5b8809639bd166265760a73a50e0d88592e1cb22ac224fc",
+   "48ca862791271df681b501a1f949b061bdff7288d063341b587d09d22f0a5069",
+   "8141ae5d225be5047664803487991efc3583b9b34ed96996061fcc66fb8d0fd1",
+   "6ac00c3f7dc5c37e87496237c6011c1cdbdd2ef00d8197d742172c4ed93cec38",
+   "5f75499f8baee98b038e69dbaa9606683a2a086e4b36112b7a32968b7721baa7",
+   "56a4113f7693041774d28742387298cb7964ecf3882d90353a5a4131c69096bb",
+   "6d3b90b3fa75449fc1a7bb4551622e62b17883a63b476d8ea13b3a14dd6b09f4",
+   "d69ec8bfa47d17a9f12eb7c48ba1850115d5a514c6f1d62bd04a2e2b892996ce",
+   "5d3cf571c4af024ac462195fe0120d9ab97b9ec148b4b0b5a5a4dbb883e19da1",
+   "2ce455f5607b3ac4ec94c9eb74ce3541d0d1bd834e84b3f5eaa3fb37fcad74c1",
+   "91e61a7b18e14bc9b052bdff7ada9f71518f689ac77c2f9e53475ced3c95b01c",
+   "c86ccf3582abf7ce82c0585d499ede437f19f88addbc57dff59ba58cd1218602",
+   "ac2403e557cdbfa6af6bc09e6f740643b3691aa6f53ac13b1deab50be584dc8f",
+   "0c0521e207bf0c2350e66e01cb67788fb7ceb1016530367c4cdc5b0357a6963e",
+   "aae5006024590aa1df0a8c738560eb292e041d8de1dc6421bada09023a32be7e",
+   "837913ea221dff233096b88817f56c8ef29be1464ba8dc0c6c44158a2849440e",
+   "3d53b05f2c61265246f862a6bdaf4e54530ad767c178da50a5634a92d7d7b7eb",
+   "42d48a5d5d3fab66443bef10879c0af273227f88aec8e39ec97401b2459332fb",
+   "88a05c395dc67f51ebf745137f6e4d561be6956c1125314d01ce2b01476a8736",
+   "c5420a61bd133dad404108ec6930c2b295a7fdd7e82ef6d8c1ac9993c675b94d",
+   "b30caac6b536c731f66a852a65269b39af151084bf45481a5031350a3b4b99c1",
+   "2fbb4a6e08d6f55d70512e2b7c2e263d6f05009dd6c55be37280b7623b49fc98",
+   "1066e7d9df46ba6c4e5741b66ac1424a3d53d78df80da446009f5e9d7784af5c",
+   "8002ca2e4e56f1006df038b1bf994a0a0eb480038ea3a71cc0155d446ea521a2",
+   "8489b75125ec676a68a0321d716552034ff7a0543d7a6848e999407761ba4056",
+   "b0106c229caa9abc9c527d8d56b8e2dc65689b850bc02ce88dd917b88b1ea5f5",
+   "19e6a83d255e629ee43ac6de855a8947b7218ef57addd6d1eebfe57b1c12a228",
+   "678e026ec15b13579058616cfa8e83c0908b576d5c1550dee44291f3ddd0a059",
+   "d6ee56ff9f1902b6113edaa5b88b300d1a24c5205a027cb36a602be28c1e9cb9",
+   "dbb308198dcfdf83696bc4cd56f8ff59bf795c7343a2f8e4d3defd9e8aa0d6b1",
+   "e35adb491939d10b1fe44decc0747ef5d0c7365dd5edf6a5cc7ec5aab3545799",
+   "05b91ea47bb6fa7d0372dcfde28d98ebd2b86015cdc856978a54d75ecf88f921",
+   "7ab95ea2d1bd6c921ba11d9d8138a0725434b6d84322c107bc808ffe102af7ec",
+   "c0c5c1aba51ca733d517c433ec8c7a26e1b0375e13ec4d6bac791d104235d779",
+   "3d7d69473252bde8984d08e16fc4eae276bd52fac03137d7eb093fda5837aed5",
+   "20a20560e1f19482dbc4acc8d190d0ad98c1dee022b8b522d2fcd7abdcf29d87",
+   "c38e15f4570fdfad13ee6085e27d1721cf43b608e87a3d30c1b7dbaabb33cef1",
+   "6451ac801d7e2dff119eb4ca3d7b3165fb7cff8ea3f7917c8e1e726088fc49f8",
+   "c2ee0b544a2522c2d82ffe69b5e506b83dd7bd562ff4a58ffc8c240b08cc8a26",
+   "09ca69b8d943d6c4e5aedb9b65879f4bd878e6a910ab29dcd242992603ef7855",
+   "3130b8b178df6a89aa53dbe83911a8551454e4396a249870c868b87eed7c01b7",
+   "f5f278a43a6fc376b8305a014f572fed0dbc6d5cdd54e4d8b79ff625cc712c56",
+   "475204aade041d9b47010a59c733a703b3c5c81f58374514ba3fb7459a66687f",
+   "f672f8a200aa456c73b2f0c809fa880c60c9ee21a3f2c377cfcbb1a5b372696b",
+   "50f7b31e13ab2d9a74e8ccb7e995d03aa6c27db4947f6ed83e64a12c7ee993b3",
+   "40f5062b7f10bec914c7ea77f1b34585ee7aa9561334c25e576767b11531befb"
+  ]
+ }
+}

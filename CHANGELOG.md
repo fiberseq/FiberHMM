@@ -79,6 +79,60 @@
   carried `fire` groups were revalidated. Any MSP quality in such a file is
   therefore fibertools FIRE. See
   [Header declarations](https://fiberseq.github.io/FiberHMM/reference/headers/#fiberhmm-annotation-contract).
+- **Opt-in stricter DAF chimera detector, `--chimera-detector strict`.**
+  The default detector (`--chimera-detector standard`) is unchanged:
+  without the new option, `fiberhmm-call`, `fiberhmm-qc`,
+  `fiberhmm-pipeline` and `fiberhmm-export-posteriors` write the same
+  records, sidecars, `@PG` DS and QC reports as 3.2.1. The strict detector:
+  - needs 10 same-strand deaminations per segment at 90% purity (the
+    `--chimera-min-seg`/`--chimera-purity` defaults with this option; 5
+    and 80% for the standard detector);
+  - counts only deaminations with base quality 15 or more when the record
+    has QUAL (`--chimera-min-baseq`, 0 disables);
+  - requires each segment's same-strand deaminations to span at least
+    200 query bp (`--chimera-min-span`, 0 disables);
+  - also calls reads with several switches, such as an opposite-strand
+    island (CT → GA → CT), when every segment passes the rule
+    (`--no-chimera-multi-switch` tests one switch only);
+  - drops events at sites of a chimera-only recurrent error mask built
+    in the DAF SNP screen's two passes (only clearly single-strand,
+    non-chimeric fibers vote, at base quality 15 or more), written to
+    `qc/<stem>.daf_snps.chimera_error_mask.bed`/`.json` and never applied
+    to calling (`--no-chimera-error-mask` turns it off);
+  - tests and marks duplicate-flagged (`0x400`) reads but leaves them out
+    of the count (`n_duplicates_excluded`).
+
+  Calling itself still uses every deamination. The strict-only options are
+  refused with the standard detector. The `@PG` DS (`chimera_detector=strict`
+  and the settings) and the chimeras sidecar (`detector: strict`, the
+  settings, the error mask and the duplicates left out) record a strict
+  call.
+- **QC chimera grade for strict calls.** For a BAM called with the strict
+  detector, QC grades the chimera fraction as its own row: PASS below 10%,
+  WARN from 10%, WARN with severity `high` from 20% (INSUFFICIENT below
+  100 checked reads). A chimera WARN can turn an overall PASS into WARN,
+  never into FAIL, and does not change the score. The report adds a
+  per-region table (`<prefix>.qc.chimera_regions.tsv`), a text block, a
+  PDF/PNG status box and the TSV columns `chimeras_status`,
+  `chimeras_severity`, `chimeras_basis`, and notes that same-strand
+  chimeras are invisible to either detector. QC's state-aware rates use
+  the strict call's detector settings and its chimera error mask.
+  `fiberhmm-call` and `fiberhmm-pipeline` print a `WARNING:` line when a
+  strict call's chimera fraction is 10% or more. Standard calls get the
+  QC report of 3.2.1.
+- **`--chimeras split`** (needs `--chimera-detector strict`): each chimeric
+  alignment is cut at its breakpoint gaps into single-strand records,
+  `<name>/c0`, `<name>/c1`, ... (`xc:Z:split`, `xi`, `xn`, `xb`), which are
+  called separately. The gaps are dropped and pieces shorter than
+  `--min-read-length` are dropped. Pieces keep `MM`/`ML` (and `Mm`/`Ml`)
+  re-indexed to the piece, with `MN` set to its length; a hard-clipped
+  record or one whose `MM`/`ML` do not match SEQ gives pieces without
+  them. Unmapped records are kept whole and flagged. See the DAF-seq guide
+  for the caveats.
+- `fiberhmm-export-posteriors` takes `--chimera-detector` and, with
+  `strict`, the strict options and `--chimera-error-mask BED`.
+  `fiberhmm-pipeline` takes `--chimera-detector` and passes it to
+  `fiberhmm-call`.
 
 ### Fixed
 
