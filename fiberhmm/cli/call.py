@@ -139,7 +139,9 @@ def parse_args():
                         'nanopore, given or detected), 128 otherwise. R/Y- and '
                         'MD-encoded DAF input is binary and ignores it.')
     p.add_argument('--min-read-length', type=non_negative_int, default=_D.MIN_READ_LENGTH,
-                   help='Min aligned read length (default 1000 — matches fiberhmm-apply)')
+                   help='Min read length: the full SEQ, soft clips included (DAF with '
+                        '--daf-mask-unaligned: the aligned length). Default 1000, '
+                        'as fiberhmm-apply.')
     p.add_argument('--msp-min-size', type=int, default=_D.MSP_MIN_SIZE,
                    help='Min MSP size (default 0)')
     p.add_argument('--nuc-min-size', type=int, default=_D.NUC_MIN_SIZE,

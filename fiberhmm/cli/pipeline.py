@@ -131,7 +131,8 @@ def build_parser() -> argparse.ArgumentParser:
     call = p.add_argument_group("calling (passed to fiberhmm-call; defaults are "
                                 "fiberhmm-call's)")
     call.add_argument("--min-read-length", type=int, default=None,
-                      help="Minimum aligned read length to call (default 1000).")
+                      help="Minimum read length to call: the full SEQ, soft clips "
+                           "included (DAF: the aligned length). Default 1000.")
     call.add_argument("--dedup", choices=["auto", "on", "off"], default="auto",
                       help="DAF PCR-duplicate detection (default auto: on for file "
                            "input).")
