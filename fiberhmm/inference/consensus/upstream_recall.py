@@ -16,6 +16,28 @@ MOLECULE_RECALL_FAILURES = ('Upstream TF overlaps a final nucleosome',
                             'Query annotations do not match the loaded original scaffold')
 
 
+def legacy_tag_intervals(read, start_tag, length_tag, legacy_annotation_frame):
+    """SEQ-frame intervals of one legacy tag pair, as the loader reads them.
+
+    A scalar or string tag (Dorado's ``ns:i``) is not a legacy call and counts
+    as absent (``legacy_annotations._legacy_tag``); a missing array partner
+    still raises.
+    """
+    from ..legacy_annotations import _legacy_tag
+    from ...io.ma_tags import flip_intervals_to_seq
+    if legacy_annotation_frame not in ('seq', 'molecular'):
+        raise ValueError('Nuc recall needs MA annotations or an explicit legacy tag frame')
+    has_start, has_length = _legacy_tag(read, start_tag), _legacy_tag(read, length_tag)
+    if not has_start and not has_length:
+        return []  # Absent feature; scaffold equality below still rejects any disagreement.
+    if not has_start or not has_length:
+        raise ValueError('Missing original nuc/MSP annotation tags')
+    starts, lengths = read.get_tag(start_tag), read.get_tag(length_tag)
+    if legacy_annotation_frame == 'molecular':
+        starts, lengths = flip_intervals_to_seq(starts, lengths, read)
+    return [(int(a), int(a+b)) for a,b in zip(starts,lengths)]
+
+
 def recall_hia5_alignment(read, unit, model, strand_mode, mode, context_size,
                           probability_threshold, minimum_llr, *,
                           minimum_opportunities=3, split_minimum_llr=4.,
@@ -48,16 +70,7 @@ def recall_hia5_alignment(read, unit, model, strand_mode, mode, context_size,
             starts, lengths = flip_intervals_to_seq([a for a, _ in fibertools[feature]],
                                                     [b for _, b in fibertools[feature]], read)
             return sorted((int(a), int(a+b)) for a, b in zip(starts, lengths))
-        if legacy_annotation_frame not in ('seq', 'molecular'):
-            raise ValueError('Nuc recall needs MA annotations or an explicit legacy tag frame')
-        if not read.has_tag(start_tag) and not read.has_tag(length_tag):
-            return []  # Absent feature; scaffold equality below still rejects any disagreement.
-        if not read.has_tag(start_tag) or not read.has_tag(length_tag):
-            raise ValueError('Missing original nuc/MSP annotation tags')
-        starts, lengths = read.get_tag(start_tag), read.get_tag(length_tag)
-        if legacy_annotation_frame == 'molecular':
-            starts, lengths = flip_intervals_to_seq(starts, lengths, read)
-        return [(int(a), int(a+b)) for a,b in zip(starts,lengths)]
+        return legacy_tag_intervals(read, start_tag, length_tag, legacy_annotation_frame)
 
     nucs=intervals('nuc','ns','nl');msps=intervals('msp','as','al')
     def project(a,b):

@@ -62,3 +62,18 @@ def test_corrupt_integer_pairs_still_fail_loudly():
     r.set_tag("nl", array("i", [5, 6]))
     with pytest.raises(ValueError, match="Mismatched"):
         legacy_annotations(r, "seq")
+
+
+def test_hia5_replay_scaffold_ignores_a_scalar_ns():
+    from fiberhmm.inference.consensus.upstream_recall import legacy_tag_intervals
+
+    r = _read()
+    r.set_tag("ns", 5000, value_type="i")
+    r.set_tag("as", array("i", [10]))
+    r.set_tag("al", array("i", [20]))
+    assert legacy_tag_intervals(r, "ns", "nl", "seq") == []
+    assert legacy_tag_intervals(r, "as", "al", "seq") == [(10, 30)]
+    r.set_tag("nl", array("i", [5]))
+    r.set_tag("ns", None)
+    with pytest.raises(ValueError, match="Missing original"):
+        legacy_tag_intervals(r, "ns", "nl", "seq")
