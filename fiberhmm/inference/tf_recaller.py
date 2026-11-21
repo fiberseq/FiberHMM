@@ -1121,6 +1121,7 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
                 m5c_llr_miss: Optional[np.ndarray] = None,
                 cpg_mask_policy: str = "unmethylated-only",
                 prob_threshold: int = RECALL_PROB_THRESHOLD,
+                footprints: Optional[dict] = None,
                 ) -> Tuple[List[TFCall], List[Tuple[int, int]], List[Tuple[int, int]]]:
     """Process one read.
 
@@ -1131,17 +1132,23 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
                               (>= unify_threshold OR no overlapping TF call)
         - msp_intervals: v2 MSPs unchanged
 
-    ``input_molecular_frame`` controls how the read's existing ns/nl/as/al are
-    interpreted: True (default) = molecular frame (current FiberHMM output),
-    flipped to seq for recall; False = legacy/v1.0 SEQ-frame tags, used as-is.
-    Pass the wrong value and reverse-strand calls get mis-placed (they land on
-    accessible m6A-rich DNA -- e.g. open promoters fill with spurious nuc).
+    The v2 nucleosomes and MSPs come from the read's ``MA`` (else fibertools
+    ``Ma``) ``nuc``/``msp`` groups; legacy ``ns/nl/as/al`` only when it has no
+    such group (:func:`fiberhmm.io.footprint_calls.resolve_footprint_tags`;
+    the MA frame comes from ``read.header``). ``footprints`` passes calls
+    already resolved that way (``ns/nl/as/al`` in the input frame) instead.
+
+    ``input_molecular_frame`` is the frame of those intervals: True (default)
+    = molecular frame (current FiberHMM output), flipped to seq for recall;
+    False = legacy/v1.0 SEQ-frame tags, used as-is. Pass the wrong value and
+    reverse-strand calls get mis-placed (they land on accessible m6A-rich DNA
+    -- e.g. open promoters fill with spurious nuc).
     """
-    # The shared array-pair rule (fiberhmm.io.legacy_tags): a scalar or string
-    # tag (Dorado's ns:i signal count) or unequal lengths make the pair absent.
-    from fiberhmm.io.legacy_tags import array_tag_pair
-    ns_raw, nl_raw = array_tag_pair(read, 'ns', 'nl') or ((), ())
-    as_raw, al_raw = array_tag_pair(read, 'as', 'al') or ((), ())
+    if footprints is None:
+        from fiberhmm.io.footprint_calls import resolve_footprint_tags
+        footprints = resolve_footprint_tags(read, input_molecular_frame) or {}
+    ns_raw, nl_raw = footprints.get('ns', ()), footprints.get('nl', ())
+    as_raw, al_raw = footprints.get('as', ()), footprints.get('al', ())
 
     if len(ns_raw) == 0 and len(as_raw) == 0:
         return [], [], []
