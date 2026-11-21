@@ -19,6 +19,11 @@
 - **`fire` groups are revalidated.** Recall keeps a carried `fire` group only
   if every element is still exactly one of the record's MSPs. Otherwise the
   group is dropped with its `AQ` bytes and `AN` names.
+- Records those commands write without rewriting their MSPs (skipped or
+  failed reads, `apply --no-msps`, unpaired `merge` reads) lose an `aq` when
+  the input has a `fiberhmm-apply` `@PG` and no contract line. Such an `aq`
+  may be an older FiberHMM's posterior rather than FIRE; fibertools 0.13
+  `ft extract` reports one as `fire_qual`.
 - Consensus export, `fiberhmm-tag-m5c` and `fiberhmm-scan` copy a fibertools
   `Ma` into `MA` as before, and now remove `Ma`/`Aq`/`An` after the copy.
 
