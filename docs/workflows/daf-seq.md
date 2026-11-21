@@ -306,7 +306,10 @@ error mask, with no extra pass over the BAM. Only clearly single-strand
 fibers vote: at least 10 deaminations of one strand at purity 0.92 or more,
 counting deaminations with base quality of at least 15 (fixed, independent
 of `--chimera-min-baseq`; records without QUAL are not filtered), and not
-chimeric under the run's detector. Chimeric fibers do not vote, so
+chimeric under the run's detector applied to those deaminations. The mask's
+`parameters` record this effective voter threshold as `voter_min_baseq` (also
+in `voter_detector`) and the final detector's `--chimera-min-baseq` as
+`detector_min_baseq`. Chimeric fibers do not vote, so
 real accessible sites on chimeric reads are not masked. A site is masked
 for the opposite-strand event when, among voters of the other strand, it has
 

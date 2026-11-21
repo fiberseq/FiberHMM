@@ -483,6 +483,11 @@ def test_error_mask_voters_use_fixed_q15(tmp_path, min_baseq):
                                             chimera_detector=cfg)
     masked = {s['position_0based'] for s in payload['chimera_error_mask']['sites']}
     assert error in masked and low_error not in masked
+    # Provenance records the effective voter quality, and the detector's apart.
+    params = payload['chimera_error_mask']['parameters']
+    assert params['voter_min_baseq'] == 15
+    assert params['voter_detector']['min_baseq'] == 15
+    assert params['detector_min_baseq'] == min_baseq
 
 
 # --- QC with state processing on ----------------------------------------------
