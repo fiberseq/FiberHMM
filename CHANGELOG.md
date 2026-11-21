@@ -1,5 +1,28 @@
 # Changelog
 
+## 3.2.1
+
+### Fixed
+
+- `fiberhmm-pipeline` works with minimap2 2.27, the version Ubuntu 24.04's
+  `apt install minimap2` installs. minimap2 2.27 ignores `--MD`: it writes a
+  `cs` tag and no `MD` tag (fixed in minimap2 2.28; 2.26 and earlier are not
+  affected). DAF-seq runs used to stop at the call step with "no
+  deamination-site source". The align step now computes `MD` (and `NM` when
+  absent) from the reference for every record the aligner left without one,
+  and drops the unrequested `cs` tag. The aligned and called BAMs match a
+  minimap2 2.30 run record for record.
+- The pipeline logs a warning when it finds minimap2 2.27. `fiberhmm-call` and
+  `fiberhmm-daf-encode` name minimap2 2.27 in their missing-MD messages when
+  the BAM header shows it; for BAMs you align yourself, use minimap2 2.28 or
+  newer, `samtools calmd`, or `--reference`.
+
+### CI
+
+- Linux jobs use a pinned, checksum-verified minimap2 2.30 release binary
+  instead of the distribution package. The Linux wheel smoke also runs the
+  installed pipeline under minimap2 2.27.
+
 ## 3.2.0
 
 
