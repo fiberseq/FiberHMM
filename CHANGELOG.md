@@ -42,7 +42,8 @@
   still exactly one of the record's MSPs. Otherwise the group is dropped with
   its `AQ` bytes and `AN` names.
 - call and apply clear the earlier run's calls from every record they write,
-  skipped and call-less reads included, as before; only DddA m5C groups stay.
+  skipped and call-less reads included, as before; only DddA m5C groups stay
+  (`call --no-legacy-tags` leaves a skipped read's legacy tags in place).
   `apply --no-msps` keeps the input's `as`/`al` and their fibertools `aq`, and
   also writes those MSPs into `MA` when a read keeps DddA m5C groups. Records
   written without rewriting their MSPs (reads recall fails on, unpaired `merge`

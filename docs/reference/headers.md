@@ -154,9 +154,12 @@ Written once (never duplicated on re-runs) by the commands that rewrite MSPs:
 record they write, including reads they skip (length, MAPQ, unmapped,
 unselected contigs, chimeras) and reads that yield no calls: such a record
 leaves with no nucleosome/MSP/TF tags and no `Ma`/`Aq`/`An`, keeping only its
-DddA m5C groups (in `MA`). `apply --no-msps` keeps the input's `as`/`al` and
-their `aq` on every record, and writes those MSPs into `MA` when the record
-keeps DddA m5C groups.
+DddA m5C groups (in `MA`). Two options leave legacy tags in place instead:
+`call --no-legacy-tags` keeps a skipped read's `ns`/`nl`/`as`/`al`/`nq`/`aq`
+(it never rewrites legacy tags), and `apply --no-msps` keeps every record's
+`as`/`al` and their `aq`, and writes those MSPs into `MA` when the record
+keeps DddA m5C groups. A fibertools 0.13 `fire` group (in `Ma`) is not kept
+under `apply --no-msps`: only the legacy `as`/`al` survive.
 
 Records written without rewriting their MSPs keep their MSP tags: reads
 `fiberhmm-recall-tfs`/`-recall-nucs` fail to recall (recall's chimeras are
