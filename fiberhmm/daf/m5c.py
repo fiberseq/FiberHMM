@@ -17,6 +17,7 @@ from typing import Iterable, Sequence
 
 import numpy as np
 
+from fiberhmm.io.footprint_calls import footprint_annotation_tag
 from fiberhmm.io.legacy_tags import array_tag_pair
 from fiberhmm.io.ma_tags import (
     DDDA_MCG_FEATURE,
@@ -1041,9 +1042,9 @@ def collect_read_observations(read, fasta, chrom: str | None = None,
     original_base = ord("C") if top else ord("G")
     deamination_mark = ord("Y") if top else ord("R")
     excluded = np.zeros(len(sequence), dtype=bool)
-    nuc_intervals = (ma_intervals(read, "nuc", input_molecular_frame)
-                     if read.has_tag("MA") else [])
-    legacy_nucs = None if nuc_intervals else array_tag_pair(read, "ns", "nl")
+    from_ma = footprint_annotation_tag(read) == "MA"   # MA first; legacy only without nuc/msp groups
+    nuc_intervals = ma_intervals(read, "nuc", input_molecular_frame) if from_ma else []
+    legacy_nucs = None if from_ma else array_tag_pair(read, "ns", "nl")
     if legacy_nucs is not None:
         starts, lengths = legacy_nucs
         if _legacy_molecular(read, input_molecular_frame):
@@ -1111,9 +1112,9 @@ def _interval_mask(length: int, intervals: Sequence[tuple[int, int]]) -> np.ndar
 
 
 def _nucleosome_intervals_seq(read, input_molecular_frame: bool) -> list[tuple[int, int]]:
-    intervals = (ma_intervals(read, "nuc", input_molecular_frame)
-                 if read.has_tag("MA") else [])
-    legacy_nucs = None if intervals else array_tag_pair(read, "ns", "nl")
+    from_ma = footprint_annotation_tag(read) == "MA"   # MA first; legacy only without nuc/msp groups
+    intervals = ma_intervals(read, "nuc", input_molecular_frame) if from_ma else []
+    legacy_nucs = None if from_ma else array_tag_pair(read, "ns", "nl")
     if legacy_nucs is not None:
         starts, lengths = legacy_nucs
         if _legacy_molecular(read, input_molecular_frame):
@@ -1938,9 +1939,9 @@ def write_cpg_island_bed(
 
 def _initial_msp_intervals_seq(read, input_molecular_frame: bool) -> list[tuple[int, int]]:
     """Return initial MSPs in SEQ coordinates from MA or legacy as/al tags."""
-    intervals = (ma_intervals(read, "msp", input_molecular_frame)
-                 if read.has_tag("MA") else [])
-    legacy_msps = None if intervals else array_tag_pair(read, "as", "al")
+    from_ma = footprint_annotation_tag(read) == "MA"   # MA first; legacy only without nuc/msp groups
+    intervals = ma_intervals(read, "msp", input_molecular_frame) if from_ma else []
+    legacy_msps = None if from_ma else array_tag_pair(read, "as", "al")
     if legacy_msps is None:
         return intervals
     starts, lengths = legacy_msps

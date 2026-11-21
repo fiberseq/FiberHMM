@@ -53,7 +53,8 @@ def recall_hia5_alignment(read, unit, model, strand_mode, mode, context_size,
     from ..tf_recaller import build_llr_tables
     from ..fused_stages import _build_fused_recall_result_with_nucs, resolve_nuc_recall_policy
     from ...daf.m5c import ma_intervals
-    from ...io.ma_tags import fibertools_ma_intervals, flip_intervals_to_seq
+    from ...io.footprint_calls import annotation_nuc_msp, footprint_annotation_tag
+    from ...io.ma_tags import flip_intervals_to_seq
     if mode not in ('pacbio-fiber', 'nanopore-fiber'):
         raise ValueError('This upstream recall adapter is restricted to Hia5')
     # The nucleosome policy fiberhmm-call resolves for this platform, recorded
@@ -72,11 +73,13 @@ def recall_hia5_alignment(read, unit, model, strand_mode, mode, context_size,
     if len(obs) != len(refs) or len(obs) != len(read.query_sequence):
         raise ValueError('Complete query observations and CIGAR projection required for nuc recall')
 
+    source = footprint_annotation_tag(read)   # MA first, then Ma; legacy only without nuc/msp groups
+
     def intervals(feature, start_tag, length_tag):
-        if read.has_tag('MA'):
+        if source == 'MA':
             return ma_intervals(read, feature)
-        fibertools = fibertools_ma_intervals(read)
-        if fibertools is not None:  # fibertools >= 0.13: Ma, always molecular
+        if source == 'Ma':  # fibertools >= 0.13: Ma, always molecular
+            fibertools = annotation_nuc_msp(read, 'Ma')
             starts, lengths = flip_intervals_to_seq([a for a, _ in fibertools[feature]],
                                                     [b for _, b in fibertools[feature]], read)
             return sorted((int(a), int(a+b)) for a, b in zip(starts, lengths))

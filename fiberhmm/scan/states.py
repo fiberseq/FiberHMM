@@ -139,7 +139,7 @@ class StateReader:
 
     def _parsed(self, read):
         from fiberhmm.cli.extract_tags import _parse_all_ma_annotations
-        from fiberhmm.io.ma_tags import has_annotation_tag
+        from fiberhmm.inference.legacy_annotations import legacy_calls_apply
         f = self._frame_context()
         try:
             parsed = _parse_all_ma_annotations(read, annotation_frame=f['frame'], molecular_layers=f['layers'],
@@ -147,13 +147,15 @@ class StateReader:
         except (KeyError, TypeError, ValueError):
             parsed = {}
         legacy = self._chemistry_runtime()['legacy_frame_loader']
-        if legacy is not None and not has_annotation_tag(read):
+        if legacy is not None and legacy_calls_apply(read):
+            # No MA/Ma nuc/msp groups: legacy ns/nl/as/al hold the calls; the
+            # MA's other groups (m5C, FIRE) are kept beside them.
             from fiberhmm.inference.legacy_annotations import has_legacy_tags, legacy_annotations
             frame = legacy
             if f['provenance_legacy'] is not None and has_legacy_tags(read):
                 frame = f['provenance_legacy'][0]
             try:
-                parsed = legacy_annotations(read, frame) or {}
+                parsed = {**parsed, **(legacy_annotations(read, frame) or {})}
             except (KeyError, TypeError, ValueError):
                 parsed = {}
         return parsed

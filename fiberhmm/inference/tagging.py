@@ -134,6 +134,9 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
 
     from fiberhmm.inference.read_filters import HARMONIZED_LEGACY_TAG
 
+    # --no-msps keeps the record's own MSPs: read them (MA msp first, else
+    # legacy as/al) before the stale MA footprint groups are dropped.
+    retained_msps = None if write_msps else _retained_seq_msps(read)
     strip_stale_call_tags(read, legacy_tags=(), keep_m5c_groups=True)
     keeps_m5c = read.has_tag("MA")
     # The MSPs the output carries: this run's, or under --no-msps the
@@ -143,7 +146,7 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
         out_msps = [(int(s), int(n)) for s, n in zip(result["as"], result["al"]) if int(n) > 0]
         msp_view = result
     else:
-        out_msps = _retained_seq_msps(read)
+        out_msps = retained_msps
         msp_view = {**result, "as": [s for s, _ in out_msps], "al": [n for _, n in out_msps]}
     if harmonize:
         result = {**_harmonized_result(msp_view, True),
@@ -210,15 +213,16 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
 
 
 def _retained_seq_msps(read) -> list:
-    """The record's own ``as``/``al`` MSPs (molecular frame) in SEQ frame,
-    ``[]`` unless they are two integer arrays of equal length."""
-    from fiberhmm.io.legacy_tags import array_tag_pair
+    """The record's own MSPs in SEQ frame: its MA (else fibertools Ma) msp
+    group, or, without MA/Ma nuc/msp groups, its legacy ``as``/``al``
+    (molecular frame; two integer arrays of equal length). ``[]`` without."""
+    from fiberhmm.io.footprint_calls import resolve_footprint_tags
     from fiberhmm.io.ma_tags import flip_intervals_to_seq
 
-    pair = array_tag_pair(read, "as", "al")
-    if pair is None:
+    footprints = resolve_footprint_tags(read, True) or {}
+    if "as" not in footprints:
         return []
-    starts, lengths = flip_intervals_to_seq(pair[0], pair[1], read)
+    starts, lengths = flip_intervals_to_seq(footprints["as"], footprints["al"], read)
     return [(int(s), int(n)) for s, n in zip(starts, lengths) if int(n) > 0]
 
 

@@ -863,13 +863,15 @@ def extract_bed_from_tagged_bam(input_bam: str, output_bed: str,
             if read.is_unmapped or read.is_secondary or read.is_supplementary:
                 continue
 
-            # Footprint tags in SEQ/query coords (molecular tags are flipped)
-            from fiberhmm.io.legacy_tags import array_tag_pair
-            pair = array_tag_pair(read, 'ns', 'nl')
-            if pair is None:
-                continue  # No footprint tags (or not a valid array pair)
-            ns, nl = pair
-            if legacy_frame.is_molecular(read):
+            # Nucleosome calls MA first (legacy ns/nl only without MA/Ma
+            # nuc/msp groups), in SEQ/query coords (molecular ones flipped).
+            from fiberhmm.io.footprint_calls import resolve_footprint_tags
+            molecular = legacy_frame.is_molecular(read)
+            footprints = resolve_footprint_tags(read, molecular) or {}
+            if 'ns' not in footprints:
+                continue  # No nucleosome calls
+            ns, nl = footprints['ns'], footprints['nl']
+            if molecular:
                 ns, nl = flip_intervals_to_seq(ns, nl, read)
             else:
                 ns, nl = [int(x) for x in ns], [int(x) for x in nl]
@@ -880,10 +882,7 @@ def extract_bed_from_tagged_bam(input_bam: str, output_bed: str,
             # Get scores if requested
             nq = None
             if with_scores:
-                try:
-                    nq = read.get_tag('nq')
-                except KeyError:
-                    pass
+                nq = footprints.get('nq')   # MA nuc Q, else legacy nq
 
             # Convert query coords to reference coords
             chrom = read.reference_name

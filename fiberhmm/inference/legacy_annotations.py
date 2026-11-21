@@ -18,11 +18,31 @@ def has_legacy_tags(read):
     return any(_legacy_tag(read, tag) for tag in ('ns','nl','as','al'))
 
 
+def legacy_calls_apply(read):
+    """Whether ``read``'s legacy ns/nl/as/al are its nucleosome/MSP calls.
+
+    MA (or fibertools Ma) nuc/msp groups are authoritative, including an
+    explicitly empty layer, and so is an MA/Ma this loader cannot parse
+    (never silently replaced by legacy tags). An MA holding only other groups
+    (m5C, FIRE) does not hide the legacy calls (fiberhmm.io.footprint_calls)."""
+    from fiberhmm.io.footprint_calls import footprint_annotation_tag
+    from fiberhmm.io.ma_tags import parse_ma_tag
+    if footprint_annotation_tag(read) is not None:
+        return False
+    for tag in ('MA', 'Ma'):
+        if read.has_tag(tag):
+            try:
+                parse_ma_tag(str(read.get_tag(tag)))
+            except (ValueError, TypeError):
+                return False
+    return True
+
+
 def legacy_annotations(read, frame):
     if frame not in ('disabled','seq','molecular'):
         raise ValueError('Unknown legacy annotation frame')
-    if read.has_tag('MA') or read.has_tag('Ma'):
-        return None  # MA (or fibertools Ma) is authoritative, including an explicitly empty layer.
+    if not legacy_calls_apply(read):
+        return None
     out={};n=int(read.query_length or 0)
     for target,starts_tag,lengths_tag in [('msp','as','al'),('nuc','ns','nl')]:
         present=[_legacy_tag(read,starts_tag),_legacy_tag(read,lengths_tag)]
