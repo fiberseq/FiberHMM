@@ -44,3 +44,6 @@ def test_pipeline_passes_the_chimera_detector_to_call(plasmid_run, detector):  #
     assert cars, sorted(str(p.relative_to(run["out"])) for p in run["out"].rglob("*"))[:40]
     detectors = {json.loads(p.read_text())["statistics"].get("detector", "standard") for p in cars}
     assert detectors == {"strict" if detector == "strict" else "standard"}, detectors
+    # the run record carries the detector in its call arguments, so a Library re-call repeats it
+    call_args = json.loads((run["out"] / "outputs.json").read_text())["settings"]["call_args"]
+    assert ("--chimera-detector" in call_args) == (detector == "strict"), call_args
