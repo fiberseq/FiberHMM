@@ -1010,3 +1010,40 @@ def test_split_keeps_paired_chimeras_whole_and_flagged(tmp_path):
     marked = tmp_path / 'flag.bam'
     strict_prepare(bam, str(marked), mode='flag', min_baseq=0)
     assert all(is_marked_chimera(r) for r in records(marked) if r.query_name == 'pair')
+
+
+@pytest.mark.parametrize('bounds, expected', [
+    # Segment form, as split mode passes it (daf_chimera_segments).
+    ([(None, 2100), (2200, None)], [(0, 2000), (2300, 4300)]),
+    ([(None, 1900), (2050, 3000), (3100, None)],
+     [(0, 1901), (2300, 3001), (3100, 4300)]),
+    # An interior piece wholly inside the insertion is not cut; the outer
+    # pieces stay valid and every gap is placed.
+    ([(None, 1900), (2050, 2250), (2400, None)], [(0, 1901), None, (2400, 4300)]),
+])
+def test_split_moves_insertion_anchors_of_segments(tmp_path, bounds, expected):
+    from fiberhmm.inference.chimera_split import split_record
+    ref = reference()
+    hdr = header()
+    read = _with_modifications(
+        make_read(hdr, ref, 'ins', 3000, [(0, 2000), (1, 300), (0, 2000)],
+                  swap_at(5000), seed=7))
+    pieces, gaps = split_record(read, hdr, {'pieces': bounds})
+    assert all(gap is not None for gap in gaps)
+    flat = [value for gap in gaps for value in gap]
+    path = tmp_path / 'pieces.bam'
+    with pysam.AlignmentFile(str(path), 'wb', header=hdr) as out:
+        for piece, interval in zip(pieces, expected):
+            assert (piece is None) == (interval is None)
+            if piece is not None:
+                out.write(piece)
+    back = records(path)
+    kept = [interval for interval in expected if interval is not None]
+    assert len(back) == len(kept)
+    for piece, (qs, qe) in zip(back, kept):
+        assert piece.query_sequence == read.query_sequence[qs:qe]
+        assert piece.infer_query_length() == qe - qs
+        assert piece.cigartuples[0][0] == 0 and piece.cigartuples[-1][0] == 0
+        assert list(piece.get_tag('xb')) == flat
+        assert _calls(piece) == {k: sorted(v) for k, v in
+                                 _expected_calls(read, qs, qe).items()}
