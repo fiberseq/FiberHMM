@@ -453,3 +453,58 @@ def test_mask_is_parsed_once_per_content_and_refingerprinted_each_read(tmp_path)
     mask.write_text('chr1\t165\t166\n')
     changed, changed_receipt = read_mask(mask)
     assert changed == {'chr1': frozenset({165})} and changed_receipt['sha256'] != receipt['sha256']
+
+
+def md_read_with_methylation_tags(cigar='200M'):
+    """CT read aligned with MD that kept basecaller 6mA ``A+a`` MM/ML tags."""
+    import array
+    read, hit, miss = read_with_variant('CT', 'md')
+    read.cigarstring = cigar
+    read.set_tag('MM', 'A+a.,0,3,5;')
+    read.set_tag('ML', array.array('B', [250, 250, 250]))
+    return read, hit, miss
+
+
+def test_md_extraction_skips_cigar_padding_without_shifting_positions():
+    # pysam's aligned pairs advance the query index across P (and build the MD
+    # reference from the shifted query), so a padded MD+MM read used to raise
+    # IndexError, or with a trailing soft clip silently read shifted bases.
+    from fiberhmm.daf.encoder import get_daf_positions
+    plain, _, _ = md_read_with_methylation_tags()
+    expected = get_daf_positions(plain)
+    for cigar in ('60M1P140M', '30M2P170M', '60M1P140M0P'):
+        padded, _, _ = md_read_with_methylation_tags(cigar)
+        assert get_daf_positions(padded) == expected
+        assert padded.cigarstring == cigar  # the record itself is not modified
+    clipped, _, _ = md_read_with_methylation_tags('195M5S')
+    clipped.set_tag('MD', None)
+    ref = ('ACGT' * 50)[:195]
+    pieces, matches = [], 0
+    for a, b in zip(ref, clipped.query_sequence):
+        if a == b:
+            matches += 1
+        else:
+            pieces.extend([str(matches), a]); matches = 0
+    clipped.set_tag('MD', ''.join(pieces) + str(matches))
+    unpadded = get_daf_positions(clipped)
+    clipped.cigarstring = '100M1P95M5S'
+    assert get_daf_positions(clipped) == unpadded
+
+
+def test_padded_md_read_keeps_true_positions_and_masks_after_the_pad():
+    plain_read, hit, miss = md_read_with_methylation_tags()
+    padded, _, _ = md_read_with_methylation_tags('60M1P140M')
+    assert hit > 60 and miss > 60
+    with daf_snp_mask_scope({}):
+        plain, strand = hard_observations(plain_read, 'daf', 'daf', 3, None)
+        observed, padded_strand = hard_observations(padded, 'daf', 'daf', 3, None)
+    assert strand == padded_strand == 'CT'
+    np.testing.assert_array_equal(observed, plain)
+    assert observed[hit] < 4096 and 4097 <= observed[miss] < 8193
+    with daf_snp_mask_scope({'chr1': frozenset({100 + hit, 100 + miss})}):
+        masked, masked_strand = hard_observations(padded, 'daf', 'daf', 3, None)
+    assert masked_strand == 'CT'
+    assert masked[hit] == masked[miss] == 8193
+    unknown = lambda obs: {int(q) for q in np.flatnonzero(np.asarray(obs) == 8193)}
+    assert {hit, miss} <= unknown(masked) - unknown(observed)
+    assert {hit - 1, hit + 1} & (unknown(masked) - unknown(observed)) <= {miss}

@@ -173,6 +173,12 @@
   lattice.
 - Consensus mask positions follow the CIGAR exactly; a `P` operation no
   longer shifts later positions by one.
+- DAF deaminations read from `MD` (or `--reference`) on reads whose CIGAR
+  contains padding (`P`) are at their true positions. pysam's aligned pairs
+  shift the read past each pad, so `fiberhmm-call`, `fiberhmm-daf-encode`,
+  recall, consensus and strand rescue stopped with an IndexError on such
+  reads, or, with a trailing soft clip, missed or misplaced the deaminations
+  after the pad. Reads without `P` are unchanged.
 - Consensus and strand rescue read the legacy `Mm`/`Ml` modification tags
   that older basecallers and modkit versions write, as `fiberhmm-call` does.
   Such Hia5 datasets used to load with no molecules.
