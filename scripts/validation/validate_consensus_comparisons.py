@@ -2,7 +2,7 @@
 """Controlled assay-sensitivity checks for fixed consensus geometry.
 
 This is a conditional simulation of one known class, not an end-to-end
-calibration of discovery, GLMM p-values, or biological TF occupancy. The
+calibration of discovery, mixed-model p-values, or biological TF occupancy. The
 all-accessible background uses f=1 and independent Bernoulli sites, deliberately
 favorable assumptions. Run from a checkout with PYTHONPATH=. .
 """

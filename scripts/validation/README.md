@@ -1,7 +1,6 @@
 # DAF SNP threshold validation
 
-For conditional consensus/haplotype sensitivity tests and the November 2026
-audit, see [Consensus comparison validation](consensus-comparisons.md).
+For conditional consensus/haplotype sensitivity tests, see [Consensus comparison validation](consensus-comparisons.md).
 
 `validate_daf_snp_downsampling.py` calibrates the optional FiberHMM DAF SNP
 mask by thinning bidirectionally classified fiber evidence over a prespecified

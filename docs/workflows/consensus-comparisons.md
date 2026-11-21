@@ -56,9 +56,9 @@ with the desired difference.
   CT and GA records are not automatically independent physical molecules.
 
 A coverage cutoff should apply to each sample × haplotype × tested strand.
-State the actual denominator, exclusions and missing strata. Four eligible
-samples out of six may be a useful prespecified design choice, but this
-threshold is not a FiberHMM calibration guarantee. Haplotype labels must refer
+State the actual denominator, exclusions and missing strata. A minimum
+number of eligible samples may be a useful prespecified design choice, but
+such a threshold is not a FiberHMM calibration guarantee. Haplotype labels must refer
 to corresponding alleles across samples or phase blocks.
 
 ## Keep the compared class definitions and observations comparable
@@ -127,7 +127,7 @@ Low-posterior BF-positive molecules are possible without a numerical bug.
 Hard-threshold counts depend on sensitivity and false-positive assignment as
 well as the biological fraction. The direction of bias need not be downward.
 Lower deamination or fewer usable targets can change them even with equal
-true fractions. A sample random intercept in a GLMM does not automatically
+true fractions. A per-sample random intercept in a mixed model does not automatically
 correct allele-specific detection bias.
 
 Use fitted `prevalence` as the model-based point estimate, but do not simply
@@ -180,4 +180,5 @@ from a fraction conditional on a chosen accessibility context.
 
 The checked-in [validation script](https://github.com/fiberseq/FiberHMM/blob/main/scripts/validation/validate_consensus_comparisons.py)
 exercises a fixed-geometry synthetic setting; its results are not a calibration
-of a particular user's GLMM or an end-to-end genome-wide false-discovery rate.
+of any particular study's statistical model or an end-to-end genome-wide
+false-discovery rate.

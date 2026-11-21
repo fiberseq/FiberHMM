@@ -1,10 +1,11 @@
-# Consensus comparison audit, 2026-11-11
+# Consensus comparison validation
 
 This audit examines fixed-catalogue comparisons between haplotypes, motivated
 by concerns about strand support, deamination efficiency, BF/posterior count
 filters and conversion-like variants. It tests implementation behavior and
-controlled measurement biases. No user's BAMs, motif instances or GLMM design
-were available, so it does not validate a biological hit or its significance.
+controlled measurement biases. It uses no real BAMs, motif instances or
+study-specific statistical model, so it does not validate a biological hit or
+its significance.
 
 ## Conclusions for comparative analyses
 
@@ -18,8 +19,8 @@ were available, so it does not validate a biological hit or its significance.
   separation from competing protected shapes, or emission calibration.
   A class absent on one haplotype can still be resolved there; do not require
   support on both comparison arms.
-- Fifty scored molecules and four eligible samples out of six are study
-  design choices, not validated power/error thresholds. Apply depth rules to
+- Minimum scored-molecule and eligible-sample counts are study design
+  choices, not validated power/error thresholds. Apply depth rules to
   each sample × haplotype × tested strand, specify the denominator, and report
   missing strata. Shared directions across samples can reflect shared
   sequence-linked detection bias. Align haplotype orientation across samples.
@@ -51,13 +52,12 @@ develops these distinctions and gives a transfer command.
 
 ## Implementation changes and checks
 
-The branch starts from FiberHMM 3.0.4 (`e8589f4`). Commit `d3b947e` adds
-explicit `--daf-snp-mask` preparation to consensus and BAM transfer, including
+FiberHMM 3.3.0 adds explicit `--daf-snp-mask` preparation to consensus and BAM transfer, including
 content fingerprints, parallel/restart handling and refusal to remask saved
 evidence. Targets must provide their own mask; source-coordinate masks are
 not inherited from frozen catalogues.
 
-Subsequent changes:
+It also makes these changes:
 
 1. Compute BF labels directly from log likelihoods, normalizing the floored
    alternative mixture. The old clipped-odds calculation can turn likelihood
@@ -143,31 +143,26 @@ protection still biases the comparison (EM .331/.280). Thus EM is not a
 general correction for misspecification or geometry confusion.
 
 The script records a naive Fisher count test for exploration. That is not
-the user's GLMM, and no calibrated false-positive/FDR claim follows from
+a study's mixed model, and no calibrated false-positive/FDR claim follows from
 these results. Real-lattice nulls, competing geometry, clustered molecules,
 phasing, uncertainty propagation and selection/multiple-testing calibration
 are still required for a biological analysis.
 
-## Independent advice and decisions
+## Design decisions
 
-AGY and Claude were queried independently with code and the proposed changes,
-then shown reproductions, simulation results and the final patch. Advice was
-checked against code and tests, not accepted by vote.
+Labels use direct BF arithmetic, propagated consistently to tiers, edges and
+frozen transfer, with explicit observability diagnostics. Support, posterior
+probability and differential inference are kept distinct. A low-posterior,
+BF-positive molecule is not treated as a numerical failure, and label
+permutations are not used to validate allele-linked sensitivity.
 
-Both ultimately endorsed direct BF arithmetic, consistent production
-propagation, explicit observability diagnostics and the distinction between
-support, posterior probability and differential inference. Initial suggestions
-to treat low-posterior BF members as bugs or to rely on label permutations
-were corrected after inspecting counterexamples.
-
-One disagreement remained about point masks. AGY accepted the documented
-scope limitation after the encoder tests. Claude preferred restoring a
-reference target base for neighbor contexts/runs. That would impose a C/G
-context on a true T/A allele, changing the substrate model. We retained the
-existing point-mask semantics, narrowed the direct-observation claim and
-documented the conversion-state dependence. The tests demonstrate a common
-expanded mask removing it in a short-run example. This is a deliberate
-limitation, not a claim that point masks make allele comparisons unbiased.
+Point masks keep their semantics: a masked site is removed, and no reference
+C/G is restored for neighbouring contexts or runs, because that would impose a
+C/G context on a true T/A allele and change the substrate model. A masked
+site's conversion state can therefore still affect which neighbour survives
+run thinning. This is documented as a limitation; the tests show a common
+expanded mask removing it in a short-run example. Point masks do not make
+allele comparisons unbiased.
 
 Deferred: haplotype-aware context restoration, automatic context/run padding,
 per-dataset excluded-observation counts, automatic mapping/mask warnings,
@@ -177,15 +172,8 @@ definition was changed.
 
 ## Validation record
 
-- Baseline at `d3b947e`: 3,641 passed, 23 skipped, 26 benchmark tests deselected.
-- Focused consensus/transfer regression suite: 78 passed, 1 skipped.
-- Expanded numerical/mask/integration checks: 51 passed.
-- Full regression run after implementation: 3,667 passed, 23 skipped,
-  26 benchmark tests deselected (916 seconds). Seven cases added during final
-  review after that run collected its tests are included in the separate
-  51-passing expanded run above.
-- CLI-reference regeneration check and strict MkDocs build passed.
-
-Large replicate files, reviewer transcripts and test logs are retained outside
-the repository in the working session's `consensus_review_20261111` directory.
-The commands above reproduce the simulations without those local artifacts.
+Targeted tests cover the mask, label, diagnostic and transfer paths
+(`tests/test_consensus_snp_mask.py`,
+`tests/test_consensus_comparison_diagnostics.py`); the CLI-reference
+regeneration check and strict MkDocs build pass. The commands above reproduce
+the simulations; large replicate outputs are not kept in the repository.
