@@ -1286,9 +1286,17 @@ def call_opposite_conversion_snps(
             "parameters": {
                 "voter_min_events": _chimeras.ERROR_MASK_VOTER_MIN_EVENTS,
                 "voter_min_purity": _chimeras.ERROR_MASK_VOTER_MIN_PURITY,
-                "voter_min_baseq": int(detector.get("min_baseq") or 0),
-                "voter_detector": {k: detector[k] for k in (
-                    "min_seg", "purity", "min_baseq", "min_span", "multi_switch")},
+                # Voters count only events at >= Q15 whatever the detector's
+                # min_baseq; their swap test runs on those events with the
+                # detector's segment settings. The final detector's own base
+                # quality threshold is recorded apart.
+                "voter_min_baseq": _chimeras.ERROR_MASK_VOTER_MIN_BASEQ,
+                "voter_detector": {
+                    **{k: detector[k] for k in (
+                        "min_seg", "purity", "min_span", "multi_switch")},
+                    "min_baseq": _chimeras.ERROR_MASK_VOTER_MIN_BASEQ,
+                },
+                "detector_min_baseq": int(detector.get("min_baseq") or 0),
                 "min_depth": _chimeras.ERROR_MASK_MIN_DEPTH,
                 "min_mismatches": _chimeras.ERROR_MASK_MIN_MISMATCHES,
                 "min_fraction": _chimeras.ERROR_MASK_MIN_FRACTION,

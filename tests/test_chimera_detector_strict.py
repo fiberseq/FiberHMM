@@ -442,6 +442,9 @@ def test_call_records_detector_provenance_and_keeps_masks_apart(tmp_path):
     assert ds['chimera_min_baseq'] == '15' and ds['chimera_min_span'] == '200'
     assert ds['chimera_multi_switch'] == 'on'
     assert ds['chimera_error_mask'] == f"on/{mask['n_sites']}sites"
+    from fiberhmm.io.run_state import sha256_file
+    digest = sha256_file(tmp_path / 'qc/calls.daf_snps.chimera_error_mask.bed')
+    assert mask['sha256'] == digest and ds['chimera_error_mask_sha256'] == digest
     assert ds['chimera_duplicates_excluded'] == '0'
     snp_bed = (tmp_path / 'qc/calls.daf_snps.bed').read_text()
     assert f'\t{error}\t' not in snp_bed
@@ -462,6 +465,8 @@ def test_call_without_error_mask_says_why(tmp_path, extra, reason, state):
     assert reason in side['error_mask']['reason']
     assert side['min_baseq'] == 15             # the quality filter still applies
     assert _ds(tmp_path / 'calls.bam')['chimera_error_mask'] == state
+    assert 'chimera_error_mask_sha256' not in _ds(tmp_path / 'calls.bam')
+    assert side['error_mask']['sha256'] is None
     assert not (tmp_path / 'qc/calls.daf_snps.chimera_error_mask.bed').exists()
 
 
@@ -483,6 +488,11 @@ def test_error_mask_voters_use_fixed_q15(tmp_path, min_baseq):
                                             chimera_detector=cfg)
     masked = {s['position_0based'] for s in payload['chimera_error_mask']['sites']}
     assert error in masked and low_error not in masked
+    # Provenance records the effective voter quality, and the detector's apart.
+    params = payload['chimera_error_mask']['parameters']
+    assert params['voter_min_baseq'] == 15
+    assert params['voter_detector']['min_baseq'] == 15
+    assert params['detector_min_baseq'] == min_baseq
 
 
 # --- QC with state processing on ----------------------------------------------
@@ -543,19 +553,46 @@ def test_state_qc_leaves_duplicate_chimeras_out(tmp_path):
     assert chimeras['n_duplicates_excluded'] == 3
 
 
-@pytest.mark.parametrize('with_bed', [True, False])
-def test_standalone_state_qc_restores_the_calls_error_mask(tmp_path, with_bed):
+def _mask_bed(sites):
+    return ''.join(f'{CONTIG}\t{s}\t{s + 1}\tG>A\n' for s in sites)
+
+
+def _sha256(text):
+    import hashlib
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+# The call's mask, and another run's mask with the same number of sites.
+_CALL_MASK = _mask_bed(TAIL)
+_OTHER_MASK = _mask_bed([s + 1 for s in TAIL])
+
+
+def _masked_ds(digest=_sha256(_CALL_MASK)):
+    ds = _DS_DEFAULT.format(mask=f'on/{len(TAIL)}sites')
+    return ds + (f' chimera_error_mask_sha256={digest}' if digest else '')
+
+
+@pytest.mark.parametrize('bed_text, digest, state', ids=[
+    'restored', 'unavailable', 'mismatch', 'unverified'], argvalues=[
+    (_CALL_MASK, _sha256(_CALL_MASK), 'restored'),
+    (None, _sha256(_CALL_MASK), 'unavailable'),
+    (_OTHER_MASK, _sha256(_CALL_MASK), 'mismatch'),      # same site count
+    (_CALL_MASK, None, 'unverified'),                    # no digest recorded
+])
+def test_standalone_state_qc_restores_the_calls_error_mask(tmp_path, bed_text, digest,
+                                                           state):
     from fiberhmm.inference import engine
     make = ct_with_ga_tail(TAIL)
     # Chimeric under the default detector, rescued by the call's error mask,
     # so the call kept it unmarked.
     reads = [make('rescued', seed=3), build('clean', lambda r: 'CT', seed=4)]
-    hdr = _call_header(_DS_DEFAULT.format(mask=f'on/{len(TAIL)}sites'))
+    hdr = _call_header(_masked_ds(digest))
     bam = _write_with_header(tmp_path / 'calls.bam', reads, hdr)
-    if with_bed:
+    with_bed = state == 'restored'
+    if bed_text is not None:
         bed = tmp_path / 'qc' / 'calls.daf_snps.chimera_error_mask.bed'
         bed.parent.mkdir()
-        bed.write_text(''.join(f'{CONTIG}\t{s}\t{s + 1}\tG>A\n' for s in TAIL))
+        bed.write_text(bed_text)
     before = dict(engine._DAF_CHIMERA_CFG)
     result = _qc(bam, tmp_path, 'calls')
     assert engine._DAF_CHIMERA_CFG == before            # restored after QC
@@ -570,10 +607,14 @@ def test_standalone_state_qc_restores_the_calls_error_mask(tmp_path, with_bed):
         assert detector['error_mask'].endswith('calls.daf_snps.chimera_error_mask.bed')
         assert states['reads']['reads_chimera_skipped'] == 0
     else:
-        assert states['definition']['chimera_error_mask'] == 'unavailable'
-        assert result['chimeras']['error_mask_restored'] == 'unavailable'
+        # Not this call's mask (or none, or unverifiable): not restored.
+        assert states['definition']['chimera_error_mask'] == state
+        assert result['chimeras']['error_mask_restored'] == state
+        assert result['chimeras']['error_mask_not_restored'] == state
         assert detector['error_mask'] is None
         assert states['reads']['reads_chimera_skipped'] == 1
+        from fiberhmm.qc.core import format_terminal
+        assert f'error mask not restored ({state}' in format_terminal(result)
 
 
 def test_standalone_state_qc_restores_the_calls_detector_settings(tmp_path):
@@ -598,10 +639,13 @@ def test_standalone_state_qc_restores_the_calls_detector_settings(tmp_path):
     assert not (tmp_path / 'out' / 'old.qc.chimera_regions.tsv').exists()
 
 
-@pytest.mark.parametrize('valid', [True, False])
-def test_standalone_state_qc_finds_a_custom_prefix_mask_via_the_sidecar(tmp_path, valid):
+@pytest.mark.parametrize('valid, replaced', [(True, False), (False, False),
+                                             (True, True)])
+def test_standalone_state_qc_finds_a_custom_prefix_mask_via_the_sidecar(tmp_path, valid,
+                                                                       replaced):
     """--daf-snp-output-prefix elsewhere, no --snp-report: the BAM-validated
-    chimeras sidecar names the mask; an unvalidated one is not trusted."""
+    chimeras sidecar names the mask; an unvalidated one is not trusted, nor
+    a BED another run wrote over it (same site count, other content)."""
     from fiberhmm.io.run_state import sha256_file
     make = ct_with_ga_tail(TAIL)
     reads = [make('rescued', seed=3), build('clean', lambda r: 'CT', seed=4)]
@@ -612,13 +656,20 @@ def test_standalone_state_qc_finds_a_custom_prefix_mask_via_the_sidecar(tmp_path
     bed.write_text(''.join(f'{CONTIG}\t{s}\t{s + 1}\tG>A\n' for s in TAIL))
     stats = strict_prepare(bam, mode='flag', error_mask=str(bed))
     assert stats['error_mask']['bed'] == str(bed) and stats['n_chimeric'] == 0
+    assert stats['error_mask']['sha256'] == sha256_file(bed)
+    if replaced:
+        bed.write_text(_OTHER_MASK)
     (tmp_path / 'qc').mkdir()
     (tmp_path / 'qc' / 'calls.chimeras.json').write_text(json.dumps({
         'assay': {'mode': 'daf', 'enzyme': 'dddb'},
         'output_sha256': sha256_file(bam) if valid else '0' * 64,
         'statistics': stats}))
     states = _qc(bam, tmp_path, 'calls')['state_rates']
-    if valid:
+    if replaced:
+        assert states['definition']['chimera_error_mask'] == 'mismatch'
+        assert states['definition']['chimera_detector']['error_mask'] is None
+        assert states['reads']['reads_chimera_skipped'] == 1
+    elif valid:
         assert states['definition']['chimera_error_mask'] == 'restored'
         assert states['definition']['chimera_detector']['error_mask'] == str(bed)
         assert states['reads']['reads_chimera_skipped'] == 0
@@ -868,3 +919,46 @@ def test_export_posteriors_output_cannot_be_the_chimera_error_mask(tmp_path, mon
                     "--chimera-error-mask", mask, "-o", tmp_path / "x.tsv",
                     "--format", "tsv")
     assert code == 2 and "need --chimera-detector strict" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('bed_text', [None, _OTHER_MASK], ids=['missing', 'other-run'])
+def test_qc_without_the_calls_mask_grades_the_calls_marks(tmp_path, bed_text):
+    """No sidecar and the call's error mask missing (or replaced by another
+    run's BED): extraction re-detects mask-rescued reads, but they are
+    reported apart and the grade stays on the call's flagged fraction (0)."""
+    from fiberhmm.qc.core import run_qc
+    make = ct_with_ga_tail(TAIL)
+    reads = [make(f'rescued{i}', seed=100 + i) for i in range(30)]
+    reads += [build(f'clean{i}', lambda r: 'CT', seed=200 + i) for i in range(90)]
+    bam = _write_with_header(tmp_path / 'calls.bam', reads, _call_header(_masked_ds()))
+    if bed_text is not None:
+        bed = tmp_path / 'qc' / 'calls.daf_snps.chimera_error_mask.bed'
+        bed.parent.mkdir()
+        bed.write_text(bed_text)
+    result = run_qc(bam, output_prefix=str(tmp_path / 'out' / 'calls'), mode='daf',
+                    enzyme='dddb', reference_profile='none', sample_reads=200,
+                    state_source='light-call', light_call_reads=200, stream=None)
+    chimeras = result['chimeras']
+    assert chimeras['error_mask_restored'] == ('unavailable' if bed_text is None
+                                               else 'mismatch')
+    # Merged into the count (as before the fix) these would grade WARN-high.
+    assert result['state_rates']['reads']['reads_chimera_detected_at_extraction'] == 30
+    assert chimeras['sampled_extraction_detected'] == 30
+    assert (chimeras['n_chimeric'], chimeras['sampled_chimeric']) == (0, 0)
+    assert chimeras['n_reads_checked'] == 120 and chimeras['fraction'] == 0
+    grade = chimeras['grade']
+    assert grade['source'] == 'bounded sample' and grade['status'] == 'PASS'
+    assert 'warned_by' not in result['overall']
+
+
+@pytest.mark.parametrize('mask', ['unavailable', 'off'])
+def test_qc_does_not_report_a_missing_mask_the_call_never_applied(tmp_path, mask):
+    from fiberhmm.qc.core import format_terminal
+    make = ct_with_ga_tail(TAIL)
+    reads = [make('chim', seed=3), build('clean', lambda r: 'CT', seed=4)]
+    bam = _write_with_header(tmp_path / 'calls.bam', reads,
+                             _call_header(_DS_DEFAULT.format(mask=mask)))
+    result = _qc(bam, tmp_path, 'calls')
+    assert result['chimeras']['error_mask_restored'] == mask
+    assert 'error_mask_not_restored' not in result['chimeras']
+    assert 'error mask not restored' not in format_terminal(result)

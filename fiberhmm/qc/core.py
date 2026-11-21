@@ -1515,6 +1515,14 @@ def _chimera_status_text(grade: Optional[dict]) -> str:
     return f"{grade['status']}{severity}"
 
 
+# Why QC could not restore a strict call's chimera error mask.
+_ERROR_MASK_NOT_RESTORED = {
+    "unavailable": "the call's BED was not found",
+    "mismatch": "the BED found is not the one the call applied (SHA-256 differs)",
+    "unverified": "the call recorded no SHA-256 to verify the BED against",
+}
+
+
 def _chimera_terminal_lines(result: dict) -> list[str]:
     """The DAF chimera block of the text summary."""
     chimeras = result["chimeras"]
@@ -1546,6 +1554,11 @@ def _chimera_terminal_lines(result: dict) -> list[str]:
             lines.append(f"    {details}")
         if grade and grade.get("basis_note"):
             lines.append(f"    basis: {grade['basis_note']}")
+        restored = chimeras.get("error_mask_not_restored")
+        if restored in _ERROR_MASK_NOT_RESTORED:
+            lines.append(f"    error mask not restored ({restored}: "
+                         f"{_ERROR_MASK_NOT_RESTORED[restored]}); state-aware "
+                         "rates ran without it")
         split = chimeras.get("split")
         if split:
             lines.append(
@@ -2942,7 +2955,7 @@ def _validated_chimera_sidecar(candidate, mode, enzyme, input_path) -> Optional[
 
 
 def _call_chimera_detector(settings, snp_report_path, sidecar_dir, input_stem,
-                           recorded_mask=None):
+                           recorded_mask=None, recorded_sha256=None):
     """``(detector, error_mask_state)``: the strict call's strand-swap detector.
 
     ``detector`` holds the keys of ``engine._DAF_CHIMERA_CFG`` restored from
@@ -2951,8 +2964,13 @@ def _call_chimera_detector(settings, snp_report_path, sidecar_dir, input_stem,
     ``recorded_mask`` (the BED named by the call's validated chimeras
     report, which also covers a custom ``--daf-snp-output-prefix``), else
     found through the SNP report's outputs, else next to the SNP outputs
-    (``qc/<stem>.daf_snps.chimera_error_mask.bed``); when neither exists the
-    state is ``unavailable`` and extraction runs without it.
+    (``qc/<stem>.daf_snps.chimera_error_mask.bed``). A candidate is restored
+    only when its SHA-256 matches the digest the call recorded
+    (``chimera_error_mask_sha256`` in DS, else ``recorded_sha256`` from the
+    validated sidecar): a BED overwritten by another run at the same prefix
+    is not this call's mask. Otherwise extraction runs without a mask and
+    the state says why: ``mismatch`` (a BED exists but is not the call's),
+    ``unverified`` (the call recorded no digest) or ``unavailable`` (no BED).
     """
     from fiberhmm.inference.chimeras import (
         STRICT_MIN_BASEQ, STRICT_MIN_SPAN, STRICT_MULTI_SWITCH,
@@ -2993,11 +3011,21 @@ def _call_chimera_detector(settings, snp_report_path, sidecar_dir, input_stem,
             else str(snp_report_path))[0])
     candidates.append(chimera_error_mask_paths(
         str(Path(sidecar_dir) / f"{input_stem}.daf_snps"))[0])
-    for candidate in candidates:
-        if candidate.is_file():
-            detector["error_mask"] = str(candidate)
-            return detector, "restored"
-    return detector, "unavailable"
+    expected = settings.get("chimera_error_mask_sha256") or recorded_sha256
+    existing = [candidate for candidate in candidates if candidate.is_file()]
+    if not existing:
+        return detector, "unavailable"
+    if not expected:
+        return detector, "unverified"
+    from fiberhmm.io.run_state import sha256_file
+    for candidate in existing:
+        try:
+            if sha256_file(candidate) == expected:
+                detector["error_mask"] = str(candidate)
+                return detector, "restored"
+        except OSError:
+            continue
+    return detector, "mismatch"
 
 
 def _state_rates(input_path, reads, mode, enzyme, **options) -> tuple[dict, dict]:
@@ -3195,10 +3223,11 @@ def run_qc(
     )
     # Strict: restore the call's detector (and its error mask) before state
     # extraction, so reads the call kept are not re-detected differently.
-    recorded_mask = ((recorded_statistics or {}).get('error_mask') or {}).get('bed')
+    recorded_error_mask = (recorded_statistics or {}).get('error_mask') or {}
     chimera_detector, error_mask_state = (
         _call_chimera_detector(call_settings, snp_report_path, sidecar_dir, input_stem,
-                               recorded_mask=recorded_mask)
+                               recorded_mask=recorded_error_mask.get('bed'),
+                               recorded_sha256=recorded_error_mask.get('sha256'))
         if strict_chimeras else (None, None))
     state_block, state_arrays = _state_rates(
         input_path, sampled.reads, resolved_mode, resolved_enzyme,
@@ -3262,9 +3291,19 @@ def run_qc(
     }
     # Preserve sampled evidence while preferring the exact pre-removal run.
     chimeras = result["chimeras"]
-    state_count = (state_block.get("reads") or {}).get("reads_chimera_skipped", 0)
-    chimeras["sampled_chimeric"] = max(chimeras["n_chimeric"], state_count)
-    chimeras["n_chimeric"] = chimeras["sampled_chimeric"]
+    state_reads = state_block.get("reads") or {}
+    if strict_chimeras:
+        # Strict: the sampled count is the call's own marks. Reads detected
+        # afresh during state extraction are reported apart and never merged:
+        # with the error mask not restored they reflect another detector
+        # configuration, not the call.
+        chimeras["sampled_chimeric"] = chimeras["n_chimeric"]
+        chimeras["sampled_extraction_detected"] = int(
+            state_reads.get("reads_chimera_detected_at_extraction", 0))
+    else:
+        state_count = state_reads.get("reads_chimera_skipped", 0)
+        chimeras["sampled_chimeric"] = max(chimeras["n_chimeric"], state_count)
+        chimeras["n_chimeric"] = chimeras["sampled_chimeric"]
     checked = chimeras["n_reads_checked"]
     chimeras["fraction"] = chimeras["n_chimeric"] / checked if checked else None
     chimeras["detected"] = bool(chimeras["n_chimeric"])
@@ -3282,6 +3321,10 @@ def run_qc(
                                 or chimeras['mode'] in ('flag', 'remove', 'split'))
         if error_mask_state is not None:
             chimeras['error_mask_restored'] = error_mask_state
+            # Only a mask the call applied (DS on/<N>sites) can be missing.
+            if (settings.get('chimera_error_mask', 'off').startswith('on')
+                    and error_mask_state in _ERROR_MASK_NOT_RESTORED):
+                chimeras['error_mask_not_restored'] = error_mask_state
     elif call_settings is not None:
         settings = call_settings
         chimeras['mode'] = (settings.get('chimeras', chimeras['mode'])

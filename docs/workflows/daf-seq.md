@@ -306,7 +306,10 @@ error mask, with no extra pass over the BAM. Only clearly single-strand
 fibers vote: at least 10 deaminations of one strand at purity 0.92 or more,
 counting deaminations with base quality of at least 15 (fixed, independent
 of `--chimera-min-baseq`; records without QUAL are not filtered), and not
-chimeric under the run's detector. Chimeric fibers do not vote, so
+chimeric under the run's detector applied to those deaminations. The mask's
+`parameters` record this effective voter threshold as `voter_min_baseq` (also
+in `voter_detector`) and the final detector's `--chimera-min-baseq` as
+`detector_min_baseq`. Chimeric fibers do not vote, so
 real accessible sites on chimeric reads are not masked. A site is masked
 for the opposite-strand event when, among voters of the other strand, it has
 
@@ -332,13 +335,21 @@ read but are not counted: they are left out of `n_reads_checked`,
 detector counts them). The sidecar (`detector: strict`) and the
 `@PG` DS line (`chimera_detector=strict`) record the detector settings (`min_seg`, `purity`,
 `min_baseq`, `min_span`, `multi_switch`), the error mask (applied or not,
-number of sites, reason) and the duplicates left out. For a strict call, QC restores the call's detector from the
+number of sites, reason, and the SHA-256 of the applied BED as `sha256` in
+the sidecar and `chimera_error_mask_sha256` in DS) and the duplicates left out. For a strict call, QC restores the call's detector from the
 `@PG` DS before measuring state-aware rates, with the call's chimera error
 mask: the BED named in the chimeras sidecar when that sidecar matches the
 BAM (this covers a custom `--daf-snp-output-prefix`), else through the SNP
-report or at `qc/<stem>.daf_snps.chimera_error_mask.bed`. When the call applied a mask
-that QC cannot find, the state block's `definition.chimera_error_mask` and
-the chimera block's `error_mask_restored` say `unavailable`. Chimeras
+report or at `qc/<stem>.daf_snps.chimera_error_mask.bed`. A BED is restored
+only when its SHA-256 matches the digest the call recorded, so a mask that
+another run wrote at the same prefix is never used. When the call applied a
+mask that QC cannot restore, state extraction runs without it and the state
+block's `definition.chimera_error_mask` and the chimera block's
+`error_mask_restored` say why: `unavailable` (no BED found), `mismatch` (a
+BED was found but its digest differs) or `unverified` (the call recorded no
+digest); the text summary says so too. Reads that extraction then detects
+afresh are reported as `sampled_extraction_detected` and are not added to the
+call's chimera count or grade. Chimeras
 skipped during state extraction are counted as unique read names, without
 duplicate-flagged reads, as in the chimera count.
 
@@ -385,8 +396,10 @@ written:
   the cut, so the cut does not create footprints at the inner edges.
   Breakpoints are anchored on deaminations that pass
   `--chimera-min-baseq`, so a low-quality basecall inside the gap does not
-  extend a piece past the switch.
-- CIGAR, SEQ, QUAL and MD are cut together, `NM` is recomputed and the
+  extend a piece past the switch. An anchor inside an insertion or soft
+  clip (possible with `--no-daf-mask-unaligned`) moves inward to the
+  nearest aligned base, so every piece starts and ends on an aligned base.
+- CIGAR, SEQ, QUAL, MM/ML and MD are cut over the same query range, `NM` is recomputed and the
   reference start is adjusted. Outer soft and hard clips stay with their
   piece.
 - Tags: `xc:Z:split`, `xi:i` (piece index, 0 to n-1 from left to right),
@@ -413,7 +426,11 @@ written:
   flagged as in flag mode. Unnamed records are not split. Unmapped records
   (`--process-unmapped`, or streamed input) are not split either: they have
   no CIGAR or reference position to cut, so a chimeric unmapped record is
-  kept whole and flagged (counted as `n_records_unmapped_kept_whole`). A
+  kept whole and flagged (counted as `n_records_unmapped_kept_whole`).
+  Paired records (flag 0x1, for example short-read pairs) are also kept
+  whole and flagged, with their pairing flags and mate fields unchanged
+  (`n_records_paired_kept_whole`): renamed pieces would leave the mate
+  pointing at a record that no longer exists. A
   piece that still shows a swap after cutting is flagged.
 - Each piece is called with its own strand. Split mode runs before the
   insert-consensus pre-pass, so pieces carry their own insertion evidence.

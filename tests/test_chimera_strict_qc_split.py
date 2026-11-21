@@ -909,3 +909,141 @@ def test_pieces_keep_mm_without_ml(names, reverse):
     piece = make_piece(single, hdr, first_c, 1500, 0, None)
     assert piece.get_tag('MM') == 'C+m,0;' and not piece.has_tag('ML')
     assert make_piece(single, hdr, first_c + 1, 1500, 0, None).get_tag('MM') == 'C+m;'
+
+
+# --- breakpoint anchors inside an insertion -----------------------------------
+
+@pytest.mark.parametrize('reverse', [False, True])
+@pytest.mark.parametrize('left_last, right_first, expected', [
+    (2100, 2400, [(0, 2000), (2400, 4300)]),    # left anchor in the insertion
+    (1900, 2100, [(0, 1901), (2300, 4300)]),    # right anchor in the insertion
+    (2050, 2200, [(0, 2000), (2300, 4300)]),    # both in the same insertion
+    (1900, 2400, [(0, 1901), (2400, 4300)]),    # aligned anchors: unchanged
+])
+def test_split_moves_insertion_anchors_to_aligned_bases(tmp_path, reverse, left_last,
+                                                        right_first, expected):
+    """2000M300I2000M (--no-daf-mask-unaligned lets an insertion event anchor a
+    breakpoint): pieces start and end on aligned bases, SEQ/QUAL/MM-ML match
+    the CIGAR, xb is placed and the records survive a BAM round trip."""
+    from fiberhmm.inference.chimera_split import piece_intervals, snap_to_aligned, split_record
+    ref = reference()
+    hdr = header()
+    start = 3000
+    read = _with_modifications(
+        make_read(hdr, ref, 'ins', start, [(0, 2000), (1, 300), (0, 2000)],
+                  swap_at(start + 2000), seed=7, flag=16 if reverse else 0))
+    split = {'left_last': left_last, 'right_first': right_first}
+    if (left_last, right_first) == (1900, 2400):
+        assert snap_to_aligned(read, split) == split
+    assert piece_intervals(read, snap_to_aligned(read, split))[0] == expected
+    pieces, gaps = split_record(read, hdr, split)
+    assert all(piece is not None for piece in pieces)
+    path = tmp_path / 'pieces.bam'
+    with pysam.AlignmentFile(str(path), 'wb', header=hdr) as out:
+        for piece in pieces:
+            out.write(piece)
+    back = records(path)
+    assert len(back) == 2
+    left_ref = read.get_reference_positions(full_length=True)
+    gap = (left_ref[expected[0][1] - 1] + 1, left_ref[expected[1][0]])
+    assert gaps == [gap]
+    for piece, (qs, qe) in zip(back, expected):
+        assert piece.query_sequence == read.query_sequence[qs:qe]
+        assert list(piece.query_qualities) == list(read.query_qualities[qs:qe])
+        assert piece.infer_query_length() == qe - qs
+        assert piece.cigartuples[0][0] == 0 and piece.cigartuples[-1][0] == 0
+        assert tuple(piece.get_tag('xb')) == gap
+        assert piece.has_tag('MM') and piece.has_tag('ML')
+        assert _calls(piece) == {k: sorted(v) for k, v in
+                                 _expected_calls(read, qs, qe).items()}
+        assert md_matches_cigar(piece)
+    assert back[0].reference_end == gap[0] and back[1].reference_start == gap[1]
+
+
+def test_make_piece_refuses_a_cut_whose_cigar_would_not_match_seq():
+    """A direct cut inside an insertion is refused, not written invalid."""
+    ref = reference()
+    hdr = header()
+    read = make_read(hdr, ref, 'ins', 3000, [(0, 2000), (1, 300), (0, 2000)],
+                     clean('CT'), seed=7)
+    assert make_piece(read, hdr, 0, 2251, 0, None) is None
+    assert make_piece(read, hdr, 2100, 4300, 1, None) is None
+    assert make_piece(read, hdr, 0, 2000, 0, None) is not None
+
+
+def test_split_keeps_paired_chimeras_whole_and_flagged(tmp_path):
+    """Policy: a paired (0x1) chimeric record is not cut. It is written whole
+    with its pairing flags and mate fields, and flagged by name like an
+    unmapped chimera; an unpaired chimera beside it is still split."""
+    ref = reference()
+    hdr = header()
+    paired = make_read(hdr, ref, 'pair', 2000, [(0, 4000)], swap_at(4000), seed=1, flag=99)
+    mate = make_read(hdr, ref, 'pair', 9000, [(0, 1500)], clean('CT'), seed=3, flag=147)
+    for read, other in ((paired, mate), (mate, paired)):
+        read.next_reference_id = 0
+        read.next_reference_start = other.reference_start
+    paired.template_length = 8500
+    mate.template_length = -8500
+    single = make_read(hdr, ref, 'single', 2000, [(0, 4000)], swap_at(4000), seed=2)
+    bam = write_bam(tmp_path / 'in.bam', [paired, mate, single])
+    spool = tmp_path / 'spool.bam'
+    names = ChimeraDecisions()
+    stats = strict_prepare(bam, mode='split', spool_bam=str(spool),
+                           chimeric_names=names, min_baseq=0)
+    split = stats['split']
+    assert split['n_records_paired_kept_whole'] == 1
+    assert split['n_records_unmapped_kept_whole'] == 0
+    assert split['n_records_split'] == 1
+    assert 'pair' in names and 'single' in names
+    out = records(spool)
+    assert not any(r.query_name.startswith('pair/') for r in out)
+    kept = sorted((r for r in out if r.query_name == 'pair'), key=lambda r: r.flag)
+    assert [r.flag for r in kept] == [99, 147]
+    assert kept[0].query_sequence == paired.query_sequence
+    assert (kept[0].next_reference_id, kept[0].next_reference_start,
+            kept[0].template_length) == (0, 9000, 8500)
+    assert {r.query_name for r in out if r.query_name.startswith('single/')} == {
+        'single/c0', 'single/c1'}
+    for piece in (r for r in out if r.has_tag('xn')):
+        assert not piece.flag & (0x1 | 0x2 | 0x8 | 0x20 | 0x40 | 0x80)
+    # Flag mode marks both records of the pair.
+    marked = tmp_path / 'flag.bam'
+    strict_prepare(bam, str(marked), mode='flag', min_baseq=0)
+    assert all(is_marked_chimera(r) for r in records(marked) if r.query_name == 'pair')
+
+
+@pytest.mark.parametrize('bounds, expected', [
+    # Segment form, as split mode passes it (daf_chimera_segments).
+    ([(None, 2100), (2200, None)], [(0, 2000), (2300, 4300)]),
+    ([(None, 1900), (2050, 3000), (3100, None)],
+     [(0, 1901), (2300, 3001), (3100, 4300)]),
+    # An interior piece wholly inside the insertion is not cut; the outer
+    # pieces stay valid and every gap is placed.
+    ([(None, 1900), (2050, 2250), (2400, None)], [(0, 1901), None, (2400, 4300)]),
+])
+def test_split_moves_insertion_anchors_of_segments(tmp_path, bounds, expected):
+    from fiberhmm.inference.chimera_split import split_record
+    ref = reference()
+    hdr = header()
+    read = _with_modifications(
+        make_read(hdr, ref, 'ins', 3000, [(0, 2000), (1, 300), (0, 2000)],
+                  swap_at(5000), seed=7))
+    pieces, gaps = split_record(read, hdr, {'pieces': bounds})
+    assert all(gap is not None for gap in gaps)
+    flat = [value for gap in gaps for value in gap]
+    path = tmp_path / 'pieces.bam'
+    with pysam.AlignmentFile(str(path), 'wb', header=hdr) as out:
+        for piece, interval in zip(pieces, expected):
+            assert (piece is None) == (interval is None)
+            if piece is not None:
+                out.write(piece)
+    back = records(path)
+    kept = [interval for interval in expected if interval is not None]
+    assert len(back) == len(kept)
+    for piece, (qs, qe) in zip(back, kept):
+        assert piece.query_sequence == read.query_sequence[qs:qe]
+        assert piece.infer_query_length() == qe - qs
+        assert piece.cigartuples[0][0] == 0 and piece.cigartuples[-1][0] == 0
+        assert list(piece.get_tag('xb')) == flat
+        assert _calls(piece) == {k: sorted(v) for k, v in
+                                 _expected_calls(read, qs, qe).items()}
