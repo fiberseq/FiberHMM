@@ -77,3 +77,52 @@ def test_hia5_replay_scaffold_ignores_a_scalar_ns():
     r.set_tag("ns", None)
     with pytest.raises(ValueError, match="Missing original"):
         legacy_tag_intervals(r, "ns", "nl", "seq")
+
+
+# --------------------------------------------------------------------------
+# DddA m5C (fiberhmm-tag-m5c / -call-m5c) and fiberhmm-utils transfer
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("bad", ["scalar", "string", "unequal"])
+def test_m5c_legacy_fallback_follows_the_pair_rule(bad):
+    from fiberhmm.daf.m5c import _initial_msp_intervals_seq, _nucleosome_intervals_seq
+
+    r = _read()
+    if bad == "scalar":
+        r.set_tag("ns", 40, value_type="i"); r.set_tag("nl", 20, value_type="i")
+        r.set_tag("as", 40, value_type="i"); r.set_tag("al", 20, value_type="i")
+    elif bad == "string":
+        r.set_tag("ns", "40,60", value_type="Z"); r.set_tag("nl", "5,5", value_type="Z")
+        r.set_tag("as", "40,60", value_type="Z"); r.set_tag("al", "5,5", value_type="Z")
+    else:
+        r.set_tag("ns", array("i", [10, 40])); r.set_tag("nl", array("i", [20]))
+        r.set_tag("as", array("i", [10, 40])); r.set_tag("al", array("i", [20]))
+    assert _nucleosome_intervals_seq(r, False) == []
+    assert _initial_msp_intervals_seq(r, False) == []
+
+
+def test_m5c_legacy_fallback_reads_a_valid_pair():
+    from fiberhmm.daf.m5c import _initial_msp_intervals_seq, _nucleosome_intervals_seq
+
+    r = _read()
+    r.set_tag("ns", array("i", [10])); r.set_tag("nl", array("i", [20]))
+    r.set_tag("as", array("i", [40])); r.set_tag("al", array("i", [15]))
+    assert _nucleosome_intervals_seq(r, False) == [(10, 30)]
+    assert _initial_msp_intervals_seq(r, False) == [(40, 55)]
+
+
+@pytest.mark.parametrize("bad", ["scalar", "string", "unequal"])
+def test_utils_transfer_reference_reader_follows_the_pair_rule(bad):
+    from fiberhmm.cli.utils import _parse_footprints_from_bam_read
+
+    r = _read()
+    if bad == "scalar":
+        r.set_tag("ns", 40, value_type="i"); r.set_tag("nl", 20, value_type="i")
+    elif bad == "string":
+        r.set_tag("ns", "40", value_type="Z"); r.set_tag("nl", "20", value_type="Z")
+    else:
+        r.set_tag("ns", array("i", [10, 40])); r.set_tag("nl", array("i", [20]))
+    assert _parse_footprints_from_bam_read(r, molecular=False) is None
+    r.set_tag("ns", array("i", [10])); r.set_tag("nl", array("i", [20]))
+    mask = _parse_footprints_from_bam_read(r, molecular=False)
+    assert mask.sum() == 20 and mask[10] and not mask[30]
