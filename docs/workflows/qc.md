@@ -141,7 +141,11 @@ with `plot: not written (install matplotlib)`.
   panel; TSV columns `chimeras_status`, `chimeras_severity` and
   `chimeras_basis` follow the existing columns. The grade comes from the
   call's full-run count when available; standalone QC of a flag-mode BAM
-  without the sidecar grades the flagged fraction of its sample. Remove and
+  without the sidecar grades the flagged fraction of its sample. For a strict
+  call the sampled count is the call's marks only: reads that state
+  extraction detects afresh (for example when the error mask is not
+  restored) are reported apart as `sampled_extraction_detected` and never
+  merged into `n_chimeric` or the grade. Remove and
   split BAMs without their sidecar are not graded. The grade records the
   settings that made the count (`min_seg`, `purity`) and its `basis`:
   `default` for the strict defaults, `lenient` or `custom` otherwise, with a

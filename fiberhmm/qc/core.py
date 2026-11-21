@@ -3291,9 +3291,19 @@ def run_qc(
     }
     # Preserve sampled evidence while preferring the exact pre-removal run.
     chimeras = result["chimeras"]
-    state_count = (state_block.get("reads") or {}).get("reads_chimera_skipped", 0)
-    chimeras["sampled_chimeric"] = max(chimeras["n_chimeric"], state_count)
-    chimeras["n_chimeric"] = chimeras["sampled_chimeric"]
+    state_reads = state_block.get("reads") or {}
+    if strict_chimeras:
+        # Strict: the sampled count is the call's own marks. Reads detected
+        # afresh during state extraction are reported apart and never merged:
+        # with the error mask not restored they reflect another detector
+        # configuration, not the call.
+        chimeras["sampled_chimeric"] = chimeras["n_chimeric"]
+        chimeras["sampled_extraction_detected"] = int(
+            state_reads.get("reads_chimera_detected_at_extraction", 0))
+    else:
+        state_count = state_reads.get("reads_chimera_skipped", 0)
+        chimeras["sampled_chimeric"] = max(chimeras["n_chimeric"], state_count)
+        chimeras["n_chimeric"] = chimeras["sampled_chimeric"]
     checked = chimeras["n_reads_checked"]
     chimeras["fraction"] = chimeras["n_chimeric"] / checked if checked else None
     chimeras["detected"] = bool(chimeras["n_chimeric"])

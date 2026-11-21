@@ -347,7 +347,9 @@ mask that QC cannot restore, state extraction runs without it and the state
 block's `definition.chimera_error_mask` and the chimera block's
 `error_mask_restored` say why: `unavailable` (no BED found), `mismatch` (a
 BED was found but its digest differs) or `unverified` (the call recorded no
-digest); the text summary says so too. Chimeras
+digest); the text summary says so too. Reads that extraction then detects
+afresh are reported as `sampled_extraction_detected` and are not added to the
+call's chimera count or grade. Chimeras
 skipped during state extraction are counted as unique read names, without
 duplicate-flagged reads, as in the chimera count.
 

@@ -533,6 +533,7 @@ def compute_state_rates(
                       if getattr(read, "is_duplicate", False)}
     chimera_keys = ({key for key, read in zip(keys, reads) if is_marked_chimera(read)}
                     if mode == 'daf' else set())
+    marked_keys = set(chimera_keys)
     eligible_pairs = [(key, read) for key, read in zip(keys, reads)
                       if not getattr(read, "is_duplicate", False)
                       and (mode != 'daf' or not is_marked_chimera(read))]
@@ -695,6 +696,10 @@ def compute_state_rates(
         light["elapsed_seconds"] = round(float(clock() - started), 3)
     if strict:
         counts["reads_chimera_skipped"] = len(chimera_keys - duplicate_keys)
+        # Of those, the ones the call did not mark: detected afresh during
+        # extraction (graded apart from the call's marks by fiberhmm-qc).
+        counts["reads_chimera_detected_at_extraction"] = len(
+            chimera_keys - marked_keys - duplicate_keys)
 
     msp_rate = _rate(totals["msp_events"], totals["msp_opps"])
     out_rate = _rate(totals["out_events"], totals["out_opps"])

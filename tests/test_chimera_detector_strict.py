@@ -917,3 +917,32 @@ def test_export_posteriors_output_cannot_be_the_chimera_error_mask(tmp_path, mon
                     "--chimera-error-mask", mask, "-o", tmp_path / "x.tsv",
                     "--format", "tsv")
     assert code == 2 and "need --chimera-detector strict" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('bed_text', [None, _OTHER_MASK])
+def test_qc_without_the_calls_mask_grades_the_calls_marks(tmp_path, bed_text):
+    """No sidecar and the call's error mask missing (or replaced by another
+    run's BED): extraction re-detects mask-rescued reads, but they are
+    reported apart and the grade stays on the call's flagged fraction (0)."""
+    from fiberhmm.qc.core import run_qc
+    make = ct_with_ga_tail(TAIL)
+    reads = [make(f'rescued{i}', seed=100 + i) for i in range(30)]
+    reads += [build(f'clean{i}', lambda r: 'CT', seed=200 + i) for i in range(90)]
+    bam = _write_with_header(tmp_path / 'calls.bam', reads, _call_header(_masked_ds()))
+    if bed_text is not None:
+        bed = tmp_path / 'qc' / 'calls.daf_snps.chimera_error_mask.bed'
+        bed.parent.mkdir()
+        bed.write_text(bed_text)
+    result = run_qc(bam, output_prefix=str(tmp_path / 'out' / 'calls'), mode='daf',
+                    enzyme='dddb', reference_profile='none', sample_reads=200,
+                    state_source='light-call', light_call_reads=10, stream=None)
+    chimeras = result['chimeras']
+    assert chimeras['error_mask_restored'] == ('unavailable' if bed_text is None
+                                               else 'mismatch')
+    assert result['state_rates']['reads']['reads_chimera_detected_at_extraction'] > 0
+    assert chimeras['sampled_extraction_detected'] > 0
+    assert (chimeras['n_chimeric'], chimeras['sampled_chimeric']) == (0, 0)
+    assert chimeras['n_reads_checked'] == 120 and chimeras['fraction'] == 0
+    grade = chimeras['grade']
+    assert grade['source'] == 'bounded sample' and grade['status'] == 'PASS'
+    assert 'warned_by' not in result['overall']
