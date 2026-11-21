@@ -470,16 +470,23 @@ def error_mask_summary(enabled=STRICT_ERROR_MASK, bed=None, n_sites=0,
 
     ``enabled``: requested (``--no-chimera-error-mask`` turns it off);
     ``applied``: a mask was computed and used; ``reason`` says why not.
+    ``sha256``: the applied BED's content digest, so QC restores only this
+    call's mask (:func:`fiberhmm.qc.core._call_chimera_detector`).
     """
     applied = bool(enabled and bed)
     if not enabled:
         reason = 'disabled (--no-chimera-error-mask)'
     elif not applied and reason is None:
         reason = 'no DAF SNP screen in this run'
+    digest = None
+    if applied and Path(bed).is_file():
+        from fiberhmm.io.run_state import sha256_file
+        digest = sha256_file(bed)
     return {'enabled': bool(enabled), 'applied': applied,
             'n_sites': int(n_sites) if applied else 0,
             'bed': str(bed) if applied else None,
-            'reason': None if applied else reason}
+            'reason': None if applied else reason,
+            'sha256': digest}
 
 
 def _new_stats_fields(mode, n_checked=0, n_chimeric=None, cfg=None,

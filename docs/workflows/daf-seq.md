@@ -335,13 +335,19 @@ read but are not counted: they are left out of `n_reads_checked`,
 detector counts them). The sidecar (`detector: strict`) and the
 `@PG` DS line (`chimera_detector=strict`) record the detector settings (`min_seg`, `purity`,
 `min_baseq`, `min_span`, `multi_switch`), the error mask (applied or not,
-number of sites, reason) and the duplicates left out. For a strict call, QC restores the call's detector from the
+number of sites, reason, and the SHA-256 of the applied BED as `sha256` in
+the sidecar and `chimera_error_mask_sha256` in DS) and the duplicates left out. For a strict call, QC restores the call's detector from the
 `@PG` DS before measuring state-aware rates, with the call's chimera error
 mask: the BED named in the chimeras sidecar when that sidecar matches the
 BAM (this covers a custom `--daf-snp-output-prefix`), else through the SNP
-report or at `qc/<stem>.daf_snps.chimera_error_mask.bed`. When the call applied a mask
-that QC cannot find, the state block's `definition.chimera_error_mask` and
-the chimera block's `error_mask_restored` say `unavailable`. Chimeras
+report or at `qc/<stem>.daf_snps.chimera_error_mask.bed`. A BED is restored
+only when its SHA-256 matches the digest the call recorded, so a mask that
+another run wrote at the same prefix is never used. When the call applied a
+mask that QC cannot restore, state extraction runs without it and the state
+block's `definition.chimera_error_mask` and the chimera block's
+`error_mask_restored` say why: `unavailable` (no BED found), `mismatch` (a
+BED was found but its digest differs) or `unverified` (the call recorded no
+digest); the text summary says so too. Chimeras
 skipped during state extraction are counted as unique read names, without
 duplicate-flagged reads, as in the chimera count.
 

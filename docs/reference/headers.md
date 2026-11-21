@@ -49,7 +49,9 @@ strict detector (`--chimera-detector strict`, 3.3.0) adds, after
 `chimera_purity`: `chimera_detector=strict`, `chimera_min_baseq`,
 `chimera_min_span`, `chimera_multi_switch=on|off`,
 `chimera_error_mask=on/<N>sites|off|unavailable|n/a` (`unavailable`:
-requested, but no SNP screen ran) and `chimera_duplicates_excluded=<N>`
+requested, but no SNP screen ran), `chimera_error_mask_sha256=<hex>` (the
+applied mask BED's SHA-256, only with `on/<N>sites`; QC restores only a BED
+with this digest) and `chimera_duplicates_excluded=<N>`
 (duplicate-flagged reads not counted). A DS without `chimera_detector` is
 the standard detector, as in earlier releases.
 
