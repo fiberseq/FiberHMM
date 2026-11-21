@@ -325,6 +325,19 @@ def _strip_tag(read, tag: str) -> None:
             pass
 
 
+def _adopt_fibertools_ma(read) -> None:
+    """Take a fibertools ``Ma``/``Aq``/``An`` as the read's ``MA``/``AQ``/``AN``."""
+    read.set_tag("MA", str(read.get_tag("Ma")), value_type="Z")
+    if read.has_tag("Aq"):
+        read.set_tag("AQ", read.get_tag("Aq"))
+    else:
+        _strip_tag(read, "AQ")
+    if read.has_tag("An"):
+        read.set_tag("AN", str(read.get_tag("An")), value_type="Z")
+    else:
+        _strip_tag(read, "AN")
+
+
 def strip_stale_call_tags(read, *, legacy_tags=LEGACY_CALL_TAGS,
                           keep_m5c_groups: bool = True) -> None:
     """Remove annotations a previous call pass left on ``read``.
@@ -336,9 +349,12 @@ def strip_stale_call_tags(read, *, legacy_tags=LEGACY_CALL_TAGS,
     reduced exactly as the MA writer of the matching pipeline would reduce it:
     the fused call writer keeps DddA m5C groups (``keep_m5c_groups=True``),
     the legacy apply writer drops MA/AN/AQ wholesale (``False``).
-    fibertools' (>= 0.13) ``Ma/Aq/An`` are dropped wholesale: they hold the
-    footprints this run replaces (nuc/msp, plus FIRE built on those MSPs) and
-    never DddA m5C groups. Groups derived from the old calls (fiberhmm-scan's
+    fibertools' (>= 0.13) ``Ma/Aq/An`` never survive: ``ft fire`` moves every
+    group of an input ``MA`` into ``Ma`` (FiberHMM's nuc/msp/tf and any DddA
+    m5C groups), so a read without ``MA`` first has its ``Ma`` taken as its
+    ``MA`` (``Ma`` is molecular, the frame callers declare) and is then reduced
+    like any ``MA``; FIRE built on the replaced MSPs is dropped with them.
+    Groups derived from the old calls (fiberhmm-scan's
     ``nucsz``/``nucseg``/``nucmol``/``nucreg``, ``fpcls``, ``nfrvar``, ``nfrmol``) are
     always dropped: only m5C groups survive.
     """
@@ -346,6 +362,8 @@ def strip_stale_call_tags(read, *, legacy_tags=LEGACY_CALL_TAGS,
         return
     for tag in legacy_tags or ():
         _strip_tag(read, tag)
+    if keep_m5c_groups and not read.has_tag("MA") and read.has_tag("Ma"):
+        _adopt_fibertools_ma(read)
     for tag in ("Ma", "Aq", "An"):
         _strip_tag(read, tag)
     if "ns" in (legacy_tags or ()):

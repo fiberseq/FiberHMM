@@ -1473,7 +1473,8 @@ def _seed_ma_from_fibertools(read, output_frame=None) -> None:
     footprints once an m5C group creates ``MA`` (``MA`` wins over ``Ma``):
     copy them into ``MA``/``AQ``/``AN`` first, as consensus export does, in
     the frame the OUTPUT header gives each group (``output_frame``, an
-    ``annotation_frame.MAGroupFrame``; default the read's own header)."""
+    ``annotation_frame.MAGroupFrame``; default the read's own header), and
+    remove ``Ma``/``Aq``/``An``."""
     if read.has_tag("MA") or not read.has_tag("Ma"):
         return
     from fiberhmm.inference.consensus.bam_export import _fibertools_ma_in_frame
@@ -1492,6 +1493,10 @@ def _seed_ma_from_fibertools(read, output_frame=None) -> None:
         read.set_tag("AQ", _array.array("B", [int(v) for v in aq]))
     if an is not None:
         read.set_tag("AN", str(an), value_type="Z")
+    # The copied groups now live in MA (which wins over Ma): one source of truth.
+    for tag in ("Ma", "Aq", "An"):
+        if read.has_tag(tag):
+            read.set_tag(tag, None)
 
 
 def _replace_m5c_ma_groups(

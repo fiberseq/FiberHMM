@@ -646,8 +646,10 @@ def test_consensus_export_keeps_fibertools_ma_under_family_layers():
     # a declared-molecular file copies Ma verbatim
     with pysam.AlignmentFile(str(FX / 'ft0.13_addnuc_fire.bam')) as bam:
         read = next(r for r in bam if r.query_name == 'read_rev')
+    ma = read.get_tag('Ma')
     _append_annotations(read, rows, 'molecular')
-    assert read.get_tag('MA').startswith(read.get_tag('Ma') + ';fam.')
+    assert read.get_tag('MA').startswith(ma + ';fam.')
+    assert not any(read.has_tag(t) for t in ('Ma', 'Aq', 'An'))   # one source of truth
 
 
 def test_consensus_export_publisher_keeps_fibertools_footprints_in_place(tmp_path):
