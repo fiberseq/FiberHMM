@@ -3,7 +3,8 @@
 The recallers re-run the likelihood-ratio passes on a BAM that already has
 HMM calls, without running the HMM again. Use them to:
 
-- add TF calls to the output of `fiberhmm-apply`;
+- finish the HMM-only calls of `fiberhmm-call --hmm-only` (TF recall, or
+  nucleosome + TF recall);
 - re-call with a refit or custom emission table;
 - change recall settings (`--min-llr`, the nucleosome split thresholds, the
   CpG policy) on an existing call set.
@@ -23,49 +24,58 @@ evidence) and sequence, and take the HMM footprints from the input's `MA`
 `nuc`/`msp` groups (else fibertools `Ma`); the legacy `ns`/`nl`/`as`/`al`
 are read only when a record has no such group. Legacy tags that disagree
 with `MA` (for example call's, left beside an `MA` that a later run
-refreshed) are ignored. On `fiberhmm-apply` output,
-`fiberhmm-recall-nucs` gives the same footprint tags as `fiberhmm-call` with
-matching options.
+refreshed) are ignored. On `fiberhmm-call --hmm-only` output the HMM
+footprints are the `nuc` and `tf` groups together (its `tf` group holds the
+HMM's TF-sized footprints, not recalled TFs), and `fiberhmm-recall-nucs`
+gives the same footprint tags as `fiberhmm-call` with matching options.
 
-## After `fiberhmm-apply`
+## After `fiberhmm-call --hmm-only`
 
 ```bash
-fiberhmm-apply -i demo/hia5_pacbio.bam --enzyme hia5 --seq pacbio -o out/apply -c 2
-fiberhmm-recall-tfs  -i out/apply/hia5_pacbio_footprints.bam -o out/apply.tfs.bam \
-    --enzyme hia5 --seq pacbio -c 2
-fiberhmm-recall-nucs -i out/apply/hia5_pacbio_footprints.bam -o out/apply.recalled.bam \
-    --enzyme hia5 --seq pacbio -c 2
+fiberhmm-call -i demo/hia5_pacbio.bam -o out/hmm.bam --enzyme hia5 --seq pacbio --hmm-only -c 2
+fiberhmm-recall-tfs  -i out/hmm.bam -o out/hmm.tfs.bam --enzyme hia5 --seq pacbio -c 2
+fiberhmm-recall-nucs -i out/hmm.bam -o out/hmm.recalled.bam --enzyme hia5 --seq pacbio -c 2
 ```
 
 ```text
+[recall_tfs] input is fiberhmm-call --hmm-only output: MA nuc + tf are read as the HMM footprints
 [recall_tfs] enzyme=hia5 mode=pacbio-fiber k=3 min_llr=5.00 uplift=1.00 tf_decoder=multi_interval_v1 cpg_mask=off unify_threshold=90 cores=2 numba=on
 [recall_tfs] ML threshold for MM/ML calls: 125
-[recall_tfs] processed 300 reads; 300 carried v2 tags; ... TF calls emitted; ... v2 short nucs demoted to tf+
 ```
 
-On default `fiberhmm-apply` output the recallers read the `MA` nucleosomes
-(the footprints outside MSPs). `fiberhmm-apply --legacy-tags` writes no `MA`
-(except on reads keeping DddA CpG islands), so the recallers read its
-`ns`/`nl`, which list every HMM footprint. `fiberhmm-recall-nucs` gives
-`fiberhmm-call`'s calls from either. Output of `fiberhmm-apply --harmonize-legacy-tags`
-holds only the `MA`-view nucleosomes in `ns`/`nl` and marks each such read
-with `hl:i:1`; both recallers stop at the first read with that tag:
+The recallers recognise an hmm-only file from its header: the latest
+FiberHMM footprint writer (`fiberhmm-call`, `-recall-tfs`, `-recall-nucs`,
+or a pre-3.3 `fiberhmm-apply`) is a `fiberhmm-call` whose `@PG DS` has
+`hmm_only=on`. They then read the `nuc` + `tf` groups as the HMM footprint
+list, exactly what the integrated call feeds its recall. On the demo data
+(Hia5 PacBio and Nanopore, DddB, DddA), `--hmm-only` then
+`fiberhmm-recall-nucs` reproduces `fiberhmm-call` on every read, and
+`--hmm-only` then `fiberhmm-recall-tfs` reproduces
+`fiberhmm-call --no-recall-nucs`. Recall output is not hmm-only output: its
+`tf` group is recalled TFs, so running a recaller on it again reads `nuc`
+alone (for DddA see [DddA call output](#ddda-call-output)).
+
+Output of `fiberhmm-apply` before 3.3 is read as before: with `--legacy-tags`
+its `ns`/`nl` list every HMM footprint. Output of the pre-3.3
+`fiberhmm-apply --harmonize-legacy-tags` holds only the `MA`-view
+nucleosomes in `ns`/`nl` and marks each such read with `hl:i:1`; both
+recallers stop at the first read with that tag:
 
 ```text
-error: read 'pacbio_0275' carries hl: the input is fiberhmm-apply --harmonize-legacy-tags output, whose ns/nl no longer list every HMM footprint that recall needs; re-run fiberhmm-apply without --harmonize-legacy-tags (or use fiberhmm-call)
+error: read 'pacbio_0275' carries hl: the input is fiberhmm-apply --harmonize-legacy-tags output (before 3.3), whose ns/nl no longer list every HMM footprint that recall needs; re-run fiberhmm-call --hmm-only (or fiberhmm-call)
 ```
 
 A writer that replaces `ns`/`nl` (the recallers, `fiberhmm-call`) removes
 `hl`; tools that pass the tags through keep it.
 
-`fiberhmm-apply` output declares its chemistry like `fiberhmm-call` output,
-so a refit table given with `-m` alone inherits it (see below). The recall
-output declares its chemistry and `MA-TYPES`, keeps the input order, and is
-not indexed; run `samtools index` if the input was sorted.
+Hmm-only output declares its chemistry like any `fiberhmm-call` output, so a
+refit table given with `-m` alone inherits it (see below). The recall output
+declares its chemistry and `MA-TYPES`, keeps the input order, and is not
+indexed; run `samtools index` if the input was sorted.
 
 ## With a refit or custom table
 
-On a BAM that `fiberhmm-call` or `fiberhmm-apply` produced, give only the model:
+On a BAM that `fiberhmm-call` (with or without `--hmm-only`) produced, give only the model:
 
 ```bash
 fiberhmm-recall-tfs -i out/dddb.calls.bam -o out/dddb.refit.bam -m dddb_refit.json -c 2

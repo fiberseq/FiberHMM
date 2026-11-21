@@ -293,49 +293,85 @@ worker is written through uncalled and counted. If more than 1% of processed
 reads fail (any failure when fewer than 100 reads were processed), the run
 stops with the first tracebacks and writes no output.
 
-## `fiberhmm-apply`: HMM only
+## `--hmm-only`: HMM calls only
 
-`fiberhmm-apply` runs only the HMM (step 2): nucleosome and MSP calls in
-`MA` (`nuc` = the footprints outside MSPs, `msp`), no TF recall. With
-`--legacy-tags` it also writes `ns`/`nl` (every HMM footprint) and `as`/`al`. It is useful for inspecting the
-raw HMM, for a staged workflow, or with `fiberhmm-recall-tfs`/`-recall-nucs`
-afterwards ([Re-calling](recalling.md)).
+`fiberhmm-call --hmm-only` runs only the HMM (step 2): no nucleosome recall,
+no TF recall. It writes every HMM call to `MA`/`AQ`, classed by size alone:
+
+| HMM call | MA group | AQ bytes |
+|---|---|---|
+| footprint of `--nuc-min-size` bp or more (default 85) | `nuc.Q` | `0`; with `--scores` the HMM posterior mean of the footprint (×255) |
+| footprint shorter than `--nuc-min-size`, wherever it lies (inside MSPs too) | `tf+QQQ` | `0,0,0`: no LLR and no edge evidence (recall writes those) |
+| accessible run between nucleosome-sized footprints (the HMM MSP) | `msp.` | none |
+
+The threshold is the one the HMM's own MSP step uses (only footprints of
+`--nuc-min-size` bp or more bound an MSP), so `nuc` and `msp` tile the read
+and every `tf` lies inside an `msp`. It is not `--unify-threshold` (90 bp),
+which only recall uses. Nothing is dropped: the `nuc` and `tf` groups
+together are every HMM footprint, the list `fiberhmm-apply --legacy-tags`
+wrote to `ns`/`nl` before 3.3.
 
 ```bash
-fiberhmm-apply -i demo/hia5_pacbio.bam --enzyme hia5 --seq pacbio -o out/apply -c 2
+fiberhmm-call -i demo/hia5_pacbio.bam -o out/hmm.bam --enzyme hia5 --seq pacbio --hmm-only -c 2
 ```
 
 ```text
-Processed 300 reads -> 300 with footprints
-BAM: out/apply/hia5_pacbio_footprints.bam
-BAM index: out/apply/hia5_pacbio_footprints.bam.bai
+  fiberhmm-call --hmm-only — HMM calls, no recall (streaming)
+  ...
+  nuc >= 85 bp, tf < 85 bp, msp: HMM
 ```
 
-- `-o` is an output **directory**; the BAM is `<input stem>_footprints.bam`.
-  `-o -` writes the BAM to stdout.
-- `--streaming` processes unaligned, unindexed or stdin input in a pipeline;
-  `-c 0` uses every CPU; `-c 1` (default) runs in one process.
-- DAF and DddA options match `fiberhmm-call`: `--daf-mask-runs`,
-  `--daf-run-policy`, `--daf-mask-unaligned`, and the first-pass CpG mask
-  (`--use-m5c`/`--no-use-m5c`, `--cpg-mask-policy`; on for DddA).
-- With `--legacy-tags`, `ns`/`nl` list every HMM footprint.
-  `--harmonize-legacy-tags` (implies `--legacy-tags`) writes `ns`/`nl` as the nucleosomes `MA`
-  would hold (footprints outside MSPs), so the legacy tags tile with
-  `as`/`al` like `fiberhmm-call` output; each such read carries `hl:i:1`,
-  and `fiberhmm-recall-tfs`/`-recall-nucs` refuse it
-  ([Re-calling](recalling.md)).
-- `--scores` writes posterior-mean `nq` (no MSP score: since 3.3.0 it no
-  longer writes `aq` and warns once; MSP quality is fibertools FIRE);
-  `--no-msps` omits `as`/`al` (the input's MSP tags are kept);
-  `--stats` samples reads for summary plots (needs `fiberhmm[plots]`);
-  `--output-posteriors FILE` also exports HMM posteriors; `-t` excludes the
-  read IDs a model was trained on.
-- `fiberhmm-apply` records the same provenance as `fiberhmm-call`: an `@PG`
-  line with its resolved settings and a `FIBERHMM-CHEMISTRY` declaration, so
-  recall, extract and QC read the chemistry from its output.
-- `--chroms`, `--skip-scaffolds`, `--region-size`, `--scores-db` and `-l`
-  never had an effect in `fiberhmm-apply` and are rejected; use
-  `fiberhmm-call --region-parallel` to select regions.
+- The output is input for `fiberhmm-recall-nucs` (nucleosome + TF recall)
+  and `fiberhmm-recall-tfs` (TF recall only); they read the `nuc` + `tf`
+  groups of an hmm-only call as the HMM footprints. `--hmm-only` then
+  `fiberhmm-recall-nucs` gives the same calls as `fiberhmm-call` with
+  matching options, and `--hmm-only` then `fiberhmm-recall-tfs` the same as
+  `fiberhmm-call --no-recall-nucs` ([Re-calling](recalling.md)).
+- The `@PG` record is `fiberhmm-call`'s, with `hmm_only=on`,
+  `recall_nucs=False`, `tf_recall=off`, `nuc_min_size=N` and
+  `msps=hmm|kept` in its `DS` (and `--hmm-only` in `CL`). Readers use the
+  `DS` token: a file whose latest FiberHMM footprint writer is an hmm-only
+  call has HMM footprints, not recalled TFs, in its `tf` group.
+- Everything else is `fiberhmm-call`'s: streaming or `--region-parallel`
+  (with `--resume`), the DAF pre-passes (dedup, chimera flagging, SNP screen,
+  insert consensus), the first-pass CpG mask, QC. No recall table is read,
+  so a custom `-m` of any context size works; `--recall-nucs` and
+  `--recall-model` are refused with `--hmm-only`.
+- `--legacy-tags` adds `ns`/`nl` = the `nuc` group and `as`/`al` = the `msp`
+  group (the legacy view `fiberhmm-call` writes).
+- `--keep-msps` (with `--hmm-only` only) keeps each record's own MSPs instead
+  of writing the HMM's: its `MA`/`Ma` `msp` group, legacy `as`/`al` with any
+  `aq` (fibertools ≤ 0.12 FIRE), the fibertools ≥ 0.13 `fire` group and every
+  other non-footprint group. The HMM footprints are still classed by size.
+  Use it to add HMM footprints to fibertools MSP/FIRE calls.
+- `--train-reads TSV` (a `rid` column) leaves the reads a custom model was
+  trained on uncalled.
+- HMM posteriors are exported by `fiberhmm-posteriors`
+  ([Posteriors](posteriors.md)).
+
+### `fiberhmm-apply` (deprecated)
+
+`fiberhmm-apply` is a deprecated alias for one release and is removed in the
+release after 3.3. It prints a deprecation notice, maps its options onto
+`fiberhmm-call --hmm-only` and runs that; the `@PG` records the translated
+`fiberhmm-call` command.
+
+| `fiberhmm-apply` | runs as |
+|---|---|
+| `-o DIR` | `-o DIR/<input stem>_footprints.bam` (`-o -` is stdout) |
+| `--no-msps` | `--keep-msps` |
+| `-t/--train-reads` | `--train-reads` |
+| `--scores` | `--scores` (nucleosome `nq`; no MSP score) |
+| `--stats` (`--stats-sample`, `--stats-seed`) | `fiberhmm-call` QC (`--qc-sample-reads`, `--qc-seed`); without `--stats`, `--no-qc` |
+| `--legacy-tags` / `--harmonize-legacy-tags` | `--legacy-tags` (`ns`/`nl` = `MA` `nuc`: the harmonized view); `--harmonize-legacy-tags` warns |
+| `--output-posteriors` | ignored with a warning; use `fiberhmm-posteriors` |
+| `--debug-timing`, `--streaming` | ignored with a warning |
+| `--chroms`, `--skip-scaffolds`, `--region-size`, `--scores-db`, `-l` | rejected, as before; use `fiberhmm-call --region-parallel` |
+
+Every other option is passed through unchanged; apply's defaults (`-c 1`,
+`--io-threads 4`) are kept. As `fiberhmm-call` runs, DAF input also gets
+call's pre-passes (dedup marking, chimera flagging, SNP screen), which
+`fiberhmm-apply` never ran.
 
 ## Performance
 

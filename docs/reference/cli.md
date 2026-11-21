@@ -12,8 +12,8 @@ Every command also accepts `-h`/`--help` and `--version` (prints
 | Command | What it does | Guide |
 |---|---|---|
 | [`fiberhmm-pipeline`](#fiberhmm-pipeline) | Reads + reference (FASTA or plasmid map) to a called BAM: align, call, QC | [Quick DAF-seq](../getting-started/quick-daf-seq.md), [Plasmids](../workflows/plasmids.md) |
-| [`fiberhmm-call`](#fiberhmm-call) | Call nucleosomes, MSPs and TF footprints (HMM + recall) in one pass | [Calling](../workflows/calling.md) |
-| [`fiberhmm-apply`](#fiberhmm-apply) | HMM nucleosomes/MSPs only | [Calling](../workflows/calling.md#fiberhmm-apply-hmm-only) |
+| [`fiberhmm-call`](#fiberhmm-call) | Call nucleosomes, MSPs and TF footprints (HMM + recall) in one pass; `--hmm-only` writes the HMM calls alone | [Calling](../workflows/calling.md) |
+| [`fiberhmm-apply`](#fiberhmm-apply) | Deprecated alias of `fiberhmm-call --hmm-only` (removed after 3.3) | [Calling](../workflows/calling.md#fiberhmm-apply-deprecated) |
 | [`fiberhmm-recall-tfs`](#fiberhmm-recall-tfs), [`fiberhmm-recall-nucs`](#fiberhmm-recall-nucs) | Re-call TFs (and nucleosomes) on a called BAM | [Re-calling](../workflows/recalling.md) |
 | [`fiberhmm-qc`](#fiberhmm-qc) | Bounded QC report for one or more BAMs | [QC](../workflows/qc.md) |
 | [`fiberhmm-extract`](#fiberhmm-extract) | Calls to BED12 / bigBed | [Extracting tracks](../workflows/extracting.md) |
@@ -111,10 +111,13 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--edge-trim` | `10` | Bases to mask at edges (default 10) |
 | `--min-mapq` | `0` | Min mapping quality (default 0) |
 | `--prob-threshold` | — | Min MM/ML modification probability 0-255. Default: chemistry preset -- 248 for Hia5 Nanopore (--seq nanopore, given or detected), 128 otherwise. R/Y- and MD-encoded DAF input is binary and ignores it. |
-| `--min-read-length` | `1000` | Min read length: the full SEQ, soft clips included (DAF with --daf-mask-unaligned: the aligned length). Default 1000, as fiberhmm-apply. |
+| `--min-read-length` | `1000` | Min read length: the full SEQ, soft clips included (DAF with --daf-mask-unaligned: the aligned length). Default 1000, as the HMM step has always used. |
 | `--msp-min-size` | `0` | Min MSP size (default 0) |
-| `--nuc-min-size` | `85` | Min footprint size to count as nucleosome (default 85) |
-| `--with-scores` / `--scores` | off | Write the HMM posterior-mean nq score of baseline nucleosomes (with --no-recall-nucs; nucleosome recall writes its own LLR-based nq). No aq is written. --scores is the fiberhmm-apply spelling. |
+| `--nuc-min-size` | `85` | Min footprint size to count as nucleosome (default 85): only footprints this size or larger bound an MSP; with --hmm-only it also splits footprints into nuc and tf. |
+| `--hmm-only` | off | Run the HMM step only (no nucleosome recall, no TF recall) and write every HMM call to MA/AQ: footprints &gt;= --nuc-min-size bp as nuc (nuc.Q: 0, or the HMM posterior-mean byte with --scores), smaller footprints as tf (tf+QQQ, bytes 0: no LLR), wherever they lie (inside MSPs too), and the HMM MSPs as msp. Nothing is dropped, so the output is input for fiberhmm-recall-nucs / fiberhmm-recall-tfs (they read nuc + tf of an hmm-only call as the HMM footprints). Replaces fiberhmm-apply. --legacy-tags adds ns/nl = nuc, as/al = msp. |
+| `--keep-msps` | off | With --hmm-only: keep the input's own MSPs (MA/Ma msp, legacy as/al/aq), fibertools FIRE and other non-footprint groups instead of writing the HMM's MSPs (e.g. MSPs from fibertools). Replaces fiberhmm-apply --no-msps. |
+| `-t` / `--train-reads` | — | TSV with a "rid" column of read names to leave uncalled (passed through), e.g. the reads a custom model was trained on. |
+| `--with-scores` / `--scores` | off | Write the HMM posterior-mean nq score of baseline nucleosomes (with --no-recall-nucs; nucleosome recall writes its own LLR-based nq). No aq is written. With --hmm-only: the HMM nq of every nuc. |
 | `-r` / `--circular` | off | Enable circular molecule mode (3x tile internally, emit wrapped MA/AQ/AN annotations). |
 | `--process-unmapped` / `--no-process-unmapped` | auto | Call unmapped reads that carry SEQ + MM/ML. Default: automatic -- on for stdin, unindexed and unaligned (uBAM) input, off (pass-through) for indexed aligned BAMs. A run that skips &gt;90% of records as unmapped fails unless --no-process-unmapped is given. |
 | `--alignments` | `primary-supplementary` | Alignment records to call (default primary-supplementary): primary and supplementary records, the parts of a split read (e.g. both sides of a structural variant); secondary records, alternative placements of the same bases, pass through uncalled. On a supplementary record only its aligned bases are called. "primary" calls primary records only; "all" also calls secondary records. Hard-clipped records whose MM/ML cannot match SEQ are always skipped (hard_clipped_mm). Choices: `primary`, `primary-supplementary`, `all`. |
@@ -124,7 +127,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--min-opps` | `3` | Min informative target positions per TF call (default 3). |
 | `--unify-threshold` | `90` | v2 nucs with nl &lt; this may be demoted to tf+ (default 90). |
 | `--emission-uplift` | — | Emission power transform. Default: enzyme preset. |
-| `--use-m5c` / `--no-use-m5c` | auto | DddA CpG-aware calling: CpG observations are excluded from the first-pass HMM and from nucleosome and TF recall, except inside confident unmethylated island calls (MA ddda_ucg from fiberhmm-tag-m5c) the input already carries. The same mask applies in fiberhmm-apply, -posteriors and -pair/-merge. Default: on for --enzyme ddda, off otherwise; --no-use-m5c for an ablation. |
+| `--use-m5c` / `--no-use-m5c` | auto | DddA CpG-aware calling: CpG observations are excluded from the first-pass HMM and from nucleosome and TF recall, except inside confident unmethylated island calls (MA ddda_ucg from fiberhmm-tag-m5c) the input already carries. The same mask applies in fiberhmm-call --hmm-only, -posteriors and -pair/-merge. Default: on for --enzyme ddda, off otherwise; --no-use-m5c for an ablation. |
 | `--cpg-mask-policy` | — | With CpG-aware calling (HMM and recall): keep CpGs only inside ddda_ucg islands (default unmethylated-only), or mask only ddda_mcg spans (methylated-only, the former behaviour). DddA only; ignored with a warning otherwise. Choices: `unmethylated-only`, `methylated-only`. |
 | `--legacy-tags` | off | Also write the legacy ns/nl/nq (nucleosomes) and as/al (MSPs) tags beside MA/AQ, for FiberBrowser &lt;= 3.1.0 (blank read rows without them), fibertools &lt;= 0.12 and old scripts. Default: MA/AQ only (FiberHMM, fibertools &gt;= 0.13 and FiberBrowser &gt;= 3.1.1 read MA); legacy tags on rewritten records are removed. |
 | `--no-legacy-tags` | off | Deprecated no-op: MA-only output is the default. |
@@ -212,15 +215,14 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--process-unmapped` / `--no-process-unmapped` | auto | Process unmapped reads that have sequences and modification tags. Default: automatic -- on for stdin, unindexed and unaligned (uBAM) input. A run that skips &gt;90% of records as unmapped fails unless --no-process-unmapped is given. |
 | `--edge-trim` / `-e` | `10` | Bases to trim from read edges (default: 10) |
 | `-r` / `--circular` | off | Enable circular mode (tiles reads 3x) |
-| `--scores` | off | Write the HMM posterior-mean nq score of each footprint (slower). No MSP score is written: the MSP aq of earlier versions is deprecated (MSP quality is fibertools FIRE). |
+| `--scores` | off | fiberhmm-call --scores: the HMM posterior-mean nq byte of each nucleosome (nuc.Q). No MSP score. |
 | `--msp-min-size` | `0` | Minimum size for MSP regions in bp. Default 0 (emit every accessible run; matches fibertools, which does not impose an MSP size filter at this stage). Pass a positive value to filter. |
 | `--nuc-min-size` | `85` | Minimum footprint size (bp) to count as nucleosome-sized for MSP boundary detection. Only footprints &gt;= this size split MSPs; smaller footprints are absorbed (default: 85) |
-| `--no-msps` | off | Do not write MSP tags (as/al) to output BAM. Useful for Fiber-seq where MSPs are computed differently by fibertools |
+| `--no-msps` | off | fiberhmm-call --keep-msps: keep the input's own MSPs (and fibertools FIRE) instead of writing the HMM's. |
 | `--stats` | off | Generate summary statistics and plots |
-| `--stats-sample` | `10000` | Number of reads to sample for statistics (default: 10000) |
-| `--stats-seed` | `42` | Random seed for sampling (default: 42) |
-| `--output-posteriors` | — | Export HMM posteriors to file (H5 or TSV) |
-| `--debug-timing` | off | Show per-read timing breakdown |
+| `--stats-sample` | — | fiberhmm-call --qc-sample-reads (with --stats). |
+| `--stats-seed` | — | fiberhmm-call --qc-seed (with --stats). |
+| `--output-posteriors` | — | Ignored with a warning: export posteriors with fiberhmm-posteriors. |
 | `--daf-mask-runs` | — | Thin DAF targets in same-strand runs of &gt;= N original C (CT) or G (GA) bases (N=2: CC/GG and longer). Default: 2 with keep-one for DddA (duplex-validated), off otherwise; 0 disables. |
 | `--daf-run-policy` | `keep-one` | With --daf-mask-runs: keep each run's 5'-most target (default) or drop the run. Choices: `keep-one`, `drop`. |
 | `--daf-mask-unaligned` / `--no-daf-mask-unaligned` | on | DAF only: treat insertion and soft-clip bases as no evidence and leave unaligned stretches of &gt;= 50 bp uncalled (default on, as in fiberhmm-call). |
@@ -228,13 +230,13 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--cpg-mask-policy` | — | With CpG-aware calling: keep CpGs only inside ddda_ucg islands (default unmethylated-only), or mask only ddda_mcg spans (methylated-only). DddA only; ignored with a warning otherwise. Choices: `unmethylated-only`, `methylated-only`. |
 | `--legacy-tags` | off | Also write the legacy ns/nl/nq (nucleosomes) and as/al (MSPs) tags beside MA/AQ, for FiberBrowser &lt;= 3.1.0 (blank read rows without them), fibertools &lt;= 0.12 and old scripts. Default: MA/AQ only (FiberHMM, fibertools &gt;= 0.13 and FiberBrowser &gt;= 3.1.1 read MA); legacy tags on rewritten records are removed. |
 | `--no-legacy-tags` | off | Deprecated no-op: MA-only output is the default. |
-| `--harmonize-legacy-tags` | off | Implies --legacy-tags. Write ns/nl as the nucleosomes that MA would hold (footprints outside MSPs), so legacy tags tile with as/al like fiberhmm-call output. Default (--legacy-tags): ns/nl list every HMM footprint, which fiberhmm-recall-tfs/-nucs need; they refuse harmonized input. |
+| `--harmonize-legacy-tags` | off | Deprecated: --legacy-tags now writes the harmonized view (ns/nl = the MA nucleosomes, as/al = MSPs); mapped to --legacy-tags with a warning. |
 
 ## fiberhmm-recall-tfs
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-i` / `--in-bam` | required | Input BAM tagged by fiberhmm-apply (has ns/nl/as/al). Use "-" for stdin. |
+| `-i` / `--in-bam` | required | Input BAM with HMM calls (fiberhmm-call --hmm-only; MA first, legacy ns/nl/as/al without MA). Use "-" for stdin. |
 | `-o` / `--out-bam` | required | Output BAM with MA/AQ + refreshed legacy tags. Use "-" for stdout (for piping to ft fire, samtools, etc). |
 | `-m` / `--model` | — | FiberHMM model JSON. If omitted, the bundled model for --enzyme/--seq is used automatically. |
 | `--enzyme` | — | Enzyme preset: auto-selects the bundled model and min-llr/emission-uplift defaults (ddda, dddb, hia5). Choices: `ddda`, `dddb`, `hia5`. |
@@ -273,7 +275,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-i` / `--in-bam` | required | Input BAM tagged by fiberhmm-apply (has ns/nl/as/al). Use "-" for stdin. |
+| `-i` / `--in-bam` | required | Input BAM with HMM calls (fiberhmm-call --hmm-only; MA first, legacy ns/nl/as/al without MA). Use "-" for stdin. |
 | `-o` / `--out-bam` | required | Output BAM with MA/AQ + refreshed legacy tags. Use "-" for stdout (for piping to ft fire, samtools, etc). |
 | `-m` / `--model` | — | FiberHMM model JSON. If omitted, the bundled model for --enzyme/--seq is used automatically. |
 | `--enzyme` | — | Enzyme preset: auto-selects the bundled model and min-llr/emission-uplift defaults (ddda, dddb, hia5). Choices: `ddda`, `dddb`, `hia5`. |

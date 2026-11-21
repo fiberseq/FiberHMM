@@ -4,6 +4,26 @@
 
 ### Changed
 
+- **`fiberhmm-apply` is folded into `fiberhmm-call --hmm-only`.**
+  `--hmm-only` runs the HMM step alone (no nucleosome recall, no TF recall)
+  inside the call pipelines (streaming and `--region-parallel`, with call's
+  DAF pre-passes and QC) and writes every HMM call to `MA`/`AQ`, classed by
+  size: footprints of `--nuc-min-size` (85) bp or more as `nuc` (`nuc.Q`: 0,
+  or the HMM posterior mean with `--scores`), smaller footprints as `tf`
+  (`tf+QQQ`, bytes 0: no LLR) wherever they lie, inside MSPs too, and the
+  HMM MSPs as `msp`. Nothing is dropped, unlike apply's `MA` view, whose
+  `nuc` held only the footprints outside MSPs. `--legacy-tags` adds
+  `ns`/`nl` = `nuc` and `as`/`al` = `msp`. The `@PG` record is
+  `fiberhmm-call`'s, with `hmm_only=on recall_nucs=False tf_recall=off
+  nuc_min_size=N msps=hmm|kept` in `DS`. recall-tfs/-nucs and the
+  `fiberhmm-tag-m5c` accessibility mask read the `nuc` + `tf` groups of an
+  hmm-only call (latest FiberHMM footprint writer in the header) as the HMM
+  footprints, so `--hmm-only` then `fiberhmm-recall-nucs` reproduces
+  `fiberhmm-call` (every read identical on the Hia5 PacBio, Hia5 Nanopore,
+  DddB and DddA demo data), `--hmm-only` then `fiberhmm-recall-tfs`
+  reproduces `fiberhmm-call --no-recall-nucs`, and `fiberhmm-tag-m5c` on
+  `MA`-only hmm-only output gives the integrated mCG spans. Default
+  `fiberhmm-call` output is unchanged.
 - **Legacy `ns/nl/nq`, `as/al` tags are no longer written by default.**
   `fiberhmm-call`, `-apply`, `-recall-tfs`, `-recall-nucs`, `-merge --recall`
   and `-pipeline` write calls to `MA`/`AQ`/`AN` only, and remove legacy
@@ -15,17 +35,14 @@
   scripts that read `ns/nl` need `--legacy-tags` (on every writer;
   `fiberhmm-pipeline` passes it to call), which writes them as before.
   `--no-legacy-tags` is accepted as a deprecated no-op; `--downstream-compat`
-  is unchanged (legacy tags only). `fiberhmm-apply` without `--legacy-tags`
-  writes `MA` `nuc` (the footprints outside MSPs) and `msp` on every called
-  read (with it, legacy tags as before, and `MA` only on reads keeping DddA
-  CpG islands), and `--no-msps` keeps a record's MSPs from `MA` too;
-  `--harmonize-legacy-tags` implies `--legacy-tags`. The default is
+  is unchanged (legacy tags only). `fiberhmm-apply` is now
+  `fiberhmm-call --hmm-only` (above). The default is
   `fiberhmm.defaults.WRITE_LEGACY_TAGS`, and `write_ma_tags` and the apply
   pipeline functions take it as their default too. Without legacy tags a
   call BAM is 6–9% smaller (Hia5 PacBio 6.4%, DddA PacBio 8.5%).
 - **Nucleosome and MSP calls are read from `MA` first.** Every FiberHMM
   reader of nucleosome/MSP calls (recall-tfs and recall-nucs, the consensus
-  loaders and native replay, call-m5c, apply `--no-msps`, `fiberhmm-probs`,
+  loaders and native replay, call-m5c, call `--hmm-only --keep-msps`, `fiberhmm-probs`,
   stats and BED export, alongside scan, extract, QC and `fiberhmm.nuc`, which
   already did) takes them from the record's `MA` `nuc` and `msp` groups, else
   fibertools' `Ma`, and reads the legacy `ns/nl`, `as/al` (and `nq`) only
@@ -36,14 +53,10 @@
   stale against `MA` (for example 3.2 recall-nucs `--no-legacy-tags` output,
   which refreshed `MA` and left call's `ns/nl`) now follows `MA`; and
   calls in an `MA` that holds only an `msp` group no longer pick up
-  nucleosomes from leftover `ns/nl`. `fiberhmm-apply` output carries an `MA`
-  whose `nuc` lists only the footprints outside MSPs (on every called read
-  by default since 3.3.0, before only on reads keeping DddA CpG islands), so
-  recall-tfs on it now reads that view rather than every HMM footprint in
-  `ns/nl`: TF and MSP calls are unchanged, and short footprints inside MSPs
-  that no TF call overlaps are no longer kept as nucleosomes (1.6% of
-  nucleosome calls on the Hia5 PacBio demo data). recall-nucs on apply
-  output still gives exactly `fiberhmm-call`'s calls. An `MA` that holds only m5C or FIRE groups no
+  nucleosomes from leftover `ns/nl`. On `fiberhmm-call --hmm-only` output
+  (the former `fiberhmm-apply`) the HMM footprints are its `nuc` + `tf`
+  groups, which recall reads together, so recall sees every HMM footprint as
+  it did in apply's legacy `ns/nl`. An `MA` that holds only m5C or FIRE groups no
   longer hides legacy calls from the consensus loaders. `fiberhmm-scan`
   peaks keeps FiberBrowser 3.1.0's loader rule (legacy pairs only, an
   `MA`-only record is one neutral row) so its rows match FiberBrowser; it
@@ -70,9 +83,9 @@
 - **FiberHMM writes no MSP quality score.** An MSP quality is fibertools
   FIRE (`ft fire`): the `fire` group in `Ma`/`MA`, or fibertools ≤ 0.12's
   `aq`. `fiberhmm-apply --scores` used to write its MSP posterior as `aq`,
-  the tag fibertools uses for FIRE. `--scores` is still accepted, still
-  writes the footprint `nq`, and prints a one-line warning that it writes no
-  MSP score. `fiberhmm-call --scores` never wrote one and is unchanged.
+  the tag fibertools uses for FIRE. `fiberhmm-call --scores` (also with
+  `--hmm-only`, and through the `fiberhmm-apply` alias) writes only the
+  nucleosome `nq` and never wrote an MSP score.
 - **No stale fibertools annotations after MSPs change.** `fiberhmm-call`,
   `-apply`, `-recall-tfs`, `-recall-nucs` and `-merge` remove any legacy `aq`
   and fibertools `Ma`/`Aq`/`An` from the records whose MSPs they rewrite, also
@@ -88,10 +101,10 @@
 - call and apply clear the earlier run's calls from every record they write,
   skipped and call-less reads included, as before; only DddA m5C groups stay
   (`call --no-legacy-tags` leaves a skipped read's legacy tags in place).
-  `apply --no-msps` keeps the input's `as`/`al` and their fibertools `aq`, and
-  also writes those MSPs into `MA` when a read it calls keeps DddA m5C groups. Records
-  written without rewriting their MSPs (reads recall fails on, unpaired `merge`
-  reads, and `apply --no-msps` output) lose an `aq` when the input has a
+  `call --hmm-only --keep-msps` keeps the input's MSPs (`MA`/`Ma` `msp`,
+  legacy `as`/`al` and their fibertools `aq`, a fibertools 0.13 `fire`
+  group). Records written without rewriting their MSPs (reads recall fails
+  on, unpaired `merge` reads, and `--keep-msps` output) lose an `aq` when the input has a
   `fiberhmm-apply` `@PG` and no contract line. Such an `aq` may be an older
   FiberHMM's posterior rather than FIRE; fibertools 0.13 `ft extract` reports
   one as `fire_qual`. For such a BAM, `fiberhmm-extract` now calls the `_msp`
@@ -110,6 +123,12 @@
   Reference > Shared defaults.
 
 ### Added
+
+- `fiberhmm-call --hmm-only` (see Changed), `--keep-msps` (with
+  `--hmm-only`: keep each record's own MSPs, legacy `as`/`al`/`aq`,
+  fibertools `fire` and other non-footprint groups instead of writing the
+  HMM's; replaces apply `--no-msps`) and `--train-reads TSV` (leave the
+  listed reads uncalled; replaces apply `-t`).
 
 - `fiberhmm-consensus` and BAM-based `fiberhmm-transfer` accept
   `--daf-snp-mask BED` (`input.daf_snp_mask`) to exclude SNP positions from
@@ -196,6 +215,24 @@
   `strict`, the strict options and `--chimera-error-mask BED`.
   `fiberhmm-pipeline` takes `--chimera-detector` and passes it to
   `fiberhmm-call`.
+
+### Deprecated
+
+- **`fiberhmm-apply` is a deprecated alias of `fiberhmm-call --hmm-only`
+  and will be removed in the release after 3.3.** It prints a deprecation
+  notice, maps its options and runs `fiberhmm-call --hmm-only` (the `@PG`
+  records the translated command): `-o DIR` -> `-o DIR/<name>_footprints.bam`,
+  `--no-msps` -> `--keep-msps`, `-t` -> `--train-reads`, `--stats`
+  (`--stats-sample`, `--stats-seed`) -> call's QC (`--qc-sample-reads`,
+  `--qc-seed`; without `--stats` the alias passes `--no-qc`), `--scores` ->
+  `--scores`. `--harmonize-legacy-tags` is dropped (it maps to
+  `--legacy-tags`, whose `ns`/`nl` are the `MA` nucleosomes: the harmonized
+  view), and `--output-posteriors` (use `fiberhmm-posteriors`),
+  `--debug-timing` (it never printed a breakdown) and `--streaming` are
+  ignored, each with a warning, so scripts still run. Apply's `-c 1` and
+  `--io-threads 4` defaults are kept; DAF input now also gets call's
+  pre-passes (duplicate marking, chimera flagging, SNP screen, insert
+  consensus).
 
 ### Fixed
 

@@ -19,8 +19,9 @@ live lift. FiberBrowser runs the same engine (`fiberhmm.scan.run_units`) for
 its own scans, so a browser scan and a command-line scan of the same units
 give the same rows.
 
-Inputs must be called by FiberHMM (`fiberhmm-call` or `fiberhmm-apply`);
-the scan does not call footprints.
+Inputs must be called by FiberHMM (`fiberhmm-call`, or `fiberhmm-call
+--hmm-only`, whose `tf` group holds the HMM's TF-sized footprints rather
+than recalled TFs); the scan does not call footprints.
 
 ## Quick start
 

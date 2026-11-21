@@ -101,7 +101,7 @@ Outputs in `-o`:
 | `best-model.json` | the model to use |
 | `all_models.json` | every initialization |
 | `model_config.json` | context size, mode, edge trim, probability adjustment |
-| `training-reads.tsv` | the read IDs used (pass to `fiberhmm-apply -t` to exclude them) |
+| `training-reads.tsv` | the read IDs used (pass to `fiberhmm-call --train-reads` to leave them uncalled) |
 
 ## 3. Use the model
 

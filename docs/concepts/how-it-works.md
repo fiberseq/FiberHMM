@@ -86,8 +86,9 @@ the most likely state path; each run of the protected state is a footprint.
   TF recaller (step 4); a recaller call that overlaps one replaces it.
 - `--edge-trim` (10) masks the read ends, where calls are unreliable.
 
-`fiberhmm-apply` stops here and writes `ns`/`nl`/`as`/`al` (and `MA` on
-reads that already carry DddA island groups).
+`fiberhmm-call --hmm-only` stops here and writes every HMM call to `MA`:
+footprints of `--nuc-min-size` (85) bp or more as `nuc`, smaller ones as
+`tf`, and the MSPs as `msp` ([Calling](../workflows/calling.md#-hmm-only-hmm-calls-only)).
 
 ## 3. Nucleosome recall
 

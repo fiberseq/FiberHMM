@@ -180,8 +180,9 @@ annotation's input frame is resolved from the input header and the read's
 original tags, before anything is stripped, by the rules above. An annotation
 whose input frame cannot be decided is dropped.
 
-- `fiberhmm-apply`, `-call` and `-recall-tfs`/`-nucs` declare
-  `coord=molecular`. Apply `--no-msps` MSPs, call/recall `--no-legacy-tags`
+- `fiberhmm-call` (also `--hmm-only`), `-recall-tfs`/`-nucs` and the old
+  `fiberhmm-apply` declare `coord=molecular`. `call --hmm-only --keep-msps`
+  MSPs, call/recall `--no-legacy-tags`
   legacy tags, recall's preserved `MA` groups and the reads they leave
   uncalled are converted to molecular frame (`fiberhmm.io.frame_carry`).
 Pass-through tools (`dedup`, `pair`, `merge`, `tag-m5c`, `call-m5c`,

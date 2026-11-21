@@ -7,7 +7,7 @@ written 1-based). The meaning of the scores is explained in
 
 ## Footprint calls
 
-Written by `fiberhmm-call`, `fiberhmm-apply`,
+Written by `fiberhmm-call` (also `--hmm-only`),
 `fiberhmm-recall-tfs`/`-recall-nucs`, and the joint recall of
 `fiberhmm-pair`/`fiberhmm-merge --recall`. Since 3.3.0 they write `MA`/`AQ`
 (and `AN`) only; the legacy `ns`/`nl`/`nq` and `as`/`al` are written only
@@ -21,15 +21,15 @@ legacy tags only when a record has no `nuc`/`msp` group
 | Tag | Type | Content |
 |---|---|---|
 | `ns` / `nl` | `B:I` | with `--legacy-tags`: nucleosome starts / lengths; with `--downstream-compat` also TF calls |
-| `as` / `al` | `B:I` | with `--legacy-tags`: MSP starts / lengths (`fiberhmm-apply --no-msps` omits them) |
+| `as` / `al` | `B:I` | with `--legacy-tags`: MSP starts / lengths (`fiberhmm-call --hmm-only --keep-msps` keeps the input's, with their `aq`) |
 | `nq` | `B:C` | with `--legacy-tags`, one byte per `ns` entry: with nucleosome recall the LLR ×10 (0 = unresolved); otherwise the HMM posterior mean ×255 (`--scores`), the input's `nq`, or 0 |
 | `MA` | `Z` | molecular annotations (groups below) |
 | `AQ` | `B:C` | quality bytes of every `MA` annotation, in `MA` order |
 | `AN` | `Z` | one name per `MA` annotation (`.` for unnamed); written when a call wraps a circular origin (`fhw_*`), for strand-rescue roles, consensus class tokens, or when preserved groups carry names |
-| `hl` | `i` | `1` on reads written by `fiberhmm-apply --harmonize-legacy-tags` (opt-in): `ns`/`nl` hold only the nucleosomes of the `MA` view, not every HMM footprint, so `fiberhmm-recall-tfs`/`-nucs` refuse the read. A later run removes it only when it replaces `ns`/`nl` (call, apply, recall, duplex joint recall); a run that leaves `ns`/`nl` in place, such as an `MA`-only write, keeps it |
+| `hl` | `i` | `1` on reads written by `fiberhmm-apply --harmonize-legacy-tags` before 3.3 (no longer written): `ns`/`nl` hold only the nucleosomes of the `MA` view, not every HMM footprint, so `fiberhmm-recall-tfs`/`-nucs` refuse the read. A later run removes it only when it replaces `ns`/`nl` (call, recall, duplex joint recall); a run that leaves `ns`/`nl` in place, such as an `MA`-only write, keeps it |
 
 FiberHMM writes no MSP quality score (since 3.3.0; `fiberhmm-apply --scores`
-used to write its MSP posterior as `aq`). An MSP quality is fibertools FIRE:
+in 3.2.1 and older used to write its MSP posterior as `aq`). An MSP quality is fibertools FIRE:
 the `fire` group of `Ma`/`MA`, or fibertools ≤ 0.12's `aq`. A command that
 rewrites MSPs removes any `aq` and fibertools `Ma`/`Aq`/`An` it finds,
 keeps `fire` groups only when they still match the MSPs exactly, and declares
