@@ -572,7 +572,8 @@ def _masked_ds(digest=_sha256(_CALL_MASK)):
     return ds + (f' chimera_error_mask_sha256={digest}' if digest else '')
 
 
-@pytest.mark.parametrize('bed_text, digest, state', [
+@pytest.mark.parametrize('bed_text, digest, state', ids=[
+    'restored', 'unavailable', 'mismatch', 'unverified'], argvalues=[
     (_CALL_MASK, _sha256(_CALL_MASK), 'restored'),
     (None, _sha256(_CALL_MASK), 'unavailable'),
     (_OTHER_MASK, _sha256(_CALL_MASK), 'mismatch'),      # same site count
@@ -920,7 +921,7 @@ def test_export_posteriors_output_cannot_be_the_chimera_error_mask(tmp_path, mon
     assert code == 2 and "need --chimera-detector strict" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize('bed_text', [None, _OTHER_MASK])
+@pytest.mark.parametrize('bed_text', [None, _OTHER_MASK], ids=['missing', 'other-run'])
 def test_qc_without_the_calls_mask_grades_the_calls_marks(tmp_path, bed_text):
     """No sidecar and the call's error mask missing (or replaced by another
     run's BED): extraction re-detects mask-rescued reads, but they are
@@ -936,12 +937,13 @@ def test_qc_without_the_calls_mask_grades_the_calls_marks(tmp_path, bed_text):
         bed.write_text(bed_text)
     result = run_qc(bam, output_prefix=str(tmp_path / 'out' / 'calls'), mode='daf',
                     enzyme='dddb', reference_profile='none', sample_reads=200,
-                    state_source='light-call', light_call_reads=10, stream=None)
+                    state_source='light-call', light_call_reads=200, stream=None)
     chimeras = result['chimeras']
     assert chimeras['error_mask_restored'] == ('unavailable' if bed_text is None
                                                else 'mismatch')
-    assert result['state_rates']['reads']['reads_chimera_detected_at_extraction'] > 0
-    assert chimeras['sampled_extraction_detected'] > 0
+    # Merged into the count (as before the fix) these would grade WARN-high.
+    assert result['state_rates']['reads']['reads_chimera_detected_at_extraction'] == 30
+    assert chimeras['sampled_extraction_detected'] == 30
     assert (chimeras['n_chimeric'], chimeras['sampled_chimeric']) == (0, 0)
     assert chimeras['n_reads_checked'] == 120 and chimeras['fraction'] == 0
     grade = chimeras['grade']
