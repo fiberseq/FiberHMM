@@ -173,7 +173,8 @@
   Unmasked runs are unchanged.
 - Replaying saved masked evidence with `input.correct_native=false` is
   refused: it would combine the BAM's unmasked TF calls with the masked
-  lattice.
+  lattice. Every window of pooled (`--pool-loci`) evidence is checked, not
+  only the first.
 - Consensus mask positions follow the CIGAR exactly; a `P` operation no
   longer shifts later positions by one.
 - DAF deaminations read from `MD` (or `--reference`) on reads whose CIGAR

@@ -397,6 +397,46 @@ def test_replaying_masked_evidence_requires_native_replay():
     assert prepare_sources(payload(), parse_options(options))
 
 
+def pooled_windows(masked_windows):
+    """Two separately prepared windows pooled with --pool-loci; ``masked_windows``
+    names the windows whose preparation used a SNP mask."""
+    from test_staged_families import payload
+    from fiberhmm.inference.consensus.regions import pool_payloads
+    windows = [dict(name='w1', chrom='chrTest', start=0, end=81, strand='+'),
+               dict(name='w2', chrom='chrTest', start=100, end=181, strand='+')]
+    payloads = []
+    for index, window in enumerate(windows):
+        data = payload()
+        shift = window['start']
+        for unit in data['strata'][0]['units']:
+            unit['unit_id'] = f"{window['name']}_{unit['unit_id']}"
+            unit['positions'] = [p + shift for p in unit['positions']]
+            for key in ('raw_tf_intervals', 'representative_raw_tf_intervals', 'msp_intervals', 'aligned_blocks'):
+                unit[key] = [[a + shift, b + shift] for a, b in unit[key]]
+            unit['reference_start'] += shift; unit['reference_end'] += shift
+        data['region'] = dict(chrom='chrTest', start=window['start'], end=window['end'])
+        manifest = dict(emissions_sha256='0' * 64)
+        if window['name'] in masked_windows:
+            manifest['daf_snp_mask'] = dict(path='/x/snps.bed', sha256='0' * 64, sites=1)
+        data['strata'][0]['model_manifest'] = manifest
+        payloads.append(data)
+    return pool_payloads(payloads, windows)
+
+
+@pytest.mark.parametrize('masked_windows', [{'w2'}, {'w1'}, {'w1', 'w2'}])
+def test_replaying_pooled_evidence_with_any_masked_window_requires_native_replay(masked_windows):
+    # Pooled strata keep only the first window's manifest; a later masked
+    # window must still refuse replay with the BAM's unmasked calls.
+    from test_staged_families import parameters
+    from fiberhmm.inference.consensus.harmonized_families.workflow import prepare_sources
+    options = parameters()
+    assert options['input']['correct_native'] is False
+    with pytest.raises(ValueError, match='DAF SNP mask.*input.correct_native=true'):
+        prepare_sources(pooled_windows(masked_windows), parse_options(options))
+    # An unmasked pool still replays with the BAM's own calls.
+    assert prepare_sources(pooled_windows(set()), parse_options(options))
+
+
 @pytest.mark.parametrize('duplex', [False, True])
 def test_mask_positions_skip_cigar_padding(duplex):
     # P consumes neither query nor reference; pysam's aligned pairs shift the
