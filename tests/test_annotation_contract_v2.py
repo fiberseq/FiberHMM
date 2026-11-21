@@ -164,6 +164,34 @@ def test_write_ma_tags_keeps_a_fire_group_that_matches_the_msps(reverse):
     assert not any(read.has_tag(t) for t in STALE)
 
 
+@pytest.mark.parametrize('reverse', [False, True])
+def test_write_ma_tags_fire_strand_must_match_the_msp_group(reverse):
+    """FiberHMM writes ``msp.``: a ``fire.`` group (what ft fire writes) can
+    match it, strand-qualified ``fire+``/``fire-`` groups cannot, even with
+    the same intervals. Elements compare as parsed numbers."""
+    read = _read(_header(), reverse=reverse)
+    seq_msps = [(900, 100), (600, 150)] if reverse else [(0, 100), (250, 150)]
+    read.set_tag('Ma', '1000;msp.:1-100,251-150;fire+Q:251-150;fire-Q:251-150;'
+                       'fire.Q:0251-150;deam+:11-5')
+    read.set_tag('Aq', array('B', [11, 22, 233]))
+    read.set_tag('An', 'a,b,fp,fm,f1,d1')
+    _write_ma(read, seq_msps)
+    heads = [g.partition(':')[0] for g in str(read.get_tag('MA')).split(';')[1:]]
+    assert 'fire.Q' in heads and 'fire+Q' not in heads and 'fire-Q' not in heads
+    aq = list(read.get_tag('AQ'))
+    assert aq[-1] == 233 and 11 not in aq and 22 not in aq
+    assert read.get_tag('AN').split(',')[-2:] == ['f1', 'd1']
+    assert not {'fp', 'fm'} & set(read.get_tag('AN').split(','))
+
+
+def test_write_ma_tags_drops_an_unparsable_fire_group():
+    read = _read(_header())
+    read.set_tag('Ma', '1000;msp.:1-100,251-150;fire.Q:251-1x0')
+    read.set_tag('Aq', array('B', [233]))
+    _write_ma(read, [(0, 100), (250, 150)])
+    assert 'fire' not in _groups(read)
+
+
 def test_write_ma_tags_drops_a_fire_group_whose_msps_changed():
     read = _read(_header())
     read.set_tag('Ma', '1000;msp.:1-100,251-150;fire.Q:251-150;deam+Q:11-5')
@@ -302,23 +330,29 @@ def test_aq_is_ambiguous_only_after_an_old_fiberhmm_apply_without_the_contract()
                                           'CO': [ANNOTATION_CONTRACT_V2]})
 
 
-def _with_old_apply_pg(src, dst):
+def _with_old_apply_pg(src, dst, *, old_apply=True, m5c=False):
     with pysam.AlignmentFile(str(src)) as bam:
         header = bam.header.to_dict()
-        header['PG'] = [{'ID': 'fiberhmm-apply', 'PN': 'fiberhmm-apply', 'VN': '3.2.1'},
-                        *header['PG']]
+        if old_apply:
+            header['PG'] = [{'ID': 'fiberhmm-apply', 'PN': 'fiberhmm-apply', 'VN': '3.2.1'},
+                            *header['PG']]
         with pysam.AlignmentFile(str(dst), 'wb', header=header) as out:
             for read in bam:
+                if m5c:   # a DddA CpG-island group (molecular, no AQ bytes)
+                    read.set_tag('MA', str(read.get_tag('MA')) + ';ddda_ucg.:101-50')
                 out.write(read)
     pysam.index(str(dst))
 
 
+@pytest.mark.parametrize('m5c', [False, True], ids=['no-m5c', 'm5c'])
 @pytest.mark.parametrize('old_apply', [False, True])
-def test_apply_no_msps_keeps_fibertools_aq_but_not_an_ambiguous_one(tmp_path, old_apply):
+def test_apply_no_msps_keeps_fibertools_aq_but_not_an_ambiguous_one(tmp_path, old_apply, m5c):
     src = FT062
-    if old_apply:
+    if old_apply or m5c:
         src = tmp_path / 'in.bam'
-        _with_old_apply_pg(FT062, src)
+        _with_old_apply_pg(FT062, src, old_apply=old_apply, m5c=m5c)
+    with pysam.AlignmentFile(str(src)) as bam:
+        before = {r.is_reverse: r for r in bam}
     proc = _run('fiberhmm.cli.apply', '-i', src, '-o', tmp_path / 'out', '--enzyme', 'hia5',
                 '--seq', 'pacbio', '--force-seq', '--no-msps', '-c', '1')
     assert proc.returncode == 0, proc.stderr
@@ -327,3 +361,40 @@ def test_apply_no_msps_keeps_fibertools_aq_but_not_an_ambiguous_one(tmp_path, ol
         reads = list(bam)
     assert all(r.has_tag('as') for r in reads)            # --no-msps keeps the input's MSPs
     assert all(r.has_tag('aq') != old_apply for r in reads)
+    for read in reads:
+        orig = before[read.is_reverse]
+        assert list(read.get_tag('as')) == list(orig.get_tag('as'))
+        if not old_apply:
+            assert list(read.get_tag('aq')) == list(orig.get_tag('aq'))
+        if m5c:
+            # MA (present for the kept island) carries the retained MSPs,
+            # molecular frame like as/al, and nucleosomes only outside them
+            groups = _groups(read)
+            assert groups['ddda_ucg'] == ['101-50']
+            want = [f'{s + 1}-{n}' for s, n in zip(orig.get_tag('as'), orig.get_tag('al'))
+                    if n > 0]
+            assert sorted(groups['msp']) == sorted(want), read.is_reverse
+            msps = [(s, s + n) for s, n in zip(orig.get_tag('as'), orig.get_tag('al'))]
+            for item in groups.get('nuc', []):
+                if not item:
+                    continue
+                a, n = (int(v) for v in item.split('-'))
+                assert not any(a - 1 < e and s < a - 1 + n for s, e in msps)
+
+
+def test_apply_no_msps_harmonized_ns_matches_ma_nuc(tmp_path):
+    """--harmonize-legacy-tags under --no-msps: ns/nl and MA nuc are the same
+    footprints (those outside the retained MSPs)."""
+    src = tmp_path / 'in.bam'
+    _with_old_apply_pg(FT062, src, old_apply=False, m5c=True)
+    proc = _run('fiberhmm.cli.apply', '-i', src, '-o', tmp_path / 'out', '--enzyme', 'hia5',
+                '--seq', 'pacbio', '--force-seq', '--no-msps', '--harmonize-legacy-tags',
+                '-c', '1')
+    assert proc.returncode == 0, proc.stderr
+    with pysam.AlignmentFile(str(tmp_path / 'out' / 'in_footprints.bam')) as bam:
+        for read in bam:
+            ma_nuc = sorted(i for i in _groups(read).get('nuc', []) if i)
+            ns = list(read.get_tag('ns')) if read.has_tag('ns') else []
+            nl = list(read.get_tag('nl')) if read.has_tag('nl') else []
+            assert sorted(f'{s + 1}-{n}' for s, n in zip(ns, nl)) == ma_nuc, read.is_reverse
+            assert read.has_tag('aq') and read.has_tag('as')

@@ -32,7 +32,7 @@ BAM (logged). Without a VCF, `--all` skips `var` with a one-line note.
 | Flag | File suffix | Source | Block score |
 |---|---|---|---|
 | `--nucleosome` | `_nucleosome` | `MA` `nuc` (or `ns`/`nl`) | `nq` |
-| `--msp` | `_msp` | `as`/`al` | `aq` (fibertools ≤ 0.12 FIRE; FiberHMM writes none) |
+| `--msp` | `_msp` | `as`/`al` | `aq` (fibertools ≤ 0.12 FIRE; FiberHMM writes none)¹ |
 | `--tf` | `_tf` | `MA` `tf.QQQ` with `tq` ≥ `--min-tq` (50) | `tq` |
 | `--m6a` | `_m6a` | `MM`/`ML` m6A at ML ≥ `-p` | ML |
 | `--m5c` | `_m5c` | DddA `ddda_mcg` spans, or native `MM`/`ML` 5mC | ML (0 for `ddda_mcg`) |
@@ -40,6 +40,12 @@ BAM (logged). Without a VCF, `--all` skips `var` with a one-line note.
 | `--both-strand` | `_bothstrand` | the `deam+` ∩ `deam-` region of joint duplex molecules | |
 | `--variants VCF` | `_var` | the allele each read carries at the sites of a VCF/BCF ([below](#variant-alleles-var)) | `blockAllele`, `blockBq` (always written) |
 | `--sv` | `_sv` | CIGAR deletions/insertions, long clips and the `SA` tag ([below](#structural-events-sv)) | `blockType`, `blockLen` (always written) |
+
+¹ A BAM whose header has a `fiberhmm-apply` `@PG` but no
+`FIBERHMM-ANNOTATION-CONTRACT` line comes from FiberHMM 3.2.1 or older, where
+`apply --scores` wrote its own MSP posterior as `aq`. For such a BAM the
+`_msp` bigBed's autoSQL description calls the `aq` score ambiguous instead of
+fibertools FIRE.
 
 `-p/--prob-threshold` defaults to 248 for BAMs that declare Hia5 Nanopore
 and 125 otherwise; it does not apply to `ddda_mcg` spans or to R/Y/`MD`

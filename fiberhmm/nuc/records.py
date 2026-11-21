@@ -252,7 +252,10 @@ def header_chemistry(header) -> dict:
         out['enzyme'] = chem.get('enzyme') if chem.get('enzyme') not in (None, 'custom') else None
         out['platform'] = chem.get('platform') if chem.get('platform') not in (None, 'unknown') else None
     hd = header.to_dict() if hasattr(header, 'to_dict') else dict(header or {})
-    for pg in reversed(hd.get('PG', [])):
+    # The call record itself (is_call_record), else -- as before -- the last
+    # record of any fiberhmm-call* program that names the chemistry.
+    call = last_call_record(hd)
+    for pg in ([call] if call is not None else reversed(hd.get('PG', []))):
         if 'fiberhmm-call' not in str(pg.get('PN') or pg.get('ID') or ''):
             continue
         cl = str(pg.get('CL', ''))
@@ -317,9 +320,13 @@ class DecodeContext(FrameContext):
         self.mark_threshold = resolve_prob_threshold(
             params.mark_threshold if params.mark_threshold is not None else recorded_threshold,
             chem['enzyme'], chem['platform'])
-        self.edge_trim = int(params.edge_trim)
-        if recorded_trim is not None and params.edge_trim == DEFAULT_PARAMS.edge_trim:
+        if params.edge_trim is not None:
+            self.edge_trim = int(params.edge_trim)
+        elif recorded_trim is not None:
             self.edge_trim = recorded_trim
+        else:
+            from fiberhmm import defaults as _defaults
+            self.edge_trim = int(_defaults.EDGE_TRIM)
         from fiberhmm.daf.replay import EvidenceReplay
         self.evidence = EvidenceReplay(header, self.mode)
         # DAF: the call's same-strand run mask and DddA CpG policy, so marks and
@@ -330,12 +337,31 @@ class DecodeContext(FrameContext):
                 header, chem['enzyme'], 'daf')
 
 
-def _last_call_record(header) -> Optional[dict]:
+_CALL_ID = re.compile(r'fiberhmm-call(\.\d+)?')
+
+
+def is_call_record(pg) -> bool:
+    """True for a ``@PG`` record of ``fiberhmm-call`` itself: ``PN`` exactly
+    ``fiberhmm-call``, or without ``PN`` an ``ID`` of ``fiberhmm-call`` with an
+    optional generated ``.N`` suffix. Other programs whose names start the same
+    way (``fiberhmm-call-m5c``) are not call records."""
+    pn = pg.get('PN')
+    if pn:
+        return str(pn) == 'fiberhmm-call'
+    return bool(_CALL_ID.fullmatch(str(pg.get('ID') or '')))
+
+
+def last_call_record(header) -> Optional[dict]:
+    """The header's last ``fiberhmm-call`` ``@PG`` record (:func:`is_call_record`),
+    or None. Shared by decoding and ``CallerSettings.from_header``."""
     hd = header.to_dict() if hasattr(header, 'to_dict') else dict(header or {})
     for pg in reversed(hd.get('PG', [])):
-        if 'fiberhmm-call' in str(pg.get('PN') or pg.get('ID') or ''):
+        if is_call_record(pg):
             return pg
     return None
+
+
+_last_call_record = last_call_record
 
 
 def _cl_option(toks, *names) -> Optional[str]:

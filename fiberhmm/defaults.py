@@ -150,6 +150,10 @@ ALLOWED_OVERRIDES = {
         "DAF-only tool: the DAF chemistry default is 128"),
     ("fiberhmm-merge", "prob_threshold"): (PROB_THRESHOLD,
         "DAF-only tool: the DAF chemistry default is 128"),
+    # -- nucleosome decoding: the call's own trim unless one is given ------
+    ("fiberhmm.nuc.params.NucParams", "edge_trim"): (None,
+        "unset = the recorded fiberhmm-call --edge-trim, else EDGE_TRIM "
+        "(nuc.records.DecodeContext); any explicit value, 10 included, wins"),
     # -- fiberhmm-train: one context size by default ----------------------
     ("fiberhmm-train", "context_size"): (3,
         "trains one table at k=3, the bundled models' context size"),
