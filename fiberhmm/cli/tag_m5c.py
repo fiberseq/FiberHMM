@@ -110,7 +110,7 @@ def _preflight_input(path: str, max_primary_reads: int = 5000) -> None:
         )
     raise SystemExit(
         "input BAM has no FiberHMM nuc/MSP structure in the first "
-        f"{seen:,} primary reads; run fiberhmm-apply before fiberhmm-tag-m5c"
+        f"{seen:,} primary reads; run fiberhmm-call (or fiberhmm-call --hmm-only) before fiberhmm-tag-m5c"
     )
 
 

@@ -8,7 +8,7 @@ input frame is resolved from the INPUT header and the read's ORIGINAL tags
 (before any stripping), by the shared rules (``annotation_frame``); an
 annotation whose input frame cannot be decided is dropped.
 
-fiberhmm-apply, -call and -recall-tfs/-nucs declare ``coord=molecular``, so
+fiberhmm-call (and the old fiberhmm-apply) and -recall-tfs/-nucs declare ``coord=molecular``, so
 :func:`carry_to_molecular` is their carrier. Pass-through tools (dedup,
 merge, pair, tag-m5c, ...) keep the 3.0.0 header behaviour
 (``annotation_frame.pass_through_frame``); they are supported on 3.0

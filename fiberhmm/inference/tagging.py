@@ -104,7 +104,8 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
                           harmonize: bool = False, write_legacy: bool = True) -> None:
     """Write apply's tags in place: MA, and legacy `ns/nl/as/al` (optional `nq`).
 
-    ``write_legacy=False`` (``fiberhmm-apply`` default since 3.3.0; the
+    Used by the legacy apply engine (internal since 3.3, when ``fiberhmm-apply``
+    became an alias of ``fiberhmm-call --hmm-only``). ``write_legacy=False`` (the
     function default stays True for API callers) writes MA/AQ only -- the
     footprints outside MSPs as ``nuc`` and the MSPs as ``msp`` -- and removes
     any legacy ns/nl/nq/as/al/aq the record carried. With ``write_legacy``
@@ -125,7 +126,7 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
     nucleosomes are the footprints outside MSPs, so nuc and msp tile the read
     and ``ns/nl`` may list more footprints than MA ``nuc``.
 
-    ``harmonize`` (``fiberhmm-apply --harmonize-legacy-tags``) writes ``ns/nl``
+    ``harmonize`` (the pre-3.3 ``--harmonize-legacy-tags``) writes ``ns/nl``
     from the MA view instead (footprints outside MSPs), so legacy tags and MA
     agree as in fiberhmm-call output; ``as/al`` are unchanged. Without
     ``write_msps`` (``--no-msps``) the MSPs are the record's retained

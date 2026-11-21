@@ -22,7 +22,7 @@ def chemistry_declaration(
     ``apply_model_path`` is the emission table of the footprint (apply) pass
     and ``recall_model_path`` the table of the recall pass; either is None
     when the run has no such pass (``fiberhmm-recall-tfs`` has no apply pass,
-    ``fiberhmm-apply`` no recall pass). ``nuc_model_path`` is a separate
+    ``fiberhmm-call --hmm-only`` and the old ``fiberhmm-apply`` no recall pass). ``nuc_model_path`` is a separate
     nucleosome-likelihood table (DddA nucleosome refinement), when used.
 
     Besides assay/enzyme/platform/mode, the declaration records the exact

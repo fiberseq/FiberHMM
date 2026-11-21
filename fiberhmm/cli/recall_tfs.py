@@ -4,15 +4,16 @@
 Per-enzyme defaults are calibrated for Hia5 (PacBio, Nanopore), DddB and
 DddA DAF-seq.
 
-Runs as a 2nd pass on a BAM already tagged by ``fiberhmm-apply``.
+Runs as a 2nd pass on a BAM of HMM calls (``fiberhmm-call --hmm-only``;
+the ``nuc`` + ``tf`` MA groups of such a file are read as the HMM footprints).
 Writes spec-compliant ``MA``/``AQ`` Molecular-annotation tags
 (https://github.com/fiberseq/Molecular-annotation-spec) plus refreshed
 legacy ``ns``/``nl``/``as``/``al`` tags reflecting the unified call set.
 
 Supports stdin/stdout piping (``-i -`` / ``-o -``) for composition with
-``fiberhmm-apply`` and downstream fibertools stages:
+``fiberhmm-call --hmm-only`` and downstream fibertools stages:
 
-    fiberhmm-apply -o - ... | fiberhmm-recall-tfs -i - -o - --enzyme hia5 | ft fire
+    fiberhmm-call --hmm-only -o - ... | fiberhmm-recall-tfs -i - -o - --enzyme hia5 | ft fire
 
 By default, v2 short nuc calls (``nl < --unify-threshold``) that overlap
 a recaller TF call are demoted out of the ``nuc+`` annotation -- the
@@ -23,24 +24,24 @@ them in the ``tf+`` annotation.
 per-read nucleosome recaller BEFORE TF recall: it splits over-merged HMM
 footprints on accessible evidence and refines each nucleosome's conservative
 edges + quality (nuc+QQQ), re-derives MSPs, then runs TF recall over the
-cleaner accessible space. It reuses the apply-tagged ``ns``/``nl``/``as``/``al``
--- the HMM is NOT re-run -- so its footprint tags are equivalent to
-``fiberhmm-call --recall-nucs`` (linear reads only). The BAM headers retain
+cleaner accessible space. It reuses the HMM calls of the input -- the HMM is
+NOT re-run -- so on ``fiberhmm-call --hmm-only`` output its calls equal
+``fiberhmm-call``'s (linear reads only). The BAM headers retain
 distinct command provenance.
 
 Examples:
-  # Add nucleosome recall to an apply-tagged BAM (no HMM re-run)
-  fiberhmm-recall-nucs -i apply_footprints.bam -o recalled.bam \\
+  # Add nucleosome + TF recall to HMM-only calls (no HMM re-run)
+  fiberhmm-recall-nucs -i hmm_calls.bam -o recalled.bam \\
                         --enzyme hia5 --seq pacbio -c 8
   # equivalent: fiberhmm-recall-tfs --recall-nucs ...
 
   # DddA DAF-seq BAM (two-pass workflow) -- bundled models, no -m needed
-  fiberhmm-apply -i input.bam --enzyme ddda -o tmp/
-  fiberhmm-recall-nucs -i tmp/input_footprints.bam -o recalled.bam \\
+  fiberhmm-call -i input.bam --enzyme ddda --hmm-only -o hmm_calls.bam
+  fiberhmm-recall-nucs -i hmm_calls.bam -o recalled.bam \\
                         --enzyme ddda -c 8
 
   # Hia5 streaming composition
-  fiberhmm-apply -i input.bam --enzyme hia5 -o - | \\
+  fiberhmm-call -i input.bam --enzyme hia5 --hmm-only -o - | \\
       fiberhmm-recall-tfs -i - -o recalled.bam --enzyme hia5 -c 8
 
   # Override with a custom model
@@ -864,7 +865,8 @@ def parse_args(default_recall_nucs: bool = False):
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument('-i', '--in-bam', required=True,
-                   help='Input BAM tagged by fiberhmm-apply (has ns/nl/as/al). '
+                   help='Input BAM with HMM calls (fiberhmm-call --hmm-only; '
+                        'MA first, legacy ns/nl/as/al without MA). '
                         'Use "-" for stdin.')
     p.add_argument('-o', '--out-bam', required=True,
                    help='Output BAM with MA/AQ + refreshed legacy tags. '
@@ -1343,13 +1345,13 @@ def _main(args):
 
 
 class HarmonizedInputError(ValueError):
-    """A read carries the fiberhmm-apply --harmonize-legacy-tags marker."""
+    """A read carries the marker of (pre-3.3) fiberhmm-apply --harmonize-legacy-tags."""
 
 
 _HARMONIZED_MESSAGE = (
-    "the input is fiberhmm-apply --harmonize-legacy-tags output, whose ns/nl "
-    "no longer list every HMM footprint that recall needs; re-run "
-    "fiberhmm-apply without --harmonize-legacy-tags (or use fiberhmm-call)")
+    "the input is fiberhmm-apply --harmonize-legacy-tags output (before 3.3), "
+    "whose ns/nl no longer list every HMM footprint that recall needs; re-run "
+    "fiberhmm-call --hmm-only (or fiberhmm-call)")
 
 
 def _refuse_harmonized_read(read) -> None:

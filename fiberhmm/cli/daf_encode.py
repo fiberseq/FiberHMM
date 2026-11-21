@@ -26,12 +26,12 @@ Examples:
 
   # Pipe directly to footprint calling
   fiberhmm-daf-encode -i aligned.bam -o - | \\
-      fiberhmm-apply --enzyme dddb --streaming -i - -o output/
+      fiberhmm-call --enzyme dddb --hmm-only -i - -o output/calls.bam
 
   # Full pipeline from alignment
   minimap2 --MD -a ref.fa reads.fq | samtools view -b | \\
       fiberhmm-daf-encode -i - -o - | \\
-      fiberhmm-apply --enzyme dddb --streaming -i - -o output/
+      fiberhmm-call --enzyme dddb -i - -o output/calls.bam
 
   # Use reference FASTA when MD tags are missing
   fiberhmm-daf-encode -i aligned.bam -o encoded.bam --reference ref.fa

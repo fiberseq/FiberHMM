@@ -36,7 +36,7 @@ def ensure_parent_dir(path: str) -> str:
     """Create the directory that will hold output ``path`` (like ``mkdir -p``).
 
     Every FiberHMM writer creates missing output directories, as
-    ``fiberhmm-apply``/``-extract`` always did for their output directory.
+    ``fiberhmm-extract`` (and the old ``fiberhmm-apply``) always did for their output directory.
     Returns the directory.
     """
     directory = os.path.dirname(os.path.abspath(path))

@@ -273,7 +273,7 @@ def carry_annotation_msps_as_legacy(read, *, ma_molecular: Optional[bool] = None
                                     ma_evidence: Optional[bool] = None) -> bool:
     """Write a read's MA/Ma ``msp`` calls as legacy ``as``/``al`` (molecular
     frame) when it has no legacy as/al pair, for a writer that keeps the
-    record's own MSPs (``fiberhmm-apply --no-msps``) but drops the MA
+    record's own MSPs (the legacy apply engine's ``--no-msps``) but drops the MA
     footprint groups first. A legacy pair already on the record is a carried
     annotation and is left in place. Returns whether the tags were written.
     ``ma_molecular``/``ma_evidence``: see :func:`resolve_footprint_tags` (a

@@ -40,7 +40,7 @@ NOTE_ONLY_SKIP_KEYS = frozenset({"too_short_soft_clipped"})
 
 # Legacy footprint tags written by FiberHMM (and fibertools) call passes.
 LEGACY_CALL_TAGS = ("ns", "nl", "as", "al", "nq", "aq")
-# Per-read marker of fiberhmm-apply --harmonize-legacy-tags: this read's ns/nl
+# Per-read marker of (pre-3.3) fiberhmm-apply --harmonize-legacy-tags: this read's ns/nl
 # hold only the MA-view nucleosomes, not every HMM footprint recall needs.
 # Every writer that rewrites ns/nl removes it.
 HARMONIZED_LEGACY_TAG = "hl"

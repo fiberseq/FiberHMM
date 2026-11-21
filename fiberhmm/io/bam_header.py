@@ -325,7 +325,7 @@ def call_writer_header(header):
 # Stable, version-independent token marking that ns/nl/as/al (and MA) are written
 # in molecular (original-fiber) coordinates. Downstream consumers (FiberBrowser)
 # key off the exact token `coord=molecular`. fiberhmm-call carries it in its @PG
-# DS; paths without a full @PG (e.g. fiberhmm-apply) emit it as a @CO comment.
+# DS; paths without a full @PG (e.g. the legacy apply engine) emit it as a @CO comment.
 COORD_MOLECULAR_MARKER = "fiberhmm:coord=molecular"
 
 

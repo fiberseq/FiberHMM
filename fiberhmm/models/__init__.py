@@ -2,7 +2,7 @@
 
 Most users can rely on enzyme-specific defaults:
 
-    fiberhmm-apply -i data.bam --enzyme hia5 --seq pacbio -o out/
+    fiberhmm-call -i data.bam --enzyme hia5 --seq pacbio -o out.bam
     fiberhmm-recall-tfs -i out/data_footprints.bam -o recalled.bam --enzyme hia5 --seq pacbio
 
 Use ``--model /path/to/custom.json`` to override with a custom file.
@@ -195,7 +195,7 @@ def get_model_path(enzyme: str, tool: str = 'recall', seq: str | None = None) ->
         Registry entries for development artifacts are an internal API and do
         not constitute a supported workflow.
     tool:
-        ``'apply'`` (fiberhmm-apply nuc HMM), ``'recall'``
+        ``'apply'`` (the HMM step of fiberhmm-call), ``'recall'``
         (fiberhmm-recall-tfs TF recaller), or the internal ``'nuc_refine'``
         likelihood model where bundled separately.
     seq:
@@ -235,7 +235,7 @@ def get_model_path(enzyme: str, tool: str = 'recall', seq: str | None = None) ->
 from fiberhmm import defaults as _shared_defaults  # noqa: E402
 
 #: Default minimum ML probability (0-255) for calling from MM/ML, used by
-#: ``fiberhmm-call`` and ``fiberhmm-apply`` and by the DAF tools
+#: ``fiberhmm-call`` (also ``--hmm-only``) and by the DAF tools
 #: (``fiberhmm-dedup``/``-pair``/``-merge``) for MM/ML-native dU calls.
 DEFAULT_PROB_THRESHOLD = _shared_defaults.PROB_THRESHOLD
 

@@ -4,8 +4,9 @@ Export per-position HMM posterior probabilities for downstream analysis.
 
 Runs the HMM forward-backward algorithm on each read to produce P(footprint)
 at every position. Input is any BAM with MM/ML modification tags (the same BAM
-you would pass to fiberhmm-apply). This is a parallel pipeline to
-fiberhmm-apply, not a downstream step.
+you would pass to fiberhmm-call). This is a parallel pipeline to
+fiberhmm-call --hmm-only, not a downstream step (it replaces the
+``--output-posteriors`` option of the retired fiberhmm-apply).
 
 Supports two output formats:
   - TSV (gzipped): No extra dependencies, base64-encoded uint8 posteriors
@@ -129,7 +130,7 @@ def inherited_chemistry(enzyme, seq, mode, input_bam):
 
     A run without ``--enzyme`` (a custom ``--model``) takes the enzyme and
     platform the input BAM declares when they fit the run's observation mode,
-    as fiberhmm-call and fiberhmm-apply do (``resolve_effective_chemistry``),
+    as fiberhmm-call does (``resolve_effective_chemistry``),
     so the DddA CpG mask and DAF run mask follow the chemistry's defaults.
     """
     if enzyme or not input_bam or input_bam == '-':

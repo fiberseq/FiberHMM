@@ -3,7 +3,7 @@
 Reads a plain aligned BAM (e.g. from minimap2), identifies deamination
 mismatches via the MD tag (or reference FASTA fallback), encodes them as
 Y (C or T) / R (A or G) in the query sequence, adds an st:Z tag, and
-writes a new BAM ready for ``fiberhmm-apply --mode daf``.
+writes a new BAM ready for ``fiberhmm-call`` (DAF mode).
 """
 
 import copy

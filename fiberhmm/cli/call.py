@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """fiberhmm-call — fused apply + recall-tfs in a single Python process.
 
-Eliminates the streaming-pipeline pipe serialization between `fiberhmm-apply`
-and `fiberhmm-recall-tfs` by running the 2-state HMM (nucleosome/MSP calls)
-and native-LLR multi-interval decoding (TF calls) in the same worker per read. Uses the
-same slim-IPC main→worker payload as `fiberhmm-apply`.
+Runs the 2-state HMM (nucleosome/MSP calls) and native-LLR multi-interval
+decoding (TF calls) in the same worker per read, with nucleosome recall in
+between. ``--hmm-only`` stops after the HMM and writes every HMM call (the
+former ``fiberhmm-apply``); ``fiberhmm-recall-nucs`` finishes such a file.
 
-Output BAM has BOTH:
-  - Legacy ns/nl/as/al tags (post-unification: short nucs overlapping TF
-    calls are demoted to the tf track)
-  - MA/AQ spec tags (Molecular-annotation with tf.QQQ quality scoring)
+Output BAM: MA/AQ spec tags (Molecular-annotation, nuc/msp/tf with quality
+bytes); --legacy-tags also writes legacy ns/nl/as/al.
 
 Examples:
   # Hia5 PacBio, fused apply+recall (bundled model)
   fiberhmm-call -i aligned.bam -o out.bam --enzyme hia5 --seq pacbio -c 8
+
+  # HMM calls only (nuc >= 85 bp, tf smaller, msp); recall later
+  fiberhmm-call -i aligned.bam -o hmm.bam --enzyme hia5 --seq pacbio --hmm-only
+  fiberhmm-recall-nucs -i hmm.bam -o out.bam --enzyme hia5 --seq pacbio
 
   # DddB DAF-seq with custom recall threshold
   fiberhmm-call -i aligned.bam -o out.bam --enzyme dddb --min-llr 6.0 -c 8
@@ -147,7 +149,7 @@ def parse_args():
     p.add_argument('--min-read-length', type=non_negative_int, default=_D.MIN_READ_LENGTH,
                    help='Min read length: the full SEQ, soft clips included (DAF with '
                         '--daf-mask-unaligned: the aligned length). Default 1000, '
-                        'as fiberhmm-apply.')
+                        'as the HMM step has always used.')
     p.add_argument('--msp-min-size', type=int, default=_D.MSP_MIN_SIZE,
                    help='Min MSP size (default 0)')
     p.add_argument('--nuc-min-size', type=int, default=_D.NUC_MIN_SIZE,
@@ -180,7 +182,7 @@ def parse_args():
                    help='Write the HMM posterior-mean nq score of baseline '
                         'nucleosomes (with --no-recall-nucs; nucleosome recall '
                         'writes its own LLR-based nq). No aq is written. '
-                        '--scores is the fiberhmm-apply spelling.')
+                        'With --hmm-only: the HMM nq of every nuc.')
     p.add_argument('-r', '--circular', action='store_true',
                    help='Enable circular molecule mode (3x tile internally, '
                         'emit wrapped MA/AQ/AN annotations).')
@@ -211,7 +213,7 @@ def parse_args():
                         'recall, except inside confident unmethylated island '
                         'calls (MA ddda_ucg from fiberhmm-tag-m5c) the input '
                         'already carries. The same mask applies in '
-                        'fiberhmm-apply, -posteriors and -pair/-merge. '
+                        'fiberhmm-call --hmm-only, -posteriors and -pair/-merge. '
                         'Default: on for --enzyme ddda, off otherwise; '
                         '--no-use-m5c for an ablation.')
     p.add_argument('--cpg-mask-policy',

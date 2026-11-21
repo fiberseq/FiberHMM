@@ -1,6 +1,6 @@
 """LLR-based TF footprint recaller -- second pass on FiberHMM-tagged BAMs.
 
-The first pass (``fiberhmm-apply``) calls nucleosomes and MSPs with a trained
+The first pass (the HMM step of ``fiberhmm-call``; ``--hmm-only`` alone) calls nucleosomes and MSPs with a trained
 2-state HMM. This second pass scans MSPs and short sub-nucleosomal calls for
 sequence-context-aware TF footprints. The result is ``MA``/``AQ``
 spec-compliant output with a ``tf.QQQ`` annotation type.
@@ -18,7 +18,7 @@ Algorithm summary
 For each read:
 
 1. Build per-position observation array using the same encoder as
-   ``fiberhmm-apply`` (``encode_from_query_sequence``).
+   the HMM step (``encode_from_query_sequence``).
 2. From v2 tags, derive the scan space:
      - all MSPs (``as``/``al``)
      - all short v2 nucs (``ns``/``nl`` with ``nl < unify_threshold``)
@@ -1405,7 +1405,7 @@ def write_ma_tags(read, read_length: int,
     ``downstream_compat=True`` and ``also_write_legacy=False`` are mutually
     exclusive; compat mode always writes the legacy track.
 
-    ``msps_replaced=False`` (``fiberhmm-apply --no-msps``) means ``msps`` are
+    ``msps_replaced=False`` (``fiberhmm-call --hmm-only --keep-msps``) means ``msps`` are
     the record's own retained MSPs, not new calls: a legacy ``aq`` scoring
     them (fibertools FIRE) is kept. Otherwise any ``aq`` is removed.
     """
@@ -1444,7 +1444,7 @@ def write_ma_tags(read, read_length: int,
             read.set_tag(tag, None)
 
     # FiberHMM writes no MSP score; a legacy aq (fibertools <= 0.12 FIRE, or
-    # an older fiberhmm-apply --scores) scores MSPs this write replaces, even
+    # an older fiberhmm-apply --scores, before 3.0) scores MSPs this write replaces, even
     # when the legacy as/al are left in place (also_write_legacy=False).
     # Retained MSPs (msps_replaced=False) keep their FIRE aq.
     if msps_replaced and read.has_tag('aq'):
