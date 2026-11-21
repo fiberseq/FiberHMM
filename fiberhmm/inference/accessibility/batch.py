@@ -55,6 +55,24 @@ def _write_json(path, value):
     tmp.replace(path)
 
 
+_CODE = None
+
+
+def code_digest():
+    """FiberHMM version plus the SHA-256 of the accessibility and consensus (loader) sources: a window computed by
+    other code is redone by --continue, even when the version string did not change."""
+    global _CODE
+    if _CODE is None:
+        from fiberhmm import __version__
+        h = hashlib.sha256(__version__.encode())
+        pkg = Path(__file__).resolve().parents[1]
+        for sub in ('accessibility', 'consensus'):
+            for path in sorted((pkg/sub).rglob('*.py')):
+                h.update(str(path.relative_to(pkg)).encode()); h.update(path.read_bytes())
+        _CODE = h.hexdigest()
+    return _CODE
+
+
 def run_record(datasets, windows, values, nfr):
     """What --continue must match. BAMs are identified by path, size and mtime (no content hash: these BAMs are often
     tens of GB); --cores, --window-jobs and --json-progress are execution-only."""
@@ -207,7 +225,7 @@ def _run_locked(out, windows, datasets, values, nfr, *, cores, window_jobs, cont
     inner = deepcopy(values); inner.setdefault('compute', {})['cores'] = 1
     specs = [dict(index=i, name=w['name'], region={k: w[k] for k in ('chrom', 'start', 'end')}, datasets=datasets,
                   values=inner, nfr=nfr, folder=str(out/f'window_{i + 1:06d}'),
-                  digest=_digest([run_digest, i, {k: w[k] for k in ('chrom', 'start', 'end', 'name')}]))
+                  digest=_digest([run_digest, code_digest(), i, {k: w[k] for k in ('chrom', 'start', 'end', 'name')}]))
              for i, w in enumerate(windows)]
     rows = {}
     for s in specs:
@@ -240,9 +258,19 @@ def _run_locked(out, windows, datasets, values, nfr, *, cores, window_jobs, cont
         from concurrent.futures import as_completed
         from .workflow import worker_pool
         with worker_pool(jobs) as executor:
-            futures = [executor.submit(window_task, s) for s in pending]
+            futures = {executor.submit(window_task, s): s for s in pending}
             for future in as_completed(futures):
-                finished(future.result())
+                try:
+                    row = future.result()
+                except BaseException as error:   # noqa: BLE001 - a worker died (e.g. out of memory): record, go on
+                    if isinstance(error, KeyboardInterrupt):
+                        raise
+                    s = futures[future]
+                    row = dict(index=s['index'], name=s['name'], folder=s['folder'], **s['region'], status='failed',
+                               nfrs=None, variants=None, molecules=None, pairs=None, warnings=[], seconds=None,
+                               error=f'worker process failed ({type(error).__name__}: {error}); out of memory? '
+                                     'lower --window-jobs and rerun with --continue')
+                finished(row)
     summary = [rows[s['index']] for s in specs]
     _write_json(out/'regions.json', summary)
     (out/'regions.tsv').write_text(_tsv(summary, SUMMARY_FIELDS))

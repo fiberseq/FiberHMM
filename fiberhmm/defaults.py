@@ -144,8 +144,8 @@ NFR_FOLD_WEIGHTS = "all"
 #: consistent when both edges lie within this many bp of the variant's edges.
 NFR_EDGE_TOLERANCE_BP = 25
 
-#: Concurrent fiberhmm-nfr BED windows (0 = automatic: up to --cores, lowered
-#: to fit --max-memory-gb when given).
+#: Concurrent fiberhmm-nfr BED windows (0 = automatic: up to --cores), one
+#: core each.
 NFR_WINDOW_JOBS = 0
 
 

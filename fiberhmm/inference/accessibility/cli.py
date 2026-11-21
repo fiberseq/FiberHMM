@@ -293,6 +293,9 @@ def load_payload(datasets, region, values, options, progress=None, sampling=None
     one a single sequential load builds (strata and input files in dataset order, the same unit_ids)."""
     from fiberhmm.inference.consensus.bam import load_bam_payload
     from .gaps import compact_unit
+    ids = [d['dataset_id'] for d in datasets]
+    if len(set(ids)) != len(ids):
+        raise ValueError('Duplicate dataset ID: ' + next(i for i in ids if ids.count(i) > 1))
     jobs = min(int(jobs or 1), len(datasets))
     if jobs <= 1 or (sampling and sampling.get('cap')):
         return load_bam_payload(datasets, region, options, progress, loader_sampling=sampling, unit_hook=compact_unit)
