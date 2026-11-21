@@ -143,8 +143,10 @@ def test_loader_resolves_mixed_qualifiers_per_group(tmp_path):
         read = _read(out.header, {'MA': '400;tf.:11-20;tf+:101-20'})
         read.query_sequence = ''.join(seq)
         read.query_qualities = pysam.qualitystring_to_array('I' * 400)
-        read.set_tag('MM', 'A+a.;')
-        read.set_tag('ML', array.array('B', []))
+        # One low-probability call: an empty ML now means no modification
+        # calls (as in fiberhmm-call) and the read would be skipped.
+        read.set_tag('MM', 'A+a.,0;')
+        read.set_tag('ML', array.array('B', [10]))
         out.write(read)
     pysam.index(str(path))
 
