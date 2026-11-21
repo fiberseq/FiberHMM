@@ -551,10 +551,8 @@ def _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
 
 def _resolve_nuc_recall_policy(args, mode: str) -> str:
     """Resolve the public auto policy to the core recaller policy."""
-    policy = str(getattr(args, 'nuc_recall_policy', 'auto')).lower()
-    if policy == 'auto':
-        return 'conservative'
-    return policy
+    from fiberhmm.inference.fused_stages import resolve_nuc_recall_policy
+    return resolve_nuc_recall_policy(getattr(args, 'nuc_recall_policy', 'auto'), mode)
 
 
 def _resolve_dedup(args, mode: str) -> bool:

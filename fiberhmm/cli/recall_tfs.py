@@ -1069,10 +1069,8 @@ def _resolve_model_metadata(model_path):
 
 
 def _resolve_nuc_recall_policy(args, mode: str) -> str:
-    policy = str(getattr(args, 'nuc_recall_policy', 'auto')).lower()
-    if policy == 'auto':
-        return 'conservative'
-    return policy
+    from fiberhmm.inference.fused_stages import resolve_nuc_recall_policy
+    return resolve_nuc_recall_policy(getattr(args, 'nuc_recall_policy', 'auto'), mode)
 
 
 def _parse_phase_nrl_option(raw):

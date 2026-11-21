@@ -116,6 +116,23 @@ def apply_result_has_footprints(apply_result: Optional[Mapping[str, Any]]) -> bo
     return len(apply_result["ns"]) > 0 or len(apply_result["as"]) > 0
 
 
+def resolve_nuc_recall_policy(policy: str, mode: str) -> str:
+    """The nucleosome recall policy a ``--nuc-recall-policy`` value means for ``mode``.
+
+    ``auto`` is ``conservative`` on every platform (the 3.0 default; ``topology``
+    is a retired experimental mode, still accepted when named explicitly to
+    reproduce earlier calls). ``fiberhmm-call``, ``fiberhmm-recall-tfs`` and the
+    consensus Hia5 replay all resolve it here, so they cannot drift apart.
+    ``mode`` is accepted so a platform-specific default can live in one place.
+    """
+    policy = str(policy).lower()
+    if policy == 'auto':
+        return 'conservative'
+    if policy not in ('conservative', 'topology'):
+        raise ValueError(f"nuc recall policy must be 'auto', 'conservative' or 'topology', got {policy!r}")
+    return policy
+
+
 def payload_cpg_mask(payload: Mapping[str, Any], read_length: int,
                      policy: str):
     """DddA CpG mask for one slim payload (see ``make_apply_payload``).
