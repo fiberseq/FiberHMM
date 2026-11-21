@@ -421,3 +421,19 @@ def test_masked_query_positions_follow_every_cigar_operation():
     read.query_sequence = 'A' * 25
     assert masked_query_positions(read, {100, 109, 110, 113, 115, 122, 127}) == {3, 12, 15, 18, 19, 24}
     assert masked_query_positions(read, set()) == set()
+
+
+def test_staged_transfer_manifest_keeps_mask_digest(tmp_path):
+    from pathlib import Path
+    from test_consensus_bed_cli import make_bam
+    from fiberhmm.inference.consensus.transfer_cli import main as transfer
+    model = Path(__file__).parent / 'fixtures/paper_families/gata_tal1/models.json.gz'
+    bam = tmp_path / 'reads.bam'; make_bam(bam)
+    bed = tmp_path / 'windows.bed'; bed.write_text('chr1\t0\t300\tplus\t0\t+\n')
+    mask = tmp_path / 'snps.bed'; mask.write_text('chr1\t161\t162\n')
+    transfer(['--models', str(model), '--bam', str(bam), '--bed', str(bed), '--daf-snp-mask', str(mask),
+              '--no-bam', '--output', str(tmp_path / 'masked')])
+    receipt, = read_json(tmp_path / 'masked' / 'manifest.json')['daf_snp_masks']
+    assert receipt['sha256'] == sha256(mask.read_bytes()).hexdigest() and receipt['sites'] == 1
+    transfer(['--models', str(model), '--bam', str(bam), '--bed', str(bed), '--no-bam', '--output', str(tmp_path / 'plain')])
+    assert 'daf_snp_masks' not in read_json(tmp_path / 'plain' / 'manifest.json')

@@ -107,7 +107,7 @@ def _main(argv=None):
     check_chemistry(parser,datasets)
     windows=load_bed(args.bed,pooled=True) if args.bed else [None]
     if any(w and w['end']-w['start']!=bundle['region'][1]-bundle['region'][0] for w in windows):parser.error('BED widths must match the frozen source window')
-    analyses=[];all_results=[];summary=[]
+    analyses=[];all_results=[];summary=[];masks=[]
     for index,w in enumerate(windows):
         progress('load',f'Window {index+1}/{len(windows)}')
         payload=read_json(args.evidence) if w is None else pool_payloads([load_bam_payload(datasets,dict(chrom=w['chrom'],start=w['start'],end=w['end']),options,progress)], [w])
@@ -119,6 +119,10 @@ def _main(argv=None):
             for source in payload['strata']:
                 for u in source['units']:u['genomic_provenance']=dict(window=w,coordinate_origin=offset)
             payload['region'].update(start=bundle['region'][0],end=bundle['region'][1])
+        # Keep each applied mask's receipt (path, SHA-256, sites); the BED path alone does not identify its content.
+        for source in payload['strata']:
+            receipt=(source.get('model_manifest') or {}).get('daf_snp_mask')
+            if receipt and receipt not in masks:masks.append(receipt)
         result=score_payload(bundle,payload,progress=progress,maximum_bytes=options['compute'].maximum_matrix_mb*1024**2)
         result['window']=w or payload.get('pooling',{}).get('windows') or payload['region']
         result['input_digest']=digest(payload);write_json(out/f'window_{index+1:05d}.json.gz',result);all_results.append(result)
@@ -171,7 +175,7 @@ def _main(argv=None):
     from .harmonized_families.workflow import implementation_hashes
     write_json(out/'manifest.json',dict(implementation_sha256=implementation_hashes(),preparation_parameters=params,schema='fiberhmm.transfer_run.v1',model_sha256=bundle['content_sha256'],windows=len(windows),refitted=False,
         source_provenance=bundle['provenance'],input_digests=[r['input_digest'] for r in all_results],training_molecule_exclusions=sum(len(r['exclusions']) for r in all_results),
-        chip_label='peak overlaps supplied window' if args.chip_bed else None))
+        chip_label='peak overlaps supplied window' if args.chip_bed else None,**({'daf_snp_masks':masks} if masks else {})))
     rows=''.join('<tr>'+''.join('<td>'+html.escape(str(r.get(k,'')))+'</td>' for k in summary_fields)+'</tr>' for r in summary)
     headers='<tr>'+''.join('<th>'+html.escape(k)+'</th>' for k in summary_fields)+'</tr>'
     lo,hi=bundle['region'];svg=['<svg xmlns="http://www.w3.org/2000/svg" width="900" height="'+str(50+35*len(bundle['models']))+'">','<rect width="100%" height="100%" fill="white"/>']
