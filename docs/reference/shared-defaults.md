@@ -43,6 +43,7 @@ thinning) are listed per chemistry in
 | `fiberhmm-pipeline` | MAPQ, read length, chimeras | unset | not passed: `fiberhmm-call`'s default applies (MAPQ: or the value an earlier run recorded in the output folder) |
 | `fiberhmm-posteriors` | records | primary only | documented on the [Posteriors](../workflows/posteriors.md) page |
 | `fiberhmm-scan` states, peaks, NFR | nucleosome size | 90 bp | the FiberBrowser accessibility rule |
+| `fiberhmm.nuc` decoding (`NucParams`, `fiberhmm-scan` nuc) | edge trim | unset | the trim the call recorded (`--edge-trim`), else 10 bp; any value you pass, 10 included, is used |
 
 Python entry points (`process_bam_for_footprints` and the pipeline functions)
 take the resolved threshold, read length and alignment set from their caller;

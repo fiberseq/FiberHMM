@@ -258,11 +258,17 @@ class _PayloadRead:
     the worker) and the associated MM/ML base64 encoding overhead.
     """
     __slots__ = ('query_sequence', 'is_reverse', '_tags', '_daf_md_result',
-                 '_daf_unaligned_query_positions', '_daf_insert_mods')
+                 '_daf_unaligned_query_positions', '_daf_insert_mods',
+                 'cpg_intervals')
 
     def __init__(self, seq, is_reverse, tags, daf_md_result=None,
-                 daf_unaligned_query_positions=None, daf_insert_mods=None):
+                 daf_unaligned_query_positions=None, daf_insert_mods=None,
+                 cpg_intervals=None):
         self.query_sequence = seq
+        # DddA CpG islands read on the live record (MA, else fibertools Ma;
+        # tf_recaller.read_cpg_intervals), so the worker's CpG mask matches
+        # fiberhmm-call's whatever tag carries them.
+        self.cpg_intervals = cpg_intervals
         self.is_reverse = is_reverse
         self._tags = tags
         self._daf_md_result = daf_md_result
@@ -437,6 +443,10 @@ def _make_payload(read, mode=None, input_molecular_frame=True) -> dict:
     if mode == 'daf' and read.query_sequence:
         from fiberhmm.core.bam_reader import has_iupac_encoding
         from fiberhmm.inference.engine import daf_unaligned_without_evidence
+        from fiberhmm.inference.tf_recaller import read_cpg_intervals
+        # The live record's islands (MA, else fibertools Ma), as the call
+        # pipelines read them; the stub alone carries neither Ma nor a header.
+        payload['_cpg_intervals'] = read_cpg_intervals(read)
         unaligned = daf_unaligned_without_evidence(read)
         if unaligned:
             payload['_daf_unaligned_query_positions'] = unaligned
@@ -470,6 +480,7 @@ def _process_payload_record(payload) -> tuple:
         payload.get('_daf_md_result'),
         payload.get('_daf_unaligned_query_positions'),
         payload.get('_daf_insert_mods'),
+        payload.get('_cpg_intervals'),
     )
     if payload.get('_chimera'):
         return None, {key: 0 for key in _STATS_KEYS}

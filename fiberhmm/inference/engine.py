@@ -1004,10 +1004,12 @@ def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None,
     if no_call_blocks:
         payload['_no_call_blocks'] = no_call_blocks
 
-    if mode == 'daf' and read.has_tag('MA'):
+    if mode == 'daf' and (read.has_tag('MA') or read.has_tag('Ma')):
         # DddA CpG-aware recall reads the molecule's own tag-m5c island calls
         # (ddda_ucg exempts CpGs from masking); the worker only sees this
-        # payload, so the SEQ-frame intervals travel with it.
+        # payload, so the SEQ-frame intervals travel with it. Read from MA,
+        # else fibertools' Ma, before any stale-tag stripping (the shared
+        # accessor), so every calling path sees the same islands.
         from fiberhmm.inference.tf_recaller import read_cpg_intervals
         cpg_intervals = read_cpg_intervals(read)
         if cpg_intervals['ucg'] or cpg_intervals['mcg']:
@@ -1429,8 +1431,9 @@ def hmm_cpg_mask(read_length: int, policy: str, intervals=None) -> np.ndarray:
 
 
 def read_cpg_ma_intervals(read) -> dict:
-    """The ``ddda_ucg``/``ddda_mcg`` SEQ-frame intervals a read's MA tag carries."""
-    if not read.has_tag('MA'):
+    """The ``ddda_ucg``/``ddda_mcg`` SEQ-frame intervals a read's MA (else
+    fibertools ``Ma``) tag carries."""
+    if not (read.has_tag('MA') or read.has_tag('Ma')):
         return {}
     from fiberhmm.inference.tf_recaller import read_cpg_intervals
 

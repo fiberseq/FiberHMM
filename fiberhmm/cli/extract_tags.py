@@ -1790,7 +1790,8 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
                    sample_name: Optional[str] = None,
                    circular_groups: bool = False,
                    haplotype_fields: bool = False,
-                   source_note: Optional[str] = None) -> bool:
+                   source_note: Optional[str] = None,
+                   msp_aq_ambiguous: bool = False) -> bool:
     """Convert BED to bigBed using bedToBigBed.
 
     If ``extract_type`` matches a FiberHMM autoSQL schema
@@ -1811,6 +1812,9 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
             matching autoSQL schema; None to skip schema embedding.
         block_scores: If True, expect BED12+N input (per-block quality
             columns appended) and use the matching autoSQL variant.
+        msp_aq_ambiguous: Describe the MSP ``aq`` score as of ambiguous
+            provenance (source BAM from FiberHMM <= 3.2.1 apply, see
+            ``read_filters.header_aq_may_be_fiberhmm``), not as FIRE.
     """
     from fiberhmm.io.autosql import (
         CIRCULAR_FIELD_COUNT,
@@ -1830,7 +1834,8 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
                                   sample_name=sample_name,
                                   circular_groups=circular_groups,
                                   haplotype_fields=haplotype_fields,
-                                  source_note=source_note)
+                                  source_note=source_note,
+                                  msp_aq_ambiguous=msp_aq_ambiguous)
                if extract_type else None)
 
     n_extra = EXTRA_FIELD_COUNTS.get(extract_type, 0) if block_scores else 0
@@ -2429,6 +2434,16 @@ Examples:
 
     # Get chrom sizes — only required for bigBed conversion
     chrom_sizes = get_chrom_sizes(args.input) if make_bigbed else {}
+    # An aq in a BAM from FiberHMM <= 3.2.1 apply (no annotation contract)
+    # may be FiberHMM's MSP posterior: the MSP schema then says so.
+    msp_aq_ambiguous = False
+    if make_bigbed and 'msp' in extract_types:
+        from fiberhmm.inference.read_filters import header_aq_may_be_fiberhmm
+        try:
+            with pysam.AlignmentFile(args.input, check_sq=False) as _bam:
+                msp_aq_ambiguous = header_aq_may_be_fiberhmm(_bam.header)
+        except (OSError, ValueError):
+            msp_aq_ambiguous = False
 
     print(f"Input: {args.input}")
     print(f"Output: {args.outdir}")
@@ -2543,7 +2558,9 @@ Examples:
                               circular_groups=circular_groups_for_type,
                               haplotype_fields=args.haplotype_fields,
                               source_note=(variant_note if extract_type == 'var'
-                                           else None)):
+                                           else None),
+                              msp_aq_ambiguous=(msp_aq_ambiguous
+                                                and extract_type == 'msp')):
                 print(f"  [{extract_type}] bigBed: {bb_path}")
                 if not args.keep_bed:
                     try:

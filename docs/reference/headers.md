@@ -49,7 +49,9 @@ strict detector (`--chimera-detector strict`, 3.3.0) adds, after
 `chimera_purity`: `chimera_detector=strict`, `chimera_min_baseq`,
 `chimera_min_span`, `chimera_multi_switch=on|off`,
 `chimera_error_mask=on/<N>sites|off|unavailable|n/a` (`unavailable`:
-requested, but no SNP screen ran) and `chimera_duplicates_excluded=<N>`
+requested, but no SNP screen ran), `chimera_error_mask_sha256=<hex>` (the
+applied mask BED's SHA-256, only with `on/<N>sites`; QC restores only a BED
+with this digest) and `chimera_duplicates_excluded=<N>`
 (duplicate-flagged reads not counted). A DS without `chimera_detector` is
 the standard detector, as in earlier releases.
 
@@ -145,13 +147,27 @@ Written once (never duplicated on re-runs) by the commands that rewrite MSPs:
   the calls (`consensus` export, `tag-m5c`, `fiberhmm-scan`) remove `Ma`
   after the copy.
 - **`fire` groups were revalidated.** A `fire` group carried into a new `MA`
-  is kept only when every element is exactly one of the record's MSPs;
-  otherwise it is dropped with its `AQ` bytes and `AN` names.
+  is kept only when its strand qualifier equals the `msp` group's (FiberHMM
+  writes `msp.`, and `ft fire` writes `fire.`, so `fire+`/`fire-` groups never
+  match) and every element is exactly one of the record's MSPs; otherwise it
+  is dropped with its `AQ` bytes and `AN` names.
 
-Records a run writes without rewriting their MSPs (skipped or failed reads,
-`apply --no-msps`, unpaired reads in `merge`) keep their MSP tags; when the
-input has a `fiberhmm-apply` `@PG` and no contract line, their `aq` is
-removed, since it may be FiberHMM's.
+`fiberhmm-call` and `fiberhmm-apply` clear the earlier run's calls from every
+record they write, including reads they skip (length, MAPQ, unmapped,
+unselected contigs, chimeras) and reads that yield no calls: such a record
+leaves with no nucleosome/MSP/TF tags and no `Ma`/`Aq`/`An`, keeping only its
+DddA m5C groups (in `MA`). Two options leave legacy tags in place instead:
+`call --no-legacy-tags` keeps a skipped read's `ns`/`nl`/`as`/`al`/`nq`/`aq`
+(it never rewrites legacy tags), and `apply --no-msps` keeps every record's
+`as`/`al` and their `aq`, and writes those MSPs into `MA` when the record
+keeps DddA m5C groups. A fibertools 0.13 `fire` group (in `Ma`) is not kept
+under `apply --no-msps`: only the legacy `as`/`al` survive.
+
+Records written without rewriting their MSPs keep their MSP tags: reads
+`fiberhmm-recall-tfs`/`-recall-nucs` fail to recall (recall's chimeras are
+cleared like call's) and unpaired reads in `merge`. On those records, and under
+`apply --no-msps`, an `aq` is removed when the input has a `fiberhmm-apply`
+`@PG` and no contract line, since it may be FiberHMM's.
 
 Files without the line come from FiberHMM 3.2.1 or older, where
 `fiberhmm-apply --scores` wrote its MSP posterior as `aq`; there an `aq`

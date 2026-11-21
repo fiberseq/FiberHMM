@@ -177,21 +177,66 @@ def cpg_mask_from_intervals(read_len: int, policy: str = "unmethylated-only",
     return mask
 
 
+def _fibertools_ma_cpg_intervals(read, feature: str) -> list:
+    """SEQ-frame intervals of one m5C feature in a fibertools ``Ma`` tag.
+
+    ``Ma`` is always molecular frame, so a reverse read's intervals are
+    flipped, as :func:`fiberhmm.daf.m5c.ma_strand_intervals` does for the
+    (always molecular) m5C groups of FiberHMM's ``MA``."""
+    from fiberhmm.daf.m5c import ma_group_feature
+    from fiberhmm.io.ma_tags import flip_interval_frame
+
+    read_length = read.query_length or len(read.query_sequence or "")
+    out = []
+    for group in str(read.get_tag('Ma')).split(';')[1:]:
+        head, sep, body = group.partition(':')
+        if not sep or ma_group_feature(head) != feature:
+            continue
+        for item in body.split(','):
+            if '-' not in item:
+                continue
+            one_based, size = (int(v) for v in item.split('-', 1))
+            start, length = one_based - 1, size
+            if read.is_reverse:
+                start, length = flip_interval_frame(start, length, read_length)
+            out.append((int(start), int(start + length)))
+    out.sort()
+    return out
+
+
 def read_cpg_intervals(read) -> dict:
-    """SEQ-frame ``ddda_ucg``/``ddda_mcg`` intervals carried by ``read``'s MA.
+    """SEQ-frame ``ddda_ucg``/``ddda_mcg`` intervals carried by ``read``.
 
-    Returns ``{'ucg': [...], 'mcg': [...]}`` (empty lists without MA). Small
-    and picklable, so pipelines can compute it in the main process and ship
-    it to workers that only see a slim payload.
+    The one accessor every calling path uses (region, streaming, recall,
+    replay), so they all see the same islands whatever the order of tag
+    stripping: FiberHMM's ``MA`` when present, else fibertools' (>= 0.13)
+    ``Ma`` (``ft fire`` moves every ``MA`` group into ``Ma``; molecular
+    frame), the precedence of :func:`fiberhmm.io.ma_tags.annotation_tags`
+    and :func:`fiberhmm.inference.read_filters.strip_stale_call_tags`.
+    A slim worker stub carrying intervals precomputed on the live read
+    (``cpg_intervals``) returns those.
+
+    Returns ``{'ucg': [...], 'mcg': [...]}`` (empty lists without either
+    tag). Small and picklable, so pipelines can compute it in the main
+    process and ship it to workers that only see a slim payload.
     """
-    if not read.has_tag('MA'):
-        return {'ucg': [], 'mcg': []}
-    from fiberhmm.daf.m5c import ma_intervals
+    precomputed = getattr(read, 'cpg_intervals', None)
+    if isinstance(precomputed, dict):
+        return {'ucg': list(precomputed.get('ucg', ())),
+                'mcg': list(precomputed.get('mcg', ()))}
+    if read.has_tag('MA'):
+        from fiberhmm.daf.m5c import ma_intervals
 
-    return {
-        'ucg': [tuple(map(int, iv)) for iv in ma_intervals(read, DDDA_UCG_FEATURE)],
-        'mcg': [tuple(map(int, iv)) for iv in ma_intervals(read, DDDA_MCG_FEATURE)],
-    }
+        return {
+            'ucg': [tuple(map(int, iv)) for iv in ma_intervals(read, DDDA_UCG_FEATURE)],
+            'mcg': [tuple(map(int, iv)) for iv in ma_intervals(read, DDDA_MCG_FEATURE)],
+        }
+    if read.has_tag('Ma'):
+        return {
+            'ucg': _fibertools_ma_cpg_intervals(read, DDDA_UCG_FEATURE),
+            'mcg': _fibertools_ma_cpg_intervals(read, DDDA_MCG_FEATURE),
+        }
+    return {'ucg': [], 'mcg': []}
 
 
 def build_cpg_mask(read, read_len: int,
@@ -959,6 +1004,17 @@ def extract_modification_calls(read, mode: str, context_size: int = 3,
             from fiberhmm.inference.engine import daf_reference_evidence
             md_result = daf_reference_evidence(
                 read, excluded_reference_positions=excluded_reference_positions or None)
+        if md_result is None and excluded_reference_positions:
+            # No reference evidence left once masked. If the read had
+            # reference evidence before masking, the mask made its strand
+            # undecidable: skip it. Falling through to MM/ML would read
+            # retained basecaller marks (e.g. 6mA) as deaminations.
+            unmasked = getattr(read, '_daf_md_result', None)
+            if unmasked is None and hasattr(read, 'get_aligned_pairs'):
+                from fiberhmm.inference.engine import daf_reference_evidence
+                unmasked = daf_reference_evidence(read)
+            if unmasked is not None:
+                return None
         if md_result is not None:
             ct_pos, ga_pos, strand_tag = md_result
             ct_pos, ga_pos = set(ct_pos) - unaligned, set(ga_pos) - unaligned
@@ -1257,24 +1313,50 @@ def _preserved_ma_groups(read) -> Tuple[List[str], List[str], List[int]]:
     return kept_groups, kept_names, kept_aq
 
 
-def _drop_stale_fire_groups(groups, names, aq, msps):
+def _ma_items(group: str):
+    """``[(start0, length), ...]`` of an MA group's elements, or ``None`` when
+    one does not parse as ``<1-based start>-<length>``."""
+    out = []
+    for item in group.partition(':')[2].split(','):
+        if not item:
+            continue
+        start, sep, length = item.partition('-')
+        try:
+            out.append((int(start) - 1, int(length)))
+        except ValueError:
+            return None
+        if not sep:
+            return None
+    return out
+
+
+def _drop_stale_fire_groups(groups, names, aq, msps, msp_strand: str = '.'):
     """``(groups, names, aq)`` without ``fire`` groups that no longer describe
     the record's MSPs.
 
-    A fibertools FIRE group is kept only when every element is exactly one of
-    ``msps`` (molecular ``(start, length)`` pairs, as written to the MA msp
-    group); otherwise the group goes, with its AN names and AQ bytes. FIRE
-    scores belong to the MSPs ``ft fire`` saw, so nothing derived from
-    replaced MSPs survives."""
-    msp_tokens = {f'{int(s) + 1}-{int(n)}' for s, n in msps}
+    A fibertools FIRE group is kept only when its strand qualifier equals the
+    MSP group's (``msp_strand``; FiberHMM writes ``msp.``, so ``fire.`` --
+    what ``ft fire`` writes -- can match and ``fire+``/``fire-`` cannot) and
+    every element, parsed and normalised, is exactly one of ``msps``
+    (molecular ``(start, length)`` pairs, as written to the MA msp group);
+    otherwise the group goes, with its AN names and AQ bytes. FIRE scores
+    belong to the MSPs ``ft fire`` saw, so nothing derived from replaced MSPs
+    survives."""
+    from fiberhmm.daf.m5c import ma_group_strand
+
+    msp_set = {(int(s), int(n)) for s, n in msps}
     kept_groups, kept_names, kept_aq = [], [], []
     name_offset = aq_offset = 0
     for group in groups:
         feature, qual_spec = _ma_group_head(group)
-        items = [item for item in group.partition(':')[2].split(',') if item]
-        count = len(items)
+        count = sum(bool(item) for item in group.partition(':')[2].split(','))
         n_bytes = len(qual_spec) * count
-        if feature != 'fire' or all(item in msp_tokens for item in items):
+        keep = True
+        if feature == 'fire':
+            items = _ma_items(group)
+            keep = (ma_group_strand(group) == msp_strand and items is not None
+                    and all(item in msp_set for item in items))
+        if keep:
             kept_groups.append(group)
             kept_names.extend(names[name_offset:name_offset + count])
             kept_aq.extend(aq[aq_offset:aq_offset + n_bytes])
@@ -1291,7 +1373,8 @@ def write_ma_tags(read, read_length: int,
                   also_write_legacy: bool = True,
                   downstream_compat: bool = False,
                   nuc_el_for_kept: Optional[Sequence[int]] = None,
-                  nuc_er_for_kept: Optional[Sequence[int]] = None) -> None:
+                  nuc_er_for_kept: Optional[Sequence[int]] = None,
+                  msps_replaced: bool = True) -> None:
     """Set MA/AQ (and optionally legacy ns/nl/as/al) tags on the read in place.
 
     Three output modes:
@@ -1317,6 +1400,10 @@ def write_ma_tags(read, read_length: int,
 
     ``downstream_compat=True`` and ``also_write_legacy=False`` are mutually
     exclusive; compat mode always writes the legacy track.
+
+    ``msps_replaced=False`` (``fiberhmm-apply --no-msps``) means ``msps`` are
+    the record's own retained MSPs, not new calls: a legacy ``aq`` scoring
+    them (fibertools FIRE) is kept. Otherwise any ``aq`` is removed.
     """
     import array as pyarray
 
@@ -1345,7 +1432,8 @@ def write_ma_tags(read, read_length: int,
     # FiberHMM writes no MSP score; a legacy aq (fibertools <= 0.12 FIRE, or
     # an older fiberhmm-apply --scores) scores MSPs this write replaces, even
     # when the legacy as/al are left in place (also_write_legacy=False).
-    if read.has_tag('aq'):
+    # Retained MSPs (msps_replaced=False) keep their FIRE aq.
+    if msps_replaced and read.has_tag('aq'):
         read.set_tag('aq', None)
 
     # Default nq for kept nucs to 0 (sentinel for "unverified") if not provided.

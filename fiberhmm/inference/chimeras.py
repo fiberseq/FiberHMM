@@ -470,16 +470,23 @@ def error_mask_summary(enabled=STRICT_ERROR_MASK, bed=None, n_sites=0,
 
     ``enabled``: requested (``--no-chimera-error-mask`` turns it off);
     ``applied``: a mask was computed and used; ``reason`` says why not.
+    ``sha256``: the applied BED's content digest, so QC restores only this
+    call's mask (:func:`fiberhmm.qc.core._call_chimera_detector`).
     """
     applied = bool(enabled and bed)
     if not enabled:
         reason = 'disabled (--no-chimera-error-mask)'
     elif not applied and reason is None:
         reason = 'no DAF SNP screen in this run'
+    digest = None
+    if applied and Path(bed).is_file():
+        from fiberhmm.io.run_state import sha256_file
+        digest = sha256_file(bed)
     return {'enabled': bool(enabled), 'applied': applied,
             'n_sites': int(n_sites) if applied else 0,
             'bed': str(bed) if applied else None,
-            'reason': None if applied else reason}
+            'reason': None if applied else reason,
+            'sha256': digest}
 
 
 def _new_stats_fields(mode, n_checked=0, n_chimeric=None, cfg=None,
@@ -648,7 +655,9 @@ def _prepare_chimeras_strict(input_bam, output_bam=None, *, mode='flag', daf=Tru
     one switch and more for several (:mod:`fiberhmm.inference.chimera_split`);
     pieces shorter than ``min_read_length`` are dropped, and a record with no
     piece left is kept whole, as is an unmapped record (no CIGAR or
-    reference to cut; ``n_records_unmapped_kept_whole``). Every other record
+    reference to cut; ``n_records_unmapped_kept_whole``) and a paired record
+    (flag 0x1: its mate cannot be updated to match renamed pieces;
+    ``n_records_paired_kept_whole``). Every other record
     of a chimeric name is
     flagged as in flag mode. A coordinate-sorted input gives a sorted,
     indexed spool.
@@ -689,6 +698,7 @@ def _prepare_chimeras_strict(input_bam, output_bam=None, *, mode='flag', daf=Tru
     bin_of, bin_spans, anonymous_bins = {}, {}, {}
     split_info = dict(n_records_split=0, n_pieces_written=0, n_pieces_too_short=0,
                       n_records_kept_whole=0, n_records_unmapped_kept_whole=0,
+                      n_records_paired_kept_whole=0,
                       n_pieces_still_chimeric=0,
                       n_pieces_modifications_kept=0, n_pieces_modifications_dropped=0,
                       chimeric_bases=0, recovered_bases=0,
@@ -853,6 +863,13 @@ def _split_pieces(read, header, split, min_read_length, ref, decide, info,
         # Unmapped (no CIGAR or reference): kept whole and flagged.
         info['n_records_kept_whole'] += 1
         info['n_records_unmapped_kept_whole'] += 1
+        return None
+    if read.is_paired:
+        # Paired (0x1): pieces would need new names and mate fields that the
+        # mate record cannot be repaired to match in this streaming pass, so
+        # the record is kept whole and flagged, with its pairing untouched.
+        info['n_records_kept_whole'] += 1
+        info['n_records_paired_kept_whole'] += 1
         return None
     pieces, record_gaps = split_record(read, header, split)
     kept = []

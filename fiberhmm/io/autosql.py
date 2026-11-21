@@ -215,12 +215,15 @@ def _make_schema(table_name: str, description: str,
                  sample_name: Optional[str] = None,
                  circular_groups: bool = False,
                  haplotype_fields: bool = False,
-                 source_note: Optional[str] = None) -> str:
+                 source_note: Optional[str] = None,
+                 msp_aq_ambiguous: bool = False) -> str:
     fields = _BED12_FIELDS
     if extract_type in _LAYER_FIELDS:
         fields = fields + _LAYER_FIELDS[extract_type]
     if block_scores and extract_type in _BLOCK_SCORE_FIELDS:
-        fields = fields + _BLOCK_SCORE_FIELDS[extract_type]
+        fields = fields + (_MSP_AQ_AMBIGUOUS_BLOCK_FIELD
+                           if msp_aq_ambiguous and extract_type == 'msp'
+                           else _BLOCK_SCORE_FIELDS[extract_type])
     if circular_groups:
         fields = fields + _CIRCULAR_FIELDS
     if haplotype_fields:
@@ -323,28 +326,54 @@ AUTOSQL_SCHEMAS = {
 # Back-compat: the nucleosome type was named 'footprint' through 2.13.x.
 _TYPE_ALIASES = {'footprint': 'nucleosome'}
 
+# MSP score wording when the source BAM's legacy ``aq`` may not be FIRE: a
+# header with a fiberhmm-apply @PG and no FIBERHMM-ANNOTATION-CONTRACT line
+# (fiberhmm.inference.read_filters.header_aq_may_be_fiberhmm) comes from
+# FiberHMM <= 3.2.1, whose ``apply --scores`` wrote its own MSP posterior as
+# ``aq``, the tag fibertools <= 0.12 uses for FIRE.
+_MSP_AQ_AMBIGUOUS_DESCRIPTION = (
+    'FiberHMM methylase-sensitive patches (as/al BAM tags). '
+    'One BED12 row per read; each block is an accessible patch '
+    'between nucleosomes. BED score = mean aq (0-255 when present); '
+    'ambiguous provenance: the source BAM comes from FiberHMM <= 3.2.1 '
+    'apply, so aq may be its MSP posterior (apply --scores) rather than '
+    'fibertools FIRE.'
+)
+_MSP_AQ_AMBIGUOUS_BLOCK_FIELD = (
+    '    int[blockCount] blockAq; '
+    '"Per-block MSP aq score, 0-255 (fibertools FIRE, or a FiberHMM <= 3.2.1 '
+    'apply --scores posterior; ambiguous for this source)"\n'
+)
+
 
 def get_schema(extract_type: str, block_scores: bool = False,
                sample_name: Optional[str] = None,
                circular_groups: bool = False,
                haplotype_fields: bool = False,
-               source_note: Optional[str] = None) -> Optional[str]:
+               source_note: Optional[str] = None,
+               msp_aq_ambiguous: bool = False) -> Optional[str]:
     """Return the autoSQL schema string for ``extract_type``, optionally
     with the per-block score columns appended and/or a ``Sample: <name>.``
     marker prepended to the description. ``source_note`` (e.g. the ``var``
     layer's ``VCF: ...`` marker, :func:`vcf_source_note`) goes between the
-    sample marker and the description."""
+    sample marker and the description. ``msp_aq_ambiguous`` (MSP only)
+    describes ``aq`` as of ambiguous provenance instead of fibertools FIRE,
+    for a source BAM from FiberHMM <= 3.2.1 apply
+    (:func:`fiberhmm.inference.read_filters.header_aq_may_be_fiberhmm`)."""
     extract_type = _TYPE_ALIASES.get(extract_type, extract_type)
     desc = _DESCRIPTIONS.get(extract_type)
     if desc is None:
         return None
+    if msp_aq_ambiguous and extract_type == 'msp':
+        desc = _MSP_AQ_AMBIGUOUS_DESCRIPTION
     return _make_schema(f'fiberhmm_{extract_type}', desc,
                         extract_type=extract_type,
                         block_scores=block_scores,
                         sample_name=sample_name,
                         circular_groups=circular_groups,
                         haplotype_fields=haplotype_fields,
-                        source_note=source_note)
+                        source_note=source_note,
+                        msp_aq_ambiguous=msp_aq_ambiguous)
 
 
 def write_autosql_for(extract_type: str, out_dir: Optional[str] = None,
@@ -352,7 +381,8 @@ def write_autosql_for(extract_type: str, out_dir: Optional[str] = None,
                       sample_name: Optional[str] = None,
                       circular_groups: bool = False,
                       haplotype_fields: bool = False,
-                      source_note: Optional[str] = None) -> Optional[str]:
+                      source_note: Optional[str] = None,
+                      msp_aq_ambiguous: bool = False) -> Optional[str]:
     """Write the autoSQL file for a given extract_type to disk.
 
     Returns the path to the written file, or None if no schema exists
@@ -366,10 +396,13 @@ def write_autosql_for(extract_type: str, out_dir: Optional[str] = None,
                         sample_name=sample_name,
                         circular_groups=circular_groups,
                         haplotype_fields=haplotype_fields,
-                        source_note=source_note)
+                        source_note=source_note,
+                        msp_aq_ambiguous=msp_aq_ambiguous)
     if schema is None:
         return None
     variant = ''
+    if msp_aq_ambiguous and extract_type == 'msp':
+        variant += '.aqamb'
     if block_scores:
         variant += '.bs'
     if circular_groups:

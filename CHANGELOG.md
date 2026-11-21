@@ -34,15 +34,24 @@
   and fibertools `Ma`/`Aq`/`An` from the records whose MSPs they rewrite, also
   with `--no-legacy-tags`. `ft fire` 0.13 moves every `MA` group into `Ma`.
   call and apply now keep a read's DddA m5C groups from that `Ma`, which they
-  used to drop with it.
+  used to drop with it, and every calling path (region, streaming, recall)
+  reads its `ddda_ucg`/`ddda_mcg` islands from `MA`, else `Ma`, for the DddA
+  CpG mask. Earlier versions ignored islands in `Ma`.
 - **`fire` groups are revalidated.** Recall keeps a carried `fire` group only
-  if every element is still exactly one of the record's MSPs. Otherwise the
-  group is dropped with its `AQ` bytes and `AN` names.
-- Records those commands write without rewriting their MSPs (skipped or
-  failed reads, `apply --no-msps`, unpaired `merge` reads) lose an `aq` when
-  the input has a `fiberhmm-apply` `@PG` and no contract line. Such an `aq`
-  may be an older FiberHMM's posterior rather than FIRE; fibertools 0.13
-  `ft extract` reports one as `fire_qual`.
+  if its strand qualifier matches the `msp` group's (`.`) and every element is
+  still exactly one of the record's MSPs. Otherwise the group is dropped with
+  its `AQ` bytes and `AN` names.
+- call and apply clear the earlier run's calls from every record they write,
+  skipped and call-less reads included, as before; only DddA m5C groups stay
+  (`call --no-legacy-tags` leaves a skipped read's legacy tags in place).
+  `apply --no-msps` keeps the input's `as`/`al` and their fibertools `aq`, and
+  also writes those MSPs into `MA` when a read keeps DddA m5C groups. Records
+  written without rewriting their MSPs (reads recall fails on, unpaired `merge`
+  reads, and `apply --no-msps` output) lose an `aq` when the input has a
+  `fiberhmm-apply` `@PG` and no contract line. Such an `aq` may be an older
+  FiberHMM's posterior rather than FIRE; fibertools 0.13 `ft extract` reports
+  one as `fire_qual`. For such a BAM, `fiberhmm-extract` now calls the `_msp`
+  bigBed's `aq` score ambiguous rather than FIRE.
 - Consensus export, `fiberhmm-tag-m5c` and `fiberhmm-scan` copy a fibertools
   `Ma` into `MA` as before, and now remove `Ma`/`Aq`/`An` after the copy.
 - `fiberhmm-call` and `fiberhmm-pipeline` help: `--min-read-length` counts the
@@ -167,12 +176,22 @@
 - With `--daf-snp-mask`, a read whose chemical strand can no longer be
   decided once masked sites are removed (an R/Y read without an `st` tag, or
   an MM-tagged read, whose only marks were masked) is skipped instead of
-  being scored as GA. Unmasked runs are unchanged.
+  being scored as GA. The same holds for a read with `MD` whose conversions
+  the mask removes or leaves tied: it is skipped rather than re-read from
+  retained basecaller `MM`/`ML` tags (6mA would count as G→A deamination).
+  Unmasked runs are unchanged.
 - Replaying saved masked evidence with `input.correct_native=false` is
   refused: it would combine the BAM's unmasked TF calls with the masked
-  lattice.
+  lattice. Every window of pooled (`--pool-loci`) evidence is checked, not
+  only the first.
 - Consensus mask positions follow the CIGAR exactly; a `P` operation no
   longer shifts later positions by one.
+- DAF deaminations read from `MD` (or `--reference`) on reads whose CIGAR
+  contains padding (`P`) are at their true positions. pysam's aligned pairs
+  shift the read past each pad, so `fiberhmm-call`, `fiberhmm-daf-encode`,
+  recall, consensus and strand rescue stopped with an IndexError on such
+  reads, or, with a trailing soft clip, missed or misplaced the deaminations
+  after the pad. Reads without `P` are unchanged.
 - Consensus and strand rescue read the legacy `Mm`/`Ml` modification tags
   that older basecallers and modkit versions write, as `fiberhmm-call` does.
   Such Hia5 datasets used to load with no molecules.
@@ -203,7 +222,9 @@
   the `--prob-threshold` and `--edge-trim` the BAM's `fiberhmm-call` record
   shows, as nucleosome recall replay already did. Before, a call run with a
   non-default threshold or edge trim was decoded at the chemistry default and
-  10 bp.
+  10 bp. Both read the `fiberhmm-call` record itself, not a later
+  `fiberhmm-call-m5c` one. `NucParams.edge_trim` is unset by default (the
+  recorded trim, else 10); a value you pass, 10 included, is used as given.
 - `fiberhmm-posteriors` with a custom `-m` on a BAM that declares DddA now
   applies the DddA CpG mask and keep-one run thinning, as `fiberhmm-call` and
   `fiberhmm-apply` do on the same input. The Python API

@@ -115,9 +115,9 @@ class EvidenceReplay:
             return
         hd = header.to_dict() if hasattr(header, 'to_dict') else dict(header or {})
         pgs = list(hd.get('PG', []) or [])
+        from fiberhmm.nuc.records import is_call_record
         call_index = next((i for i in range(len(pgs) - 1, -1, -1)
-                           if 'fiberhmm-call' in str(pgs[i].get('PN') or pgs[i].get('ID') or '')),
-                          -1)
+                           if is_call_record(pgs[i])), -1)
         pg = pgs[call_index] if call_index >= 0 else {}
         ds = str(pg.get('DS', ''))
         token = re.search(r'(?:^|\s)daf_evidence=(\S+)', ds)

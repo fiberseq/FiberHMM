@@ -141,7 +141,11 @@ with `plot: not written (install matplotlib)`.
   panel; TSV columns `chimeras_status`, `chimeras_severity` and
   `chimeras_basis` follow the existing columns. The grade comes from the
   call's full-run count when available; standalone QC of a flag-mode BAM
-  without the sidecar grades the flagged fraction of its sample. Remove and
+  without the sidecar grades the flagged fraction of its sample. For a strict
+  call the sampled count is the call's marks only: reads that state
+  extraction detects afresh (for example when the error mask is not
+  restored) are reported apart as `sampled_extraction_detected` and never
+  merged into `n_chimeric` or the grade. Remove and
   split BAMs without their sidecar are not graded. The grade records the
   settings that made the count (`min_seg`, `purity`) and its `basis`:
   `default` for the strict defaults, `lenient` or `custom` otherwise, with a
@@ -149,7 +153,10 @@ with `plot: not written (install matplotlib)`.
   into WARN (`overall.warned_by: ["chimeras"]`); it never fails a sample and
   is not part of the score, since flagged chimeras are excluded from calls.
   Before measuring state-aware rates QC restores the call's strict detector
-  and its chimera error mask. BAMs called with the standard detector (the
+  and its chimera error mask, verified against the SHA-256 the call recorded;
+  a BED that is missing, differs (`mismatch`) or cannot be verified is not
+  restored, and `error_mask_restored` says which (`error_mask_not_restored`
+  and a text-summary line appear only when the call applied a mask). BAMs called with the standard detector (the
   default) get the chimera section, TSV columns, PDF/PNG line and verdict
   of earlier releases, unchanged.
 

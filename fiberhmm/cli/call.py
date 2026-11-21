@@ -1767,7 +1767,10 @@ def _main(args):
             f"chimera_min_span={args.chimera_min_span} "
             f"chimera_multi_switch={'on' if args.chimera_multi_switch else 'off'} "
             f"chimera_error_mask={error_mask_state} "
-            f"chimera_duplicates_excluded={duplicates_state} "
+            + (f"chimera_error_mask_sha256={error_mask_info['sha256']} "
+               if error_mask_state.startswith('on/') and error_mask_info.get('sha256')
+               else '')
+            + f"chimera_duplicates_excluded={duplicates_state} "
             if args.chimera_detector == 'strict' else '')
         if snp_mask_path:
             snp_state = f"on/{snp_mask_sites}sites"

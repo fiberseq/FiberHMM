@@ -78,11 +78,8 @@ class CallerSettings:
         from fiberhmm.inference.tf_recaller import ENZYME_PRESETS
         from fiberhmm.models import get_model_path, get_observation_mode, resolve_prob_threshold
         hd = header.to_dict() if hasattr(header, 'to_dict') else dict(header or {})
-        pg = None
-        for rec in reversed(hd.get('PG', [])):
-            if 'fiberhmm-call' in str(rec.get('PN') or rec.get('ID') or ''):
-                pg = rec
-                break
+        from fiberhmm.nuc.records import last_call_record
+        pg = last_call_record(hd)
         kw: dict = {}
         notes = []
         if pg is not None:
