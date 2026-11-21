@@ -196,6 +196,8 @@ def default_outputs(tmp):
 
 
 def test_default_call_and_qc_match_321_golden(tmp_path):
+    import pytest
+    pytest.importorskip("matplotlib")  # the golden QC includes the PDF/PNG report
     golden = json.loads(GOLDEN.read_text())
     got = default_outputs(tmp_path)
     # The fixture exercises what the strict detector would change.
