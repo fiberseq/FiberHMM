@@ -324,6 +324,102 @@ def finalize_baseline_radial_nuc_configuration(
     return nuc_calls, msps
 
 
+def hmm_tf_call(start: int, length: int):
+    """A small HMM footprint as a ``tf`` entry of ``fiberhmm-call --hmm-only``.
+
+    No TF recall ran, so there is no LLR and no edge evidence: the AQ bytes
+    (tq, el, er) are all 0, the "unverified" sentinel nucleosomes without
+    recall also carry (``nuc.Q`` 0)."""
+    from fiberhmm.inference.tf_recaller import TFCall
+    from fiberhmm.io.ma_tags import EDGE_AMBIGUITY_SAT
+
+    return TFCall(int(start), int(length), 0.0, 0,
+                  EDGE_AMBIGUITY_SAT, EDGE_AMBIGUITY_SAT)
+
+
+def split_hmm_footprints(intervals, nuc_min_size: int, scores=None):
+    """``(nucs, nuc_scores, tfs)``: HMM footprints of ``nuc_min_size`` bp or
+    more are nucleosomes, smaller ones TF-sized (the size rule the HMM's MSP
+    step uses: only footprints >= ``nuc_min_size`` bound an MSP)."""
+    nucs, nuc_scores, tfs = [], [], []
+    scores = list(scores) if scores is not None else None
+    if scores is not None and len(scores) != len(intervals):
+        scores = None
+    for i, (start, length) in enumerate(intervals):
+        start, length = int(start), int(length)
+        if length <= 0:
+            continue
+        if length >= int(nuc_min_size):
+            nucs.append((start, length))
+            if scores is not None:
+                nuc_scores.append(scores[i])
+        else:
+            tfs.append((start, length))
+    return nucs, (nuc_scores if scores is not None else None), tfs
+
+
+def build_hmm_only_result(fiber_read: Mapping[str, Any],
+                          apply_result: Mapping[str, Any],
+                          nuc_min_size: int,
+                          with_scores: bool) -> dict:
+    """The fused-result dict of ``fiberhmm-call --hmm-only``: every HMM call,
+    nothing recalled.
+
+    * footprints >= ``nuc_min_size`` bp -> ``nuc`` (``nuc.Q``: the HMM
+      posterior-mean byte with ``--scores``, else 0),
+    * footprints < ``nuc_min_size`` bp -> ``tf`` (``tf+QQQ``, bytes 0: no LLR),
+      wherever they lie (inside MSPs included),
+    * the HMM MSPs -> ``msp``.
+
+    Every HMM footprint is kept, so the output is complete recall input:
+    ``fiberhmm-recall-nucs``/``-tfs`` read ``nuc`` + ``tf`` of an hmm-only
+    call as the HMM footprint list (:func:`fiberhmm.io.footprint_calls.hmm_only_calls`).
+    Calls in no-evidence blocks were already removed by the apply stage.
+    """
+    from fiberhmm.inference.tagging import scores_to_u8
+
+    if apply_result.get("circular"):
+        read_length = int(apply_result.get("circular_read_length")
+                          or len(fiber_read["query_sequence"]))
+        nucs, nuc_scores, tfs = split_hmm_footprints(
+            apply_result.get("circular_ns", []), nuc_min_size,
+            apply_result.get("circular_ns_scores") if with_scores else None)
+        kept_starts, kept_lengths, _ = split_intervals_for_legacy(
+            nucs, read_length, None)
+        msp_starts, msp_lengths, _ = split_intervals_for_legacy(
+            apply_result.get("circular_as", []), read_length, None)
+        return {
+            "ns": kept_starts,
+            "nl": kept_lengths,
+            "as": msp_starts,
+            "al": msp_lengths,
+            "ns_scores": None,
+            "as_scores": None,
+            "nq_for_kept_nucs": scores_to_u8(nuc_scores),
+            "tf_calls": [hmm_tf_call(s, n) for s, n in tfs],
+            "circular": True,
+            "circular_read_length": read_length,
+            "circular_ns": nucs,
+            "circular_as": list(apply_result.get("circular_as", [])),
+        }
+
+    intervals = list(zip(apply_result["ns"], apply_result["nl"]))
+    nucs, nuc_scores, tfs = split_hmm_footprints(
+        intervals, nuc_min_size,
+        apply_result.get("ns_scores") if with_scores else None)
+    kept_starts, kept_lengths = split_intervals(nucs)
+    return {
+        "ns": kept_starts,
+        "nl": kept_lengths,
+        "as": apply_result["as"],
+        "al": apply_result["al"],
+        "ns_scores": None,
+        "as_scores": None,
+        "nq_for_kept_nucs": scores_to_u8(nuc_scores),
+        "tf_calls": [hmm_tf_call(s, n) for s, n in tfs],
+    }
+
+
 def build_fused_recall_result(fiber_read: Mapping[str, Any], *args, **kwargs) -> dict:
     """Fused recall (see :func:`_build_fused_recall_result`), then removal of
     calls from the read's long no-evidence blocks (DAF insertions and soft

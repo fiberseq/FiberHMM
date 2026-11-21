@@ -314,7 +314,9 @@ def _footprint_tags(read, input_molecular_frame=True) -> dict | None:
     return resolve_footprint_tags(
         read, bool(input_molecular_frame),
         ma_molecular=bool(_MA_FRAME['molecular']),
-        ma_evidence=bool(_MA_FRAME.get('evidence', True)))
+        ma_evidence=bool(_MA_FRAME.get('evidence', True)),
+        # fiberhmm-call --hmm-only input: nuc + tf are the HMM footprints.
+        hmm_footprints=bool(_MA_FRAME.get('hmm_only', False)))
 
 
 def _annotation_footprints_as_legacy_tags(read, input_molecular_frame=True) -> dict:
@@ -1588,6 +1590,13 @@ def _recall(args, bam_in, model_path, using_bundled_model, n_cores):
         # output) are read in the MA frame rule's frame.
         _MA_FRAME['molecular'] = ma_annotation_frame(bam_in.header) == MOLECULAR
         _MA_FRAME['evidence'] = header_has_frame_evidence(bam_in.header)
+        # fiberhmm-call --hmm-only output: its tf group holds the HMM's
+        # TF-sized footprints, read with nuc as the HMM footprint list.
+        from fiberhmm.io.footprint_calls import hmm_only_calls
+        _MA_FRAME['hmm_only'] = hmm_only_calls(bam_in.header)
+        if _MA_FRAME['hmm_only']:
+            print("[recall_tfs] input is fiberhmm-call --hmm-only output: "
+                  "MA nuc + tf are read as the HMM footprints", file=sys.stderr)
         # ML threshold for re-reading MM/ML: explicit, else the chemistry
         # preset (Hia5 Nanopore 248, otherwise 125), taken from --enzyme/--seq
         # or the input's own chemistry declaration.

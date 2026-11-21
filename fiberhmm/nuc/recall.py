@@ -115,6 +115,11 @@ class CallerSettings:
                 kw['recall_nucs'] = False
             if opt('-m', '--model'):
                 notes.append('custom apply model in the header was not reused; bundled model used')
+            if 'hmm_only=on' in str(pg.get('DS', '')).split():
+                # Its HMM settings (threshold, trim, sizes, masks) are the
+                # call's; the recall settings are the defaults (it ran none).
+                notes.append('the header call ran --hmm-only (HMM calls, no recall); '
+                             'the caller replays HMM + recall with its HMM settings')
             m = re.search(r'phase_nrl=(\d+)', str(pg.get('DS', '')))
             if m:
                 kw['phase_nrl'] = int(m.group(1))

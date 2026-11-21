@@ -100,9 +100,17 @@ def drop_derived_groups(read) -> int:
     is kept verbatim. Returns the number of intervals removed. A read whose AQ
     does not match its MA quality specs is left unchanged (its bytes cannot be
     realigned safely)."""
+    return drop_ma_groups(read, derived_ma_groups()) or 0
+
+
+def drop_ma_groups(read, features) -> Optional[int]:
+    """Remove the MA groups whose feature is in ``features`` from a read's
+    FiberHMM ``MA``, with their AQ bytes and AN names; every other group is
+    kept verbatim. Returns the number of intervals removed, or None (read
+    unchanged) when its AQ does not match its MA quality specs."""
     if not hasattr(read, 'has_tag') or not read.has_tag('MA'):
         return 0
-    derived = derived_ma_groups()
+    derived = frozenset(features)
     ma = str(read.get_tag('MA'))
     sections = [x for x in ma.split(';')[1:] if x]
     heads = [x.partition(':')[0] for x in sections]
@@ -118,7 +126,7 @@ def drop_derived_groups(read) -> int:
     counts = [sum(bool(t) for t in x.partition(':')[2].split(',')) for x in sections]
     aq = list(read.get_tag('AQ')) if read.has_tag('AQ') else []
     if len(aq) != sum(len(q) * n for (_f, q), n in zip(feats, counts)):
-        return 0
+        return None
     names = parse_an_tag(str(read.get_tag('AN'))) if read.has_tag('AN') else None
     if names is not None and len(names) != sum(counts):
         names = None

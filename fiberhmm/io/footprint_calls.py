@@ -45,6 +45,33 @@ def ma_has_nuc_msp_groups(value) -> bool:
     return any(name in NUC_MSP_GROUPS for name, *_rest in parsed['raw_types'])
 
 
+def hmm_only_calls(header) -> bool:
+    """True when the header's latest FiberHMM footprint writer (``@PG`` of
+    fiberhmm-call/-apply/-recall-tfs/-recall-nucs, in header order) is a
+    ``fiberhmm-call --hmm-only`` run (``hmm_only=on`` in its DS).
+
+    Such a file's ``tf`` group is not recalled TF calls but the HMM's
+    TF-sized footprints (``nuc`` holds the footprints >= ``--nuc-min-size``),
+    so readers that want the HMM footprint list -- recall-nucs/-tfs, the
+    tag-m5c accessibility mask -- take ``nuc`` + ``tf`` together
+    (``resolve_footprint_tags(..., hmm_footprints=True)``). Detected from DS,
+    never from CL (the deprecated fiberhmm-apply alias records the
+    translated fiberhmm-call command)."""
+    from fiberhmm.io.annotation_frame import FIBERHMM_FOOTPRINT_PROGRAMS, _PG_ID_SUFFIX_RE
+
+    if header is None:
+        return False
+    try:
+        hd = header.to_dict() if hasattr(header, 'to_dict') else dict(header)
+    except (TypeError, ValueError):
+        return False
+    for pg in reversed(hd.get('PG', []) or []):
+        program = str(pg.get('PN') or _PG_ID_SUFFIX_RE.sub('', str(pg.get('ID') or '')))
+        if program in FIBERHMM_FOOTPRINT_PROGRAMS:
+            return program == 'fiberhmm-call' and 'hmm_only=on' in str(pg.get('DS', '')).split()
+    return False
+
+
 def footprint_annotation_tag(read) -> Optional[str]:
     """``'MA'`` or ``'Ma'``: the annotation tag that holds the read's
     nucleosome/MSP calls (FiberHMM's MA before fibertools' Ma), or None when
@@ -84,8 +111,8 @@ def annotation_nuc_msp(read, tag: Optional[str] = None) -> Optional[dict]:
     raw_types = parsed['raw_types']
     quals = parse_aq_array(aq, [rt[2] for rt in raw_types],
                            [len(rt[3]) for rt in raw_types])
-    nucs, msps, nq = [], [], []
-    strands = {'nuc': [], 'msp': []}
+    nucs, msps, tfs, nq = [], [], [], []
+    strands = {'nuc': [], 'msp': [], 'tf': []}
     groups = set()
     has_nq = aq is not None
     index = 0
@@ -105,7 +132,10 @@ def annotation_nuc_msp(read, tag: Optional[str] = None) -> Optional[dict]:
             elif name == 'msp':
                 msps.append((int(start), int(length)))
                 strands['msp'].append(strand)
-    return {'nuc': nucs, 'msp': msps, 'nq': nq if has_nq and nucs else None,
+            elif name == 'tf':
+                tfs.append((int(start), int(length)))
+                strands['tf'].append(strand)
+    return {'nuc': nucs, 'msp': msps, 'tf': tfs, 'nq': nq if has_nq and nucs else None,
             'strands': strands, 'groups': groups, 'tag': tag}
 
 
@@ -128,7 +158,8 @@ def _int_array(values):
 
 
 def resolve_footprint_tags(read, want_molecular, *, ma_molecular: Optional[bool] = None,
-                           ma_evidence: Optional[bool] = None) -> Optional[dict]:
+                           ma_evidence: Optional[bool] = None,
+                           hmm_footprints: bool = False) -> Optional[dict]:
     """The read's nucleosome/MSP calls as legacy-shaped tags, MA first.
 
     Returns ``{'source': 'MA'|'Ma'|'legacy', 'ns', 'nl', 'as', 'al', 'nq'}``
@@ -144,6 +175,10 @@ def resolve_footprint_tags(read, want_molecular, *, ma_molecular: Optional[bool]
       :func:`header_ma_frame`). ``nq`` is the MA nuc ``Q`` byte; legacy
       ``nq`` only when the legacy ns/nl list exactly the MA nucleosomes.
       Circular reads' MA pieces are used as linear pieces, like legacy tags.
+      ``hmm_footprints`` (input of a ``fiberhmm-call --hmm-only`` run, see
+      :func:`hmm_only_calls`): ``ns/nl`` are the ``nuc`` and ``tf`` groups
+      together, sorted -- every HMM footprint, as legacy apply ``ns/nl`` were;
+      ``nq`` is then left out (the tf entries have none).
     * From legacy ``ns/nl``/``as/al`` (only without MA/Ma nuc/msp groups):
       the tags' own values, in whatever frame they were written, by the
       array-pair rule; ``nq`` as stored.
@@ -179,6 +214,12 @@ def resolve_footprint_tags(read, want_molecular, *, ma_molecular: Optional[bool]
     want_molecular = bool(want_molecular)
     frame_name = MOLECULAR if ma_molecular else 'seq'
     out = {'source': tag}
+    if hmm_footprints and ma.get('tf'):
+        merged = sorted(
+            zip(ma['nuc'] + ma['tf'], ma['strands']['nuc'] + ma['strands']['tf']))
+        ma = dict(ma, nuc=[iv for iv, _ in merged], nq=None,
+                  strands=dict(ma['strands'], nuc=[st for _, st in merged]),
+                  groups=set(ma['groups']) | {'nuc'})
     for (start_tag, length_tag), feature in ((('ns', 'nl'), 'nuc'), (('as', 'al'), 'msp')):
         if feature not in ma['groups']:
             continue

@@ -323,16 +323,43 @@ def split_intervals(intervals: Sequence[Interval]) -> tuple[np.ndarray, np.ndarr
     return starts, lengths
 
 
+def kept_seq_msps(read) -> list:
+    """The MSPs ``--keep-msps`` keeps, in SEQ frame: the record's MA/Ma
+    ``msp`` group (already carried into molecular frame by the strip), else
+    its legacy ``as``/``al`` (molecular). ``[]`` without."""
+    from fiberhmm.io.footprint_calls import resolve_footprint_tags
+
+    calls = resolve_footprint_tags(read, False, ma_molecular=True, ma_evidence=True) or {}
+    if "as" not in calls:
+        return []
+    starts, lengths = list(calls["as"]), list(calls["al"])
+    if calls.get("source") == "legacy" and getattr(read, "is_reverse", False):
+        from fiberhmm.io.ma_tags import flip_intervals_to_seq
+        starts, lengths = flip_intervals_to_seq(starts, lengths, read)
+    return [(int(s), int(n)) for s, n in zip(starts, lengths) if int(n) > 0]
+
+
 def write_fused_recall_tags(
     read,
     read_length: int,
     result: dict,
     also_write_legacy: bool,
     downstream_compat: bool,
+    keep_msps: bool = False,
 ) -> None:
-    """Apply a fused apply+TF-recall result to a pysam read."""
+    """Apply a fused apply+TF-recall result to a pysam read.
+
+    ``keep_msps`` (``fiberhmm-call --hmm-only --keep-msps``): the MSPs
+    written are the record's own (:func:`kept_seq_msps`), not the result's;
+    their legacy ``as``/``al``/``aq`` stay on the record and a fibertools
+    ``fire`` group that scores them is kept."""
     kept_nucs = result.get("circular_ns") or intervals_from_arrays(result["ns"], result["nl"])
-    msps = result.get("circular_as") or intervals_from_arrays(result["as"], result["al"])
+    if keep_msps:
+        msps = kept_seq_msps(read)
+        kept = dict(msps_replaced=False, remove_legacy=False)
+    else:
+        msps = result.get("circular_as") or intervals_from_arrays(result["as"], result["al"])
+        kept = {}
     write_ma_tags(
         read,
         read_length=read_length,
@@ -344,6 +371,7 @@ def write_fused_recall_tags(
         downstream_compat=downstream_compat,
         nuc_el_for_kept=result.get("nuc_el_for_kept"),
         nuc_er_for_kept=result.get("nuc_er_for_kept"),
+        **kept,
     )
     if "ddda_mcg_spans" in result:
         # The fused caller generated these in SEQ/query coordinates. Append

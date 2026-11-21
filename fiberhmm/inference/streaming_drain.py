@@ -51,16 +51,28 @@ def strip_for_apply(read, write_msps: bool = True) -> None:
     )
 
 
-def strip_for_fused_call(read, also_write_legacy: bool = True) -> None:
+def strip_for_fused_call(read, also_write_legacy: bool = True,
+                         keep_msps: bool = False) -> None:
     """Remove stale call tags the fused call writer would otherwise leave
     (kept tags expressed in its declared molecular frame first, as in
-    :func:`strip_for_apply`)."""
+    :func:`strip_for_apply`).
+
+    ``keep_msps`` (``fiberhmm-call --hmm-only --keep-msps``): the record's
+    own MSPs stay -- its MA/Ma ``msp`` group, legacy ``as``/``al`` with any
+    ``aq`` (fibertools <= 0.12 FIRE) -- together with every other group that
+    is not a FiberHMM footprint call (fibertools ``fire``, DddA m5C islands,
+    ...). Only ``nuc``/``tf``, the groups derived from them and legacy
+    ``ns``/``nl``/``nq`` go."""
     from fiberhmm.io.frame_carry import carry_to_molecular
     from fiberhmm.daf.replay import write_insert_evidence
 
     write_insert_evidence(read)
     carry_to_molecular(read)
     strip_ambiguous_aq(read)
+    if keep_msps:
+        from fiberhmm.inference.read_filters import strip_footprint_calls_keep_msps
+        strip_footprint_calls_keep_msps(read)
+        return
     # Legacy tags go whether or not this run writes them: rewritten, or
     # (MA-only output, the default) they would be stale beside the new MA.
     strip_stale_call_tags(read, legacy_tags=LEGACY_CALL_TAGS, keep_m5c_groups=True)
@@ -157,6 +169,7 @@ def _drain_oldest_fused_chunk(
     also_write_legacy,
     downstream_compat,
     counters,
+    keep_msps=False,
 ):
     """Drain one fused apply+recall chunk and write reads in input order."""
     future, chunk_read_objs, chunk_payloads, chunk_skip_flags = inflight.popleft()
@@ -171,7 +184,7 @@ def _drain_oldest_fused_chunk(
     for read_obj, is_skipped in zip(chunk_read_objs, chunk_skip_flags):
         # Every written read loses the previous run's calls first; processed
         # reads then receive this run's tags.
-        strip_for_fused_call(read_obj, also_write_legacy)
+        strip_for_fused_call(read_obj, also_write_legacy, keep_msps)
         if is_skipped:
             outbam.write(read_obj)
             counters['written'] += 1
@@ -190,6 +203,7 @@ def _drain_oldest_fused_chunk(
                 result=result,
                 also_write_legacy=also_write_legacy,
                 downstream_compat=downstream_compat,
+                keep_msps=keep_msps,
             )
             spans = result.get('ddda_mcg_spans')
             if spans:
