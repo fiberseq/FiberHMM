@@ -138,7 +138,8 @@ assignment TSV, and `tag_tf_families(input_bam, output_bam, assignment_tsv, *, f
 runs [`fiberhmm-tag-consensus`](../workflows/tag-consensus.md).
 
 
-The [v1.11 contracts](../../CONTRACTS.md) describe record-backed
-`fiberhmm.scan.run_units(evidence=...)`, `fiberhmm.nuc.record_outputs`,
-`fiberhmm.nuc.measured_track`, cached `read_nuc_groups` arguments, and the
-association callback and dataset-calibration APIs.
+Record-backed `fiberhmm.scan.run_units(evidence=...)` is described in
+[Scanning features genome-wide](../workflows/scanning.md). The docstrings of
+`fiberhmm.nuc.record_outputs`, `fiberhmm.nuc.measured_track`, the cached
+`read_nuc_groups` arguments, and the association callback and
+dataset-calibration APIs describe their use.

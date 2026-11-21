@@ -193,5 +193,4 @@ producer signal evidence before all scan loaders. Their sorted persistent
 snapshots are under `work/_signal`; manifest file entries include
 `signal_input` with the predicate policy and original source content ID.
 Snapshot content IDs identify the filtered evidence. Existing table columns,
-MA groups and default scan behavior are unchanged. The complete mirrored
-contract is `CONTRACTS.md`, §15.
+MA groups and default scan behavior are unchanged.

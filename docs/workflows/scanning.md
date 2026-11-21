@@ -193,8 +193,12 @@ returning records. Supply each dataset's `header`/`headers` and yield complete
 `work/_evidence` feeds the ordinary loaders and dataset calibrations. Include
 the full calibration population. Optional dataset `content_ids` preserve the
 identity of the same immutable source records; never reuse an ID after a lift
-or another record change. See [contracts §14](../../CONTRACTS.md) for equality,
-continuation and metadata rules. `--inspect` includes `units.zones`.
+or another record change. With the same input IDs, header, records, read policy
+and settings, units, scan ID, module results and tables equal those of a
+BAM-backed run; pass the same evidence again to continue or extend a scan.
+Manifest file paths and annotated BAM names describe the snapshot files and may
+differ. [Scan directory format](../reference/scan-format.md) describes the
+identities. `--inspect` includes `units.zones`.
 
 ## Signal-BAM inputs
 
@@ -227,7 +231,7 @@ continued scan cannot silently reuse results from another population.
 The producer codes are `bg=1` background, `0` detectable, `-1` unclassified,
 `-2` unscored. Optional `me` JSON supplies status and structure. Unknown or
 inconsistent evidence obeys the unknown/unscored gate; requiring structure needs
-`supported` and a finite numeric score. See contracts v1.12 in `CONTRACTS.md`.
+`supported` and a finite numeric score.
 
 Execution timings are recorded in `run.json` (excluded from reproducible
 outputs): calibration seconds per module, summed unit seconds per module, and
