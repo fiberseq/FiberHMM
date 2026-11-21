@@ -183,3 +183,33 @@ def test_saturated_evidence_reaches_written_outputs_and_frozen_transfer(tmp_path
         calls = [c for record in value['datasets']['planted']['cr']['records'] for c in record.get('recaller_calls', [])]
         assert calls and all(c['tier'] == 'core' for c in calls)
     assert transferred['transfer']['label_semantics'] == M.LABEL_SEMANTICS
+
+
+def test_floored_class_weight_labels_absent_channel_non_member_in_molecules_tsv(tmp_path):
+    """End to end: a class bound on CT and absent on GA. The GA EM weight hits
+    the floor, where clipped posterior odds cancelled to log-BF 0 and labelled
+    every GA molecule "abstain"; the likelihood ratio labels them non_member."""
+    import csv
+    import gzip
+    import json
+    from test_consensus_lattice_recaller import _payload, _units_for
+    from fiberhmm.inference.consensus.workflow import run_workflow
+    ct = _units_for(80, [(1180, 1210, .5)], strands=('CT',), seed=7)
+    ga = _units_for(80, [], strands=('GA',), seed=8)
+    for i, u in enumerate(ga):
+        u['unit_id'], u['read_name'] = f'ga{i:04d}', f'garead{i:04d}'
+    res = run_workflow(_payload((1050, 1350), ct + ga),
+                       {'cr': {'engine': 'lattice_recaller'}, 'recaller': {'learned_spots': False}}, tmp_path)
+    rows = {r['channel']: r for r in res['recaller']['rows']}
+    assert rows['d::CT']['supported'] and not rows['d::GA']['supported']
+    assert rows['d::GA']['prevalence'] == 0.0
+    with gzip.open(tmp_path / 'molecules.tsv.gz', 'rt') as fh:
+        molecules = [r for r in csv.DictReader(fh, delimiter='\t') if r['channel'] == 'd::GA']
+    assert len(molecules) == 80
+    threshold = RecallerOptions().bf_threshold
+    for r in molecules:
+        # Legacy clipped posterior odds: abstain. Direct likelihood ratio: non_member.
+        assert M.label(float(r['posterior']), rows['d::GA']['prevalence'], threshold)[0] == 'abstain'
+        assert r['label'] == 'non_member' and float(r['log_bf']) <= -np.log(threshold)
+    manifest = json.loads((tmp_path / 'manifest.json').read_text())
+    assert manifest['recaller']['label_semantics'] == M.LABEL_SEMANTICS == 'likelihood_ratio_v2'
