@@ -201,9 +201,9 @@ CIGAR, clips and `SA`.
 | `IndelNear` | ≥ `--pileup-max-indel-fraction` (0.25) of the reads delete the site |
 | `ModArtifact` | an A/T site whose REF reads carry an m6A call (ML ≥ `-p`) at ≥ `--pileup-mod-min-methylation` (0.3) while the ALT fraction is below `--pileup-mod-max-alt-fraction` (0.4); `--no-pileup-mod-filter` turns it off |
 
-m6A calling does not change bases. On PacBio HiFi Hia5 data the mismatch
-rate at m6A-called A/T is 0.08% against 0.07% at uncalled ones, far below
-any ALT fraction the screen accepts, so `ModArtifact` is a guard for
+m6A calling does not change bases. On PacBio HiFi Hia5 data, mismatches at
+m6A-called A/T are about as rare as at uncalled ones (both below 0.1%), far
+below any ALT fraction the screen accepts, so `ModArtifact` is a guard for
 chemistries with stronger modification basecalling errors.
 
 The pileup screen takes REF from `--reference FASTA`, else from MD tags, else
