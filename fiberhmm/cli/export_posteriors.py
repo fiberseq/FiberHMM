@@ -118,6 +118,40 @@ def _new_stats() -> Dict[str, int]:
     return {k: 0 for k in _SKIP_REASONS}
 
 
+def inherited_chemistry(enzyme, seq, mode, input_bam):
+    """``(enzyme, seq)`` with the input's declared chemistry filled in.
+
+    A run without ``--enzyme`` (a custom ``--model``) takes the enzyme and
+    platform the input BAM declares when they fit the run's observation mode,
+    as fiberhmm-call and fiberhmm-apply do (``resolve_effective_chemistry``),
+    so the DddA CpG mask and DAF run mask follow the chemistry's defaults.
+    """
+    if enzyme or not input_bam or input_bam == '-':
+        return enzyme, seq
+    import pysam
+
+    from fiberhmm.models import (
+        SUPPORTED_ENZYMES,
+        declared_prob_threshold_chemistry,
+        get_observation_mode,
+    )
+    try:
+        with pysam.AlignmentFile(input_bam, 'rb', check_sq=False) as bam:
+            declared_enzyme, declared_seq = declared_prob_threshold_chemistry(bam.header)
+    except (OSError, ValueError):
+        return enzyme, seq
+    if declared_enzyme not in SUPPORTED_ENZYMES:
+        return enzyme, seq
+    platform = seq or declared_seq
+    try:
+        declared_mode = get_observation_mode(declared_enzyme, platform, warn_missing_seq=False)
+    except (KeyError, ValueError):
+        return enzyme, seq
+    if mode is not None and declared_mode != mode:
+        return enzyme, seq
+    return declared_enzyme, platform
+
+
 def extract_posteriors_from_read(read, model: FiberHMM, mode: str,
                                   context_size: int, edge_trim: int,
                                   prob_threshold: int = DEFAULT_PROB_THRESHOLD,
@@ -1221,16 +1255,18 @@ def main():
         'daf_snp_mask_path': args.daf_snp_mask,
     }
     from fiberhmm.inference.tf_recaller import resolve_cpg_mask_policy
+    # A custom -m inherits the input's declared enzyme for these defaults.
+    chem_enzyme, _ = inherited_chemistry(args.enzyme, args.seq, effective_mode, args.input)
     try:
         extraction['cpg_mask_policy'] = resolve_cpg_mask_policy(
-            args.use_m5c, args.cpg_mask_policy, args.enzyme, effective_mode,
+            args.use_m5c, args.cpg_mask_policy, chem_enzyme, effective_mode,
             tool='fiberhmm-posteriors')
     except ValueError as exc:
         parser.error(str(exc))
     if effective_mode == 'daf':
         # Chemistry default (DddA: keep-one on runs >= 2), as fiberhmm-call.
         extraction['daf_run_mask'] = tuple(
-            apply_daf_run_mask_arguments(args, args.enzyme))
+            apply_daf_run_mask_arguments(args, chem_enzyme))
     else:
         if args.daf_mask_runs or args.daf_snp_mask:
             parser.error("--daf-mask-runs/--daf-snp-mask require mode daf")
@@ -1280,7 +1316,7 @@ def export_posteriors_from_bam(
     context_size: int = None,
     edge_trim: int = DEFAULT_EDGE_TRIM,
     min_mapq: int = 0,
-    prob_threshold: int = DEFAULT_PROB_THRESHOLD,
+    prob_threshold: Optional[int] = None,
     n_workers: int = 4,
     chroms: Optional[Set[str]] = None,
     verbose: bool = True,
@@ -1289,6 +1325,7 @@ def export_posteriors_from_bam(
     cpg_mask_policy: Optional[str] = None,
     daf_mask_runs: Optional[int] = None,
     daf_run_policy: str = 'keep-one',
+    seq: Optional[str] = None,
 ) -> int:
     """Python API of ``fiberhmm-posteriors``.
 
@@ -1299,8 +1336,11 @@ def export_posteriors_from_bam(
     sees fiberhmm-call's first-pass CpG mask (unless ``use_m5c=False``) and
     the DddA keep-one run thinning (unless ``daf_mask_runs=0``).
     ``min_mapq`` skips primary alignments below that MAPQ (default 0: none,
-    as the command line).
+    as the command line). ``prob_threshold=None`` and ``seq`` resolve the ML
+    threshold as ``--prob-threshold``/``--seq`` do (248 for Hia5 Nanopore,
+    128 otherwise; the input's declared chemistry without ``enzyme``).
     """
+    from fiberhmm.cli.common import resolve_input_prob_threshold
     from fiberhmm.core.bam_reader import resolve_daf_run_mask
     from fiberhmm.inference.tf_recaller import resolve_cpg_mask_policy
 
@@ -1308,6 +1348,8 @@ def export_posteriors_from_bam(
     if effective_mode is None:
         _, _, model_mode = load_model_with_metadata(model_path, normalize=False)
         effective_mode = resolve_observation_mode(model_mode, source_label='custom model')
+    prob_threshold = resolve_input_prob_threshold(prob_threshold, enzyme, seq, input_bam)
+    enzyme, seq = inherited_chemistry(enzyme, seq, effective_mode, input_bam)
     if effective_mode == 'daf':
         run_mask = tuple(resolve_daf_run_mask(daf_mask_runs, daf_run_policy, enzyme))
     elif daf_mask_runs:
