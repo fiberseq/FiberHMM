@@ -202,3 +202,29 @@ def test_run_warns_when_no_molecule_has_unmethylated_islands():
     assert not cpg_policy_warnings(saved(cpg_mask_policy='unmethylated-only', m5c_conditioned_opportunities=1234,
                                          ddda_ucg_molecules=7))
     assert not cpg_policy_warnings(saved(cpg_mask_policy='off', m5c_conditioned_opportunities=0))
+
+
+def pooled(*windows):
+    """A CL-CR payload: strata keep the first window's manifest, every window's is in pooling."""
+    first = dict(preset='ddda', emissions_sha256='0' * 64, **windows[0])
+    return dict(strata=[dict(dataset_id='d', chemistry='ddda', units=[], model_manifest=first)],
+                pooling=dict(window_preparation=[dict(window=f'w{i}', dataset_id='d',
+                    model=dict(preset='ddda', emissions_sha256='0' * 64, **w)) for i, w in enumerate(windows)]))
+
+
+def test_pooled_evidence_is_checked_window_by_window():
+    from fiberhmm.inference.consensus.bam import check_saved_evidence
+    from fiberhmm.inference.consensus.parameters import parse_options
+    fresh = dict(cpg_mask_policy='unmethylated-only')
+    check_saved_evidence(pooled(fresh, fresh), parse_options({}))
+    with pytest.raises(ValueError, match='methylated-only'):
+        check_saved_evidence(pooled(fresh, dict(cpg_mask_policy='methylated-only')), parse_options({}))
+
+
+def test_pooled_warning_counts_every_window():
+    from fiberhmm.inference.consensus.lattice_recaller.workflow import cpg_policy_warnings
+    untagged = dict(cpg_mask_policy='unmethylated-only', m5c_conditioned_opportunities=10, ddda_ucg_molecules=0)
+    tagged = dict(cpg_mask_policy='unmethylated-only', m5c_conditioned_opportunities=5, ddda_ucg_molecules=1)
+    assert not cpg_policy_warnings(pooled(untagged, tagged))
+    warning, = cpg_policy_warnings(pooled(untagged, untagged))
+    assert ' 20 CpG' in warning

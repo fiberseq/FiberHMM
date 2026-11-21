@@ -273,6 +273,20 @@ def _dataset_daf_run_mask(chemistry, options, label, ds=None):
     return calls
 
 
+def dataset_preparations(payload):
+    """``(dataset_id, chemistry, model_manifest)`` of every BAM preparation behind ``payload``.
+
+    One per stratum; pooled CL-CR evidence adds one per window and dataset
+    (``pooling.window_preparation``), since its strata keep only the first
+    window's manifest."""
+    strata = list(payload.get('strata') or ())
+    chemistry = {s.get('dataset_id'): s.get('chemistry') for s in strata}
+    rows = [(s.get('dataset_id'), s.get('chemistry'), s.get('model_manifest') or {}) for s in strata]
+    for item in (payload.get('pooling') or {}).get('window_preparation') or ():
+        rows.append((item.get('dataset_id'), chemistry.get(item.get('dataset_id')), item.get('model') or {}))
+    return rows
+
+
 def check_saved_evidence(payload, options):
     """Refuse saved evidence prepared under other replay policies than this run's.
 
@@ -287,19 +301,17 @@ def check_saved_evidence(payload, options):
     Strata without the BAM loader's receipt (``model_manifest`` with the
     emission digest; hand-built payloads) are taken as given."""
     from fiberhmm.inference.fused_stages import resolve_nuc_recall_policy
-    for source in payload.get('strata') or ():
-        manifest = source.get('model_manifest') or {}
+    for label, chemistry, manifest in dataset_preparations(payload):
         if 'emissions_sha256' not in manifest:
             continue
-        label = source.get('dataset_id', '?')
-        if source.get('chemistry') == 'ddda':
+        if chemistry == 'ddda':
             expected = options['input'].ddda_cpg_mask_policy if options['input'].ddda_m5c_correction else 'off'
             recorded = manifest.get('cpg_mask_policy')
             if recorded != expected:
                 raise ValueError(f'{label}: saved DddA evidence was prepared with CpG policy '
                     f'{recorded or "unrecorded (FiberHMM before 3.3.0: methylated-only)"}, this run asks for {expected}. '
                     'Reload the evidence from the BAMs (or set input.ddda_cpg_mask_policy / ddda_m5c_correction to match).')
-        if source.get('chemistry') == 'hia5-nanopore' and manifest.get('upstream_nuc_tf_recall'):
+        if chemistry == 'hia5-nanopore' and manifest.get('upstream_nuc_tf_recall'):
             recorded = (manifest.get('upstream_nuc_tf_settings') or {}).get('nuc_recall_policy') or 'conservative'
             expected = resolve_nuc_recall_policy('auto', 'nanopore-fiber')
             if recorded != expected:

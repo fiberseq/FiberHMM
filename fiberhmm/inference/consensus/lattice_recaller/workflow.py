@@ -33,16 +33,20 @@ def cpg_policy_warnings(payload):
     the ``ddda_ucg`` islands fiberhmm-tag-m5c writes. Without them, CpG-island
     loci lose their CpG evidence; the result is correct for that input but the
     user should know the remedy."""
-    out = []
-    for source in payload.get('strata') or ():
-        manifest = source.get('model_manifest') or {}
-        if (source.get('chemistry') == 'ddda' and manifest.get('cpg_mask_policy') == 'unmethylated-only'
-                and manifest.get('m5c_conditioned_opportunities') and not manifest.get('ddda_ucg_molecules')):
-            out.append(f"{source.get('dataset_id')}: no DddA molecule carries fiberhmm-tag-m5c unmethylated-island (ddda_ucg) "
-                       f"calls, so all {manifest['m5c_conditioned_opportunities']:,} CpG observations were neutral, as in "
-                       'fiberhmm-call. At CpG islands (e.g. active promoters) run fiberhmm-tag-m5c on the BAM first to keep '
-                       'the CpG evidence of unmethylated islands.')
-    return out
+    from ..bam import dataset_preparations
+    excluded, tagged = {}, {}
+    rows = dataset_preparations(payload)
+    pooled = len(rows) > len(payload.get('strata') or ())
+    for position, (dataset, chemistry, manifest) in enumerate(rows):
+        if pooled and position < len(payload.get('strata') or ()):
+            continue  # pooled strata repeat the first window's manifest; count every window once
+        if chemistry == 'ddda' and manifest.get('cpg_mask_policy') == 'unmethylated-only':
+            excluded[dataset] = excluded.get(dataset, 0) + int(manifest.get('m5c_conditioned_opportunities') or 0)
+            tagged[dataset] = tagged.get(dataset, 0) + int(manifest.get('ddda_ucg_molecules') or 0)
+    return [f"{dataset}: no DddA molecule carries fiberhmm-tag-m5c unmethylated-island (ddda_ucg) calls, so all "
+            f"{count:,} CpG observations were neutral, as in fiberhmm-call. At CpG islands (e.g. active promoters) run "
+            'fiberhmm-tag-m5c on the BAM first to keep the CpG evidence of unmethylated islands.'
+            for dataset, count in excluded.items() if count and not tagged[dataset]]
 
 
 def _run_all(fn, tasks, cores, done=None):
