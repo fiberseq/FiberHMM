@@ -6,6 +6,7 @@ Y (C or T) / R (A or G) in the query sequence, adds an st:Z tag, and
 writes a new BAM ready for ``fiberhmm-apply --mode daf``.
 """
 
+import copy
 import itertools
 import os
 import sys
@@ -160,6 +161,7 @@ def get_daf_positions(
     seq = read.query_sequence
     if seq is None:
         return None
+    read = _without_cigar_padding(read)
 
     # Get aligned pairs with reference bases.
     # Pre-validate MD vs CIGAR to avoid pysam's AssertionError path on
@@ -210,6 +212,23 @@ def get_daf_positions(
             ga_positions.append(query_pos)
 
     return _daf_positions_result(ct_positions, ga_positions, force_strand)
+
+
+def _without_cigar_padding(read):
+    """``read`` with its CIGAR ``P`` operations removed (a copy), else ``read``.
+
+    ``P`` consumes neither query nor reference, but pysam's aligned pairs
+    advance the query index across it, so every later base (and the MD-built
+    reference string) shifts by the pad length: wrong positions, or an
+    IndexError past the end of the read. Dropping the pads leaves the same
+    alignment geometry. Records without ``P`` are returned unchanged.
+    """
+    cigar = read.cigartuples
+    if not cigar or all(op != 6 for op, _ in cigar):
+        return read
+    stripped = copy.copy(read)
+    stripped.cigartuples = [(op, length) for op, length in cigar if op != 6]
+    return stripped
 
 
 def _daf_positions_from_arrays(arrays, force_strand, excluded_reference_positions):

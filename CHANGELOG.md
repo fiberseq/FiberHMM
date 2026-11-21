@@ -167,12 +167,22 @@
 - With `--daf-snp-mask`, a read whose chemical strand can no longer be
   decided once masked sites are removed (an R/Y read without an `st` tag, or
   an MM-tagged read, whose only marks were masked) is skipped instead of
-  being scored as GA. Unmasked runs are unchanged.
+  being scored as GA. The same holds for a read with `MD` whose conversions
+  the mask removes or leaves tied: it is skipped rather than re-read from
+  retained basecaller `MM`/`ML` tags (6mA would count as G→A deamination).
+  Unmasked runs are unchanged.
 - Replaying saved masked evidence with `input.correct_native=false` is
   refused: it would combine the BAM's unmasked TF calls with the masked
-  lattice.
+  lattice. Every window of pooled (`--pool-loci`) evidence is checked, not
+  only the first.
 - Consensus mask positions follow the CIGAR exactly; a `P` operation no
   longer shifts later positions by one.
+- DAF deaminations read from `MD` (or `--reference`) on reads whose CIGAR
+  contains padding (`P`) are at their true positions. pysam's aligned pairs
+  shift the read past each pad, so `fiberhmm-call`, `fiberhmm-daf-encode`,
+  recall, consensus and strand rescue stopped with an IndexError on such
+  reads, or, with a trailing soft clip, missed or misplaced the deaminations
+  after the pad. Reads without `P` are unchanged.
 - Consensus and strand rescue read the legacy `Mm`/`Ml` modification tags
   that older basecallers and modkit versions write, as `fiberhmm-call` does.
   Such Hia5 datasets used to load with no molecules.
