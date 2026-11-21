@@ -959,6 +959,17 @@ def extract_modification_calls(read, mode: str, context_size: int = 3,
             from fiberhmm.inference.engine import daf_reference_evidence
             md_result = daf_reference_evidence(
                 read, excluded_reference_positions=excluded_reference_positions or None)
+        if md_result is None and excluded_reference_positions:
+            # No reference evidence left once masked. If the read had
+            # reference evidence before masking, the mask made its strand
+            # undecidable: skip it. Falling through to MM/ML would read
+            # retained basecaller marks (e.g. 6mA) as deaminations.
+            unmasked = getattr(read, '_daf_md_result', None)
+            if unmasked is None and hasattr(read, 'get_aligned_pairs'):
+                from fiberhmm.inference.engine import daf_reference_evidence
+                unmasked = daf_reference_evidence(read)
+            if unmasked is not None:
+                return None
         if md_result is not None:
             ct_pos, ga_pos, strand_tag = md_result
             ct_pos, ga_pos = set(ct_pos) - unaligned, set(ga_pos) - unaligned

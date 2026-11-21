@@ -167,7 +167,10 @@
 - With `--daf-snp-mask`, a read whose chemical strand can no longer be
   decided once masked sites are removed (an R/Y read without an `st` tag, or
   an MM-tagged read, whose only marks were masked) is skipped instead of
-  being scored as GA. Unmasked runs are unchanged.
+  being scored as GA. The same holds for a read with `MD` whose conversions
+  the mask removes or leaves tied: it is skipped rather than re-read from
+  retained basecaller `MM`/`ML` tags (6mA would count as G→A deamination).
+  Unmasked runs are unchanged.
 - Replaying saved masked evidence with `input.correct_native=false` is
   refused: it would combine the BAM's unmasked TF calls with the masked
   lattice.

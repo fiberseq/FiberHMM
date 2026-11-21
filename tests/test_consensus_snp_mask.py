@@ -508,3 +508,97 @@ def test_padded_md_read_keeps_true_positions_and_masks_after_the_pad():
     unknown = lambda obs: {int(q) for q in np.flatnonzero(np.asarray(obs) == 8193)}
     assert {hit, miss} <= unknown(masked) - unknown(observed)
     assert {hit - 1, hit + 1} & (unknown(masked) - unknown(observed)) <= {miss}
+
+
+def md_single_conversion_read_with_methylation_tags():
+    """CT read whose only MD conversion is at query 61 (reference 161), with
+    retained basecaller 6mA ``A+a`` MM/ML tags (not deamination calls)."""
+    import array
+    read, _, _ = read_with_variant('CT', 'md')
+    ref = 'ACGT' * 50
+    q = 61
+    read.query_sequence = ref[:q] + 'T' + ref[q + 1:]
+    read.set_tag('MD', f'{q}C{200 - q - 1}')
+    read.set_tag('MM', 'A+a.,0,3,5;')
+    read.set_tag('ML', array.array('B', [250, 250, 250]))
+    return read, q
+
+
+def test_masked_md_evidence_does_not_fall_back_to_methylation_tags():
+    from fiberhmm.inference.tf_recaller import extract_modification_calls
+    read, q = md_single_conversion_read_with_methylation_tags()
+    mods, strand, _, _ = extract_modification_calls(read, 'daf', 3)
+    assert (mods, strand) == ({q}, '+')
+    # Masking the only conversion empties the MD evidence. The read must be
+    # skipped, not re-read from MM/ML (6mA taken as G->A deamination).
+    assert extract_modification_calls(read, 'daf', 3, excluded_reference_positions={100 + q}) is None
+    plain, physical = hard_observations(read, 'daf', 'daf', 3, None)
+    assert physical == 'CT' and plain[q] < 4096
+    with daf_snp_mask_scope({'chr1': frozenset({100 + q})}):
+        assert hard_observations(read, 'daf', 'daf', 3, None) is None
+    # A mask away from the conversion keeps the MD reading.
+    with daf_snp_mask_scope({'chr1': frozenset({100 + q + 4})}):
+        kept, kept_strand = hard_observations(read, 'daf', 'daf', 3, None)
+    assert kept_strand == 'CT' and kept[q] == plain[q] and kept[q + 4] == 8193
+
+
+def test_md_tie_from_masking_is_skipped_not_read_from_mm():
+    from fiberhmm.inference.tf_recaller import extract_modification_calls
+    read, q = md_single_conversion_read_with_methylation_tags()
+    ref = 'ACGT' * 50
+    # Two C->T and one G->A: CT without the mask, a tie once one C->T is masked.
+    sequence = list(read.query_sequence); sequence[65] = 'T'; sequence[66] = 'A'
+    read.query_sequence = ''.join(sequence)
+    pieces, matches = [], 0
+    for a, b in zip(ref, read.query_sequence):
+        if a == b:
+            matches += 1
+        else:
+            pieces.extend([str(matches), a]); matches = 0
+    read.set_tag('MD', ''.join(pieces) + str(matches))
+    assert extract_modification_calls(read, 'daf', 3)[1] == '+'
+    assert extract_modification_calls(read, 'daf', 3, excluded_reference_positions={100 + q}) is None
+
+
+def test_md_without_conversions_still_reads_mm_deaminations_under_a_mask():
+    # No reference evidence before or after masking: MM/ML-native deamination
+    # calls apply, as without a mask.
+    import array
+    from fiberhmm.inference.tf_recaller import extract_modification_calls
+    read, _, _ = read_with_variant('CT', 'md')
+    ref = 'ACGT' * 50
+    read.query_sequence = ref
+    read.set_tag('MD', '200')
+    read.set_tag('MM', 'T+u.,15;')
+    read.set_tag('ML', array.array('B', [255]))
+    plain = extract_modification_calls(read, 'daf', 3)
+    masked = extract_modification_calls(read, 'daf', 3, excluded_reference_positions={100 + 5})
+    assert plain[1] == '+' and plain[0] == {63}
+    assert masked[0] == plain[0] and masked[1] == plain[1]
+
+
+def test_loader_skips_md_read_whose_only_conversion_is_masked(tmp_path):
+    from fiberhmm.io.bam_header import append_chemistry
+    header = pysam.AlignmentHeader.from_dict(dict(HD={'VN': '1.6', 'SO': 'coordinate'}, SQ=[{'SN': 'chr1', 'LN': 1000}]))
+    header = append_chemistry(header, dict(assay='daf', enzyme='ddda', platform='pacbio', mode='daf'))
+    alt, q = md_single_conversion_read_with_methylation_tags()
+    other, _, _ = read_with_variant('CT', 'md')
+    bam = tmp_path / 'input.bam'
+    with pysam.AlignmentFile(str(bam), 'wb', header=header) as handle:
+        for name, source in (('only_masked_conversion', alt), ('many_conversions', other)):
+            r = pysam.AlignedSegment(header); r.query_name = name; r.query_sequence = source.query_sequence
+            r.reference_id = 0; r.reference_start = 100; r.mapping_quality = 60; r.cigarstring = '200M'
+            for tag in ('MD', 'MM', 'ML'):
+                if source.has_tag(tag):
+                    r.set_tag(tag, source.get_tag(tag))
+            r.set_tag('MA', '200;msp.:1-200')
+            handle.write(r)
+    pysam.index(str(bam))
+    mask = tmp_path / 'snps.bed'; mask.write_text(f'chr1\t{100 + q}\t{101 + q}\n')
+    datasets = [dict(dataset_id='d', paths=[str(bam)])]
+    region = dict(chrom='chr1', start=120, end=220)
+    strands = lambda payload: {u['read_name']: u['strand'] for u in payload['strata'][0]['units']}
+    assert strands(load_bam_payload(datasets, region, parse_options({}))) == {
+        'only_masked_conversion': 'CT', 'many_conversions': 'CT'}
+    assert strands(load_bam_payload(datasets, region, parse_options({'input': {'daf_snp_mask': str(mask)}}))) == {
+        'many_conversions': 'CT'}
