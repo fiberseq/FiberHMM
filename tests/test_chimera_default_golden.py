@@ -23,7 +23,7 @@ Excluded, because they name the code or the run rather than the result:
     SHA-256 (it covers the header, hence the version);
   * the temporary directory, replaced by ``<tmp>`` in paths, and random
     temporary file names;
-  * floats are compared at 9 significant digits.
+  * floats (JSON values and TSV cells) are compared at 9 significant digits.
 
 All data are synthetic: a random reference and reads whose C->T / G->A
 conversions are placed here. The library holds clean reads of both strands,
@@ -210,7 +210,21 @@ def test_default_call_and_qc_match_321_golden(tmp_path):
     ds = next(pg['DS'] for pg in got['header']['PG'] if pg['PN'] == 'fiberhmm-call')
     assert 'chimera_detector' not in ds and 'chimera_min_baseq' not in ds
     for key in golden:
-        assert got[key] == golden[key], key
+        if key.endswith('.tsv'):
+            assert _tsv_cells(got[key]) == _tsv_cells(golden[key]), key
+        else:
+            assert got[key] == golden[key], key
+
+
+_FLOAT_CELL = re.compile(r'^-?\d+\.\d*(e[-+]?\d+)?$|^-?\d+e[-+]?\d+$', re.IGNORECASE)
+
+
+def _tsv_cells(lines):
+    """TSV lines as cells, floats at 9 significant digits like the JSON
+    values: summary statistics differ in their last bits between BLAS/numpy
+    builds (CI runners vs a workstation)."""
+    return [[f'{float(c):.9g}' if _FLOAT_CELL.match(c) else c for c in line.split('\t')]
+            for line in lines]
 
 
 if __name__ == '__main__':
