@@ -113,11 +113,6 @@ def test_nfr_values_agree_between_fiberhmm_and_fibertools_calls_of_the_same_fibe
         assert abs(float(a['longest_linker']) - float(b['longest_linker'])) <= 10, (q, a['longest_linker'], b['longest_linker'])
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    'BUG (coverage-33): fiberhmm-scan --modules nuc ignores --chemistry. On a fibertools-only BAM (no FiberHMM '
-    'chemistry or call record in the header) calibration raises "cannot tell the observation mode from the BAM '
-    'header ... pass NucParams(mode=...)" with a traceback (exit 1), while fp and nfr accept the same --chemistry. '
-    'Workaround: --parameters {"nuc": {"params": {"mode": "pacbio-fiber"}}}.'))
 def test_nuc_takes_the_dataset_chemistry_on_fibertools_only_output(tmp_path):
     proc = _scan(FT13_ONLY, tmp_path / 'scan', 'nuc')
     assert proc.returncode == 0, proc.stderr[-3000:]

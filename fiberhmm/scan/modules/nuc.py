@@ -81,6 +81,16 @@ def _p(default, typ, help_):
     return {'default': default, 'type': typ, 'help': help_}
 
 
+#: ``--chemistry`` profile -> (observation mode, enzyme, platform), for BAMs
+#: whose header declares no chemistry (fibertools-only output).
+_CHEMISTRY_PROFILES = {
+    'ddda': ('daf', 'ddda', None),
+    'dddb': ('daf', 'dddb', None),
+    'hia5-pacbio': ('pacbio-fiber', 'hia5', 'pacbio'),
+    'hia5-nanopore': ('nanopore-fiber', 'hia5', 'nanopore'),
+}
+
+
 class NucModule(ScanModuleBase):
     name = 'nuc'
     version = '2.4'
@@ -274,6 +284,28 @@ class NucModule(ScanModuleBase):
         return NucParams.from_dict(settings.get('params') or {})
 
     @staticmethod
+    def _dataset_params(params, chemistry, header):
+        """``params`` with the dataset's ``--chemistry`` filling what the BAM
+        header does not declare (fp and nfr take the same option): the
+        observation mode, and the chemistry's ML threshold when the header
+        names no enzyme. A fibertools-only BAM (no FiberHMM chemistry or call
+        record) otherwise has no mode at all. Explicit nuc params win."""
+        profile = _CHEMISTRY_PROFILES.get(chemistry or '')
+        if profile is None:
+            return params
+        from dataclasses import replace
+        from fiberhmm.models import resolve_prob_threshold
+        from fiberhmm.nuc.records import header_chemistry
+        mode, enzyme, platform = profile
+        declared = header_chemistry(header)
+        updates = {}
+        if params.mode is None and declared['mode'] is None:
+            updates['mode'] = mode
+        if params.mark_threshold is None and declared['enzyme'] is None:
+            updates['mark_threshold'] = resolve_prob_threshold(None, enzyme, platform)
+        return replace(params, **updates) if updates else params
+
+    @staticmethod
     def _regularity(settings):
         from fiberhmm.nuc.regularity import RegularityParams
         value = settings.get('nucreg', {})
@@ -379,20 +411,23 @@ class NucModule(ScanModuleBase):
                 raise ValueError(f'nuc: no records passing the read policy for {ds.dataset_id} '
                                  + ('in the reference' if scope == 'data' else 'in the scanned territory'))
             out['regions'][ds.dataset_id] = [f'{c}:{a}-{b}' for c, a, b in regions]
+            import pysam
+            with pysam.AlignmentFile(ds.paths[0], 'rb', check_sq=False) as _bam:
+                ds_params = self._dataset_params(params, ds.chemistry, _bam.header)
             if settings['calibration'] == 'thin':
-                cal = calibrate_thin(list(ds.paths), params, label=ds.dataset_id,
+                cal = calibrate_thin(list(ds.paths), ds_params, label=ds.dataset_id,
                                      n_population=int(settings['calibration_population']),
                                      seeds=int(settings['calibration_seeds']),
                                      n_targets=int(settings['calibration_targets']),
                                      cores=max(1, int(inputs.cores)), regions=regions,
                                      read_filter=read_filter)
             else:
-                mols, _frs, _s, chem = load_population(list(ds.paths), params,
+                mols, _frs, _s, chem = load_population(list(ds.paths), ds_params,
                                                        int(settings['calibration_population']), regions,
                                                        read_filter=read_filter, fiber_reads=False)
                 if not mols:
                     raise ValueError(f'nuc: no usable molecules in the calibration sample of {ds.dataset_id}')
-                cal = calibrate_self(mols, params, label=ds.dataset_id, chemistry=chem,
+                cal = calibrate_self(mols, ds_params, label=ds.dataset_id, chemistry=chem,
                                      max_molecules=int(settings['calibration_population']))
             out['datasets'][ds.dataset_id] = cal.to_dict()
             ps = settings.get('nucpatch')
@@ -402,7 +437,7 @@ class NucModule(ScanModuleBase):
                 # calibration record of scans without patches is unchanged; with an override only for ends
                 # 'truncated', whose per-width deltas still apply)
                 progress.report('nuc', f'regularity reference for {ds.dataset_id}')
-                ref = nucreg_reference(list(ds.paths), params, reg, regions,
+                ref = nucreg_reference(list(ds.paths), ds_params, reg, regions,
                                        n_population=int(settings['calibration_population']),
                                        n_windows=int(ps['reference_windows']), seed=int(ps['reference_seed']),
                                        read_filter=read_filter,
@@ -414,7 +449,7 @@ class NucModule(ScanModuleBase):
         return out
 
     # ------------------------------------------------------------------ molecule-wide outputs
-    def _record_outputs(self, read, record, settings, calibration):
+    def _record_outputs(self, read, record, settings, calibration, chemistry=None):
         from fiberhmm.nuc.scan import record_outputs
         scope = self._cache_scope
         if scope is None or scope[0] is not settings or scope[1] is not calibration:
@@ -422,7 +457,7 @@ class NucModule(ScanModuleBase):
             self._cache_scope = (settings, calibration)
         key = (record.dataset_id, record.input_index, record.record)
         if key not in self._record_cache:
-            params = self._params(settings)
+            params = self._dataset_params(self._params(settings), chemistry, read.header)
             ctx = self._context(record.dataset_id, record.input_index, read.header, params)
             pp = self._patches(settings)
             ref_median, ref_widths = self._reference(settings, calibration, record.dataset_id) \
@@ -436,7 +471,8 @@ class NucModule(ScanModuleBase):
         return self._record_cache[key]
 
     def molecule_outputs(self, molecule, settings, calibration) -> Optional[MoleculeResult]:
-        return self._record_outputs(molecule.read, molecule.record, settings, calibration)[2]
+        return self._record_outputs(molecule.read, molecule.record, settings, calibration,
+                                    getattr(molecule.dataset, 'chemistry', None))[2]
 
     # ------------------------------------------------------------------ unit tracks
     def run_unit(self, unit, inputs, settings, calibration, upstream, work: Path, progress) -> UnitResult:
@@ -494,7 +530,7 @@ class NucModule(ScanModuleBase):
                         if read.is_supplementary:
                             continue
                         record = record_ref(read, ds, i, _sha, _occ, unit.chrom)
-                        mol, res, _mr = self._record_outputs(read, record, settings, calibration)
+                        mol, res, _mr = self._record_outputs(read, record, settings, calibration, ds.chemistry)
                         if mol is None:
                             continue
                         if geo_on and res.patches is not None and mol.ref_end > unit.start \
