@@ -25,8 +25,8 @@ CHIMERA_QC_TAG = 'xq'  # original QC-fail state before our mark (0 or 1)
 # strict detector has its own functions (``*_strict``).
 DETECTORS = ('standard', 'strict')
 DEFAULT_DETECTOR = 'standard'
-STANDARD_MIN_SEG = 5        # dominant events per segment
-STANDARD_PURITY = 0.8       # dominant fraction of a segment's events
+from fiberhmm.defaults import CHIMERA_MIN_SEG as STANDARD_MIN_SEG    # 5: dominant events per segment
+from fiberhmm.defaults import CHIMERA_PURITY as STANDARD_PURITY      # 0.8: dominant fraction of a segment's events
 STRICT_MIN_SEG = 10
 STRICT_PURITY = 0.9
 STRICT_MIN_BASEQ = 15       # events need base quality >= this (when QUAL is present)

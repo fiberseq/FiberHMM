@@ -158,6 +158,13 @@ ALLOWED_OVERRIDES = {
         "unset: DEFAULT_MIN_MAPQ, or the value an earlier run recorded in OUTDIR"),
     ("fiberhmm-pipeline", "min_read_length"): (None,
         "unset: not passed, fiberhmm-call's default applies"),
+    # -- fiberhmm-posteriors: the chimera thresholds follow the detector --
+    ("fiberhmm-posteriors", "chimera_min_seg"): (None,
+        "unset: CHIMERA_MIN_SEG under --chimera-detector standard (the default), "
+        "10 under strict, as fiberhmm-call resolves it"),
+    ("fiberhmm-posteriors", "chimera_purity"): (None,
+        "unset: CHIMERA_PURITY under --chimera-detector standard (the default), "
+        "0.9 under strict, as fiberhmm-call resolves it"),
     ("fiberhmm-pipeline", "chimeras"): (None,
         "unset: flag for DAF (passed to fiberhmm-call as --chimeras flag)"),
     # -- Python API defaults (every in-repo caller passes these) ----------
