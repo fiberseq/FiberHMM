@@ -467,8 +467,9 @@ def _read_strand(read, ref_fasta=None, snp_mask=None,
     only on the strand the caller picks, so this mirrors it: for R/Y input
     the ``st`` tag, else the R/Y marks on bases that carry evidence (aligned,
     not SNP-masked); for other input the reference comparison (MD or FASTA, SNP-masked sites excluded)
-    and MM/ML-native marks, in the caller's order (``md_first``: fiberhmm-call,
-    ``engine``; otherwise fiberhmm-recall-tfs, ``tf_recaller``). Undecided
+    and MM/ML-native marks, reference first (``md_first``, the order every
+    caller uses since 3.3.0; ``md_first=False`` reproduces the former
+    fiberhmm-recall-tfs order). Undecided
     gives None: the carrier is not used and its insert stays masked."""
     seq = read.query_sequence or ""
     reference_sites = _reference_mask_sites(read, snp_mask)

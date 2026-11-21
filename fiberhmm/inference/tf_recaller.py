@@ -946,6 +946,27 @@ def extract_modification_calls(read, mode: str, context_size: int = 3,
         mod_pos.difference_update(unaligned)
         mod_pos = merge_insert(mod_pos, strand)
         return mod_pos, strand, seq, set(unaligned)
+    if mode == 'daf':
+        # fiberhmm-call's evidence order: R/Y (above), then the reference
+        # comparison (MD), then MM/ML-native calls. A read with MD that also
+        # kept basecaller MM/ML (Dorado 5mC/6mA) is read from MD, as in call
+        # (engine.daf_reference_evidence is the shared rule).
+        # Cached strand selection predates this caller's reference mask.
+        # Recompute from MD when applying exclusions, including strand
+        # detection after removing conversion-like SNPs.
+        md_result = None if excluded_reference_positions else getattr(read, '_daf_md_result', None)
+        if md_result is None and hasattr(read, 'get_aligned_pairs'):
+            from fiberhmm.inference.engine import daf_reference_evidence
+            md_result = daf_reference_evidence(
+                read, excluded_reference_positions=excluded_reference_positions or None)
+        if md_result is not None:
+            ct_pos, ga_pos, strand_tag = md_result
+            ct_pos, ga_pos = set(ct_pos) - unaligned, set(ga_pos) - unaligned
+            if strand_tag == 'CT':
+                return (merge_insert(ct_pos, 'CT'), '+', seq.upper(),
+                        set(unaligned))
+            return (merge_insert(ga_pos, 'GA'), '-', seq.upper(),
+                    set(unaligned))
     try:
         mm_tag = read.get_tag('MM') if read.has_tag('MM') else read.get_tag('Mm')
     except KeyError:
@@ -955,27 +976,6 @@ def extract_modification_calls(read, mode: str, context_size: int = 3,
     except KeyError:
         ml_tag = []
     if not mm_tag or not ml_tag:
-        if mode == 'daf':
-            # Cached strand selection predates this caller's reference mask.
-            # Recompute from MD when applying exclusions, including strand
-            # detection after removing conversion-like SNPs.
-            md_result = None if excluded_reference_positions else getattr(read, '_daf_md_result', None)
-            if md_result is None and hasattr(read, 'get_aligned_pairs'):
-                from fiberhmm.daf.encoder import get_daf_positions
-                md_result = get_daf_positions(read, excluded_reference_positions=excluded_reference_positions) if excluded_reference_positions else get_daf_positions(read)
-            if md_result is None:
-                from fiberhmm.inference.engine import _insert_evidence_strand
-                fallback = _insert_evidence_strand(read)
-                if fallback is not None:
-                    md_result = ([], [], fallback)
-            if md_result is not None:
-                ct_pos, ga_pos, strand_tag = md_result
-                ct_pos, ga_pos = set(ct_pos) - unaligned, set(ga_pos) - unaligned
-                if strand_tag == 'CT':
-                    return (merge_insert(ct_pos, 'CT'), '+', seq.upper(),
-                            set(unaligned))
-                return (merge_insert(ga_pos, 'GA'), '-', seq.upper(),
-                        set(unaligned))
         return None
     mod_pos, unknown_pos = parse_mm_tag_query_calls(
         mm_tag, ml_tag, seq, read.is_reverse,
