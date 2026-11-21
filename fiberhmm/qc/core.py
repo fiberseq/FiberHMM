@@ -1554,7 +1554,7 @@ def _chimera_terminal_lines(result: dict) -> list[str]:
             lines.append(f"    {details}")
         if grade and grade.get("basis_note"):
             lines.append(f"    basis: {grade['basis_note']}")
-        restored = chimeras.get("error_mask_restored")
+        restored = chimeras.get("error_mask_not_restored")
         if restored in _ERROR_MASK_NOT_RESTORED:
             lines.append(f"    error mask not restored ({restored}: "
                          f"{_ERROR_MASK_NOT_RESTORED[restored]}); state-aware "
@@ -3321,6 +3321,10 @@ def run_qc(
                                 or chimeras['mode'] in ('flag', 'remove', 'split'))
         if error_mask_state is not None:
             chimeras['error_mask_restored'] = error_mask_state
+            # Only a mask the call applied (DS on/<N>sites) can be missing.
+            if (settings.get('chimera_error_mask', 'off').startswith('on')
+                    and error_mask_state in _ERROR_MASK_NOT_RESTORED):
+                chimeras['error_mask_not_restored'] = error_mask_state
     elif call_settings is not None:
         settings = call_settings
         chimeras['mode'] = (settings.get('chimeras', chimeras['mode'])

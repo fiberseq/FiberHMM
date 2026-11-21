@@ -609,6 +609,7 @@ def test_standalone_state_qc_restores_the_calls_error_mask(tmp_path, bed_text, d
         # Not this call's mask (or none, or unverifiable): not restored.
         assert states['definition']['chimera_error_mask'] == state
         assert result['chimeras']['error_mask_restored'] == state
+        assert result['chimeras']['error_mask_not_restored'] == state
         assert detector['error_mask'] is None
         assert states['reads']['reads_chimera_skipped'] == 1
         from fiberhmm.qc.core import format_terminal
@@ -946,3 +947,16 @@ def test_qc_without_the_calls_mask_grades_the_calls_marks(tmp_path, bed_text):
     grade = chimeras['grade']
     assert grade['source'] == 'bounded sample' and grade['status'] == 'PASS'
     assert 'warned_by' not in result['overall']
+
+
+@pytest.mark.parametrize('mask', ['unavailable', 'off'])
+def test_qc_does_not_report_a_missing_mask_the_call_never_applied(tmp_path, mask):
+    from fiberhmm.qc.core import format_terminal
+    make = ct_with_ga_tail(TAIL)
+    reads = [make('chim', seed=3), build('clean', lambda r: 'CT', seed=4)]
+    bam = _write_with_header(tmp_path / 'calls.bam', reads,
+                             _call_header(_DS_DEFAULT.format(mask=mask)))
+    result = _qc(bam, tmp_path, 'calls')
+    assert result['chimeras']['error_mask_restored'] == mask
+    assert 'error_mask_not_restored' not in result['chimeras']
+    assert 'error mask not restored' not in format_terminal(result)

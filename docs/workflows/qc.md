@@ -155,7 +155,8 @@ with `plot: not written (install matplotlib)`.
   Before measuring state-aware rates QC restores the call's strict detector
   and its chimera error mask, verified against the SHA-256 the call recorded;
   a BED that is missing, differs (`mismatch`) or cannot be verified is not
-  restored, and `error_mask_restored` says which. BAMs called with the standard detector (the
+  restored, and `error_mask_restored` says which (`error_mask_not_restored`
+  and a text-summary line appear only when the call applied a mask). BAMs called with the standard detector (the
   default) get the chimera section, TSV columns, PDF/PNG line and verdict
   of earlier releases, unchanged.
 
