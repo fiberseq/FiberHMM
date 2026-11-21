@@ -153,3 +153,33 @@ def test_consensus_mask_is_the_fiberhmm_call_mask():
             assert np.array_equal(adapter.m5c_query_mask(read, len(SEQ), policy), call_mask)
         assert np.array_equal(adapter.m5c_query_mask(read, len(SEQ)),
                               payload_cpg_mask({'_cpg_ma_intervals': read_cpg_intervals(read)}, len(SEQ), CPG_MASK_POLICIES[0]))
+
+
+def saved(**manifest):
+    return dict(strata=[dict(dataset_id='d', chemistry='ddda', units=[],
+                             model_manifest=dict(preset='ddda', emissions_sha256='0' * 64, **manifest))])
+
+
+def test_saved_ddda_evidence_must_match_the_requested_cpg_policy():
+    from fiberhmm.inference.consensus.bam import check_saved_evidence
+    from fiberhmm.inference.consensus.parameters import parse_options
+    default = parse_options({})
+    with pytest.raises(ValueError, match='Reload the evidence'):
+        check_saved_evidence(saved(), default)  # written before the policy was recorded
+    with pytest.raises(ValueError, match='methylated-only'):
+        check_saved_evidence(saved(cpg_mask_policy='methylated-only'), default)
+    check_saved_evidence(saved(cpg_mask_policy='unmethylated-only'), default)
+    check_saved_evidence(saved(cpg_mask_policy='off'), parse_options({'input': {'ddda_m5c_correction': False}}))
+    # Hand-built payloads carry no loader receipt and are taken as given.
+    check_saved_evidence(dict(strata=[dict(dataset_id='d', chemistry='ddda', units=[])]), default)
+
+
+def test_consensus_cli_refuses_pre_fix_ddda_evidence(tmp_path):
+    from fiberhmm.inference.consensus.artifacts import write_json
+    from fiberhmm.inference.consensus.cli import main
+    path = tmp_path / 'evidence.json.gz'
+    payload = saved()
+    payload['region'] = dict(chrom='chr1', start=0, end=100)
+    write_json(path, payload)
+    with pytest.raises(ValueError, match='CpG policy'):
+        main(['--evidence', str(path), '--output', str(tmp_path / 'out'), '--no-bam'])

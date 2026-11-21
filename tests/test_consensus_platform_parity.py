@@ -142,3 +142,39 @@ def test_region_loader_keeps_reads_with_legacy_mm_ml(tmp_path):
             prob_threshold=125, llr_hit=hit, llr_miss=miss, min_mapq=0, max_reads=0)
         counts[legacy] = [(r.name, len(r.positions), int(np.sum(r.hits))) for r in reads]
     assert counts[False] and counts[True] == counts[False]
+
+
+def test_empty_ml_is_no_observation_as_in_fiberhmm_call():
+    """fiberhmm-call skips a read whose ML is empty; it must not become an all-unmodified read."""
+    header = pysam.AlignmentHeader.from_dict(dict(HD=dict(VN='1.6'), SQ=[dict(SN='chr1', LN=1000)]))
+    for mm_name, ml_name in (('MM', 'ML'), ('Mm', 'Ml')):
+        read = pysam.AlignedSegment(header)
+        read.query_name = 'r'; read.query_sequence = 'ACGT' * 75; read.flag = 0
+        read.reference_id = 0; read.reference_start = 100; read.cigartuples = [(0, 300)]
+        read.set_tag(mm_name, 'A+a.;', 'Z'); read.set_tag(ml_name, array.array('B', []))
+        assert strand_rescue.hard_observations(read, 'alignment', 'pacbio-fiber', 3, 125) is None
+
+
+def saved_stratum(chemistry, **manifest):
+    return dict(dataset_id='d', chemistry=chemistry, units=[],
+                model_manifest=dict(preset=chemistry, emissions_sha256='0' * 64, **manifest))
+
+
+def test_saved_nanopore_evidence_must_match_the_calling_replay_policy():
+    from fiberhmm.inference.consensus.bam import check_saved_evidence
+    from fiberhmm.inference.consensus.parameters import parse_options
+    options = parse_options({})
+    # Unrecorded (older evidence) was replayed conservatively: still fiberhmm-call's policy.
+    old = dict(strata=[saved_stratum('hia5-nanopore', upstream_nuc_tf_recall=True,
+                                     upstream_nuc_tf_settings=dict(minimum_llr=5.0))])
+    check_saved_evidence(old, options)
+    new = dict(strata=[saved_stratum('hia5-nanopore', upstream_nuc_tf_recall=True,
+                                     upstream_nuc_tf_settings=dict(nuc_recall_policy='conservative'))])
+    check_saved_evidence(new, options)
+    topology = dict(strata=[saved_stratum('hia5-nanopore', upstream_nuc_tf_recall=True,
+                                          upstream_nuc_tf_settings=dict(nuc_recall_policy='topology'))])
+    with pytest.raises(ValueError, match='Reload the evidence'):
+        check_saved_evidence(topology, options)
+    pacbio = dict(strata=[saved_stratum('hia5-pacbio', upstream_nuc_tf_recall=True,
+                                        upstream_nuc_tf_settings=dict(nuc_recall_policy='topology'))])
+    check_saved_evidence(pacbio, options)  # only the Nanopore replay is checked

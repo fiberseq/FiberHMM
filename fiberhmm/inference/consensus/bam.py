@@ -273,6 +273,41 @@ def _dataset_daf_run_mask(chemistry, options, label, ds=None):
     return calls
 
 
+def check_saved_evidence(payload, options):
+    """Refuse saved evidence prepared under other replay policies than this run's.
+
+    Evidence (``--evidence``, ``--resume``, transfer) carries lattices and
+    native calls that were already conditioned. DddA CpG handling must be the
+    one this run asks for (the production mask, ``model_manifest.cpg_mask_policy``),
+    and the Hia5 Nanopore replay must have used the nucleosome policy
+    fiberhmm-call resolves for Nanopore (``resolve_nuc_recall_policy``).
+    Evidence written before FiberHMM 3.3.0 records no CpG policy (it used the
+    methylated-only rule); reload it from the BAMs. Unrecorded Hia5 replay
+    policies were conservative, which is still fiberhmm-call's default.
+    Strata without the BAM loader's receipt (``model_manifest`` with the
+    emission digest; hand-built payloads) are taken as given."""
+    from fiberhmm.inference.fused_stages import resolve_nuc_recall_policy
+    for source in payload.get('strata') or ():
+        manifest = source.get('model_manifest') or {}
+        if 'emissions_sha256' not in manifest:
+            continue
+        label = source.get('dataset_id', '?')
+        if source.get('chemistry') == 'ddda':
+            expected = options['input'].ddda_cpg_mask_policy if options['input'].ddda_m5c_correction else 'off'
+            recorded = manifest.get('cpg_mask_policy')
+            if recorded != expected:
+                raise ValueError(f'{label}: saved DddA evidence was prepared with CpG policy '
+                    f'{recorded or "unrecorded (FiberHMM before 3.3.0: methylated-only)"}, this run asks for {expected}. '
+                    'Reload the evidence from the BAMs (or set input.ddda_cpg_mask_policy / ddda_m5c_correction to match).')
+        if source.get('chemistry') == 'hia5-nanopore' and manifest.get('upstream_nuc_tf_recall'):
+            recorded = (manifest.get('upstream_nuc_tf_settings') or {}).get('nuc_recall_policy') or 'conservative'
+            expected = resolve_nuc_recall_policy('auto', 'nanopore-fiber')
+            if recorded != expected:
+                raise ValueError(f'{label}: saved Hia5 Nanopore evidence was replayed with the {recorded} '
+                    f'nucleosome policy, not the {expected} policy fiberhmm-call uses for Nanopore. '
+                    'Reload the evidence from the BAMs.')
+
+
 def _load_payload(state,request,options,progress, *, loader_sampling=None):
     from .loader_sampling import load_sampled, policy
     sampling = loader_sampling if loader_sampling is not None else policy(options)
