@@ -30,6 +30,12 @@ MIN_READ_LENGTH = 1000
 #: secondary records pass through uncalled.
 ALIGNMENTS = "primary-supplementary"
 
+#: Source of nucleosome/MSP calls for every reader: the MA (else fibertools
+#: Ma) ``nuc``/``msp`` groups; legacy ns/nl, as/al only when the record has
+#: no such group (``fiberhmm.io.footprint_calls``; checked by
+#: tests/test_legacy_pair_readers_guard.py).
+FOOTPRINT_CALL_SOURCE = "MA first, legacy fallback"
+
 # ---------------------------------------------------------------------------
 # Modification observations
 # ---------------------------------------------------------------------------

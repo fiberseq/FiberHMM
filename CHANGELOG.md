@@ -4,6 +4,24 @@
 
 ### Changed
 
+- **Nucleosome and MSP calls are read from `MA` first.** Every FiberHMM
+  reader of nucleosome/MSP calls (recall-tfs and recall-nucs, the consensus
+  loaders and native replay, call-m5c, apply `--no-msps`, `fiberhmm-probs`,
+  stats and BED export, alongside scan, extract, QC and `fiberhmm.nuc`, which
+  already did) takes them from the record's `MA` `nuc` and `msp` groups, else
+  fibertools' `Ma`, and reads the legacy `ns/nl`, `as/al` (and `nq`) only
+  when the record has no such group. recall-tfs took its input nucleosomes and
+  MSPs from the legacy tags whenever they were present. Output from the
+  standard pipeline, where call writes `MA` and legacy tags that agree, is
+  unchanged. Two kinds of BAM recall differently: a BAM whose legacy tags are
+  stale against `MA` (for example recall-nucs `--no-legacy-tags` output,
+  which refreshes `MA` and leaves call's `ns/nl`) now follows `MA`; and
+  calls in an `MA` that holds only an `msp` group no longer pick up
+  nucleosomes from leftover `ns/nl`. A `fiberhmm-apply` record that keeps
+  DddA CpG islands carries an `MA` whose `nuc` lists only the footprints
+  outside MSPs, so recall-tfs on it now reads that view rather than every HMM
+  footprint in `ns/nl`. An `MA` that holds only m5C or FIRE groups no
+  longer hides legacy calls from the consensus loaders.
 - **DddA consensus numbers change** because `fiberhmm-consensus` now scores
   DddA CpGs with the same unmethylated-only CpG mask as `fiberhmm-call`.
   Earlier versions excluded CpGs only inside methylated islands

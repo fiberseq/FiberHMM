@@ -31,6 +31,18 @@ thinning) are listed per chemistry in
 | DAF chimeras | flag (0x200 + `xc:Z:strand_swap`); min segment 5, purity 0.8 | `--chimeras` |
 | DAF duplicates | Jaccard 0.95, ≥ 10 deaminations, ends within 50 bp | `--dedup-*` |
 | DAF insert consensus | ≥ 20 carriers | `--daf-insert-min-carriers` |
+| Nucleosome/MSP call source (every reader) | `MA` `nuc`/`msp` groups (else fibertools `Ma`); legacy `ns/nl`, `as/al` only when the record has no such group | none (`fiberhmm.io.footprint_calls`) |
+
+Every tool that reads nucleosome or MSP calls back (recall-tfs, recall-nucs,
+consensus, scan, extract, QC, `fiberhmm.nuc`, call-m5c, apply `--no-msps`,
+`fiberhmm-probs`, stats) takes them from the record's `MA` `nuc` and `msp`
+groups, which is what `fiberhmm-call`, `-recall-tfs` and `-recall-nucs`
+write, else from fibertools' `Ma`. The legacy `ns/nl` and `as/al` pairs are
+read only when the record has no `nuc` or `msp` group in either tag, under
+the array-pair rule (two integer arrays of equal length). An `MA` holding only
+other groups (m5C islands, FIRE, a lone `tf` layer) does not hide them.
+`tests/test_legacy_pair_readers_guard.py` fails when a module reads the
+legacy pairs without this rule.
 
 ## Documented differences
 
