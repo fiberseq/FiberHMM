@@ -17,6 +17,8 @@ Excluded, because they name the code or the run rather than the result:
     (version, command line with temporary paths);
   * the ``fiberhmm_version`` / ``fiberhmm_commit`` tokens of the chemistry
     ``@CO`` line;
+  * the ``@CO FIBERHMM-ANNOTATION-CONTRACT`` line, added to every FiberHMM
+    writer's header in 3.3.0 independently of the chimera detector;
   * JSON keys holding versions, commits, timings and the output BAM's
     SHA-256 (it covers the header, hence the version);
   * the temporary directory, replaced by ``<tmp>`` in paths, and random
@@ -156,7 +158,8 @@ def _header(path, tmp):
         if str(pg.get('PN', '')).startswith('fiberhmm'):
             pg.pop('VN', None)
     header['CO'] = [re.sub(r'fiberhmm_(commit|version)=[^;]*', r'fiberhmm_\1=<code>', co)
-                    for co in header.get('CO', [])]
+                    for co in header.get('CO', [])
+                    if not co.startswith('FIBERHMM-ANNOTATION-CONTRACT:')]
     return _normalise(header, tmp)
 
 
