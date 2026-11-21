@@ -7,7 +7,6 @@ import pysam
 import pytest
 
 from fiberhmm.inference.chimeras import (
-    DEFAULT_MIN_SEG, DEFAULT_PURITY,
     clear_chimera_mark, is_marked_chimera, mark_chimera, prepare_chimeras,
 )
 
@@ -119,7 +118,7 @@ def test_call_cli_and_qc(tmp_path, mode, region_parallel):
     assert chim['mode'] == mode
     assert chim['n_chimeric'] == (0 if mode == 'keep' else 1)
     assert chim['n_reads_checked'] == (0 if mode == 'keep' else 2)
-    assert (chim['min_seg'], chim['purity']) == (DEFAULT_MIN_SEG, DEFAULT_PURITY)
+    assert chim['min_seg'] == 5 and chim['purity'] == 0.8
     assert 'chimeras_n_chimeric' in (tmp_path / 'qc/calls.qc.tsv').read_text()
     with pysam.AlignmentFile(target, 'rb') as bam:
         ds = bam.header.to_dict()['PG'][-1]['DS']
@@ -513,102 +512,3 @@ def test_scan_consumers_use_exact_owned_mark(tmp_path, xc, qcfail, excluded):
     clear_chimera_mark(read)
     assert read.is_qcfail == qcfail  # without xq:0, the QC failure is preserved
     assert passes(read, {})
-
-
-def test_in_process_call_restores_every_detector_setting(tmp_path, monkeypatch):
-    from fiberhmm.cli import call
-    from fiberhmm.inference import engine
-    source = fixture_bam(tmp_path / 'source.bam')
-    mask = tmp_path / 'prior_mask.bed'
-    mask.write_text('chr1\t10\t11\tG>A\n')
-    engine.configure_daf_chimera_filter(True, 7, 0.85, min_baseq=30, min_span=0,
-                                        multi_switch=False, error_mask=str(mask))
-    policy = dict(engine._DAF_CHIMERA_CFG)
-    try:
-        monkeypatch.setattr(call, '_process_bam_streaming_pipeline_fused',
-                            lambda **kwargs: (0, 0))
-        monkeypatch.setattr(sys, 'argv', [
-            'fiberhmm-call', '-i', str(source), '-o', str(tmp_path / 'calls.bam'),
-            '--enzyme', 'dddb', '--seq', 'nanopore', '-c', '1', '--io-threads', '1',
-            '--no-qc', '--no-dedup', '--no-daf-call-snps',
-            '--daf-insert-consensus', 'off'])
-        call._main(call.parse_args())
-        assert engine._DAF_CHIMERA_CFG == policy
-    finally:
-        engine.configure_daf_chimera_filter()
-
-
-_NON_DEFAULT_DETECTOR = dict(min_seg=7, purity=0.85, min_baseq=30, min_span=0,
-                             multi_switch=False)
-
-
-@pytest.mark.parametrize('kind', ['streaming', 'region', 'fused_region'])
-def test_worker_init_sees_every_detector_setting(tmp_path, kind):
-    from fiberhmm.inference import engine, region_workers, streaming_workers
-    from fiberhmm.models import get_model_path
-    mask = tmp_path / 'mask.bed'
-    mask.write_text('chr1\t10\t11\tG>A\n')
-    model = get_model_path('dddb', tool='apply')
-    d = _NON_DEFAULT_DETECTOR
-    params = {'filter_chimeras': True, 'chimera_min_seg': d['min_seg'],
-              'chimera_purity': d['purity'], 'chimera_min_baseq': d['min_baseq'],
-              'chimera_min_span': d['min_span'],
-              'chimera_multi_switch': d['multi_switch'],
-              'chimera_error_mask_path': str(mask)}
-    try:
-        if kind == 'streaming':
-            streaming_workers._init_fused_worker(
-                model, None, filter_chimeras=True, chimera_min_seg=d['min_seg'],
-                chimera_purity=d['purity'], chimera_min_baseq=d['min_baseq'],
-                chimera_min_span=d['min_span'], chimera_multi_switch=d['multi_switch'],
-                chimera_error_mask_path=str(mask))
-        elif kind == 'region':
-            region_workers._init_region_worker(model, params)
-        else:
-            region_workers._init_fused_region_worker(model, None, 1.0, params)
-        assert engine._DAF_CHIMERA_CFG == {'filter': True, **d, 'error_mask': str(mask)}
-    finally:
-        engine.configure_daf_chimera_filter()
-
-
-@pytest.mark.parametrize('region_parallel', [False, True])
-def test_call_passes_every_detector_setting_to_its_workers(tmp_path, monkeypatch,
-                                                           region_parallel):
-    from fiberhmm.cli import call
-    from fiberhmm.inference import region_pipeline, streaming_pipeline
-    source = fixture_bam(tmp_path / 'source.bam')
-    seen = {}
-
-    class Stop(Exception):
-        pass
-
-    def executor(*args, initializer=None, initargs=(), **kwargs):
-        seen['initializer'], seen['initargs'] = initializer, initargs
-        raise Stop
-    monkeypatch.setattr(streaming_pipeline, 'ProcessPoolExecutor', executor)
-    monkeypatch.setattr(region_pipeline, 'ProcessPoolExecutor', executor)
-    monkeypatch.setattr(sys, 'argv', [
-        'fiberhmm-call', '-i', str(source), '-o', str(tmp_path / 'calls.bam'),
-        '--enzyme', 'dddb', '--seq', 'nanopore', '-c', '1', '--io-threads', '1',
-        '--no-qc', '--no-dedup', '--no-daf-call-snps', '--daf-insert-consensus', 'off',
-        '--chimera-min-seg', '7', '--chimera-purity', '0.85',
-        '--chimera-min-baseq', '30', '--chimera-min-span', '0',
-        '--no-chimera-multi-switch', *(['--region-parallel'] if region_parallel else [])])
-    try:
-        with pytest.raises(Stop):
-            call._main(call.parse_args())
-    finally:
-        from fiberhmm.inference import engine
-        engine.configure_daf_chimera_filter()
-    d = _NON_DEFAULT_DETECTOR
-    if region_parallel:
-        initargs = seen['initargs']
-        params = next(a for a in initargs if isinstance(a, dict))
-        got = {k: params[f'chimera_{k}'] for k in d}
-        assert 'chimera_error_mask_path' in params
-    else:
-        import inspect
-        bound = inspect.signature(seen['initializer']).bind(*seen['initargs']).arguments
-        got = {k: bound[f'chimera_{k}'] for k in d}
-        assert 'chimera_error_mask_path' in bound
-    assert got == d

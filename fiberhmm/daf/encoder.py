@@ -25,7 +25,7 @@ from fiberhmm.daf.aligned_arrays import (
     md_reference_length,
 )
 from fiberhmm.inference.bam_output import _sort_and_index_bam, atomic_output
-from fiberhmm.inference.chimeras import DEFAULT_MIN_SEG, DEFAULT_PURITY
+from fiberhmm.inference.chimeras import STRICT_MIN_SEG, STRICT_PURITY
 
 # CIGAR op codes (from the BAM spec) that consume reference:
 #   M=0, D=2, N=3, =7, X=8. Of these, MD describes M/=/X/D only
@@ -260,10 +260,63 @@ def _daf_positions_result(ct_positions, ga_positions, force_strand):
 
 
 def is_daf_chimera(ct_positions, ga_positions,
-                   min_seg_events: int = DEFAULT_MIN_SEG,
-                   purity: float = DEFAULT_PURITY, *,
-                   min_span: int = 0, multi_switch: bool = False) -> bool:
+                   min_seg_events: int = 5, purity: float = 0.8) -> bool:
     """Detect a DAF-seq strand-swap chimera.
+
+    A clean DAF read is deaminated on ONE strand (C->T XOR G->A). A chimera
+    (template switch / merged molecule) "swaps" mid-read: a contiguous segment
+    of C->T deamination and a separate contiguous segment of G->A deamination.
+
+    Spatial test: order all deamination events by query position (CT=+1, GA=-1);
+    a chimera has a breakpoint splitting them into two segments that are each
+    >= ``purity`` pure for OPPOSITE strands, with >= ``min_seg_events`` dominant
+    events on each side. Scattered minority events (SNPs / sequencing error) do
+    not form a pure segment, so they are not flagged -- robust to the low
+    deamination rate of under-deaminating enzymes like DddB.
+
+    Returns True if the read looks chimeric.
+    """
+    nct = len(ct_positions)
+    nga = len(ga_positions)
+    if min(nct, nga) < min_seg_events:
+        return False
+
+    events = sorted([(int(p), 1) for p in ct_positions]
+                    + [(int(p), -1) for p in ga_positions])
+    n = len(events)
+    if n < 2 * min_seg_events:
+        return False
+
+    ct_left = 0
+    for k in range(1, n):                       # breakpoint: left=[0,k), right=[k,n)
+        if events[k - 1][1] == 1:
+            ct_left += 1
+        left_n = k
+        right_n = n - k
+        if left_n < min_seg_events or right_n < min_seg_events:
+            continue
+        ga_left = left_n - ct_left
+        ct_right = nct - ct_left
+        ga_right = nga - ga_left
+        # orientation A: CT segment then GA segment
+        if (ct_left >= min_seg_events and ga_right >= min_seg_events
+                and ct_left >= purity * left_n and ga_right >= purity * right_n):
+            return True
+        # orientation B: GA segment then CT segment
+        if (ga_left >= min_seg_events and ct_right >= min_seg_events
+                and ga_left >= purity * left_n and ct_right >= purity * right_n):
+            return True
+    return False
+
+
+def is_daf_chimera_strict(ct_positions, ga_positions,
+                          min_seg_events: int = STRICT_MIN_SEG,
+                          purity: float = STRICT_PURITY, *,
+                          min_span: int = 0, multi_switch: bool = False) -> bool:
+    """The strict detector's strand-swap test (``--chimera-detector strict``).
+
+    The same single-breakpoint scan as :func:`is_daf_chimera` (the
+    standard detector, which keeps its own code), plus the options below.
 
     A clean DAF read is deaminated on ONE strand (C->T XOR G->A). A chimera
     (template switch / merged molecule) "swaps" mid-read: a contiguous segment
@@ -281,8 +334,9 @@ def is_daf_chimera(ct_positions, ga_positions,
     ``multi_switch`` a read whose events cut into three or more alternating
     segments that each pass the same rule (for example CT -> GA -> CT, an
     opposite-strand island inside a read) is also a chimera
-    (:func:`daf_chimera_segments`). The defaults here (0, False) are the
-    3.0.3 test; :mod:`fiberhmm.inference.chimeras` passes the run's settings.
+    (:func:`daf_chimera_segments`). With (0, False) the test is the
+    single-breakpoint scan; :mod:`fiberhmm.inference.chimeras` passes the
+    run's settings.
 
     Returns True if the read looks chimeric. Same-strand chimeras (two
     molecules deaminated on the same strand) cannot be seen by this test.
@@ -295,11 +349,11 @@ def is_daf_chimera(ct_positions, ga_positions,
 
 
 def daf_chimera_split(ct_positions, ga_positions,
-                      min_seg_events: int = DEFAULT_MIN_SEG,
-                      purity: float = DEFAULT_PURITY, *, min_span: int = 0):
+                      min_seg_events: int = STRICT_MIN_SEG,
+                      purity: float = STRICT_PURITY, *, min_span: int = 0):
     """The best single strand-swap split of a chimeric read, or None.
 
-    Uses the single-breakpoint test of :func:`is_daf_chimera` (it returns
+    Uses the single-breakpoint test of :func:`is_daf_chimera_strict` (it returns
     None exactly when that test fails). Among the qualifying breakpoints it
     picks the one that assigns the most events to their segment's strand
     (ties: the first). Returns a dict with ``left_strand``/``right_strand``
@@ -318,8 +372,8 @@ _MAX_SPLIT_DEPTH = 16
 
 
 def daf_chimera_segments(ct_positions, ga_positions,
-                         min_seg_events: int = DEFAULT_MIN_SEG,
-                         purity: float = DEFAULT_PURITY, *,
+                         min_seg_events: int = STRICT_MIN_SEG,
+                         purity: float = STRICT_PURITY, *,
                          min_span: int = 0, multi_switch: bool = False):
     """Every single-strand piece of a chimeric read, or None if not chimeric.
 

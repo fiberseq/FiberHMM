@@ -666,12 +666,12 @@ def _error_mask_voter(read, arrays, detector):
     ``ERROR_MASK_VOTER_MIN_PURITY``, counting only events with base quality
     >= ``ERROR_MASK_VOTER_MIN_BASEQ`` (15, fixed: independent of the
     detector's ``min_baseq``; when QUAL is present), and not a chimera under
-    the run's detector on those events. ``good`` marks the
+    the run's strict detector on those events. ``good`` marks the
     aligned bases with sufficient quality (all when there is no QUAL). The
     SNP and error masks do not exist yet at this point, so the voter test
     sees every event.
     """
-    from fiberhmm.daf.encoder import is_daf_chimera
+    from fiberhmm.daf.encoder import is_daf_chimera_strict
     from fiberhmm.inference.chimeras import (
         ERROR_MASK_VOTER_MIN_BASEQ,
         ERROR_MASK_VOTER_MIN_EVENTS,
@@ -698,7 +698,7 @@ def _error_mask_voter(read, arrays, detector):
     )
     if direction is None:
         return None, None
-    if is_daf_chimera(
+    if is_daf_chimera_strict(
         qpos[ct_mask].tolist(), qpos[ga_mask].tolist(),
         detector["min_seg"], detector["purity"],
         min_span=detector["min_span"], multi_switch=detector["multi_switch"],

@@ -20,11 +20,9 @@ from fiberhmm.inference.engine import (
 # string instead and the drain tallies it).
 CHIMERA_RESULT = "__fiberhmm_chimera_skip__"
 from fiberhmm.inference.chimeras import (
-    DEFAULT_MIN_BASEQ,
-    DEFAULT_MIN_SEG,
-    DEFAULT_MIN_SPAN,
-    DEFAULT_MULTI_SWITCH,
-    DEFAULT_PURITY,
+    STRICT_MIN_BASEQ,
+    STRICT_MIN_SPAN,
+    STRICT_MULTI_SWITCH,
 )
 from fiberhmm.inference.fused_stages import (
     apply_result_has_footprints,
@@ -84,18 +82,19 @@ def _init_fused_worker(
     split_min_opps=3,
     nuc_recall_policy="conservative",
     filter_chimeras=True,
-    chimera_min_seg=DEFAULT_MIN_SEG,
-    chimera_purity=DEFAULT_PURITY,
+    chimera_min_seg=5,
+    chimera_purity=0.8,
     phase_nrl=0,
     nuc_profile_path=None,
     derived_tf_max_edge_ambiguity=None,
     ddda_mcg=False,
     nuc_model_path=None,
     cpg_mask_policy=None,
-    chimera_min_baseq=DEFAULT_MIN_BASEQ,
-    chimera_min_span=DEFAULT_MIN_SPAN,
-    chimera_multi_switch=DEFAULT_MULTI_SWITCH,
+    chimera_min_baseq=STRICT_MIN_BASEQ,
+    chimera_min_span=STRICT_MIN_SPAN,
+    chimera_multi_switch=STRICT_MULTI_SWITCH,
     chimera_error_mask_path=None,
+    chimera_detector='standard',
 ):
     """Initialize worker process for the fused apply+recall pipeline.
 
@@ -188,6 +187,7 @@ def _init_fused_worker(
         derived_tf_max_edge_ambiguity
     )
     configure_daf_chimera_filter(filter_chimeras, chimera_min_seg, chimera_purity,
+                                 detector=chimera_detector,
                                  min_baseq=chimera_min_baseq, min_span=chimera_min_span,
                                  multi_switch=chimera_multi_switch,
                                  error_mask=chimera_error_mask_path)

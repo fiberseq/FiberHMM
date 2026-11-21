@@ -14,22 +14,25 @@ CHIMERA_TAG = 'xc'
 CHIMERA_REASON = 'strand_swap'
 CHIMERA_QC_TAG = 'xq'  # original QC-fail state before our mark (0 or 1)
 
-# The DAF strand-swap detector defaults (3.1.0): one strict decision drives
-# flag/remove/split, the count and the grade. Every default reads these
-# constants (CLI options, prepare_chimeras, the engine, QC, workers).
-DEFAULT_MIN_SEG = 10        # dominant events per segment
-DEFAULT_PURITY = 0.9        # dominant fraction of a segment's events
-DEFAULT_MIN_BASEQ = 15      # events need base quality >= this (when QUAL is present)
-DEFAULT_MIN_SPAN = 200      # query bp from a segment's first to last dominant event
-DEFAULT_MULTI_SWITCH = True  # also call reads with several switches (CT->GA->CT)
-DEFAULT_ERROR_MASK = True   # chimera-only recurrent error mask from the SNP screen
-# FiberHMM 3.0.3 and earlier defaults; used to label counts read from older
-# sidecars and BAM headers, and to reproduce 3.0.3 decisions.
-LEGACY_MIN_SEG = 5
-LEGACY_PURITY = 0.8
-LEGACY_MIN_BASEQ = 0
-LEGACY_MIN_SPAN = 0
-LEGACY_MULTI_SWITCH = False
+# Two DAF strand-swap detectors (``--chimera-detector``):
+#   standard (default): the 3.2.1 detector, one CT/GA switch with min_seg
+#     events per segment at purity; every event counts.
+#   strict (opt-in): base-quality filter, minimum span, several switches,
+#     the chimera-only error mask, duplicates not counted, a QC grade and
+#     the optional split mode.
+# The standard detector's code path is the 3.2.1 one (prepare_chimeras ->
+# _prepare_chimeras_standard, _is_chimeric, encoder.is_daf_chimera); the
+# strict detector has its own functions (``*_strict``).
+DETECTORS = ('standard', 'strict')
+DEFAULT_DETECTOR = 'standard'
+STANDARD_MIN_SEG = 5        # dominant events per segment
+STANDARD_PURITY = 0.8       # dominant fraction of a segment's events
+STRICT_MIN_SEG = 10
+STRICT_PURITY = 0.9
+STRICT_MIN_BASEQ = 15       # events need base quality >= this (when QUAL is present)
+STRICT_MIN_SPAN = 200       # query bp from a segment's first to last dominant event
+STRICT_MULTI_SWITCH = True  # also call reads with several switches (CT->GA->CT)
+STRICT_ERROR_MASK = True    # chimera-only recurrent error mask from the SNP screen
 # Chimera-only recurrent error mask (computed in the DAF SNP screen's passes,
 # fiberhmm.daf.snps). Voters are clearly single-strand, non-chimeric fibers;
 # a reference site is masked from chimera events when its opposite-direction
@@ -93,9 +96,9 @@ def seekable_input(path):
     return path != '-' and Path(path).is_file()
 
 
-def detector_config(min_seg=DEFAULT_MIN_SEG, purity=DEFAULT_PURITY,
-                    min_baseq=DEFAULT_MIN_BASEQ, min_span=DEFAULT_MIN_SPAN,
-                    multi_switch=DEFAULT_MULTI_SWITCH, error_mask=None):
+def detector_config(min_seg=STRICT_MIN_SEG, purity=STRICT_PURITY,
+                    min_baseq=STRICT_MIN_BASEQ, min_span=STRICT_MIN_SPAN,
+                    multi_switch=STRICT_MULTI_SWITCH, error_mask=None):
     """The detector settings as one picklable dict (``error_mask``: BED path)."""
     return {'min_seg': int(min_seg), 'purity': float(purity),
             'min_baseq': int(min_baseq), 'min_span': int(min_span),
@@ -206,13 +209,13 @@ def filter_chimera_events(read, ct, ga, cfg):
 
 
 def decide_chimera(ct, ga, cfg, *, segments=False):
-    """The detector's decision on filtered events: bool, or (``segments``)
+    """The strict detector's decision on filtered events: bool, or (``segments``)
     the :func:`~fiberhmm.daf.encoder.daf_chimera_segments` result or None."""
-    from fiberhmm.daf.encoder import daf_chimera_segments, is_daf_chimera
+    from fiberhmm.daf.encoder import daf_chimera_segments, is_daf_chimera_strict
     kwargs = dict(min_span=cfg['min_span'], multi_switch=cfg['multi_switch'])
     if segments:
         return daf_chimera_segments(ct, ga, cfg['min_seg'], cfg['purity'], **kwargs)
-    return is_daf_chimera(ct, ga, cfg['min_seg'], cfg['purity'], **kwargs)
+    return is_daf_chimera_strict(ct, ga, cfg['min_seg'], cfg['purity'], **kwargs)
 
 
 def _chimera_events(read, ref, cfg=None):
@@ -246,15 +249,39 @@ def _chimera_events(read, ref, cfg=None):
     return filter_chimera_events(read, events[0], events[1], cfg)
 
 
-def _is_chimeric(read, ref, cfg=None):
+def _is_chimeric(read, ref, *, min_seg=None, purity=None):
     """Only the caller's chimera decision, without extracting call evidence."""
+    from . import engine
+    from fiberhmm.daf.encoder import get_daf_positions, is_daf_chimera
+
+    min_seg = engine._DAF_CHIMERA_CFG['min_seg'] if min_seg is None else min_seg
+    purity = engine._DAF_CHIMERA_CFG['purity'] if purity is None else purity
+    seq = read.query_sequence
+    if not seq:
+        return False
+    if engine.has_iupac_encoding(seq):
+        return engine._is_iupac_daf_chimera(
+            read, seq, engine._stub_or_live_excluded(read), ref,
+            min_seg=min_seg, purity=purity)
+    result = get_daf_positions(
+        # Both arrays are populated regardless of the chosen strand. Force
+        # collection past the dominant-strand tie check; the spatial test
+        # below evaluates both CT->GA and GA->CT swaps.
+        read, force_strand='CT', ref_fasta=ref,
+        excluded_reference_positions=engine._daf_reference_mask(read))
+    return result is not None and is_daf_chimera(
+        result[0], result[1], min_seg_events=min_seg, purity=purity)
+
+
+def _is_chimeric_strict(read, ref, cfg=None):
+    """The strict detector's decision, without extracting call evidence."""
     cfg = _active_config() if cfg is None else cfg
     events = _chimera_events(read, ref, cfg)
     return events is not None and decide_chimera(events[0], events[1], cfg)
 
 
 def engine_chimera_hit(read, ct, ga, ref=None):
-    """The engine filter's decision for ``read`` with raw events ``ct``/``ga``.
+    """The strict engine filter's decision for ``read`` with raw events ``ct``/``ga``.
 
     A slim worker payload carries the decision made on the live record
     (``_daf_chimera``), because the stub has no QUAL or alignment.
@@ -270,19 +297,19 @@ def engine_chimera_hit(read, ct, ga, ref=None):
 def detector_basis(min_seg, purity, min_baseq=None, min_span=None):
     """``(basis, note)`` of a count made with these detector settings.
 
-    ``basis`` is ``default`` for the current detector, ``lenient`` for a
-    looser one (for example the 3.0.3 detector, min_seg 5, purity 0.8, no
-    base-quality or span limit, recorded in older sidecars and BAM headers),
+    Strict detector only. ``basis`` is ``default`` for the strict
+    detector's default settings, ``lenient`` for looser settings (for
+    example min_seg 5 and purity 0.8, the standard detector's values),
     ``custom`` for any other setting and ``unknown`` when the parameters were
-    not recorded. ``min_baseq``/``min_span`` of None (older records) are not
-    compared. ``note`` explains a non-default basis (None for ``default``).
+    not recorded. ``min_baseq``/``min_span`` of None are not compared.
+    ``note`` explains a non-default basis (None for ``default``).
     """
     if min_seg is None or purity is None:
         return 'unknown', 'detector parameters not recorded'
-    values = [(int(min_seg), DEFAULT_MIN_SEG), (float(purity), DEFAULT_PURITY)]
+    values = [(int(min_seg), STRICT_MIN_SEG), (float(purity), STRICT_PURITY)]
     names = ['min_seg', 'purity']
-    for name, value, default in (('min_baseq', min_baseq, DEFAULT_MIN_BASEQ),
-                                 ('min_span', min_span, DEFAULT_MIN_SPAN)):
+    for name, value, default in (('min_baseq', min_baseq, STRICT_MIN_BASEQ),
+                                 ('min_span', min_span, STRICT_MIN_SPAN)):
         if value is not None:
             values.append((int(value), default))
             names.append(name)
@@ -292,17 +319,13 @@ def detector_basis(min_seg, purity, min_baseq=None, min_span=None):
     default_setting = ', '.join(f'{name}={default:g}'
                                 for name, (_, default) in zip(names, values))
     if all(value <= default for value, default in values):
-        legacy = (' (the FiberHMM 3.0.3 default)'
-                  if (int(min_seg), float(purity)) == (LEGACY_MIN_SEG, LEGACY_PURITY)
-                  and min_baseq in (None, LEGACY_MIN_BASEQ)
-                  and min_span in (None, LEGACY_MIN_SPAN) else '')
-        return 'lenient', (f'counted with the older lenient detector {setting}{legacy}; '
-                           f'the default detector ({default_setting}) marks fewer reads')
-    return 'custom', f'counted with a non-default detector ({setting})'
+        return 'lenient', (f'counted with lenient strict-detector settings {setting}; '
+                           f'the strict defaults ({default_setting}) mark fewer reads')
+    return 'custom', f'counted with non-default strict-detector settings ({setting})'
 
 
-def grade_chimeras(n_checked, n_chimeric, min_seg=DEFAULT_MIN_SEG,
-                   purity=DEFAULT_PURITY, min_baseq=None, min_span=None):
+def grade_chimeras(n_checked, n_chimeric, min_seg=STRICT_MIN_SEG,
+                   purity=STRICT_PURITY, min_baseq=None, min_span=None):
     """QC grade of the chimera fraction.
 
     PASS below :data:`WARN_FRACTION`, WARN from it (severity 'moderate') and
@@ -357,7 +380,7 @@ def chimera_warning(stats):
 
 
 def detector_details(stats):
-    """One line on the 3.1.0 detector settings of a statistics block ('' if absent)."""
+    """One line on the strict detector settings of a statistics block ('' if absent)."""
     if not stats or stats.get('min_baseq') is None:
         return ''
     parts = [f"min_baseq={stats['min_baseq']}",
@@ -421,12 +444,19 @@ def is_precalled_chimera(read, decisions):
     if policy is None:  # e.g. an authoritative empty keep-mode decision
         return False
     from .read_filters import streaming_skip_reason
-    config, reference, cfg = policy
+    if len(policy) == 3:  # strict: (config, reference, detector settings)
+        config, reference, cfg = policy
+        if streaming_skip_reason(read, config) is not None:
+            return False
+        with ExitStack() as stack:
+            ref = stack.enter_context(pysam.FastaFile(reference)) if reference else None
+            return _is_chimeric_strict(read, ref, cfg)
+    config, reference, min_seg, purity = policy
     if streaming_skip_reason(read, config) is not None:
         return False
     with ExitStack() as stack:
         ref = stack.enter_context(pysam.FastaFile(reference)) if reference else None
-        return _is_chimeric(read, ref, cfg)
+        return _is_chimeric(read, ref, min_seg=min_seg, purity=purity)
 
 
 DUPLICATES_POLICY = ('duplicate-flagged (0x400) reads are tested and marked like '
@@ -434,7 +464,7 @@ DUPLICATES_POLICY = ('duplicate-flagged (0x400) reads are tested and marked like
                      'fraction, the regions and the grade')
 
 
-def error_mask_summary(enabled=DEFAULT_ERROR_MASK, bed=None, n_sites=0,
+def error_mask_summary(enabled=STRICT_ERROR_MASK, bed=None, n_sites=0,
                        reason=None):
     """The ``error_mask`` provenance block of the chimera statistics.
 
@@ -455,10 +485,11 @@ def error_mask_summary(enabled=DEFAULT_ERROR_MASK, bed=None, n_sites=0,
 def _new_stats_fields(mode, n_checked=0, n_chimeric=None, cfg=None,
                       regions=None, split=None, error_mask=None,
                       n_duplicates=0):
-    """3.1.0 fields, appended after the 3.0.3 ones (key order is kept)."""
+    """Strict-detector fields, appended after the standard ones (key order is kept)."""
     detected = mode not in ('keep', 'n/a')
     cfg = cfg or {}
     return dict(
+        detector='strict',
         grade=(grade_chimeras(n_checked, n_chimeric, cfg.get('min_seg'),
                               cfg.get('purity'), cfg.get('min_baseq'),
                               cfg.get('min_span')) if detected else None),
@@ -475,9 +506,17 @@ def _new_stats_fields(mode, n_checked=0, n_chimeric=None, cfg=None,
     )
 
 
-def empty_chimera_stats(mode, min_seg=DEFAULT_MIN_SEG, purity=DEFAULT_PURITY,
-                        min_baseq=DEFAULT_MIN_BASEQ, min_span=DEFAULT_MIN_SPAN,
-                        multi_switch=DEFAULT_MULTI_SWITCH, error_mask=None):
+def empty_chimera_stats(mode, min_seg=5, purity=0.8):
+    return dict(detected=False, mode=mode, n_reads_checked=0, n_chimeric=0,
+                fraction=None, min_seg=min_seg, purity=purity,
+                n_records_affected=0, n_stale_marks_cleared=0,
+                full_run=True, count_unit='unique read names before removal')
+
+
+def empty_strict_chimera_stats(mode, min_seg=STRICT_MIN_SEG, purity=STRICT_PURITY,
+                        min_baseq=STRICT_MIN_BASEQ, min_span=STRICT_MIN_SPAN,
+                               multi_switch=STRICT_MULTI_SWITCH, error_mask=None):
+    """Statistics of a strict-detector run without detection (keep mode)."""
     cfg = detector_config(min_seg, purity, min_baseq, min_span, multi_switch)
     return dict(detected=False, mode=mode, n_reads_checked=0, n_chimeric=0,
                 fraction=None, min_seg=min_seg, purity=purity,
@@ -537,9 +576,46 @@ def _region_rows(bin_of, bin_spans, anonymous_bins, chimeric):
 
 
 def prepare_chimeras(input_bam, output_bam=None, *, mode='flag', daf=True,
-                     min_seg=DEFAULT_MIN_SEG, purity=DEFAULT_PURITY,
-                     min_baseq=DEFAULT_MIN_BASEQ, min_span=DEFAULT_MIN_SPAN,
-                     multi_switch=DEFAULT_MULTI_SWITCH, error_mask=None,
+                     min_seg=None, purity=None, detector=DEFAULT_DETECTOR,
+                     min_baseq=None, min_span=None, multi_switch=None,
+                     error_mask=None, error_mask_info=None, **options):
+    """Decide QNAMEs in a read-only pass with the chosen ``detector``.
+
+    ``standard`` (default): the 3.2.1 detector (:func:`_prepare_chimeras_standard`,
+    ``min_seg``/``purity`` default 5/0.8); ``min_baseq``, ``min_span``,
+    ``multi_switch``, ``error_mask`` and mode ``split`` belong to the strict
+    detector and are refused. ``strict``: :func:`_prepare_chimeras_strict`
+    (defaults: the ``STRICT_*`` constants). Other keywords go to both.
+    """
+    if detector not in DETECTORS:
+        raise ValueError(f'Invalid chimera detector: {detector}')
+    if detector == 'strict':
+        return _prepare_chimeras_strict(
+            input_bam, output_bam, mode=mode, daf=daf,
+            min_seg=STRICT_MIN_SEG if min_seg is None else min_seg,
+            purity=STRICT_PURITY if purity is None else purity,
+            min_baseq=STRICT_MIN_BASEQ if min_baseq is None else min_baseq,
+            min_span=STRICT_MIN_SPAN if min_span is None else min_span,
+            multi_switch=STRICT_MULTI_SWITCH if multi_switch is None else multi_switch,
+            error_mask=error_mask, error_mask_info=error_mask_info, **options)
+    strict_only = dict(min_baseq=min_baseq, min_span=min_span,
+                       multi_switch=multi_switch, error_mask=error_mask,
+                       error_mask_info=error_mask_info)
+    given = sorted(key for key, value in strict_only.items() if value is not None)
+    if given:
+        raise ValueError(f'{", ".join(given)}: strict chimera detector only')
+    if mode == 'split':
+        raise ValueError('chimera split mode requires the strict detector')
+    return _prepare_chimeras_standard(
+        input_bam, output_bam, mode=mode, daf=daf,
+        min_seg=STANDARD_MIN_SEG if min_seg is None else min_seg,
+        purity=STANDARD_PURITY if purity is None else purity, **options)
+
+
+def _prepare_chimeras_strict(input_bam, output_bam=None, *, mode='flag', daf=True,
+                     min_seg=STRICT_MIN_SEG, purity=STRICT_PURITY,
+                     min_baseq=STRICT_MIN_BASEQ, min_span=STRICT_MIN_SPAN,
+                     multi_switch=STRICT_MULTI_SWITCH, error_mask=None,
                      error_mask_info=None,
                      prob_threshold=128,
                      reference=None, snp_mask=None, min_mapq=0,
@@ -555,8 +631,8 @@ def prepare_chimeras(input_bam, output_bam=None, *, mode='flag', daf=True,
     ``spool_bam`` supplies the replay path. ``output_bam`` optionally writes
     a marked/filtered BAM for standalone use. Counts precede removal.
 
-    One detector decides flag, remove and split and gives the count and the
-    grade: ``min_seg``/``purity`` per segment, events with base quality >=
+    The strict detector. One decision drives flag, remove and split and
+    gives the count and the grade: ``min_seg``/``purity`` per segment, events with base quality >=
     ``min_baseq`` (when QUAL is present), segments whose dominant events span
     >= ``min_span`` query bp, reads with several switches (``multi_switch``)
     and events on the chimera-only ``error_mask`` BED dropped (defaults: the
@@ -591,7 +667,7 @@ def prepare_chimeras(input_bam, output_bam=None, *, mode='flag', daf=True,
         raise ValueError('chimera split mode requires spool_bam')
     cfg = detector_config(min_seg, purity, min_baseq, min_span, multi_switch,
                           error_mask)
-    engine.configure_daf_chimera_filter(daf and mode != 'keep', **cfg)
+    engine.configure_daf_chimera_filter(daf and mode != 'keep', detector='strict', **cfg)
     engine.configure_daf_snp_mask(snp_mask)
     if error_mask_info is None:
         error_mask_info = error_mask_summary(
@@ -811,3 +887,100 @@ def _split_pieces(read, header, split, min_read_length, ref, decide, info,
             info['n_pieces_still_chimeric'] += 1
             still_chimeric.add(piece.query_name)
     return kept
+
+
+def _prepare_chimeras_standard(input_bam, output_bam=None, *, mode='flag', daf=True,
+                     min_seg=5, purity=0.8, prob_threshold=128,
+                     reference=None, snp_mask=None, min_mapq=0,
+                     min_read_length=0, process_unmapped=False,
+                     io_threads=1, chimeric_names=None, spool_bam=None,
+                     alignments='primary-supplementary'):
+    """The standard (3.2.1) detector: decide QNAMEs in a read-only pass;
+    spool only non-seekable inputs.
+
+    The CLI passes a mutable ``ChimeraDecisions`` set and applies marks/removal
+    in the caller, so file input needs no intermediate BAM. A plain set gets
+    only named decisions; ChimeraDecisions also carries the unnamed replay
+    policy. For streams,
+    ``spool_bam`` supplies the replay path. ``output_bam`` optionally writes
+    a marked/filtered BAM for standalone use. Counts precede removal.
+    """
+    from . import engine
+    from .read_filters import ReadFilterConfig, streaming_skip_reason
+
+    if mode not in ('flag', 'remove', 'keep'):
+        raise ValueError(f'Invalid chimera mode: {mode}')
+    if min_seg < 1 or not 0.5 < purity <= 1:
+        raise ValueError('chimera min_seg must be >= 1 and purity in (0.5, 1]')
+    engine.configure_daf_chimera_filter(daf and mode != 'keep', min_seg, purity)
+    engine.configure_daf_snp_mask(snp_mask)
+    config = ReadFilterConfig(min_mapq=min_mapq, min_read_length=min_read_length,
+                              primary_only=alignments,
+                              process_unmapped=process_unmapped, mode='daf',
+                              has_reference=reference is not None)
+    checked, chimeric = set(), ChimeraDecisions()
+    if daf and mode != 'keep':
+        chimeric.anonymous_policy = (config, reference, min_seg, purity)
+    anonymous_checked = anonymous_chimeric = 0
+    counts = Counter()
+    stale = 0
+    # The optional standalone writer owns its private spool. The CLI owns
+    # its stream spool's lifetime, which extends through calling.
+    private_spool = False
+    if not seekable_input(input_bam) and spool_bam is None:
+        if output_bam is None:
+            raise ValueError('Non-seekable input requires spool_bam')
+        spool_bam = str(Path(output_bam).with_suffix('.source.bam'))
+        private_spool = True
+    replay = spool_bam or input_bam
+    try:
+        with ExitStack() as stack:
+            ref = stack.enter_context(pysam.FastaFile(reference)) if reference else None
+            bam = stack.enter_context(pysam.AlignmentFile(
+                input_bam, 'rb', check_sq=False, threads=io_threads))
+            out = (stack.enter_context(pysam.AlignmentFile(
+                spool_bam, 'wb', header=bam.header, threads=io_threads))
+                   if spool_bam else None)
+            for read in bam.fetch(until_eof=True):
+                named = read.query_name not in (None, '*', '')
+                if named:
+                    counts[read.query_name] += 1
+                stale += int(_has_chimera_tag(read))
+                clear_chimera_mark(read)
+                if daf and mode != 'keep' and streaming_skip_reason(read, config) is None:
+                    if named:
+                        checked.add(read.query_name)
+                        if read.query_name not in chimeric and _is_chimeric(read, ref):
+                            chimeric.add(read.query_name)
+                    else:
+                        anonymous_checked += 1
+                        anonymous_chimeric += int(_is_chimeric(read, ref))
+                if out is not None:
+                    out.write(read)
+        if chimeric_names is not None:
+            chimeric_names.update(chimeric)
+            if isinstance(chimeric_names, ChimeraDecisions):
+                chimeric_names.anonymous_policy = chimeric.anonymous_policy
+        if output_bam is not None:
+            with pysam.AlignmentFile(replay, 'rb', check_sq=False) as bam, \
+                    pysam.AlignmentFile(output_bam, 'wb', header=bam.header,
+                                        threads=io_threads) as out:
+                for read in bam.fetch(until_eof=True):
+                    clear_chimera_mark(read)
+                    if is_precalled_chimera(read, chimeric):
+                        if mode == 'remove':
+                            continue
+                        mark_chimera(read)
+                    out.write(read)
+    finally:
+        if private_spool:
+            Path(spool_bam).unlink(missing_ok=True)
+    n_checked = len(checked) + anonymous_checked
+    n_chimeric = len(chimeric) + anonymous_chimeric
+    return dict(detected=bool(daf and mode != 'keep'), mode=mode if daf else 'n/a',
+                n_reads_checked=n_checked, n_chimeric=n_chimeric,
+                fraction=n_chimeric / n_checked if n_checked else None,
+                min_seg=min_seg if daf else None, purity=purity if daf else None,
+                n_records_affected=sum(counts[name] for name in chimeric) + anonymous_chimeric,
+                n_stale_marks_cleared=stale, full_run=True,
+                count_unit='unique read names before removal; unnamed records counted individually')

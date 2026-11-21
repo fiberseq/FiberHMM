@@ -8,11 +8,9 @@ import numpy as np
 import pysam
 
 from fiberhmm.inference.chimeras import (
-    DEFAULT_MIN_BASEQ as _CHIMERA_MIN_BASEQ,
-    DEFAULT_MIN_SEG as _CHIMERA_MIN_SEG,
-    DEFAULT_MIN_SPAN as _CHIMERA_MIN_SPAN,
-    DEFAULT_MULTI_SWITCH as _CHIMERA_MULTI_SWITCH,
-    DEFAULT_PURITY as _CHIMERA_PURITY,
+    STRICT_MIN_BASEQ as _CHIMERA_MIN_BASEQ,
+    STRICT_MIN_SPAN as _CHIMERA_MIN_SPAN,
+    STRICT_MULTI_SWITCH as _CHIMERA_MULTI_SWITCH,
 )
 from fiberhmm.core.bam_reader import (
     ContextEncoder,
@@ -972,10 +970,12 @@ def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None,
             if rest is not None:
                 payload['_daf_md_result'] = rest
 
-    if mode == 'daf' and _DAF_CHIMERA_CFG['filter']:
-        # The stub has no QUAL or alignment: decide on the live record.
-        from .chimeras import _is_chimeric
-        payload['_daf_chimera'] = bool(_is_chimeric(read, ref_fasta))
+    if (mode == 'daf' and _DAF_CHIMERA_CFG['filter']
+            and _DAF_CHIMERA_CFG['detector'] == 'strict'):
+        # The stub has no QUAL or alignment: the strict detector decides on
+        # the live record (the standard detector needs neither).
+        from .chimeras import _is_chimeric_strict
+        payload['_daf_chimera'] = bool(_is_chimeric_strict(read, ref_fasta))
 
     no_call_blocks = read_no_call_blocks(read, mode)
     if no_call_blocks:
@@ -1030,26 +1030,35 @@ def extract_fiber_read_from_payload(payload: dict, mode: str, prob_threshold: in
 # distinct sentinel (vs None) so workers can tally chimeras as their own skip
 # reason rather than folding them into "no_modifications".
 CHIMERA_SKIP = object()
-_DAF_CHIMERA_CFG = {'filter': True, 'min_seg': _CHIMERA_MIN_SEG,
-                    'purity': _CHIMERA_PURITY, 'min_baseq': _CHIMERA_MIN_BASEQ,
+# ``detector``: 'standard' (the 3.2.1 detector; min_seg/purity only) or
+# 'strict' (``--chimera-detector strict``; also min_baseq, min_span,
+# multi_switch and the chimera-only error mask, which standard ignores).
+_DAF_CHIMERA_CFG = {'filter': True, 'min_seg': 5, 'purity': 0.8,
+                    'detector': 'standard', 'min_baseq': _CHIMERA_MIN_BASEQ,
                     'min_span': _CHIMERA_MIN_SPAN,
                     'multi_switch': _CHIMERA_MULTI_SWITCH, 'error_mask': None}
 
 
 def configure_daf_chimera_filter(filter_chimeras: bool = True,
-                                 min_seg: int = _CHIMERA_MIN_SEG,
-                                 purity: float = _CHIMERA_PURITY,
+                                 min_seg: int = 5, purity: float = 0.8, *,
+                                 detector: str = 'standard',
                                  min_baseq: int = _CHIMERA_MIN_BASEQ,
                                  min_span: int = _CHIMERA_MIN_SPAN,
                                  multi_switch: bool = _CHIMERA_MULTI_SWITCH,
                                  error_mask=None) -> None:
     """Set the DAF chimera-filter policy for this process (worker init).
 
-    ``error_mask``: the chimera-only error-mask BED (or None).
+    ``detector`` 'standard' uses ``min_seg``/``purity`` only (the 3.2.1
+    detector); 'strict' also uses ``min_baseq``, ``min_span``,
+    ``multi_switch`` and ``error_mask`` (the chimera-only error-mask BED or
+    None).
     """
+    if detector not in ('standard', 'strict'):
+        raise ValueError(f'Invalid chimera detector: {detector}')
     _DAF_CHIMERA_CFG['filter'] = bool(filter_chimeras)
     _DAF_CHIMERA_CFG['min_seg'] = int(min_seg)
     _DAF_CHIMERA_CFG['purity'] = float(purity)
+    _DAF_CHIMERA_CFG['detector'] = detector
     _DAF_CHIMERA_CFG['min_baseq'] = int(min_baseq)
     _DAF_CHIMERA_CFG['min_span'] = int(min_span)
     _DAF_CHIMERA_CFG['multi_switch'] = bool(multi_switch)
@@ -1060,6 +1069,7 @@ def restore_daf_chimera_filter(config: dict) -> None:
     """Restore every setting of a saved ``dict(_DAF_CHIMERA_CFG)`` snapshot."""
     configure_daf_chimera_filter(
         config['filter'], config['min_seg'], config['purity'],
+        detector=config.get('detector', 'standard'),
         min_baseq=config['min_baseq'], min_span=config['min_span'],
         multi_switch=config['multi_switch'], error_mask=config['error_mask'])
 
@@ -1107,6 +1117,41 @@ def _daf_raw_mismatch_lists(read, ref_fasta=None):
 def _is_iupac_daf_chimera(read, query_sequence: str, excluded_query_positions,
                           ref_fasta=None, *, min_seg=None, purity=None) -> bool:
     """Strand-swap chimera test for an R/Y-encoded DAF read.
+
+    CT events are Y bases plus any raw C->T mismatches; GA events are R bases
+    plus raw G->A mismatches (from MD/reference, when available). SNP-masked
+    positions are removed from both, matching the MD path. The strict
+    detector has its own test (:func:`_is_iupac_daf_chimera_strict`).
+    """
+    if _DAF_CHIMERA_CFG['detector'] == 'strict':
+        return _is_iupac_daf_chimera_strict(
+            read, query_sequence, excluded_query_positions, ref_fasta,
+            min_seg=min_seg, purity=purity)
+    from fiberhmm.daf.encoder import is_daf_chimera
+    min_seg = _DAF_CHIMERA_CFG['min_seg'] if min_seg is None else min_seg
+    purity = _DAF_CHIMERA_CFG['purity'] if purity is None else purity
+    seq_arr = np.frombuffer(query_sequence.upper().encode('ascii'), dtype=np.uint8)
+    ct = set(np.flatnonzero(seq_arr == ord('Y')).tolist())
+    ga = set(np.flatnonzero(seq_arr == ord('R')).tolist())
+    if max(len(ct), len(ga)) < min_seg:
+        return False
+    rest = getattr(read, '_daf_md_result', None)
+    if rest is None:
+        rest = _daf_raw_mismatch_lists(read, ref_fasta)
+    if rest is not None:
+        ct.update(rest[0])
+        ga.update(rest[1])
+    if excluded_query_positions:
+        ct.difference_update(excluded_query_positions)
+        ga.difference_update(excluded_query_positions)
+    return is_daf_chimera(sorted(ct), sorted(ga),
+                          min_seg_events=min_seg,
+                          purity=purity)
+
+
+def _is_iupac_daf_chimera_strict(read, query_sequence: str, excluded_query_positions,
+                          ref_fasta=None, *, min_seg=None, purity=None) -> bool:
+    """Strict-detector strand-swap chimera test for an R/Y-encoded DAF read.
 
     CT events are Y bases plus any raw C->T mismatches; GA events are R bases
     plus raw G->A mismatches (from MD/reference, when available). SNP-masked
@@ -1232,9 +1277,16 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
             # segment and GA in another corrupts the single-strand assignment.
             # Drop it (returns a distinct sentinel so callers can report counts).
             if filter_chimeras:
-                from .chimeras import engine_chimera_hit
-                if engine_chimera_hit(read, ct_pos, ga_pos):
-                    return CHIMERA_SKIP
+                if _DAF_CHIMERA_CFG['detector'] == 'strict':
+                    from .chimeras import engine_chimera_hit
+                    if engine_chimera_hit(read, ct_pos, ga_pos):
+                        return CHIMERA_SKIP
+                else:
+                    from fiberhmm.daf.encoder import is_daf_chimera
+                    if is_daf_chimera(ct_pos, ga_pos,
+                                      min_seg_events=_DAF_CHIMERA_CFG['min_seg'],
+                                      purity=_DAF_CHIMERA_CFG['purity']):
+                        return CHIMERA_SKIP
             mod_positions = set(ct_pos) if strand_tag == 'CT' else set(ga_pos)
             # SNP-masked sites are already out of the mismatch lists (they
             # were excluded by reference position); the same set, plus the

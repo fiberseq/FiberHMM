@@ -1,9 +1,11 @@
-"""The 3.0.4 DAF strand-swap detector: base quality, span, several switches,
-the chimera-only error mask, duplicates and provenance.
+"""The strict (opt-in, ``--chimera-detector strict``) DAF strand-swap
+detector: base quality, span, several switches, the chimera-only error mask,
+duplicates and provenance.
 
 All data are synthetic: a random reference and reads whose C->T / G->A
 conversions and base qualities are placed by the test.
 """
+import functools
 import json
 import random
 import subprocess
@@ -12,11 +14,14 @@ import sys
 import pysam
 import pytest
 
-from fiberhmm.daf.encoder import daf_chimera_segments, is_daf_chimera
+from fiberhmm.daf.encoder import daf_chimera_segments, is_daf_chimera_strict
 from fiberhmm.inference.chimeras import (
-    DEFAULT_MIN_BASEQ, DEFAULT_MIN_SPAN, ERROR_MASK_MAX_PVALUE, ERROR_MASK_MIN_DEPTH,
-    detector_config, filter_chimera_events, prepare_chimeras,
+    STRICT_MIN_BASEQ, STRICT_MIN_SPAN, ERROR_MASK_MAX_PVALUE, ERROR_MASK_MIN_DEPTH,
+    detector_config, filter_chimera_events, prepare_chimeras, STRICT_MIN_SEG, STRICT_PURITY,
 )
+
+# The strict detector is opt-in (--chimera-detector strict).
+strict_prepare = functools.partial(prepare_chimeras, detector='strict')
 
 CONTIG = 'chrS'
 REF_LEN = 12_000
@@ -27,7 +32,7 @@ LENGTH = 5000
 @pytest.fixture(autouse=True)
 def extraction_policy():
     from fiberhmm.inference import engine
-    engine.configure_daf_chimera_filter()
+    engine.configure_daf_chimera_filter(True, STRICT_MIN_SEG, STRICT_PURITY, detector='strict')
     engine.configure_daf_snp_mask(None)
     engine.configure_daf_insert_evidence(None)
     yield
@@ -138,9 +143,9 @@ def test_low_quality_events_do_not_make_a_chimera(tmp_path):
     make = ct_with_ga_tail(TAIL)
     bam = write_bam(tmp_path / 'q.bam', [make('lowq', low_q=set(TAIL)),
                                          make('highq', seed=1)])
-    stats = prepare_chimeras(bam, mode='flag')
+    stats = strict_prepare(bam, mode='flag')
     assert (stats['n_reads_checked'], stats['n_chimeric']) == (2, 1)
-    off = prepare_chimeras(bam, mode='flag', min_baseq=0)
+    off = strict_prepare(bam, mode='flag', min_baseq=0)
     assert off['n_chimeric'] == 2 and off['min_baseq'] == 0
 
 
@@ -149,8 +154,8 @@ def test_base_quality_filter_on_the_iupac_path(tmp_path):
     bam = write_bam(tmp_path / 'ry.bam', [make('lowq', low_q=set(TAIL)),
                                           make('highq', seed=1)])
     assert 'Y' in records(bam)[0].query_sequence
-    assert prepare_chimeras(bam, mode='flag')['n_chimeric'] == 1
-    assert prepare_chimeras(bam, mode='flag', min_baseq=0)['n_chimeric'] == 2
+    assert strict_prepare(bam, mode='flag')['n_chimeric'] == 1
+    assert strict_prepare(bam, mode='flag', min_baseq=0)['n_chimeric'] == 2
 
 
 @pytest.mark.parametrize('iupac', [False, True])
@@ -158,13 +163,13 @@ def test_engine_filter_applies_base_quality(iupac):
     from fiberhmm.inference import engine
     make = ct_with_ga_tail(TAIL, iupac=iupac)
     low, high = make('lowq', low_q=set(TAIL)), make('highq', seed=1)
-    engine.configure_daf_chimera_filter(True)
+    engine.configure_daf_chimera_filter(True, STRICT_MIN_SEG, STRICT_PURITY, detector='strict')
     assert engine._extract_fiber_read_from_pysam(high, 'daf', 128) is engine.CHIMERA_SKIP
     assert engine._extract_fiber_read_from_pysam(low, 'daf', 128) is not engine.CHIMERA_SKIP
-    engine.configure_daf_chimera_filter(True, min_baseq=0)
+    engine.configure_daf_chimera_filter(True, STRICT_MIN_SEG, STRICT_PURITY, detector='strict', min_baseq=0)
     assert engine._extract_fiber_read_from_pysam(low, 'daf', 128) is engine.CHIMERA_SKIP
     # A slim worker payload carries the live record's decision.
-    engine.configure_daf_chimera_filter(True)
+    engine.configure_daf_chimera_filter(True, STRICT_MIN_SEG, STRICT_PURITY, detector='strict')
     for read, expected in ((low, False), (high, True)):
         payload = engine.make_apply_payload(read, 'daf')
         assert payload['_daf_chimera'] is expected
@@ -186,8 +191,8 @@ def test_split_breakpoint_ignores_low_quality_events(tmp_path):
     stray = sites('G', START + 3900, START + 4000)[-1]
     make = ct_with_ga_tail(TAIL)
     bam = write_bam(tmp_path / 's.bam', [make('r', low_q={stray}, force={stray})])
-    for min_baseq, first in ((DEFAULT_MIN_BASEQ, TAIL[0]), (0, None)):
-        stats = prepare_chimeras(bam, mode='split', min_baseq=min_baseq,
+    for min_baseq, first in ((STRICT_MIN_BASEQ, TAIL[0]), (0, None)):
+        stats = strict_prepare(bam, mode='split', min_baseq=min_baseq,
                                  spool_bam=str(tmp_path / f'sp{min_baseq}.bam'))
         assert stats['split']['n_records_split'] == 1
         pieces = records(tmp_path / f'sp{min_baseq}.bam')
@@ -203,13 +208,13 @@ def test_split_breakpoint_ignores_low_quality_events(tmp_path):
 def test_minimum_span():
     ct = list(range(0, 3000, 25))
     dense = [3100 + 4 * i for i in range(12)]         # 12 GA events in 44 bp
-    assert is_daf_chimera(ct, dense, 10, 0.9)
-    assert not is_daf_chimera(ct, dense, 10, 0.9, min_span=DEFAULT_MIN_SPAN)
+    assert is_daf_chimera_strict(ct, dense, 10, 0.9)
+    assert not is_daf_chimera_strict(ct, dense, 10, 0.9, min_span=STRICT_MIN_SPAN)
     spread = [3100 + 25 * i for i in range(12)]       # 275 bp
-    assert is_daf_chimera(ct, spread, 10, 0.9, min_span=DEFAULT_MIN_SPAN)
+    assert is_daf_chimera_strict(ct, spread, 10, 0.9, min_span=STRICT_MIN_SPAN)
     # The span is measured on the dominant events of each segment.
     short_ct = list(range(0, 150, 10))
-    assert not is_daf_chimera(short_ct, spread, 10, 0.9, min_span=DEFAULT_MIN_SPAN)
+    assert not is_daf_chimera_strict(short_ct, spread, 10, 0.9, min_span=STRICT_MIN_SPAN)
 
 
 # --- several switches -------------------------------------------------------
@@ -217,14 +222,14 @@ def test_minimum_span():
 def test_multi_switch_detection_and_segments():
     ct = list(range(0, 1000, 10)) + list(range(2000, 3000, 10))
     island = list(range(1100, 1900, 20))
-    assert not is_daf_chimera(ct, island, 10, 0.9)
-    assert is_daf_chimera(ct, island, 10, 0.9, multi_switch=True,
-                          min_span=DEFAULT_MIN_SPAN)
+    assert not is_daf_chimera_strict(ct, island, 10, 0.9)
+    assert is_daf_chimera_strict(ct, island, 10, 0.9, multi_switch=True,
+                          min_span=STRICT_MIN_SPAN)
     seg = daf_chimera_segments(ct, island, 10, 0.9, multi_switch=True)
     assert seg == {'pieces': [(None, 990), (1100, 1880), (2000, None)],
                    'strands': ['CT', 'GA', 'CT']}
     # A small island is not a segment.
-    assert not is_daf_chimera(ct, island[:5], 10, 0.9, multi_switch=True)
+    assert not is_daf_chimera_strict(ct, island[:5], 10, 0.9, multi_switch=True)
     # Four segments: every piece is found.
     ga = island + list(range(3100, 4000, 10))
     seg = daf_chimera_segments(ct, ga, 10, 0.9, multi_switch=True)
@@ -242,10 +247,10 @@ def _island_read(name='island', **kw):
 
 def test_multi_switch_flag_and_recursive_split(tmp_path):
     bam = write_bam(tmp_path / 'i.bam', [_island_read()])
-    assert prepare_chimeras(bam, mode='flag')['n_chimeric'] == 1
-    assert prepare_chimeras(bam, mode='flag', multi_switch=False)['n_chimeric'] == 0
+    assert strict_prepare(bam, mode='flag')['n_chimeric'] == 1
+    assert strict_prepare(bam, mode='flag', multi_switch=False)['n_chimeric'] == 0
     spool = tmp_path / 'spool.bam'
-    stats = prepare_chimeras(bam, mode='split', spool_bam=str(spool))
+    stats = strict_prepare(bam, mode='split', spool_bam=str(spool))
     split = stats['split']
     assert (split['n_records_split'], split['n_pieces_written']) == (1, 3)
     assert split['n_records_several_switches'] == 1
@@ -261,7 +266,7 @@ def test_multi_switch_flag_and_recursive_split(tmp_path):
     assert g0s <= START + 2000 <= g0e and g1s <= START + 3000 <= g1e
     for piece in pieces:
         ct, ga = filter_chimera_events(piece, *_events(piece), detector_config())
-        assert not is_daf_chimera(ct, ga, 10, 0.9, multi_switch=True)
+        assert not is_daf_chimera_strict(ct, ga, 10, 0.9, multi_switch=True)
         assert (len(ga) > len(ct)) == (piece.get_tag('xi') == 1)
 
 
@@ -280,7 +285,7 @@ def test_duplicates_are_marked_but_not_counted(tmp_path):
     reads += [make(f'dup{i}', seed=20 + i, flag=0x400) for i in range(3)]
     bam = write_bam(tmp_path / 'd.bam', reads)
     out = tmp_path / 'out.bam'
-    stats = prepare_chimeras(bam, str(out), mode='flag')
+    stats = strict_prepare(bam, str(out), mode='flag')
     assert (stats['n_reads_checked'], stats['n_chimeric']) == (8, 2)
     assert stats['n_duplicates_excluded'] == 3
     assert stats['fraction'] == pytest.approx(2 / 8)
@@ -297,9 +302,13 @@ def test_sample_qc_leaves_duplicates_out():
     reads += [make('chim', seed=10), make('dup', seed=11, flag=0x400)]
     for read in reads[-2:]:
         mark_chimera(read)
-    chim = analyze_sample(reads, 'daf', None)[0]['chimeras']
+    chim = analyze_sample(reads, 'daf', None, strict_chimeras=True)[0]['chimeras']
     assert (chim['n_reads_checked'], chim['n_chimeric']) == (5, 1)
     assert chim['n_duplicates_excluded'] == 1
+    # A standard-detector BAM is sampled as in 3.2.1: duplicates count.
+    standard = analyze_sample(reads, 'daf', None)[0]['chimeras']
+    assert (standard['n_reads_checked'], standard['n_chimeric']) == (6, 2)
+    assert 'n_duplicates_excluded' not in standard and 'note' not in standard
 
 
 # --- chimera error mask -------------------------------------------------------
@@ -389,8 +398,8 @@ def test_error_mask_removes_events_from_the_chimera_test_only(tmp_path):
     bam = write_bam(tmp_path / 'm.bam', [make('r')])
     bed = tmp_path / 'mask.bed'
     bed.write_text(''.join(f'{CONTIG}\t{s}\t{s + 1}\tG>A\n' for s in TAIL))
-    assert prepare_chimeras(bam, mode='flag')['n_chimeric'] == 1
-    stats = prepare_chimeras(bam, mode='flag', error_mask=str(bed))
+    assert strict_prepare(bam, mode='flag')['n_chimeric'] == 1
+    stats = strict_prepare(bam, mode='flag', error_mask=str(bed))
     assert stats['n_chimeric'] == 0
     assert stats['error_mask']['applied'] and stats['error_mask']['n_sites'] == len(TAIL)
     # Calling's own mask is untouched: the GA events are still evidence.
@@ -406,7 +415,8 @@ def test_error_mask_removes_events_from_the_chimera_test_only(tmp_path):
 def _call(source, target, *extra):
     command = [sys.executable, '-m', 'fiberhmm.cli.call', '-i', str(source),
                '-o', str(target), '--enzyme', 'dddb', '-c', '1', '--io-threads', '1',
-               '--no-dedup', '--daf-insert-consensus', 'off', '--no-qc', *extra]
+               '--no-dedup', '--daf-insert-consensus', 'off', '--no-qc',
+               '--chimera-detector', 'strict', *extra]
     run = subprocess.run(command, capture_output=True, text=True, timeout=600)
     assert run.returncode == 0, run.stderr
     return run
@@ -481,11 +491,12 @@ def _call_header(ds):
     return pysam.AlignmentHeader.from_dict({
         'HD': {'VN': '1.6', 'SO': 'coordinate'},
         'SQ': [{'SN': CONTIG, 'LN': REF_LEN}],
-        'PG': [{'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call', 'VN': '3.0.4',
+        'PG': [{'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call', 'VN': '3.3.0',
                 'DS': ds}]})
 
 
 _DS_DEFAULT = ('mode=daf enzyme=dddb chimera_filter=on chimeras=flag chimera_min_seg=10 '
+               'chimera_detector=strict '
                'chimera_purity=0.9 chimera_min_baseq=15 chimera_min_span=200 '
                'chimera_multi_switch=on chimera_error_mask={mask} '
                'daf_run_mask=off')
@@ -575,13 +586,16 @@ def test_standalone_state_qc_restores_the_calls_detector_settings(tmp_path):
     states = _qc(bam, tmp_path, 'q0')['state_rates']
     assert states['definition']['chimera_detector']['min_baseq'] == 0
     assert states['reads']['reads_chimera_skipped'] == 1
-    # A 3.0.3 call (no 3.0.4 settings in DS) is restored as the 3.0.3 detector.
-    legacy = ('mode=daf enzyme=dddb chimera_filter=on chimeras=flag chimera_min_seg=5 '
-              'chimera_purity=0.8 daf_run_mask=off')
-    bam = _write_with_header(tmp_path / 'old.bam', reads, _call_header(legacy))
-    detector = _qc(bam, tmp_path, 'old')['state_rates']['definition']['chimera_detector']
-    assert detector == {'filter': True, 'min_seg': 5, 'purity': 0.8, 'min_baseq': 0,
-                        'min_span': 0, 'multi_switch': False, 'error_mask': None}
+    # A standard-detector call (no chimera_detector=strict in DS) keeps the
+    # process settings and is reported as in 3.2.1: no detector restored,
+    # no grade, no note.
+    standard = ('mode=daf enzyme=dddb chimera_filter=on chimeras=flag chimera_min_seg=5 '
+                'chimera_purity=0.8 daf_run_mask=off')
+    bam = _write_with_header(tmp_path / 'old.bam', reads, _call_header(standard))
+    result = _qc(bam, tmp_path, 'old')
+    assert 'chimera_detector' not in result['state_rates']['definition']
+    assert 'grade' not in result['chimeras'] and 'note' not in result['chimeras']
+    assert not (tmp_path / 'out' / 'old.qc.chimera_regions.tsv').exists()
 
 
 @pytest.mark.parametrize('valid', [True, False])
@@ -596,7 +610,7 @@ def test_standalone_state_qc_finds_a_custom_prefix_mask_via_the_sidecar(tmp_path
     bed = tmp_path / 'custom' / 'screen.chimera_error_mask.bed'
     bed.parent.mkdir()
     bed.write_text(''.join(f'{CONTIG}\t{s}\t{s + 1}\tG>A\n' for s in TAIL))
-    stats = prepare_chimeras(bam, mode='flag', error_mask=str(bed))
+    stats = strict_prepare(bam, mode='flag', error_mask=str(bed))
     assert stats['error_mask']['bed'] == str(bed) and stats['n_chimeric'] == 0
     (tmp_path / 'qc').mkdir()
     (tmp_path / 'qc' / 'calls.chimeras.json').write_text(json.dumps({
@@ -611,3 +625,246 @@ def test_standalone_state_qc_finds_a_custom_prefix_mask_via_the_sidecar(tmp_path
     else:
         assert states['definition']['chimera_error_mask'] == 'unavailable'
         assert states['reads']['reads_chimera_skipped'] == 1
+
+
+# --- the option: standard by default, strict opt-in ---------------------------
+
+def _flags_fixture(path):
+    from test_chimera_flags import fixture_bam
+    return fixture_bam(path)
+
+
+def _call_args(monkeypatch, *argv):
+    from fiberhmm.cli import call
+    monkeypatch.setattr(sys, 'argv', ['fiberhmm-call', '-i', 'in.bam', '-o', 'out.bam',
+                                      '--enzyme', 'dddb', *argv])
+    return call.parse_args()
+
+
+def test_standard_is_the_default_and_strict_fills_its_defaults(monkeypatch):
+    args = _call_args(monkeypatch)
+    assert args.chimera_detector == 'standard'
+    assert (args.chimera_min_seg, args.chimera_purity) == (5, 0.8)
+    assert args.chimera_min_baseq is None and args.chimera_error_mask is None
+    args = _call_args(monkeypatch, '--chimera-detector', 'strict')
+    assert (args.chimera_min_seg, args.chimera_purity, args.chimera_min_baseq,
+            args.chimera_min_span, args.chimera_multi_switch,
+            args.chimera_error_mask) == (10, 0.9, 15, 200, True, True)
+    args = _call_args(monkeypatch, '--chimera-detector', 'strict', '--chimera-min-seg', '7',
+                      '--no-chimera-error-mask')
+    assert args.chimera_min_seg == 7 and args.chimera_error_mask is False
+
+
+@pytest.mark.parametrize('argv', [
+    ('--chimera-min-baseq', '20'), ('--chimera-min-span', '0'),
+    ('--chimera-multi-switch',), ('--no-chimera-error-mask',),
+    ('--chimeras', 'split'),
+])
+def test_strict_only_options_need_the_strict_detector(monkeypatch, capsys, argv):
+    with pytest.raises(SystemExit):
+        _call_args(monkeypatch, *argv)
+    assert '--chimera-detector strict' in capsys.readouterr().err
+
+
+def test_prepare_chimeras_standard_refuses_strict_options(tmp_path):
+    source = str(_flags_fixture(tmp_path / 'source.bam'))
+    with pytest.raises(ValueError, match='strict chimera detector only'):
+        prepare_chimeras(source, min_baseq=15)
+    with pytest.raises(ValueError, match='requires the strict detector'):
+        prepare_chimeras(source, mode='split', spool_bam=str(tmp_path / 's.bam'))
+    stats = prepare_chimeras(source)
+    assert (stats['min_seg'], stats['purity']) == (5, 0.8)
+    assert 'detector' not in stats and 'grade' not in stats
+    strict = strict_prepare(source, min_span=0, min_baseq=0)
+    assert strict['detector'] == 'strict' and strict['min_seg'] == 10
+
+
+def test_standard_and_strict_detectors_differ_on_a_short_swap():
+    """The standard single-switch test (5 / 0.8) calls a swap of five events
+    per segment; the strict defaults (10 / 0.9, 200 bp span) do not."""
+    from fiberhmm.daf.encoder import is_daf_chimera
+    ct = [10, 20, 30, 40, 50]
+    ga = [200, 210, 220, 230, 240]
+    assert is_daf_chimera(ct, ga)
+    assert not is_daf_chimera_strict(ct, ga, min_span=STRICT_MIN_SPAN, multi_switch=True)
+    assert is_daf_chimera_strict(ct, ga, 5, 0.8)
+
+
+@pytest.mark.parametrize('reverse', [False, True])
+def test_strict_balanced_raw_chimera(tmp_path, reverse):
+    """A 20-bp balanced raw chimera: the strict detector with its minimum
+    span off (the read is shorter than 200 bp) tests the strand logic."""
+    from fiberhmm.daf.encoder import get_daf_positions
+    from fiberhmm.inference.chimeras import _is_chimeric_strict
+    from test_chimera_flags import fixture_bam, records as records303
+    read = records303(fixture_bam(tmp_path / 'source.bam'))[-1]
+    read.query_sequence = 'T' * 10 + 'A' * 10
+    read.cigarstring = '20M'
+    read.flag = 16 if reverse else 0
+    read.set_tag('MD', '0' + 'C0' * 10 + 'G0' * 10)
+    ct, ga, _ = get_daf_positions(read, force_strand='CT')
+    assert is_daf_chimera_strict(ct, ga, 10, 0.9)
+    assert _is_chimeric_strict(read, None, detector_config(min_span=0))
+    source, target = tmp_path / 'raw.bam', tmp_path / 'out.bam'
+    with pysam.AlignmentFile(source, 'wb', header=read.header) as out:
+        out.write(read)
+    stats = strict_prepare(str(source), str(target), min_span=0)
+    assert stats['n_chimeric'] == 1
+    assert records303(target)[0].is_qcfail
+    strict_prepare(str(source), str(target), mode='remove', min_span=0)
+    assert records303(target) == []
+
+
+def test_standard_ds_has_no_strict_fields_and_strict_records_itself(tmp_path, monkeypatch):
+    from fiberhmm.cli import call
+    source = _flags_fixture(tmp_path / 'source.bam')
+    seen = {}
+
+    def stop(**kwargs):
+        seen.update(kwargs)
+        raise SystemExit(7)
+    monkeypatch.setattr(call, '_process_bam_streaming_pipeline_fused', stop)
+    base = ['fiberhmm-call', '-i', str(source), '-o', str(tmp_path / 'calls.bam'),
+            '--enzyme', 'dddb', '--seq', 'nanopore', '-c', '1', '--io-threads', '1',
+            '--no-qc', '--no-dedup', '--no-daf-call-snps', '--daf-insert-consensus', 'off']
+    from fiberhmm.inference import engine
+    try:
+        for extra in ([], ['--chimera-detector', 'strict']):
+            seen.clear()
+            monkeypatch.setattr(sys, 'argv', base + extra)
+            with pytest.raises(SystemExit):
+                call._main(call.parse_args())
+            ds = seen['pg_record']['DS']
+            if extra:
+                assert 'chimera_detector=strict' in ds and 'chimera_min_baseq=15' in ds
+                assert seen['chimera_detector'] == 'strict'
+            else:
+                assert 'chimera_detector' not in ds and 'chimera_min_baseq' not in ds
+                assert 'chimera_detector' not in seen and 'chimera_min_baseq' not in seen
+    finally:
+        engine.configure_daf_chimera_filter()
+
+
+# --- every strict setting reaches the workers and is restored -----------------
+
+def test_in_process_call_restores_every_detector_setting(tmp_path, monkeypatch):
+    from fiberhmm.cli import call
+    from fiberhmm.inference import engine
+    source = _flags_fixture(tmp_path / 'source.bam')
+    mask = tmp_path / 'prior_mask.bed'
+    mask.write_text('chr1\t10\t11\tG>A\n')
+    engine.configure_daf_chimera_filter(True, 7, 0.85, detector='strict', min_baseq=30,
+                                        min_span=0, multi_switch=False,
+                                        error_mask=str(mask))
+    policy = dict(engine._DAF_CHIMERA_CFG)
+    try:
+        monkeypatch.setattr(call, '_process_bam_streaming_pipeline_fused',
+                            lambda **kwargs: (0, 0))
+        for extra in ([], ['--chimera-detector', 'strict']):
+            monkeypatch.setattr(sys, 'argv', [
+                'fiberhmm-call', '-i', str(source), '-o', str(tmp_path / 'calls.bam'),
+                '--enzyme', 'dddb', '--seq', 'nanopore', '-c', '1', '--io-threads', '1',
+                '--no-qc', '--no-dedup', '--no-daf-call-snps',
+                '--daf-insert-consensus', 'off', *extra])
+            call._main(call.parse_args())
+            assert engine._DAF_CHIMERA_CFG == policy
+    finally:
+        engine.configure_daf_chimera_filter()
+
+
+_NON_DEFAULT_DETECTOR = dict(min_seg=7, purity=0.85, min_baseq=30, min_span=0,
+                             multi_switch=False)
+
+
+@pytest.mark.parametrize('kind', ['streaming', 'region', 'fused_region'])
+def test_worker_init_sees_every_detector_setting(tmp_path, kind):
+    from fiberhmm.inference import engine, region_workers, streaming_workers
+    from fiberhmm.models import get_model_path
+    mask = tmp_path / 'mask.bed'
+    mask.write_text('chr1\t10\t11\tG>A\n')
+    model = get_model_path('dddb', tool='apply')
+    d = _NON_DEFAULT_DETECTOR
+    params = {'filter_chimeras': True, 'chimera_detector': 'strict',
+              'chimera_min_seg': d['min_seg'],
+              'chimera_purity': d['purity'], 'chimera_min_baseq': d['min_baseq'],
+              'chimera_min_span': d['min_span'],
+              'chimera_multi_switch': d['multi_switch'],
+              'chimera_error_mask_path': str(mask)}
+    try:
+        if kind == 'streaming':
+            streaming_workers._init_fused_worker(
+                model, None, filter_chimeras=True, chimera_min_seg=d['min_seg'],
+                chimera_purity=d['purity'], chimera_min_baseq=d['min_baseq'],
+                chimera_min_span=d['min_span'], chimera_multi_switch=d['multi_switch'],
+                chimera_error_mask_path=str(mask), chimera_detector='strict')
+        elif kind == 'region':
+            region_workers._init_region_worker(model, params)
+        else:
+            region_workers._init_fused_region_worker(model, None, 1.0, params)
+        assert engine._DAF_CHIMERA_CFG == {'filter': True, 'detector': 'strict', **d,
+                                           'error_mask': str(mask)}
+    finally:
+        engine.configure_daf_chimera_filter()
+
+
+@pytest.mark.parametrize('region_parallel', [False, True])
+def test_call_passes_every_detector_setting_to_its_workers(tmp_path, monkeypatch,
+                                                           region_parallel):
+    from fiberhmm.cli import call
+    from fiberhmm.inference import region_pipeline, streaming_pipeline
+    source = _flags_fixture(tmp_path / 'source.bam')
+    seen = {}
+
+    class Stop(Exception):
+        pass
+
+    def executor(*args, initializer=None, initargs=(), **kwargs):
+        seen['initializer'], seen['initargs'] = initializer, initargs
+        raise Stop
+    monkeypatch.setattr(streaming_pipeline, 'ProcessPoolExecutor', executor)
+    monkeypatch.setattr(region_pipeline, 'ProcessPoolExecutor', executor)
+    monkeypatch.setattr(sys, 'argv', [
+        'fiberhmm-call', '-i', str(source), '-o', str(tmp_path / 'calls.bam'),
+        '--enzyme', 'dddb', '--seq', 'nanopore', '-c', '1', '--io-threads', '1',
+        '--no-qc', '--no-dedup', '--no-daf-call-snps', '--daf-insert-consensus', 'off',
+        '--chimera-detector', 'strict',
+        '--chimera-min-seg', '7', '--chimera-purity', '0.85',
+        '--chimera-min-baseq', '30', '--chimera-min-span', '0',
+        '--no-chimera-multi-switch', *(['--region-parallel'] if region_parallel else [])])
+    try:
+        with pytest.raises(Stop):
+            call._main(call.parse_args())
+    finally:
+        from fiberhmm.inference import engine
+        engine.configure_daf_chimera_filter()
+    d = _NON_DEFAULT_DETECTOR
+    if region_parallel:
+        initargs = seen['initargs']
+        params = next(a for a in initargs if isinstance(a, dict))
+        got = {k: params[f'chimera_{k}'] for k in d}
+        assert 'chimera_error_mask_path' in params
+        assert params['chimera_detector'] == 'strict'
+    else:
+        import inspect
+        bound = inspect.signature(seen['initializer']).bind(*seen['initargs']).arguments
+        got = {k: bound[f'chimera_{k}'] for k in d}
+        assert 'chimera_error_mask_path' in bound
+        assert bound['chimera_detector'] == 'strict'
+    assert got == d
+
+
+def test_export_posteriors_output_cannot_be_the_chimera_error_mask(tmp_path, monkeypatch,
+                                                                  capsys):
+    from test_export_posteriors_robustness import _bam, _run_cli
+    bam = _bam(tmp_path / "in.bam", [(0, 1_000)])
+    mask = tmp_path / "calls.daf_snps.chimera_error_mask.bed"
+    mask.write_text("chr1\t10\t11\tG>A\n")
+    code = _run_cli(monkeypatch, "-i", bam, "--enzyme", "hia5", "--seq", "pacbio",
+                    "--chimera-detector", "strict",
+                    "--chimera-error-mask", mask, "-o", mask, "--format", "tsv")
+    assert code == 2 and "same file as --chimera-error-mask" in capsys.readouterr().err
+    assert mask.read_text() == "chr1\t10\t11\tG>A\n"
+    code = _run_cli(monkeypatch, "-i", bam, "--enzyme", "hia5", "--seq", "pacbio",
+                    "--chimera-error-mask", mask, "-o", tmp_path / "x.tsv",
+                    "--format", "tsv")
+    assert code == 2 and "need --chimera-detector strict" in capsys.readouterr().err

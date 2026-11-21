@@ -477,12 +477,15 @@ def compute_state_rates(
     light call), ``tags`` (calls only) or ``light-call`` (always re-call).
     ``use_m5c``/``cpg_mask_policy`` resolve as in ``fiberhmm-call`` (on for
     DddA): the light call's HMM sees the same first-pass CpG mask.
-    ``chimera_detector`` (DAF): the strand-swap detector settings of the call
-    that wrote the BAM (keys of ``engine._DAF_CHIMERA_CFG``; ``error_mask``
-    is the chimera error-mask BED or None), applied during extraction only;
-    None keeps the process-wide settings. Chimeras are counted as unique
-    read names (unnamed records individually); duplicate-flagged names are
-    left out, as in :func:`fiberhmm.qc.core.analyze_sample`.
+    ``chimera_detector`` (DAF, strict-detector calls only): the strand-swap
+    detector settings of the call that wrote the BAM (keys of
+    ``engine._DAF_CHIMERA_CFG``; ``error_mask`` is the chimera error-mask
+    BED or None), applied during extraction only. Chimeras are then counted
+    as unique read names (unnamed records individually) with
+    duplicate-flagged names left out, as in
+    :func:`fiberhmm.qc.core.analyze_sample`. None (standard detector) keeps
+    the process-wide settings and counts chimera-skipped records (as in
+    3.2.1).
     Returns ``(report block, per-read arrays)``.
     """
     if terminal_policy not in TERMINAL_POLICIES:
@@ -517,6 +520,9 @@ def compute_state_rates(
     frames = tag_frames(header) if header is not None else {
         "MA": "seq", "legacy": None, "legacy_reason": "no header"}
     from fiberhmm.inference.chimeras import is_marked_chimera
+    strict = mode == 'daf' and chimera_detector is not None
+    marked_chimeras = (sum(is_marked_chimera(read) for read in reads)
+                       if mode == 'daf' and not strict else 0)
 
     def read_key(read, index):
         name = getattr(read, "query_name", None)
@@ -572,10 +578,8 @@ def compute_state_rates(
     block["definition"]["daf_run_mask"] = (
         (f">={run_mask[0]}/{run_mask[1]}" if run_mask[0] else "off")
         if mode == "daf" else None)
-    if mode == "daf":
-        block["definition"]["chimera_detector"] = (
-            dict(chimera_detector) if chimera_detector is not None
-            else "process settings (no fiberhmm-call @PG)")
+    if strict:
+        block["definition"]["chimera_detector"] = dict(chimera_detector)
 
     totals = dict(msp_events=0, msp_opps=0, out_events=0, out_opps=0,
                   msp_bp=0, total_bp=0, excluded_opps=0, all_events=0, all_opps=0)
@@ -584,7 +588,7 @@ def compute_state_rates(
     per_read_ratio_inputs: list[tuple] = []
     msp_fraction_per_read: list[float] = []
     counts = dict(reads_considered=0, reads_without_signal=0, reads_without_calls=0,
-                  reads_chimera_skipped=0, reads_mm_unreliable=0,
+                  reads_chimera_skipped=marked_chimeras, reads_mm_unreliable=0,
                   reads_single_segment=0, reads_used=0)
     light = {"reads_called": 0, "budget_reads": int(light_call_reads),
              "budget_seconds": float(light_call_seconds), "stopped_by": None,
@@ -602,7 +606,7 @@ def compute_state_rates(
         # drops masked events before the chimera filter, as calling does, and
         # the masked sites are also removed as opportunities below.
         stack.enter_context(engine.daf_snp_mask_scope(snp_mask or {}))
-        if mode == "daf" and chimera_detector is not None:
+        if strict:
             # The call's own detector (incl. its chimera error mask), so a
             # read the call kept is not re-detected under other settings.
             stack.enter_context(engine.daf_chimera_filter_scope(**chimera_detector))
@@ -626,7 +630,10 @@ def compute_state_rates(
             fiber_read = engine._extract_fiber_read_from_pysam(
                 read, mode, prob_threshold, reference_handle)
             if fiber_read is engine.CHIMERA_SKIP:
-                chimera_keys.add(key)
+                if strict:
+                    chimera_keys.add(key)
+                else:
+                    counts["reads_chimera_skipped"] += 1
                 continue
             if fiber_read is None:
                 counts["reads_without_signal"] += 1
@@ -686,7 +693,8 @@ def compute_state_rates(
             per_read_ratio_inputs.append((m_events, m_opps, o_events, o_opps))
     if caller is not None:
         light["elapsed_seconds"] = round(float(clock() - started), 3)
-    counts["reads_chimera_skipped"] = len(chimera_keys - duplicate_keys)
+    if strict:
+        counts["reads_chimera_skipped"] = len(chimera_keys - duplicate_keys)
 
     msp_rate = _rate(totals["msp_events"], totals["msp_opps"])
     out_rate = _rate(totals["out_events"], totals["out_opps"])

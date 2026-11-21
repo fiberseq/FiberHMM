@@ -70,17 +70,12 @@ def _chimera_read(ref, n_ct=8, n_ga=7):
     return _segment(q, [("MD", _md(ref, q), "Z")]), c_sites, g_sites
 
 
-# The 3.0.3 detector (no base-quality or span limit, one switch): these
-# short reads test the extraction paths, not the 3.0.4 thresholds.
-LEGACY_DETECTOR = dict(min_baseq=0, min_span=0, multi_switch=False)
-
-
 @pytest.fixture(autouse=True)
 def _reset_engine_config():
-    configure_daf_chimera_filter(True, 5, 0.8, **LEGACY_DETECTOR)
+    configure_daf_chimera_filter(True, 5, 0.8)
     configure_daf_snp_mask(None)
     yield
-    configure_daf_chimera_filter(True, 5, 0.8, **LEGACY_DETECTOR)
+    configure_daf_chimera_filter(True, 5, 0.8)
     configure_daf_snp_mask(None)
 
 
@@ -127,7 +122,7 @@ def test_keep_chimeras_and_thresholds_apply_to_iupac_input():
     fr = _extract_fiber_read_from_pysam(enc, "daf", 128)
     assert isinstance(fr, dict) and fr["m6a_query_positions"] == set(c_sites)
     # --chimera-min-seg above the minority count: not a chimera
-    configure_daf_chimera_filter(True, min_seg=8, **LEGACY_DETECTOR)
+    configure_daf_chimera_filter(True, min_seg=8)
     assert isinstance(_extract_fiber_read_from_pysam(enc, "daf", 128), dict)
 
 

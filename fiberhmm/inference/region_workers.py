@@ -21,11 +21,9 @@ from fiberhmm.inference.engine import (
     read_cpg_ma_intervals,
 )
 from fiberhmm.inference.chimeras import (
-    DEFAULT_MIN_BASEQ,
-    DEFAULT_MIN_SEG,
-    DEFAULT_MIN_SPAN,
-    DEFAULT_MULTI_SWITCH,
-    DEFAULT_PURITY,
+    STRICT_MIN_BASEQ,
+    STRICT_MIN_SPAN,
+    STRICT_MULTI_SWITCH,
 )
 from fiberhmm.inference.fused_stages import (
     apply_result_has_footprints,
@@ -66,14 +64,18 @@ _REGION_NUC_PROFILE_CACHE: dict = {}
 
 
 def _configure_chimera_filter(params: dict) -> None:
-    """Every chimera detector setting of the run's ``params`` (worker init)."""
+    """Every chimera detector setting of the run's ``params`` (worker init).
+
+    The strict-only keys are present only for ``--chimera-detector strict``.
+    """
     configure_daf_chimera_filter(
         params.get('filter_chimeras', True),
-        params.get('chimera_min_seg', DEFAULT_MIN_SEG),
-        params.get('chimera_purity', DEFAULT_PURITY),
-        min_baseq=params.get('chimera_min_baseq', DEFAULT_MIN_BASEQ),
-        min_span=params.get('chimera_min_span', DEFAULT_MIN_SPAN),
-        multi_switch=params.get('chimera_multi_switch', DEFAULT_MULTI_SWITCH),
+        params.get('chimera_min_seg', 5),
+        params.get('chimera_purity', 0.8),
+        detector=params.get('chimera_detector', 'standard'),
+        min_baseq=params.get('chimera_min_baseq', STRICT_MIN_BASEQ),
+        min_span=params.get('chimera_min_span', STRICT_MIN_SPAN),
+        multi_switch=params.get('chimera_multi_switch', STRICT_MULTI_SWITCH),
         error_mask=params.get('chimera_error_mask_path'),
     )
 

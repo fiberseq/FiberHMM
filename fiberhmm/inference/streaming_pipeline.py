@@ -22,11 +22,9 @@ from fiberhmm.core.progress import progress
 from fiberhmm.inference.bam_output import _sort_and_index_bam, atomic_output
 from fiberhmm.inference.engine import configure_daf_snp_mask, make_apply_payload
 from fiberhmm.inference.chimeras import (
-    DEFAULT_MIN_BASEQ,
-    DEFAULT_MIN_SEG,
-    DEFAULT_MIN_SPAN,
-    DEFAULT_MULTI_SWITCH,
-    DEFAULT_PURITY,
+    STRICT_MIN_BASEQ,
+    STRICT_MIN_SPAN,
+    STRICT_MULTI_SWITCH,
 )
 from fiberhmm.inference.mp_context import _MP_CONTEXT
 from fiberhmm.inference.read_filters import (
@@ -120,11 +118,12 @@ def _process_bam_streaming_pipeline_fused(
     split_min_opps: int = 3,
     nuc_recall_policy: str = "conservative",
     filter_chimeras: bool = True,
-    chimera_min_seg: int = DEFAULT_MIN_SEG,
-    chimera_purity: float = DEFAULT_PURITY,
-    chimera_min_baseq: int = DEFAULT_MIN_BASEQ,
-    chimera_min_span: int = DEFAULT_MIN_SPAN,
-    chimera_multi_switch: bool = DEFAULT_MULTI_SWITCH,
+    chimera_min_seg: int = 5,
+    chimera_purity: float = 0.8,
+    chimera_detector: str = 'standard',
+    chimera_min_baseq: int = STRICT_MIN_BASEQ,
+    chimera_min_span: int = STRICT_MIN_SPAN,
+    chimera_multi_switch: bool = STRICT_MULTI_SWITCH,
     chimera_error_mask_path: Optional[str] = None,
     phase_nrl: int = 0,
     nuc_profile_path: str = None,
@@ -226,7 +225,8 @@ def _process_bam_streaming_pipeline_fused(
                               derived_tf_max_edge_ambiguity, ddda_mcg,
                               nuc_model_path, cpg_mask_policy,
                               chimera_min_baseq, chimera_min_span,
-                              chimera_multi_switch, chimera_error_mask_path),
+                              chimera_multi_switch, chimera_error_mask_path,
+                              chimera_detector),
                 )
 
                 inflight = deque()

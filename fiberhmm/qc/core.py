@@ -26,9 +26,9 @@ from fiberhmm.core.bam_reader import (
     parse_mm_tag_query_positions,
 )
 from fiberhmm.inference.chimeras import (
-    DEFAULT_MIN_SEG as DEFAULT_CHIMERA_MIN_SEG,
-    DEFAULT_PURITY as DEFAULT_CHIMERA_PURITY,
     HIGH_FRACTION as CHIMERA_HIGH_FRACTION,
+    STRICT_MIN_SEG as STRICT_CHIMERA_MIN_SEG,
+    STRICT_PURITY as STRICT_CHIMERA_PURITY,
     WARN_FRACTION as CHIMERA_WARN_FRACTION,
 )
 from fiberhmm.io.ma_tags import parse_ma_tag
@@ -993,11 +993,25 @@ def _chimera_sample_bin(read, key, bins: dict, spans: dict) -> None:
     spans[bin_key] = (start, end) if span is None else (min(span[0], start), max(span[1], end))
 
 
-def _sample_chimera_fields(bins, spans, chimeric) -> dict:
+def _strict_sample_chimeras(mode, sampled_names, chimera_names, duplicates,
+                            bins, spans) -> dict:
+    """The sampled chimera block of a strict-detector BAM."""
     from fiberhmm.inference.chimeras import CHIMERA_NOTE, _region_rows
+    counted = sampled_names - duplicates
+    chimeric = chimera_names - duplicates
+    daf = mode == "daf"
     return {
-        "regions": _region_rows(bins, spans, {}, chimeric),
-        "note": CHIMERA_NOTE,
+        "detected": bool(chimera_names), "mode": "flag" if chimera_names else None,
+        "n_reads_checked": len(counted) if daf else 0,
+        "n_chimeric": len(chimeric),
+        "fraction": len(chimeric) / len(counted) if daf and counted else None,
+        "min_seg": STRICT_CHIMERA_MIN_SEG if daf else None,
+        "purity": STRICT_CHIMERA_PURITY if daf else None,
+        "full_run": False,
+        "count_unit": "unique read names in bounded sample; unnamed records counted individually",
+        **({"regions": _region_rows(bins, spans, {}, chimera_names),
+            "note": CHIMERA_NOTE,
+            "n_duplicates_excluded": len(duplicates)} if daf else {}),
     }
 
 
@@ -1010,7 +1024,15 @@ def analyze_sample(
     min_opportunities: int = 200,
     snp_mask: Optional[dict[str, set[int]]] = None,
     control_curve: Optional[dict] = None,
+    strict_chimeras: bool = False,
 ) -> tuple[dict, dict]:
+    """Sample-level QC analysis.
+
+    ``strict_chimeras``: the BAM was called with ``--chimera-detector
+    strict``; the sampled chimera count then leaves duplicate-flagged reads
+    out and adds the region table and note. Otherwise the chimera block is
+    the standard detector's (unchanged from 3.2.1).
+    """
     rates: list[float] = []
     events = 0
     opportunities = 0
@@ -1022,7 +1044,7 @@ def analyze_sample(
     read_examples: list[dict] = []
     duplicate_flagged = 0
     chimera_names = set()
-    chimera_duplicates = set()   # duplicate-flagged: not counted (3.1.0)
+    chimera_duplicates = set()   # strict: duplicate-flagged names not counted
     chimera_bins: dict = {}
     chimera_spans: dict = {}
     def sample_key(read, record_index):
@@ -1052,13 +1074,14 @@ def analyze_sample(
                 except (ValueError, TypeError):
                     pass
             from fiberhmm.inference.chimeras import is_marked_chimera
-            if mode == 'daf' and is_duplicate:
-                chimera_duplicates.add(sample_key(read, record_index))
-            elif mode == 'daf':
-                _chimera_sample_bin(read, sample_key(read, record_index),
-                                    chimera_bins, chimera_spans)
+            if strict_chimeras and mode == 'daf':
+                if is_duplicate:
+                    chimera_duplicates.add(sample_key(read, record_index))
+                else:
+                    _chimera_sample_bin(read, sample_key(read, record_index),
+                                        chimera_bins, chimera_spans)
             if mode == 'daf' and is_marked_chimera(read):
-                if not is_duplicate:
+                if not (strict_chimeras and is_duplicate):
                     chimera_names.add(sample_key(read, record_index))
                 continue
             # Nondestructive mark/retain dedup keeps every read in the BAM,
@@ -1211,23 +1234,18 @@ def analyze_sample(
             "q25_tf_footprint_bp": float(np.quantile(tf_lengths, 0.25)) if tf_lengths else None,
             "q75_tf_footprint_bp": float(np.quantile(tf_lengths, 0.75)) if tf_lengths else None,
         },
-        "chimeras": {
+        "chimeras": (_strict_sample_chimeras(
+            mode, sampled_names, chimera_names, chimera_duplicates,
+            chimera_bins, chimera_spans) if strict_chimeras else {
             "detected": bool(chimera_names), "mode": "flag" if chimera_names else None,
-            "n_reads_checked": len(sampled_names - chimera_duplicates) if mode == "daf" else 0,
-            "n_chimeric": len(chimera_names - chimera_duplicates),
-            "fraction": (len(chimera_names - chimera_duplicates)
-                         / len(sampled_names - chimera_duplicates)
-                         if mode == "daf" and sampled_names - chimera_duplicates
-                         else None),
-            "min_seg": DEFAULT_CHIMERA_MIN_SEG if mode == "daf" else None,
-            "purity": DEFAULT_CHIMERA_PURITY if mode == "daf" else None,
+            "n_reads_checked": len(sampled_names) if mode == "daf" else 0,
+            "n_chimeric": len(chimera_names),
+            "fraction": len(chimera_names) / len(sampled_names) if reads and mode == "daf" else None,
+            "min_seg": 5 if mode == "daf" else None,
+            "purity": 0.8 if mode == "daf" else None,
             "full_run": False,
             "count_unit": "unique read names in bounded sample; unnamed records counted individually",
-            **(_sample_chimera_fields(chimera_bins, chimera_spans, chimera_names)
-               if mode == "daf" else {}),
-            **({"n_duplicates_excluded": len(chimera_duplicates)}
-               if mode == "daf" else {}),
-        },
+        }),
         "deduplication": _summarize_deduplication(
             len(reads),
             duplicate_flagged,
@@ -2626,6 +2644,11 @@ CHIMERA_TSV_FIELDS = (
 )
 
 
+def _has_chimera_grade(result: dict) -> bool:
+    """The report carries the strict detector's graded chimera block."""
+    return "grade" in (result.get("chimeras") or {})
+
+
 def _chimera_tsv_fields(result: dict) -> dict:
     chimeras = result.get("chimeras") or {}
     grade = chimeras.get("grade") or {}
@@ -2701,7 +2724,8 @@ def _write_tsv(result: dict, path: Path) -> None:
             "n_discovered_amplicons", 0
         ),
         **_state_tsv_fields(result),
-        **_chimera_tsv_fields(result),
+        # Strict-detector reports only: standard TSVs keep the 3.2.1 columns.
+        **(_chimera_tsv_fields(result) if _has_chimera_grade(result) else {}),
     }
     with path.open("w") as handle:
         handle.write("\t".join(fields) + "\n")
@@ -2919,12 +2943,11 @@ def _validated_chimera_sidecar(candidate, mode, enzyme, input_path) -> Optional[
 
 def _call_chimera_detector(settings, snp_report_path, sidecar_dir, input_stem,
                            recorded_mask=None):
-    """``(detector, error_mask_state)``: the call's strand-swap detector.
+    """``(detector, error_mask_state)``: the strict call's strand-swap detector.
 
     ``detector`` holds the keys of ``engine._DAF_CHIMERA_CFG`` restored from
-    the call's @PG DS (None without one). A call recorded without the 3.1.0
-    settings used the 3.0.3 detector (no base-quality or span limit, one
-    switch, no error mask). The error mask of a call that applied one is
+    the call's @PG DS (None without one); only strict-detector calls are
+    restored (``detector`` 'strict'). The error mask of a call that applied one is
     ``recorded_mask`` (the BED named by the call's validated chimeras
     report, which also covers a custom ``--daf-snp-output-prefix``), else
     found through the SNP report's outputs, else next to the SNP outputs
@@ -2932,26 +2955,22 @@ def _call_chimera_detector(settings, snp_report_path, sidecar_dir, input_stem,
     state is ``unavailable`` and extraction runs without it.
     """
     from fiberhmm.inference.chimeras import (
-        DEFAULT_MIN_BASEQ, DEFAULT_MIN_SPAN, DEFAULT_MULTI_SWITCH,
-        LEGACY_MIN_BASEQ, LEGACY_MIN_SPAN, LEGACY_MULTI_SWITCH,
+        STRICT_MIN_BASEQ, STRICT_MIN_SPAN, STRICT_MULTI_SWITCH,
     )
     if settings is None:
         return None, None
-    modern = "chimera_min_baseq" in settings or "chimera_min_span" in settings
     try:
         detector = {
             "filter": settings.get("chimera_filter", "on") != "off"
                       and settings.get("chimeras") != "keep",
-            "min_seg": int(settings.get("chimera_min_seg", DEFAULT_CHIMERA_MIN_SEG)),
-            "purity": float(settings.get("chimera_purity", DEFAULT_CHIMERA_PURITY)),
-            "min_baseq": int(settings.get(
-                "chimera_min_baseq", DEFAULT_MIN_BASEQ if modern else LEGACY_MIN_BASEQ)),
-            "min_span": int(settings.get(
-                "chimera_min_span", DEFAULT_MIN_SPAN if modern else LEGACY_MIN_SPAN)),
+            "detector": "strict",
+            "min_seg": int(settings.get("chimera_min_seg", STRICT_CHIMERA_MIN_SEG)),
+            "purity": float(settings.get("chimera_purity", STRICT_CHIMERA_PURITY)),
+            "min_baseq": int(settings.get("chimera_min_baseq", STRICT_MIN_BASEQ)),
+            "min_span": int(settings.get("chimera_min_span", STRICT_MIN_SPAN)),
             "multi_switch": (settings["chimera_multi_switch"] == "on"
                              if "chimera_multi_switch" in settings
-                             else (DEFAULT_MULTI_SWITCH if modern
-                                   else LEGACY_MULTI_SWITCH)),
+                             else STRICT_MULTI_SWITCH),
             "error_mask": None,
         }
     except (TypeError, ValueError):
@@ -3151,6 +3170,18 @@ def run_qc(
         snp_mask = load_snp_mask(snp_mask_path)
     else:
         snp_mask = None
+    # The call's chimera detector: the strict detector records itself in the
+    # fiberhmm-call @PG DS (chimera_detector=strict) and in its statistics.
+    # Anything else is the standard detector, reported as in 3.2.1.
+    call_settings = _call_settings(input_path)
+    chimera_report = _validated_chimera_sidecar(
+        sidecar_dir / f"{input_stem}.chimeras.json", resolved_mode, resolved_enzyme,
+        input_path)
+    recorded_statistics = (chimera_run_summary if chimera_run_summary is not None
+                           else (chimera_report or {}).get('statistics'))
+    strict_chimeras = resolved_mode == "daf" and (
+        (call_settings or {}).get("chimera_detector") == "strict"
+        or (recorded_statistics or {}).get("detector") == "strict")
     analysis, arrays = analyze_sample(
         sampled.reads,
         resolved_mode,
@@ -3160,20 +3191,15 @@ def run_qc(
         prob_threshold=prob_threshold,
         min_opportunities=min_opportunities,
         snp_mask=snp_mask,
+        strict_chimeras=strict_chimeras,
     )
-    # Restore the call's chimera detector (and its error mask) before state
+    # Strict: restore the call's detector (and its error mask) before state
     # extraction, so reads the call kept are not re-detected differently.
-    call_settings = _call_settings(input_path)
-    chimera_report = _validated_chimera_sidecar(
-        sidecar_dir / f"{input_stem}.chimeras.json", resolved_mode, resolved_enzyme,
-        input_path)
-    recorded_statistics = (chimera_run_summary if chimera_run_summary is not None
-                           else (chimera_report or {}).get('statistics'))
     recorded_mask = ((recorded_statistics or {}).get('error_mask') or {}).get('bed')
     chimera_detector, error_mask_state = (
         _call_chimera_detector(call_settings, snp_report_path, sidecar_dir, input_stem,
                                recorded_mask=recorded_mask)
-        if resolved_mode == "daf" else (None, None))
+        if strict_chimeras else (None, None))
     state_block, state_arrays = _state_rates(
         input_path, sampled.reads, resolved_mode, resolved_enzyme,
         prob_threshold=prob_threshold, reference_fasta=reference_fasta,
@@ -3181,7 +3207,7 @@ def run_qc(
         min_msp_bp=min_msp_bp, light_call_reads=light_call_reads,
         light_call_seconds=light_call_seconds,
         use_m5c=use_m5c, cpg_mask_policy=cpg_mask_policy,
-        chimera_detector=chimera_detector,
+        **({"chimera_detector": chimera_detector} if chimera_detector else {}),
     )
     if error_mask_state is not None and isinstance(state_block.get("definition"), dict):
         state_block["definition"]["chimera_error_mask"] = error_mask_state
@@ -3242,7 +3268,7 @@ def run_qc(
     checked = chimeras["n_reads_checked"]
     chimeras["fraction"] = chimeras["n_chimeric"] / checked if checked else None
     chimeras["detected"] = bool(chimeras["n_chimeric"])
-    if call_settings is not None:
+    if call_settings is not None and strict_chimeras:
         settings = call_settings
         chimeras['mode'] = (settings.get('chimeras', chimeras['mode'])
                             if resolved_mode == 'daf' else 'n/a')
@@ -3256,6 +3282,15 @@ def run_qc(
                                 or chimeras['mode'] in ('flag', 'remove', 'split'))
         if error_mask_state is not None:
             chimeras['error_mask_restored'] = error_mask_state
+    elif call_settings is not None:
+        settings = call_settings
+        chimeras['mode'] = (settings.get('chimeras', chimeras['mode'])
+                            if resolved_mode == 'daf' else 'n/a')
+        for field, key, cast in [('min_seg', 'chimera_min_seg', int),
+                                 ('purity', 'chimera_purity', float)]:
+            if key in settings:
+                chimeras[field] = cast(settings[key])
+        chimeras['detected'] = chimeras['detected'] or chimeras['mode'] in ('flag', 'remove')
     if chimeras['mode'] in ('keep', 'n/a'):
         chimeras['n_reads_checked'] = 0
         chimeras['fraction'] = None
@@ -3273,7 +3308,7 @@ def run_qc(
         chimeras['full_run_statistics'] = dict(chimera_run_summary)
         if chimera_report_path:
             chimeras['run_report_path'] = chimera_report_path
-    if resolved_mode == 'daf':
+    if strict_chimeras:
         _grade_chimera_block(chimeras, chimera_run_summary is not None)
         if (chimeras.get('grade') or {}).get('status') == 'WARN':
             result["overall"] = _overall_verdict(result, chimeras['grade'])
@@ -3323,7 +3358,7 @@ def run_qc(
     curves_path = Path(str(prefix) + ".qc.curves.json")
     _atomic_json(qc_curves(result, arrays, profile, control_curve), curves_path)
     result["outputs"]["curves"] = str(curves_path.resolve())
-    if resolved_mode == "daf":
+    if strict_chimeras:
         regions_path = Path(str(prefix) + ".qc.chimera_regions.tsv")
         if _write_chimera_regions_tsv(result, regions_path):
             result["outputs"]["chimera_regions_tsv"] = str(regions_path.resolve())
@@ -3777,7 +3812,8 @@ def _write_combined_tsv(results: Sequence[dict], path: Path) -> None:
         "n_masked_snp_sites",
         "n_discovered_amplicons",
         *STATE_TSV_FIELDS,
-        *CHIMERA_TSV_FIELDS,
+        # Strict-detector reports only: standard runs keep the 3.2.1 columns.
+        *(CHIMERA_TSV_FIELDS if any(_has_chimera_grade(r) for r in results) else ()),
     )
     with path.open("w") as handle:
         handle.write("\t".join(fields) + "\n")
@@ -3824,7 +3860,8 @@ def _write_combined_tsv(results: Sequence[dict], path: Path) -> None:
                     "n_discovered_amplicons", 0
                 ),
                 **_state_tsv_fields(result),
-                **_chimera_tsv_fields(result),
+                **(_chimera_tsv_fields(result)
+                   if CHIMERA_TSV_FIELDS[0] in fields else {}),
             }
             handle.write("\t".join("" if values[field] is None else str(values[field]) for field in fields) + "\n")
 

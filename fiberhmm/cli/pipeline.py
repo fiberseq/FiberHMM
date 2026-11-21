@@ -153,6 +153,12 @@ def build_parser() -> argparse.ArgumentParser:
                            "split cuts each chimeric alignment into single-strand "
                            "pieces, one per segment (<name>/c0, <name>/c1, ...), that "
                            "are called separately (see fiberhmm-call).")
+    call.add_argument("--chimera-detector", choices=["standard", "strict"], default=None,
+                      help="DAF strand-swap chimera detector (default standard, "
+                           "unchanged from 3.2.1). strict is opt-in: stricter "
+                           "per-segment rule, base-quality and span filters, several "
+                           "switches, a chimera-only error mask, a graded QC chimera "
+                           "row; needed for --chimeras split (see fiberhmm-call).")
     call.add_argument("--chimera-filter", action=argparse.BooleanOptionalAction,
                       default=True,
                       help="Legacy alias: --chimera-filter means --chimeras flag; "
@@ -285,6 +291,7 @@ def config_from_args(args):
         snp_mask=args.snp_mask,
         chimera_filter=args.chimera_filter,
         chimeras=args.chimeras,
+        chimera_detector=args.chimera_detector,
         daf_mask_unaligned=args.daf_mask_unaligned,
         alignments=args.alignments,
         prob_threshold=args.prob_threshold,
