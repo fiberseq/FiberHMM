@@ -179,15 +179,95 @@ only compact annotation plans for aggregate BAM export. Raw evidence memory no
 longer grows with the number of target windows. Its scoring worker pool is
 reused across windows, so imports and JIT warm-up are paid per worker.
 
-### Independent NFR windows
+### fiberhmm-nfr: landscape runs, cross-fitting and many windows
 
-`fiberhmm-nfr --bam reads.bam --bed sites.bed --cores 8 --output nfr-sites`
-runs independent BED windows with a persistent worker pool. Each window writes
-its normal single-region files to `window_XXXXXX`; `regions.json` lists them in
-BED order. `--window-jobs 1` runs sequentially. NFR detection is independent in
-each window; explicit `--nfr` and `--classes` inputs require a single `--region`.
-The output directory must be new or empty; this command does not implement
-consensus's `--continue` protocol.
+`fiberhmm-nfr` (experimental preview) writes `variants.tsv`, `configurations.tsv`,
+`molecules.tsv.gz` (per-read membership), `coaccess.tsv` (element pair tests),
+`combos.tsv` (combination patterns), `result.json`, `context.json.gz` and
+`manifest.json`.
+
+**Skipping stages.** `--skip coaccess,combinations` leaves out the pair tests
+and the combination patterns; `--fast-landscape` is the same preset. NFR
+detection, variant discovery, the configuration EM and per-read membership
+run unchanged, so `variants.tsv`, `configurations.tsv`, `molecules.tsv.gz` and
+`context.json.gz` are byte-identical to a full run with the same inputs and
+parameters. A skipped stage writes no file (an empty table would read as
+"tested, nothing found"); `result.json` and `manifest.json` list it under
+`skipped_stages`, and `result.json` has `pairs: []` with `family.stage:
+skipped`. The defaults live in `fiberhmm.defaults` (`NFR_STAGES`, `NFR_SKIP`,
+`NFR_FAST_LANDSCAPE_SKIP`).
+
+**Parameters.** `--parameters` takes a JSON file or an inline JSON object
+(text starting with `{`). Quote inline JSON for the shell, which otherwise
+strips the double quotes:
+`--parameters '{"nfr":{"min_gap_bp":150}}'`.
+
+**Execution.** With `--region`, `--cores N` loads the datasets in parallel
+(one worker process per dataset) and fits the NFR regions in parallel
+(discovery, configuration EM, bootstrap and robustness reruns of one region
+in one worker). The regions are assembled in order, so every output is
+byte-identical to `--cores 1`. The loader keeps only the fields the NFR
+analysis reads: positions and marks as arrays, without the lattice contexts
+and emission probabilities. On an 18-kb window with about 8,300 molecules,
+this cut peak memory from about 12 GB to 4 GB.
+
+**Cross-fitted discovery.** `--discover-fold-spec "hash=md5,mod=10,discover=0-4"`
+detects the NFR regions and discovers the variants (k-means, prediction
+strength, held-out merges and support) on the reads whose fold is listed.
+Every read, held out or not, then gets its membership from the configuration
+EM. A read's fold is
+`int(md5(read_name).hexdigest(), 16) % mod` (`fiberhmm.io.folds`, shared with
+other tools). Several folds are joined with `+` (`discover=0+2+4`). With a fold
+spec, `molecules.tsv.gz` gains a `fold` and a `discovery` column and
+`result.json` a `cross_fit` block (spec, folds, molecule counts).
+`--fold-weights heldout` fits the EM's configuration weights on the held-out
+folds only (default `all`). A spec whose discover folds cover every fold gives
+the same variants, configurations and memberships as a run without one.
+
+**Variant columns: stability and edge consistency.**
+
+- `stability` is the split-averaged prediction strength of the variant's
+  k-means cell. For each of `splits` molecule split-halves, both halves are
+  clustered at the chosen k. A test-half cluster scores the fraction of its
+  gap pairs that the other half's fit also puts together. The variant's value
+  is the mean over splits of those scores, weighted by where its gaps fall.
+  It measures whether the *partition* is reproducible: with few well-separated
+  cells it is near 1 even when each cell's edges are broad. It does not
+  measure edge tightness.
+- `Lsd` / `Rsd`: standard deviations of the variant's fitted edge Gaussian
+  (robust MinCovDet covariance of its members, floored at 5 bp).
+- `member_gaps`: the summed membership weight of the gaps assigned to the
+  variant. A read's gap belongs to variant j with the read's posterior summed
+  over the configurations that label that gap j.
+- `edge_within`: the weighted share of member gaps whose left and right edge
+  features both lie within `--edge-tolerance-bp` (default 25) of the
+  variant's centre edges (`L`, `R`).
+- `edge_mad_L` / `edge_mad_R`: the weighted median absolute deviation (bp) of
+  the member gaps' left and right edge features from `L` and `R`.
+- `edge_dispersion`: `(edge_mad_L + edge_mad_R) / width`.
+
+Edge features are the midpoints of the edge ranges the EM uses (from the
+nucleosome boundary to the first or last mark inside the gap, capped at 30 bp).
+
+**Many windows.** `--bed sites.bed` (alias `--regions-bed`) analyses each
+BED3/BED4 window exactly as `--region` would, in `window_XXXXXX/` (BED order).
+Up to `--window-jobs` windows (default: `--cores`) run at once, one core each,
+in worker processes that keep their imports across windows. Each window opens
+the BAMs through their index and decodes only the reads that overlap it.
+Windows share no decoded reads, so a read that spans two overlapping windows
+is decoded in both. A finished window writes `window_complete.json` last,
+recording a digest of the run inputs, parameters and window plus the size
+and SHA-256 of each output. `--continue` in the same `--output` skips intact
+finished windows and reruns the rest. It refuses when the BAMs (path, size,
+mtime), the BED or the parameters differ from `nfr_run.json`. A window with no
+molecules is recorded as `no_molecules`. A window that fails is recorded as
+`failed` with its error while the other windows still run; the command then
+exits with status 1, and `--continue` redoes only those windows. Every
+attempt rebuilds `regions.json` and `regions.tsv` (one row per window: name,
+region, status, NFRs, variants, molecules, seconds, error) and the combined
+`variants.tsv` and `configurations.tsv` (window name and region prepended)
+from the finished windows. NFR detection is independent in each window;
+explicit `--nfr` and `--classes` need a single `--region`.
 
 ### Molecule depth budgets
 

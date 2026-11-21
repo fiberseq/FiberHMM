@@ -58,6 +58,7 @@ def parse_parameters(parser, value, flag='--parameters'):
 
 
 def _parser():
+    from fiberhmm import defaults as D
     p = argparse.ArgumentParser(prog='fiberhmm-nfr', description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     src = p.add_mutually_exclusive_group()
     src.add_argument('--bam', action='append', help='Input BAM (repeat for separate datasets); chemistry from BAM @CO metadata')
@@ -70,8 +71,12 @@ def _parser():
                               '--cores), written in BED order to window_XXXXXX directories; names, status and a combined '
                               'variants table in regions.json/regions.tsv/variants.tsv. Add --continue to finish an '
                               'interrupted run in the same --output')
-    p.add_argument('--window-jobs', type=int, default=0, metavar='N',
-                   help='Concurrent BED windows (0 = up to --cores; 1 = sequential). Workers are reused across windows')
+    p.add_argument('--window-jobs', type=int, default=D.NFR_WINDOW_JOBS, metavar='N',
+                   help='Concurrent BED windows, one core each (0 = up to --cores; 1 = sequential, in this process). Workers '
+                        'are reused across windows')
+    p.add_argument('--continue', dest='continue_run', action='store_true',
+                   help='--bed: finish an interrupted run in the same --output, skipping windows already complete '
+                        '(refused when the BAMs, BED or parameters differ)')
     p.add_argument('--nfr', action='append', metavar='START-END',
                    help='NFR region inside the window (repeat for several). Default: detected from the share of callable '
                         'reads inside a >= 175-bp gap (see --detect-method)')
@@ -81,7 +86,6 @@ def _parser():
                    help='A JSON file, or an inline JSON object (quote it for the shell, e.g. \'{"nfr":{"min_gap_bp":150}}\'): '
                         'loader groups as for fiberhmm-consensus (input, compute, ...) and an "nfr" group with any engine '
                         'parameter (see --schema)')
-    from fiberhmm import defaults as D
     p.add_argument('--skip', metavar='STAGES',
                    help=f'Comma-separated optional stages to leave out: {", ".join(D.NFR_STAGES)} (pair tests and combination '
                         'patterns). Variants, configurations and molecules.tsv.gz are unchanged; skipped stages write no '
@@ -158,8 +162,11 @@ def _run(argv, stack):
     if not args.output or not any((args.bam, args.datasets, args.evidence)):
         p.error('Supply --bam/--datasets (with --region) or --evidence, and --output')
     out = Path(args.output).resolve()
-    if out.exists() and any(out.iterdir()):
-        p.error('Output directory must be empty; existing results are never overwritten')
+    if args.continue_run and not args.bed:
+        p.error('--continue applies to --bed runs')
+    if out.exists() and any(out.iterdir()) and not args.continue_run:
+        p.error('Output directory must be empty; existing results are never overwritten'
+                + (' (add --continue to finish an interrupted --bed run)' if args.bed else ''))
     if args.window_jobs < 0:
         p.error('--window-jobs must be >= 0')
     if args.evidence and (args.region or args.bed):
@@ -302,53 +309,31 @@ def load_payload(datasets, region, values, options, progress=None, sampling=None
                 input_files=[f for part in parts for f in part['input_files']])
 
 
-def _bed_task(spec):
-    """One independent site; the process pool keeps imports and JIT kernels warm."""
-    import dataclasses
-    from fiberhmm.inference.consensus.bam import load_bam_payload
-    from fiberhmm.inference.consensus.parameters import parse_options
-    from fiberhmm.inference.consensus.execution import single_threaded_blas
-    from .workflow import NFROptions, run_accessibility
-    options = parse_options(spec['values'])
-    opt = NFROptions.from_params(spec['nfr'])
-    caps = [opt.max_quantification_molecules, opt.max_discovery_molecules]
-    sampling = dict(cap=max(caps) if all(caps) else 0, discovery_cap=opt.max_discovery_molecules,
-                    seed=opt.sample_seed, mode='nfr', windows=None, nfr_options=opt)
-    with single_threaded_blas():
-        payload = load_payload(spec['datasets'], spec['region'], spec['values'], options, sampling=sampling)
-        if not any(s['units'] for s in payload['strata']):
-            raise ValueError(f"{spec['name']}: no molecules in the window (check chromosome, coordinates, MAPQ and chemistry)")
-        inputs = dict(datasets=spec['datasets'], evidence=None,
-                      loader_parameters={'input': dataclasses.asdict(options['input'])}, classes=[])
-        result = run_accessibility(payload, opt, spec['output'], inputs=inputs)
-    return dict(name=spec['name'], region=spec['region'], output=spec['output'],
-                nfrs=len(result['nfrs']), pairs=len(result['pairs']), warnings=result['warnings'])
-
-
 def _run_bed(args, parser, out, datasets, values, opt, options, progress):
-    from copy import deepcopy
     from fiberhmm.inference.consensus.regions import load_bed
     from fiberhmm.inference.consensus.cli import _check_window_sizes, _check_region_contigs
-    from fiberhmm.inference.consensus.execution import shared_worker_pool
-    from fiberhmm.inference.consensus.artifacts import write_json
-    windows = load_bed(args.bed)
+    from .batch import ContinueRefused, run_windows
+    try:
+        windows = load_bed(args.bed)
+    except (OSError, ValueError) as error:
+        parser.error(f'--bed {args.bed}: {error}')
     _check_window_sizes(parser, windows, options['compute'].maximum_region_bp, 'bed')
     _check_region_contigs(parser, windows, datasets)
-    jobs = min(len(windows), options['compute'].cores, args.window_jobs or options['compute'].cores)
-    values = deepcopy(values)
-    values.setdefault('compute', {})['cores'] = 1
-    specs = [dict(name=w['name'], region={k: w[k] for k in ('chrom', 'start', 'end')},
-                  datasets=datasets, values=values, nfr=opt.as_dict(), output=str(out/f'window_{i+1:06d}'))
-             for i, w in enumerate(windows)]
-    out.mkdir(parents=True, exist_ok=True)
-    with shared_worker_pool(jobs) as pool:
-        results = map(_bed_task, specs) if pool is None else pool.get().map(_bed_task, specs)
-        summary = []
-        for i, row in enumerate(results):
-            summary.append(row)
-            progress.report('windows', f"{row['name']} complete", completed=i+1, total=len(specs))
-    write_json(out/'regions.json', summary)
-    print(json.dumps(dict(status='complete', experimental=True, output=str(out), regions=summary)))
+    try:
+        summary = run_windows(out, windows, datasets, values, opt.as_dict(), cores=options['compute'].cores,
+                              window_jobs=args.window_jobs, continue_run=args.continue_run, progress=progress)
+    except ContinueRefused as error:
+        parser.error(str(error))
+    counts = {}
+    for row in summary:
+        counts[row['status']] = counts.get(row['status'], 0) + 1
+    failed = counts.get('failed', 0)
+    print(json.dumps(dict(status='complete' if not failed else 'incomplete', experimental=True, output=str(out),
+                          windows=counts, regions=[{k: r.get(k) for k in ('name', 'status', 'nfrs', 'variants', 'seconds', 'error')}
+                                                   for r in summary])))
+    if failed:
+        parser.exit(1, f'fiberhmm-nfr: {failed} window(s) failed (see regions.tsv); fix the cause and rerun the same command '
+                       'with --continue to redo only those\n')
 
 
 if __name__ == '__main__':

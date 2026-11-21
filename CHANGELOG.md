@@ -1,5 +1,48 @@
 # Changelog
 
+## Unreleased (feat/nfr-speed)
+
+### Added
+
+- **`fiberhmm-nfr --skip coaccess,combinations` and `--fast-landscape`** leave
+  out the element pair tests and the combination patterns. Variants,
+  configurations, per-read membership (`molecules.tsv.gz`) and
+  `context.json.gz` are byte-identical to a full run. Skipped stages write
+  no `coaccess.tsv`/`combos.tsv` and are listed under `skipped_stages`.
+- **`--parameters` accepts inline JSON** (text starting with `{`), as well as
+  a file. Unquoted JSON whose quotes the shell stripped gets an error saying
+  to quote it.
+- **Cross-fitted NFR discovery:** `--discover-fold-spec
+  "hash=md5,mod=10,discover=0-4"` detects NFRs and discovers variants on the
+  listed read-name hash folds and assigns membership to every read. It adds
+  `fold` and `discovery` columns to `molecules.tsv.gz` and a `cross_fit`
+  block to `result.json`. `--fold-weights heldout` fits the EM weights on the
+  held-out folds. The fold helper is shared: `fiberhmm.io.folds`.
+- **Edge consistency in `variants.tsv`:** `member_gaps`, `edge_within`
+  (both edges within `--edge-tolerance-bp`, default 25, of the variant's
+  edges), `edge_mad_L`, `edge_mad_R` and `edge_dispersion`. The docs now
+  define `stability`: the split-averaged prediction strength of the
+  variant's k-means cell, which measures partition reproducibility, not edge
+  tightness.
+- **Restartable many-window runs:** `--bed` (alias `--regions-bed`) adds
+  `--continue`, a per-window completion marker, per-window `failed` and
+  `no_molecules` statuses (other windows keep running), `regions.tsv`, the
+  combined `variants.tsv`/`configurations.tsv`, and progress with an ETA.
+
+### Changed
+
+- **`fiberhmm-nfr` is faster and uses less memory, with identical outputs.**
+  With `--region`, `--cores` now loads the datasets and fits the NFR regions
+  in parallel worker processes. Each unit's nucleosomes and marks are
+  indexed once instead of once per NFR region. The loader drops the lattice
+  fields the NFR analysis never reads; peak memory on an 18-kb, 8,300-molecule
+  window fell from about 12 GB to 4 GB. Every output stays byte-identical to
+  the sequential run.
+- **Exact speed-ups in native Hia5 nucleosome replay** (shared with
+  `fiberhmm-consensus`): bisection replaces the per-call overlap scans and the
+  query-to-reference projection, and a tree copy replaces `deepcopy`. Results
+  are unchanged.
+
 ## 3.3.0
 
 ### Changed
