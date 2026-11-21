@@ -313,8 +313,9 @@ def _load_payload_once(state,request,options,progress):
                 raise ValueError('Paired source reads are not independent molecules. Run fiberhmm-pair (pair -> merge -> recall) before population consensus; if pairs failed to merge, --pairs-only excludes those unresolved pairs.')
             for read in reads:_prefix_library(read,dsid)
             if chemistry in ('ddda','dddb'):
+                end_diff=options['input'].molecule_max_end_diff_bp
                 representatives,collapse=runtime['collapse'](reads,min_jaccard=options['input'].molecule_min_jaccard,
-                    min_deam=options['input'].molecule_min_deam)
+                    min_deam=options['input'].molecule_min_deam,**({'max_end_diff':end_diff} if end_diff>=0 else {}))
             else:
                 representatives=reads;collapse=dict(raw_reads=len(reads),analyzed_molecules=len(reads),duplicate_reads_collapsed=0)
             projections=_projection_members(reads,representatives,exact_records=True)

@@ -35,6 +35,7 @@ class InputOptions:
     molecule_min_jaccard: float = control(.95, "Same-strand duplicate Jaccard", "Collapse amplification copies within a chemical strand. Does not pair complementary strands.", 0, 1, .01)
     evidence_pad_bp: int = control(-1, "Evidence pad (bp; -1 = whole read)", "Memory control. Each loaded read, and the analysis copy of saved evidence, keeps only the calls, MSPs, nucleosomes, aligned blocks and m6A fingerprint that overlap the window plus this pad; a call that crosses the pad boundary is kept whole, never clipped or dropped. Native replay still decodes the whole alignment, and its calls are cropped by the same rule. Lattice positions are always limited to the window; DAF duplicate fingerprints always stay whole-read. -1 (the library and FiberBrowser default) keeps whole-read geometry; the fiberhmm-consensus command line defaults to 250 (--evidence-pad).", -1, 1000000, 50)
     molecule_min_deam: int = control(10, "Minimum duplicate fingerprint hits", "Below this number, do not assert amplification identity from a sparse pattern.", 1, 100000, 1)
+    molecule_max_end_diff_bp: int = control(-1, "Duplicate endpoint check (bp; −1 = off)", "Off (the default): same-strand reads collapse on the whole-read deamination-set Jaccard alone, so truncated copies of one template still collapse. A value ≥ 0 adds the fiberhmm-dedup endpoint check (its default is 50 bp): reads whose alignment starts or ends differ by more never collapse.", -1, 100000, 1)
 
 
 @dataclass
