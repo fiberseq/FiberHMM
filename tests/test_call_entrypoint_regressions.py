@@ -900,8 +900,9 @@ def test_apply_rejects_options_it_never_implemented(tmp_path, flag,
     assert b"error:" in result.stderr
 
 
-def test_apply_streaming_flag_selects_streaming_pipeline(tmp_path,
-                                                         benchmark_model_path):
+def test_apply_alias_accepts_streaming_flag(tmp_path, benchmark_model_path):
+    """fiberhmm-apply (alias of fiberhmm-call --hmm-only) still accepts
+    --streaming; fiberhmm-call always streams without --region-parallel."""
     from conftest import make_synthetic_bam
 
     bam = make_synthetic_bam(str(tmp_path / "in.bam"), n_reads=3,
@@ -911,7 +912,8 @@ def test_apply_streaming_flag_selects_streaming_pipeline(tmp_path,
                       "-m", benchmark_model_path, "--min-read-length", "0",
                       "--streaming", "-c", "1", "--io-threads", "1")
     assert result.returncode == 0, result.stderr.decode(errors="replace")
-    assert b"streaming pipeline" in result.stdout
+    assert b"--streaming ignored" in result.stderr
+    assert (tmp_path / "out" / "in_footprints.bam").is_file()
 
 
 # ---------------------------------------------------------------------------

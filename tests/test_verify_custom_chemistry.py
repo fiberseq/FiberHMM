@@ -238,11 +238,12 @@ def test_effective_chemistry_helper_adopts_supported_enzymes_only():
 # ---------------------------------------------------------------------------
 
 def _footprint_tags(path):
+    # fiberhmm-apply is now fiberhmm-call --hmm-only: MA-only output.
     with pysam.AlignmentFile(str(path), "rb", check_sq=False) as bam:
         return [
             (read.query_name,
-             *(tuple(read.get_tag(tag)) if read.has_tag(tag) else None
-               for tag in ("ns", "nl", "as", "al")))
+             read.get_tag("MA") if read.has_tag("MA") else None,
+             tuple(read.get_tag("AQ")) if read.has_tag("AQ") else None)
             for read in bam.fetch(until_eof=True)
         ]
 
@@ -324,5 +325,5 @@ def test_apply_refuses_conflicting_declared_chemistry(tmp_path, ddda_declared_ba
     assert result.returncode == 2
     assert b"declares chemistry" in result.stderr
     # apply has no --replace-chemistry of its own.
-    assert b"fiberhmm-call --replace-chemistry" in result.stderr
+    assert b"fiberhmm-call --hmm-only --replace-chemistry" in result.stderr
     assert not (tmp_path / "out" / "declared_footprints.bam").exists()

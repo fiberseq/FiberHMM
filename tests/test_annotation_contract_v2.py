@@ -114,7 +114,9 @@ def test_apply_scores_warns_and_writes_no_msp_score(tmp_path, fixture):
     proc = _run('fiberhmm.cli.apply', '-i', fixture, '-o', tmp_path, '--enzyme', 'hia5',
                 '--seq', 'pacbio', '--force-seq', '--scores', '-c', '1', '--legacy-tags')
     assert proc.returncode == 0, proc.stderr
-    assert 'no longer writes an MSP score' in proc.stderr
+    # fiberhmm-apply is the deprecated alias of fiberhmm-call --hmm-only,
+    # whose --scores writes the nucleosome nq only.
+    assert 'fiberhmm-apply is deprecated' in proc.stderr
     out = tmp_path / (fixture.name.replace('.bam', '') + '_footprints.bam')
     with pysam.AlignmentFile(str(out)) as bam:
         reads = list(bam)
@@ -367,20 +369,19 @@ def test_apply_no_msps_keeps_fibertools_aq_but_not_an_ambiguous_one(tmp_path, ol
         assert list(read.get_tag('as')) == list(orig.get_tag('as'))
         if not old_apply:
             assert list(read.get_tag('aq')) == list(orig.get_tag('aq'))
+        groups = _groups(read)
+        # MA carries the retained MSPs, molecular frame like as/al; the
+        # HMM footprints are split by size (fiberhmm-call --hmm-only):
+        # >= 85 bp nuc, smaller tf.
+        want = [f'{s + 1}-{n}' for s, n in zip(orig.get_tag('as'), orig.get_tag('al'))
+                if n > 0]
+        assert sorted(groups['msp']) == sorted(want), read.is_reverse
+        for feature, big in (('nuc', True), ('tf', False)):
+            for item in groups.get(feature, []):
+                if item:
+                    assert (int(item.split('-')[1]) >= 85) == big, (feature, item)
         if m5c:
-            # MA (present for the kept island) carries the retained MSPs,
-            # molecular frame like as/al, and nucleosomes only outside them
-            groups = _groups(read)
             assert groups['ddda_ucg'] == ['101-50']
-            want = [f'{s + 1}-{n}' for s, n in zip(orig.get_tag('as'), orig.get_tag('al'))
-                    if n > 0]
-            assert sorted(groups['msp']) == sorted(want), read.is_reverse
-            msps = [(s, s + n) for s, n in zip(orig.get_tag('as'), orig.get_tag('al'))]
-            for item in groups.get('nuc', []):
-                if not item:
-                    continue
-                a, n = (int(v) for v in item.split('-'))
-                assert not any(a - 1 < e and s < a - 1 + n for s, e in msps)
 
 
 def test_apply_no_msps_harmonized_ns_matches_ma_nuc(tmp_path):
