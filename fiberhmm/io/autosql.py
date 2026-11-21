@@ -110,7 +110,7 @@ _BLOCK_SCORE_FIELDS = {
     ),
     'msp': (
         '    int[blockCount] blockAq; '
-        '"Per-block MSP quality (aq) score, 0-255"\n'
+        '"Per-block MSP quality (fibertools FIRE aq) score, 0-255"\n'
     ),
     'tf': (
         '    int[blockCount] blockTq; '
@@ -256,7 +256,7 @@ _DESCRIPTIONS = {
     'msp': (
         'FiberHMM methylase-sensitive patches (as/al BAM tags). '
         'One BED12 row per read; each block is an accessible patch '
-        'between nucleosomes. BED score = mean aq (0-255 when present).'
+        'between nucleosomes. BED score = mean fibertools FIRE aq (0-255 when present).'
     ),
     'tf': (
         'FiberHMM TF / Pol II footprint recaller calls (MA/AQ tf.QQQ '

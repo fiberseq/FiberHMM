@@ -59,7 +59,7 @@ def test_set_legacy_apply_tags_writes_unsigned_bam_arrays():
     assert read.tags["as"].tolist() == [100]
     assert read.tags["al"].tolist() == [200]
     assert read.tags["nq"] == [0, 255]
-    assert read.tags["aq"] == [127]
+    assert "aq" not in read.tags     # no MSP score (MSP quality is fibertools FIRE)
 
 
 def test_set_legacy_apply_tags_clears_stale_scores_when_scores_not_written():

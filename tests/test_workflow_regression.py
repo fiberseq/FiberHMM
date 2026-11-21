@@ -359,7 +359,7 @@ def test_hmm_apply_to_tf_recall_to_label_extraction_workflow_by_mode(
     assert applied_read.has_tag("as")
     assert applied_read.has_tag("al")
     assert applied_read.has_tag("nq")
-    assert applied_read.has_tag("aq")
+    assert not applied_read.has_tag("aq")   # no MSP score (MSP quality is fibertools FIRE)
 
     monkeypatch.setattr(
         recall_tfs,
