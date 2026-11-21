@@ -108,7 +108,7 @@ but no longer written.
 | `st` | `Z` | `fiberhmm-daf-encode` | conversion flavour: `CT` or `GA`; `SEQ` then carries Y/R codes. `fiberhmm-call`'s one-pass DAF path derives the flavour internally and does not write it |
 | `di` | `i` | `fiberhmm-dedup`, integrated dedup | duplicate-cluster id, on every member of a cluster of two or more |
 | `ds` | `i` | same | cluster size (copies of the molecule in the input) |
-| `xc` | `Z` | `fiberhmm-call` | local lowercase tag: `strand_swap` identifies DAF strand-swap evidence meeting the run's detector settings in @PG DS (`chimera_min_seg`, `chimera_purity`, `chimera_min_baseq`, `chimera_min_span`, `chimera_multi_switch`, `chimera_error_mask`); paired with SAM QC-fail 0x200, including supplementary/secondary records |
+| `xc` | `Z` | `fiberhmm-call` | local lowercase tag: `strand_swap` identifies DAF strand-swap evidence meeting the run's `chimera_min_seg` / `chimera_purity` thresholds in @PG DS (with the opt-in strict detector, also its `chimera_min_baseq`, `chimera_min_span`, `chimera_multi_switch` and `chimera_error_mask` settings); paired with SAM QC-fail 0x200, including supplementary/secondary records. `split` marks a piece written by `--chimeras split` (strict detector), with `xi:i` (piece index), `xn:Z` (original read name) and `xb:B:i` (breakpoint gaps); see [Split mode](../workflows/daf-seq.md#split-mode) |
 | `xq` | `i` | `fiberhmm-call` | original QC-fail state before setting `xc:Z:strand_swap`: 0 means FiberHMM set 0x200; 1 means it was already set. Cleanup preserves pre-existing QC failures. |
 
 Duplicates are also flagged `0x400` (standalone `--flag-only`, and the

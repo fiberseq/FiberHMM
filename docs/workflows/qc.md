@@ -120,9 +120,11 @@ with `plot: not written (install matplotlib)`.
   within its bounded sample rather than full-run counts.
   Sampled marks and the state sampler's chimera skips are retained as sample
   context. Marked chimeras are excluded from rate and footprint panels. TSV columns
-  and the PDF/PNG chimera row report the same counts.
+  and a line beside the PDF/PNG duplication panel report the same counts.
   Detection is DAF-specific; m6A runs report mode `n/a`.
-- **DAF chimera row** (3.1.0). The `chimeras` section also has a `grade` of
+- **DAF chimera row (strict detector only).** For a BAM called with the
+  opt-in `--chimera-detector strict` (recorded in the `@PG` DS and the
+  chimeras sidecar), the `chimeras` section also has a `grade` of
   the chimera fraction (`status` PASS below 10%, WARN from 10%, with
   `severity` `moderate` or, from 20%, `high`; INSUFFICIENT below 100
   checked reads), a `regions` table (per-region counts and fractions; also
@@ -141,17 +143,15 @@ with `plot: not written (install matplotlib)`.
   call's full-run count when available; standalone QC of a flag-mode BAM
   without the sidecar grades the flagged fraction of its sample. Remove and
   split BAMs without their sidecar are not graded. The grade records the
-  detector that made the count (`min_seg`, `purity`) and its `basis`:
-  `default` for the 3.1.0 detector, `lenient` for a looser one such as a
-  FiberHMM 3.0.3 sidecar or BAM (5 and 0.8, no base-quality or span limit),
-  which is graded on its recorded count with a `basis_note` saying the
-  default detector marks fewer reads. A chimera WARN turns an overall PASS
+  settings that made the count (`min_seg`, `purity`) and its `basis`:
+  `default` for the strict defaults, `lenient` or `custom` otherwise, with a
+  `basis_note`. A chimera WARN turns an overall PASS
   into WARN (`overall.warned_by: ["chimeras"]`); it never fails a sample and
   is not part of the score, since flagged chimeras are excluded from calls.
-  The grade measures detectable chimeras only: at a 10% WARN about one
-  unflagged read in nine is still a same-strand chimera, at a 20% `high`
-  WARN about one in four. Without a chimera WARN, and for every non-DAF run,
-  the overall verdict is as before.
+  Before measuring state-aware rates QC restores the call's strict detector
+  and its chimera error mask. BAMs called with the standard detector (the
+  default) get the chimera section, TSV columns, PDF/PNG line and verdict
+  of earlier releases, unchanged.
 
 If the run's ML threshold differs by more than 5 from the reference's
 calibration threshold, the rate score is capped at WARN and the mismatch is
