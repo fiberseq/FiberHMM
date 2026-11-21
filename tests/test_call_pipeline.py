@@ -454,6 +454,9 @@ def test_integrated_ddda_mcg_spans_match_standalone_tagger(tmp_path):
         n_cores=1,
         chunk_size=10,
         io_threads=1,
+        # The fused path masks spans outside every HMM footprint, which only
+        # apply's legacy ns/nl list (its MA nuc holds those outside MSPs).
+        write_legacy_tags=True,
     )
     annotate_bam_per_read(
         apply_output,

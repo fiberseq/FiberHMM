@@ -101,8 +101,14 @@ def _harmonized_result(result: dict, write_msps: bool) -> dict:
 
 
 def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: bool = True,
-                          harmonize: bool = False) -> None:
-    """Write legacy apply tags (`ns/nl/as/al`, optional `nq`) in place.
+                          harmonize: bool = False, write_legacy: bool = True) -> None:
+    """Write apply's tags in place: MA, and legacy `ns/nl/as/al` (optional `nq`).
+
+    ``write_legacy=False`` (``fiberhmm-apply`` default since 3.3.0; the
+    function default stays True for API callers) writes MA/AQ only -- the
+    footprints outside MSPs as ``nuc`` and the MSPs as ``msp`` -- and removes
+    any legacy ns/nl/nq/as/al/aq the record carried. With ``write_legacy``
+    (``--legacy-tags``) the legacy views below are written as before.
 
     No MSP score is written: ``with_scores`` adds the nucleosome ``nq`` only,
     and any ``aq`` is removed when MSPs are written (an MSP quality in a
@@ -148,6 +154,14 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
     else:
         out_msps = retained_msps
         msp_view = {**result, "as": [s for s, _ in out_msps], "al": [n for _, n in out_msps]}
+    if not (write_legacy or harmonize):
+        from fiberhmm.inference.read_filters import LEGACY_CALL_TAGS
+        for tag in LEGACY_CALL_TAGS + (HARMONIZED_LEGACY_TAG,):
+            if read.has_tag(tag):
+                read.set_tag(tag, None)
+        _write_apply_ma(read, result, with_scores, write_msps, out_msps, msp_view,
+                        legacy_written=False)
+        return
     if harmonize:
         result = {**_harmonized_result(msp_view, True),
                   "as": result["as"], "al": result["al"]}
@@ -191,25 +205,33 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
     if keeps_m5c:
         # The kept CpG-island groups make MA present, and MA is authoritative
         # for readers, so it also carries this run's nucleosomes and MSPs.
-        from fiberhmm.inference.tf_recaller import write_ma_tags
+        _write_apply_ma(read, result, with_scores, write_msps, out_msps, msp_view,
+                        legacy_written=True)
 
-        footprints = [(int(s), int(n)) for s, n in zip(result["ns"], result["nl"])]
-        # --no-msps: MA carries the record's own retained MSPs, and their
-        # fibertools FIRE aq is kept (msps_replaced=False).
-        msps = out_msps
-        msp_result = {**result, "as": msp_view["as"], "al": msp_view["al"]}
-        scores = scores_to_u8(result.get("ns_scores")) if with_scores else None
-        if scores is not None and len(scores) != len(footprints):
-            scores = None
-        # Legacy ns also lists sub-nucleosomal footprints inside MSPs; in MA
-        # (where nuc and msp tile the read) only footprints outside MSPs are
-        # nucleosomes. TF-sized footprints are left to recall, as in call.
-        keep = _footprints_outside_msps(msp_result, True)
-        nucs = [footprints[i] for i in keep]
-        nq = [scores[i] for i in keep] if scores is not None else None
-        write_ma_tags(read, len(read.query_sequence or "") or int(read.query_length or 0),
-                      [], nucs, msps, nq_for_kept_nucs=nq, also_write_legacy=False,
-                      msps_replaced=write_msps)
+
+def _write_apply_ma(read, result, with_scores, write_msps, out_msps, msp_view, *,
+                    legacy_written) -> None:
+    """MA/AQ of an apply result: nucleosomes = footprints outside the MSPs."""
+    from fiberhmm.inference.tf_recaller import write_ma_tags
+
+    footprints = [(int(s), int(n)) for s, n in zip(result["ns"], result["nl"])]
+    # --no-msps: MA carries the record's own retained MSPs; with legacy
+    # tags written their fibertools FIRE aq is kept (msps_replaced=False).
+    msps = out_msps
+    msp_result = {**result, "as": msp_view["as"], "al": msp_view["al"]}
+    scores = scores_to_u8(result.get("ns_scores")) if with_scores else None
+    if scores is not None and len(scores) != len(footprints):
+        scores = None
+    # Legacy ns also lists sub-nucleosomal footprints inside MSPs; in MA
+    # (where nuc and msp tile the read) only footprints outside MSPs are
+    # nucleosomes. TF-sized footprints are left to recall, as in call.
+    keep = _footprints_outside_msps(msp_result, True)
+    nucs = [footprints[i] for i in keep]
+    nq = [scores[i] for i in keep] if scores is not None else None
+    write_ma_tags(read, len(read.query_sequence or "") or int(read.query_length or 0),
+                  [], nucs, msps, nq_for_kept_nucs=nq, also_write_legacy=False,
+                  msps_replaced=write_msps or not legacy_written,
+                  remove_legacy=not legacy_written)
 
 
 def _retained_seq_msps(read) -> list:

@@ -190,6 +190,11 @@ def build_parser() -> argparse.ArgumentParser:
                       default=None,
                       help="DddA CpG mask policy for the HMM and recall (default "
                            "unmethylated-only).")
+    from fiberhmm import defaults as _D
+    call.add_argument("--legacy-tags", action="store_true", default=_D.WRITE_LEGACY_TAGS,
+                      help="Passed to fiberhmm-call: also write legacy ns/nl/nq, as/al "
+                           "beside MA/AQ (fibertools <= 0.12, old scripts). Default: "
+                           "MA/AQ only.")
     call.add_argument("--call-args", default=None,
                       help='Other fiberhmm-call options, quoted as one string '
                            '(e.g. --call-args "--with-scores --min-llr 6").')
@@ -309,7 +314,9 @@ def config_from_args(args):
         use_m5c=args.use_m5c,
         cpg_mask_policy=args.cpg_mask_policy,
         qc=args.qc,
-        call_args=shlex.split(args.call_args or ""),
+        call_args=(shlex.split(args.call_args or "")
+                   + (["--legacy-tags"] if args.legacy_tags
+                      and "--legacy-tags" not in shlex.split(args.call_args or "") else [])),
         call_mode=args.call_mode,
         tracks=args.tracks,
         aligner=args.aligner,

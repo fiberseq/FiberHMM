@@ -1,6 +1,7 @@
 """Order-preserving drain helpers for streaming inference pipelines."""
 
 from __future__ import annotations
+from fiberhmm import defaults as _D
 
 import numpy as np
 
@@ -54,11 +55,9 @@ def strip_for_fused_call(read, also_write_legacy: bool = True) -> None:
     write_insert_evidence(read)
     carry_to_molecular(read)
     strip_ambiguous_aq(read)
-    strip_stale_call_tags(
-        read,
-        legacy_tags=LEGACY_CALL_TAGS if also_write_legacy else (),
-        keep_m5c_groups=True,
-    )
+    # Legacy tags go whether or not this run writes them: rewritten, or
+    # (MA-only output, the default) they would be stale beside the new MA.
+    strip_stale_call_tags(read, legacy_tags=LEGACY_CALL_TAGS, keep_m5c_groups=True)
 
 
 def _record_chunk_failures(counters, value) -> None:
@@ -82,6 +81,7 @@ def _drain_oldest_chunk(
     posterior_writer,
     counters,
     harmonize_legacy_tags=False,
+    write_legacy_tags=_D.WRITE_LEGACY_TAGS,
 ):
     """
     Block on the oldest in-flight apply chunk, apply tags, and write to BAM.
@@ -112,7 +112,8 @@ def _drain_oldest_chunk(
         result = next(result_iter)
         if result is not None:
             set_legacy_apply_tags(read_obj, result, with_scores, write_msps,
-                                  harmonize=harmonize_legacy_tags)
+                                  harmonize=harmonize_legacy_tags,
+                                  write_legacy=write_legacy_tags)
             counters['reads_with_footprints'] += 1
 
             if posterior_writer and result.get('posteriors') is not None:

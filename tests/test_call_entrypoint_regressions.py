@@ -677,7 +677,7 @@ def test_apply_calls_unaligned_bam_at_single_core(tmp_path, benchmark_model_path
     assert result.returncode == 0, result.stderr.decode(errors="replace")
     with pysam.AlignmentFile(str(outdir / "reads.ubam_footprints.bam"), "rb",
                              check_sq=False) as handle:
-        assert sum(read.has_tag("ns") for read in handle.fetch(until_eof=True)) > 0
+        assert sum(read.has_tag("MA") for read in handle.fetch(until_eof=True)) > 0
 
 
 # ---------------------------------------------------------------------------

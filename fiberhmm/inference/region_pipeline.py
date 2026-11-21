@@ -1,6 +1,7 @@
 """Region-parallel BAM and BED pipeline coordinators."""
 
 from __future__ import annotations
+from fiberhmm import defaults as _D
 
 import os
 import shutil
@@ -110,6 +111,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
                                    io_threads: int = 4,
                                    cpg_mask_policy: Optional[str] = None,
                                    harmonize_legacy_tags: bool = False,
+                                   write_legacy_tags: bool = _D.WRITE_LEGACY_TAGS,
                                    pg_record: Optional[dict] = None) -> Tuple[int, int]:
     """
     Process BAM using region-based parallelism with indexed access.
@@ -166,6 +168,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
             'io_threads': io_threads,
             'cpg_mask_policy': cpg_mask_policy,
             'harmonize_legacy_tags': bool(harmonize_legacy_tags),
+            'write_legacy_tags': bool(write_legacy_tags),
             'pg_record': pg_record,
         }
 

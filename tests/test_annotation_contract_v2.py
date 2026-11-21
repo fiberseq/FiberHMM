@@ -112,7 +112,7 @@ def test_set_legacy_apply_tags_with_scores_writes_nq_but_no_aq():
 @pytest.mark.parametrize('fixture', [FT13, FT062], ids=['ft0.13', 'ft0.6.2'])
 def test_apply_scores_warns_and_writes_no_msp_score(tmp_path, fixture):
     proc = _run('fiberhmm.cli.apply', '-i', fixture, '-o', tmp_path, '--enzyme', 'hia5',
-                '--seq', 'pacbio', '--force-seq', '--scores', '-c', '1')
+                '--seq', 'pacbio', '--force-seq', '--scores', '-c', '1', '--legacy-tags')
     assert proc.returncode == 0, proc.stderr
     assert 'no longer writes an MSP score' in proc.stderr
     out = tmp_path / (fixture.name.replace('.bam', '') + '_footprints.bam')
@@ -210,7 +210,8 @@ def test_write_ma_tags_without_legacy_tags_still_drops_legacy_aq():
     read.set_tag('al', array('I', [100, 150]))
     read.set_tag('aq', array('B', [0, 245]))
     _write_ma(read, [(0, 100), (250, 150)], legacy=False)
-    assert read.has_tag('as') and not read.has_tag('aq')
+    # An MA-only write removes the legacy tags too (3.3.0), so none go stale.
+    assert not read.has_tag('as') and not read.has_tag('aq')
 
 
 @pytest.mark.parametrize('tool', ['recall_tfs', 'recall_tfs --no-legacy-tags', 'recall_nucs'])
@@ -354,7 +355,7 @@ def test_apply_no_msps_keeps_fibertools_aq_but_not_an_ambiguous_one(tmp_path, ol
     with pysam.AlignmentFile(str(src)) as bam:
         before = {r.is_reverse: r for r in bam}
     proc = _run('fiberhmm.cli.apply', '-i', src, '-o', tmp_path / 'out', '--enzyme', 'hia5',
-                '--seq', 'pacbio', '--force-seq', '--no-msps', '-c', '1')
+                '--seq', 'pacbio', '--force-seq', '--no-msps', '-c', '1', '--legacy-tags')
     assert proc.returncode == 0, proc.stderr
     out = tmp_path / 'out' / (src.name.replace('.bam', '') + '_footprints.bam')
     with pysam.AlignmentFile(str(out)) as bam:

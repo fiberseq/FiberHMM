@@ -108,7 +108,7 @@ def test_keep_recall_clears_marks_for_downstream_consumers(tmp_path, option, reg
     assert all(not r.has_tag('xc') and not r.has_tag('xq') for r in current)
     assert [r.is_qcfail for r in current] == [False, False, False, True]
     primary = next(r for r in current if r.query_name == 'swap' and r.flag == 0)
-    assert primary.has_tag('MA') and primary.has_tag('ns')
+    assert primary.has_tag('MA') and 'nuc' in str(primary.get_tag('MA'))
     assert extract_modification_calls(primary, 'daf') is not None
     assert hard_observations(primary, 'daf', 'daf', 3, 128) is not None
     assert load_footprint_molecules_from_bam(str(target)).diagnostics.skipped_chimera == 0

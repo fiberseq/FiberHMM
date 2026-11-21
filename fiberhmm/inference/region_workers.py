@@ -1,6 +1,7 @@
 """Multiprocessing worker entry points for region-parallel inference."""
 
 from __future__ import annotations
+from fiberhmm import defaults as _D
 
 import sys
 from typing import Optional
@@ -322,7 +323,8 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
 
                             set_legacy_apply_tags(
                                 read, result, with_scores, write_msps,
-                                harmonize=bool(params.get('harmonize_legacy_tags')))
+                                harmonize=bool(params.get('harmonize_legacy_tags')),
+                                write_legacy=bool(params.get('write_legacy_tags', _D.WRITE_LEGACY_TAGS)))
 
                             # Stream posteriors to TSV immediately (no memory accumulation).
                             if tsv_file and result.get('posteriors') is not None:

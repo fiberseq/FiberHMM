@@ -65,6 +65,8 @@ from fiberhmm.inference.chimeras import is_marked_chimera
 
 from fiberhmm.cli.common import (
     add_force_seq_arg,
+    add_legacy_tags_args,
+    resolve_write_legacy,
     add_legacy_mode_override,
     refuse_non_bam_output,
     require_model_files,
@@ -949,8 +951,7 @@ def parse_args(default_recall_nucs: bool = False):
                         'at the first read with these tags. A wrong frame '
                         'mirrors reverse-strand calls. fibertools Ma tags are '
                         'always molecular.')
-    p.add_argument('--no-legacy-tags', action='store_true',
-                   help='Skip refreshed ns/nl/as/al -- emit only MA/AQ.')
+    add_legacy_tags_args(p)
     p.add_argument('--downstream-compat', action='store_true',
                    help='Downstream-compatibility mode: skip MA/AQ entirely '
                         'and write TF calls INTO the legacy ns/nl tag '
@@ -1620,8 +1621,7 @@ def _recall(args, bam_in, model_path, using_bundled_model, n_cores):
             header_text = str(bam_in.header)
 
             # Compat mode always writes legacy tags (TFs live in ns/nl there).
-            also_write_legacy = (True if args.downstream_compat
-                                 else (not args.no_legacy_tags))
+            also_write_legacy = resolve_write_legacy(args, 'fiberhmm-recall-tfs')
 
             if n_cores == 1:
                 n_reads, n_v2, n_tf, n_demoted, n_failed = _single_thread_loop(

@@ -78,6 +78,10 @@ CANON = {
     # consensus input options added by the consensus parity branches
     "ddda_cpg_mask_policy": (D.CPG_MASK_POLICY, False),
     "molecule_max_end_diff_bp": (D.DEDUP_MAX_END_DIFF, False),
+    # legacy ns/nl/nq, as/al beside MA (--legacy-tags; off since 3.3.0)
+    "legacy_tags": (D.WRITE_LEGACY_TAGS, False),
+    "write_legacy_tags": (D.WRITE_LEGACY_TAGS, False),
+    "also_write_legacy": (D.WRITE_LEGACY_TAGS, True),   # None: defaults.WRITE_LEGACY_TAGS
 }
 
 #: Tool-specific option names that mean a canonical setting.

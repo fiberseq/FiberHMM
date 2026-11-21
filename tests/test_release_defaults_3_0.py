@@ -297,8 +297,8 @@ def test_call_supplementary_by_default(tmp_path, benchmark_model_path,
     assert len(reads) == 3                       # nothing is dropped
     supplementary = [read for read in reads if read.is_supplementary]
     assert len(supplementary) == 1
-    assert supplementary[0].has_tag("ns") is supplementary_called
-    assert all(read.has_tag("ns") for read in reads if not read.is_supplementary)
+    assert supplementary[0].has_tag("MA") is supplementary_called
+    assert all(read.has_tag("MA") for read in reads if not read.is_supplementary)
 
 
 @pytest.mark.parametrize("mode_args", [(), ("--streaming",)])
@@ -325,8 +325,8 @@ def test_apply_supplementary_by_default(tmp_path, benchmark_model_path,
     assert len(reads) == 3
     supplementary = [read for read in reads if read.is_supplementary]
     assert len(supplementary) == 1
-    assert supplementary[0].has_tag("ns") is supplementary_called
-    assert all(read.has_tag("ns") for read in reads if not read.is_supplementary)
+    assert supplementary[0].has_tag("MA") is supplementary_called
+    assert all(read.has_tag("MA") for read in reads if not read.is_supplementary)
 
 
 # --------------------------------------------------------------------------

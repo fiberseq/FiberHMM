@@ -46,6 +46,7 @@ class TestStreamingBasic:
             mode='pacbio-fiber', context_size=3, msp_min_size=60,
             n_cores=2, streaming_pipeline=True, chunk_size=20,
             min_mapq=0, min_read_length=0, prob_threshold=0,
+            write_legacy_tags=True,  # these tests read the legacy tags
         )
         assert _count_bam_reads(output) == _count_bam_reads(synthetic_bam_small)
 
@@ -59,6 +60,7 @@ class TestStreamingBasic:
             mode='pacbio-fiber', context_size=3, msp_min_size=60,
             n_cores=2, streaming_pipeline=True, chunk_size=20,
             min_mapq=0, min_read_length=0, prob_threshold=0,
+            write_legacy_tags=True,  # these tests read the legacy tags
         )
         tags = _read_tags_by_name(output)
         tagged = sum(1 for t in tags.values() if 'ns' in t)
@@ -75,6 +77,7 @@ class TestStreamingBasic:
             mode='pacbio-fiber', context_size=3, msp_min_size=60,
             n_cores=2, streaming_pipeline=True, chunk_size=20,
             min_mapq=0, min_read_length=0, prob_threshold=0,
+            write_legacy_tags=True,  # these tests read the legacy tags
         )
         tags = _read_tags_by_name(output)
         has_msp = sum(1 for t in tags.values() if 'as' in t)
@@ -90,6 +93,7 @@ class TestStreamingBasic:
             mode='pacbio-fiber', context_size=3, msp_min_size=60,
             n_cores=2, streaming_pipeline=True, chunk_size=20,
             min_mapq=0, min_read_length=0, prob_threshold=0,
+            write_legacy_tags=True,  # these tests read the legacy tags
             write_msps=False,
         )
         tags = _read_tags_by_name(output)
@@ -106,6 +110,7 @@ class TestStreamingBasic:
             mode='pacbio-fiber', context_size=3, msp_min_size=60,
             n_cores=2, streaming_pipeline=True, chunk_size=20,
             min_mapq=0, min_read_length=0, prob_threshold=0,
+            write_legacy_tags=True,  # these tests read the legacy tags
         )
         with pysam.AlignmentFile(output, "rb") as bam:
             for read in bam:
@@ -128,6 +133,7 @@ class TestStreamingBasic:
             mode='pacbio-fiber', context_size=3, msp_min_size=60,
             n_cores=2, streaming_pipeline=True, chunk_size=20,
             min_mapq=0, min_read_length=0, prob_threshold=0,
+            write_legacy_tags=True,  # these tests read the legacy tags
             with_scores=True,
         )
         tags = _read_tags_by_name(output)
@@ -148,6 +154,7 @@ class TestStreamingOrderAndDeterminism:
             mode='pacbio-fiber', context_size=3, msp_min_size=60,
             n_cores=2, streaming_pipeline=True, chunk_size=20,
             min_mapq=0, min_read_length=0, prob_threshold=0,
+            write_legacy_tags=True,  # these tests read the legacy tags
         )
         input_names = _read_names_in_order(synthetic_bam_small)
         output_names = _read_names_in_order(output)
@@ -166,6 +173,7 @@ class TestStreamingOrderAndDeterminism:
                 mode='pacbio-fiber', context_size=3, msp_min_size=60,
                 n_cores=2, streaming_pipeline=True, chunk_size=20,
                 min_mapq=0, min_read_length=0, prob_threshold=0,
+            write_legacy_tags=True,  # these tests read the legacy tags
             )
 
         tags1 = _read_tags_by_name(out1)
@@ -185,6 +193,7 @@ class TestStreamingOrderAndDeterminism:
                 mode='pacbio-fiber', context_size=3, msp_min_size=60,
                 n_cores=cores, streaming_pipeline=True, chunk_size=20,
                 min_mapq=0, min_read_length=0, prob_threshold=0,
+            write_legacy_tags=True,  # these tests read the legacy tags
             )
 
         tags1 = _read_tags_by_name(out1)
@@ -205,6 +214,7 @@ class TestStreamingEdgeCases:
             mode='pacbio-fiber', context_size=3, msp_min_size=60,
             n_cores=2, streaming_pipeline=True, chunk_size=20,
             min_mapq=0, min_read_length=0, prob_threshold=0,
+            write_legacy_tags=True,  # these tests read the legacy tags
         )
         assert total == 0
         assert fp == 0
@@ -226,6 +236,7 @@ class TestStreamingEdgeCases:
             mode='pacbio-fiber', context_size=3, msp_min_size=60,
             n_cores=2, streaming_pipeline=True, chunk_size=20,
             min_mapq=0, min_read_length=0, prob_threshold=0,
+            write_legacy_tags=True,  # these tests read the legacy tags
         )
         assert total > 0
         assert _count_bam_reads(output) == _count_bam_reads(synthetic_bam_small)
@@ -240,6 +251,7 @@ class TestStreamingEdgeCases:
             mode='pacbio-fiber', context_size=3, msp_min_size=60,
             n_cores=2, streaming_pipeline=True, chunk_size=20,
             min_mapq=0, min_read_length=0, prob_threshold=0,
+            write_legacy_tags=True,  # these tests read the legacy tags
             process_unmapped=False,
         )
         assert total == 0  # All skipped as unmapped
@@ -257,6 +269,7 @@ class TestStreamingEdgeCases:
             mode='pacbio-fiber', context_size=3, msp_min_size=60,
             n_cores=2, streaming_pipeline=True, chunk_size=20,
             min_mapq=0, min_read_length=0, prob_threshold=0,
+            write_legacy_tags=True,  # these tests read the legacy tags
             process_unmapped=True,
         )
         assert total > 0  # Some reads processed
@@ -274,6 +287,7 @@ class TestStreamingEdgeCases:
             mode='pacbio-fiber', context_size=3, msp_min_size=60,
             n_cores=2, streaming_pipeline=True, chunk_size=5,
             min_mapq=0, min_read_length=0, prob_threshold=0,
+            write_legacy_tags=True,  # these tests read the legacy tags
             max_reads=10,
         )
         assert total == 10
@@ -288,6 +302,7 @@ class TestStreamingEdgeCases:
             mode='pacbio-fiber', context_size=3, msp_min_size=60,
             n_cores=2, streaming_pipeline=True, chunk_size=1,
             min_mapq=0, min_read_length=0, prob_threshold=0,
+            write_legacy_tags=True,  # these tests read the legacy tags
         )
         assert total == _count_bam_reads(synthetic_bam_small)
         assert _count_bam_reads(output) == _count_bam_reads(synthetic_bam_small)
@@ -302,6 +317,7 @@ class TestStreamingEdgeCases:
             mode='pacbio-fiber', context_size=3, msp_min_size=60,
             n_cores=2, streaming_pipeline=True, chunk_size=10000,
             min_mapq=0, min_read_length=0, prob_threshold=0,
+            write_legacy_tags=True,  # these tests read the legacy tags
         )
         assert total == _count_bam_reads(synthetic_bam_small)
 
@@ -331,3 +347,22 @@ def test_separate_ddda_nuc_model_ignores_tf_emission_uplift():
     np.testing.assert_array_equal(
         streaming_workers._worker_recall_state["nuc_llr_miss"], expected_miss
     )
+
+
+def test_streaming_default_writes_ma_only(synthetic_bam_small, benchmark_model_path, tmp_path):
+    """Since 3.3.0 the default is MA/AQ only (fiberhmm.defaults.WRITE_LEGACY_TAGS)."""
+    from fiberhmm.io.footprint_calls import footprint_annotation_tag
+
+    output = str(tmp_path / "out.bam")
+    _total, with_fp = process_bam_for_footprints(
+        input_bam=synthetic_bam_small, output_bam=output,
+        model_or_path=benchmark_model_path,
+        train_rids=set(), edge_trim=10, circular=False,
+        mode='pacbio-fiber', context_size=3, msp_min_size=60,
+        n_cores=2, streaming_pipeline=True, chunk_size=20,
+        min_mapq=0, min_read_length=0, prob_threshold=0,
+    )
+    assert with_fp > 0
+    assert not any(_read_tags_by_name(output).values())
+    with pysam.AlignmentFile(output, "rb") as bam:
+        assert sum(footprint_annotation_tag(r) == 'MA' for r in bam.fetch(until_eof=True)) == with_fp

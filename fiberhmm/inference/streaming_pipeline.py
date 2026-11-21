@@ -8,6 +8,7 @@ valid-looking BAM at the output path.
 """
 
 from __future__ import annotations
+from fiberhmm import defaults as _D
 
 import os
 import sys
@@ -397,6 +398,7 @@ def _process_bam_streaming_pipeline(
     pg_record: Optional[dict] = None,
     cpg_mask_policy: Optional[str] = None,
     harmonize_legacy_tags: bool = False,
+    write_legacy_tags: bool = _D.WRITE_LEGACY_TAGS,
 ) -> Tuple[int, int]:
     """Streaming producer-consumer pipeline for BAM processing.
 
@@ -501,6 +503,7 @@ def _process_bam_streaming_pipeline(
                         inflight, outbam, with_scores, write_msps,
                         posterior_writer, counters,
                         harmonize_legacy_tags=harmonize_legacy_tags,
+                        write_legacy_tags=write_legacy_tags,
                     )
 
                 def _submit():

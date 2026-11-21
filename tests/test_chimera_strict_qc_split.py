@@ -598,8 +598,9 @@ def test_split_pieces_are_valid_single_strand_alignments(tmp_path):
 def _inner_edge_footprints(piece, within=25):
     """Nucleosome calls that reach within ``within`` bp of a piece's cut edge."""
     length = len(piece.query_sequence)
-    starts = list(piece.get_tag('ns')) if piece.has_tag('ns') else []
-    lengths = list(piece.get_tag('nl')) if piece.has_tag('nl') else []
+    from fiberhmm.io.footprint_calls import resolve_footprint_tags
+    calls = resolve_footprint_tags(piece, True) or {}   # MA first, molecular frame
+    starts, lengths = list(calls.get('ns', ())), list(calls.get('nl', ()))
     if piece.get_tag('xi') == 0:
         return [(s, n) for s, n in zip(starts, lengths) if s + n >= length - within]
     return [(s, n) for s, n in zip(starts, lengths) if s <= within]

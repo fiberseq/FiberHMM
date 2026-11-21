@@ -16,6 +16,8 @@ from fiberhmm.cli.common import (
     add_filter_args,
     add_force_seq_arg,
     add_legacy_mode_override,
+    add_legacy_tags_args,
+    resolve_write_legacy,
     add_parallel_args,
     add_stats_args,
     add_version_args,
@@ -186,10 +188,11 @@ Examples:
                              'ddda_ucg islands (default unmethylated-only), or '
                              'mask only ddda_mcg spans (methylated-only). DddA '
                              'only; ignored with a warning otherwise.')
+    add_legacy_tags_args(parser)
     parser.add_argument('--harmonize-legacy-tags', action='store_true',
-                        help='Write ns/nl as the nucleosomes that MA would hold '
+                        help='Implies --legacy-tags. Write ns/nl as the nucleosomes that MA would hold '
                              '(footprints outside MSPs), so legacy tags tile with '
-                             'as/al like fiberhmm-call output. Default: ns/nl list '
+                             'as/al like fiberhmm-call output. Default (--legacy-tags): ns/nl list '
                              'every HMM footprint, which fiberhmm-recall-tfs/-nucs '
                              'need; they refuse harmonized input.')
 
@@ -603,6 +606,9 @@ def _main(args):
         pg_record=pg_record,
         cpg_mask_policy=cpg_mask_policy,
         harmonize_legacy_tags=args.harmonize_legacy_tags,
+        # --harmonize-legacy-tags is about legacy tags, so it writes them.
+        write_legacy_tags=(resolve_write_legacy(args, 'fiberhmm-apply')
+                           or args.harmonize_legacy_tags),
     )
     print(f"\nProcessed {total_reads:,} reads -> {reads_with_footprints:,} with footprints",
           file=sys.stderr if stdout_mode else sys.stdout)

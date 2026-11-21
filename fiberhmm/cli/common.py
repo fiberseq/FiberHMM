@@ -1169,3 +1169,32 @@ def refuse_region_options_without_region_parallel(args, tool: str) -> None:
             file=sys.stderr,
         )
         sys.exit(2)
+
+
+def add_legacy_tags_args(parser: argparse.ArgumentParser) -> None:
+    """``--legacy-tags`` (opt in to legacy ns/nl/nq, as/al beside MA) and the
+    deprecated ``--no-legacy-tags`` (now the default; accepted as a no-op)."""
+    from fiberhmm import defaults as _D
+
+    parser.add_argument(
+        '--legacy-tags', action='store_true', default=_D.WRITE_LEGACY_TAGS,
+        help='Also write the legacy ns/nl/nq (nucleosomes) and as/al (MSPs) '
+             'tags beside MA/AQ, for fibertools <= 0.12 and old scripts. '
+             'Default: MA/AQ only (FiberHMM, fibertools >= 0.13 and '
+             'FiberBrowser read MA); legacy tags on rewritten records are removed.')
+    parser.add_argument('--no-legacy-tags', action='store_true',
+                        help='Deprecated no-op: MA-only output is the default.')
+
+
+def resolve_write_legacy(args, tool: str) -> bool:
+    """Whether to write legacy tags, from :func:`add_legacy_tags_args` options
+    (``--downstream-compat``, where a tool has it, always writes them)."""
+    import sys
+
+    if getattr(args, 'no_legacy_tags', False):
+        print(f"{tool}: note: --no-legacy-tags is deprecated and has no effect; "
+              "MA-only output is the default (--legacy-tags adds ns/nl/as/al).",
+              file=sys.stderr)
+    if getattr(args, 'downstream_compat', False):
+        return True
+    return bool(getattr(args, 'legacy_tags', False))

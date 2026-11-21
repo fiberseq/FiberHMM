@@ -28,6 +28,8 @@ from fiberhmm.cli.common import (
     add_basecaller_provenance_args,
     add_force_seq_arg,
     add_legacy_mode_override,
+    add_legacy_tags_args,
+    resolve_write_legacy,
     ml_threshold,
     non_negative_int,
     refuse_model_enzyme_assay_conflict,
@@ -196,8 +198,7 @@ def parse_args():
                         'inside ddda_ucg islands (default unmethylated-only), or '
                         'mask only ddda_mcg spans (methylated-only, the former '
                         'behaviour). DddA only; ignored with a warning otherwise.')
-    p.add_argument('--no-legacy-tags', action='store_true',
-                   help='Skip ns/nl/as/al, emit only MA/AQ.')
+    add_legacy_tags_args(p)
     p.add_argument('--downstream-compat', action='store_true',
                    help='Skip MA/AQ; write TF calls into legacy ns/nl track.')
 
@@ -1866,7 +1867,7 @@ def _main(args):
             file=sys.stderr,
         )
 
-        also_write_legacy = True if args.downstream_compat else (not args.no_legacy_tags)
+        also_write_legacy = resolve_write_legacy(args, 'fiberhmm-call')
 
         progress = None
         if args.progress_json:

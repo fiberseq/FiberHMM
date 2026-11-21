@@ -456,17 +456,19 @@ def _assert_contract(events: list[dict], outdir: Path) -> dict:
 
 def _assert_called_bam_has_footprints(path) -> None:
     """The called BAM carries footprint calls, not just reads (coverage audit item 33): at least one
-    mapped read has paired, non-empty nucleosome start/length tags and an MA annotation."""
+    mapped read has non-empty MA nucleosome calls (legacy ns/nl are opt-in since 3.3.0)."""
+    from fiberhmm.io.footprint_calls import resolve_footprint_tags
     tagged = 0
     with pysam.AlignmentFile(str(path), check_sq=False) as bam:
         for read in bam.fetch(until_eof=True):
-            if read.is_unmapped or not read.has_tag("ns") or not read.has_tag("nl"):
+            calls = None if read.is_unmapped else resolve_footprint_tags(read, True)
+            if not calls or calls["source"] != "MA" or "ns" not in calls:
                 continue
-            starts, lengths = list(read.get_tag("ns")), list(read.get_tag("nl"))
+            starts, lengths = list(calls["ns"]), list(calls["nl"])
             assert len(starts) == len(lengths), read.query_name
-            if starts and all(n > 0 for n in lengths) and read.has_tag("MA"):
+            if starts and all(n > 0 for n in lengths):
                 tagged += 1
-    assert tagged > 0, f"no read in {path} carries ns/nl footprint calls with an MA tag"
+    assert tagged > 0, f"no read in {path} carries MA nucleosome calls"
 
 
 @needs_minimap2

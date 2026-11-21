@@ -1372,21 +1372,27 @@ def write_ma_tags(read, read_length: int,
                   kept_nucs: Sequence[Tuple[int, int]],
                   msps: Sequence[Tuple[int, int]],
                   nq_for_kept_nucs: Optional[Sequence[int]] = None,
-                  also_write_legacy: bool = True,
+                  also_write_legacy: Optional[bool] = None,
                   downstream_compat: bool = False,
                   nuc_el_for_kept: Optional[Sequence[int]] = None,
                   nuc_er_for_kept: Optional[Sequence[int]] = None,
-                  msps_replaced: bool = True) -> None:
+                  msps_replaced: bool = True,
+                  remove_legacy: bool = True) -> None:
     """Set MA/AQ (and optionally legacy ns/nl/as/al) tags on the read in place.
 
     Three output modes:
 
-    - **Default** (``also_write_legacy=True, downstream_compat=False``):
-      Write MA/AQ per the Molecular-annotation spec. Also refresh legacy
+    - **Default** (``also_write_legacy`` unset: ``defaults.WRITE_LEGACY_TAGS``,
+      off): Write MA/AQ only, per the Molecular-annotation spec, and remove
+      any legacy ns/nl/nq/as/al/aq the read carried so they cannot go stale
+      (``remove_legacy=False`` leaves them, for a caller that has just
+      written them itself). FiberHMM, fibertools >= 0.13 and FiberBrowser
+      read MA.
+
+    - ``also_write_legacy=True`` (``--legacy-tags``): also refresh legacy
       ns/nl/as/al to reflect the unified call set (v2 short-nucs demoted
       to tf+ in MA are removed from ns/nl). TF calls live ONLY in
-      MA/AQ. This is the preferred output for tools that understand the
-      spec (FiberBrowser, future fibertools-rs releases).
+      MA/AQ.
 
     - ``downstream_compat=True``: **Skip MA/AQ entirely**. Write TF calls
       INTO the legacy ns/nl tag alongside nucleosomes, with entries
@@ -1396,10 +1402,6 @@ def write_ma_tags(read, read_length: int,
       preserved -- only positions and lengths. Use this only when you
       need to feed older downstream tools.
 
-    - ``also_write_legacy=False``: Write MA/AQ only; leave existing
-      ns/nl/as/al in place (they will be stale vs. the unified set but
-      preserved unchanged for reference).
-
     ``downstream_compat=True`` and ``also_write_legacy=False`` are mutually
     exclusive; compat mode always writes the legacy track.
 
@@ -1408,6 +1410,16 @@ def write_ma_tags(read, read_length: int,
     them (fibertools FIRE) is kept. Otherwise any ``aq`` is removed.
     """
     import array as pyarray
+
+    if also_write_legacy is None:
+        from fiberhmm import defaults as _D
+        also_write_legacy = bool(downstream_compat) or _D.WRITE_LEGACY_TAGS
+    if not also_write_legacy and remove_legacy:
+        # MA-only output: legacy tags left on the record would be stale.
+        from fiberhmm.inference.read_filters import HARMONIZED_LEGACY_TAG, LEGACY_CALL_TAGS
+        for tag in LEGACY_CALL_TAGS + (HARMONIZED_LEGACY_TAG,):
+            if read.has_tag(tag):
+                read.set_tag(tag, None)
 
     # Groups this writer does not regenerate (ddda_mcg/ddda_ucg/hemi from
     # tag-m5c, deam+/deam- from the duplex merge, or any other tool's layer)
