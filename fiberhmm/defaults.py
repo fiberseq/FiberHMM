@@ -253,8 +253,8 @@ ALLOWED_OVERRIDES = {
         "recall's historical fallback (RECALL_PROB_THRESHOLD)"),
     ("fiberhmm.cli.dedup.run_dedup", "prob_threshold"): (0,
         "API: every caller passes the resolved threshold"),
-    # -- pending: differences other branches introduce or fix ---------------
+    # -- consensus duplicate collapse --------------------------------------
     ("fiberhmm.inference.consensus.parameters.InputOptions", "molecule_max_end_diff_bp"): (-1,
         "consensus duplicate collapse: the fiberhmm-dedup endpoint check is opt-in "
-        "(-1 = off) so truncated copies of one template still collapse", "pending"),
+        "(-1 = off) so truncated copies of one template still collapse"),
 }
