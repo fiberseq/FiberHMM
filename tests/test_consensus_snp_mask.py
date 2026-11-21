@@ -248,20 +248,27 @@ def test_consensus_freeze_transfer_with_explicit_mask(tmp_path):
     from fiberhmm.inference.consensus.cli import main as consensus
     from fiberhmm.inference.consensus.transfer_cli import main as transfer
     bam = make_windows_bam(tmp_path / 'reads.bam', n_windows=1)
-    mask = tmp_path / 'snps.bed'; mask.write_text('chr1\t1300\t1304\n')
-    fit, frozen, target = (tmp_path / n for n in ('fit', 'frozen', 'target'))
+    # Reference 1279-1283 is CTAC in the fixture: two isolated, non-CpG C targets.
+    mask = tmp_path / 'snps.bed'; mask.write_text('chr1\t1279\t1283\n')
+    fit, frozen, target, control = (tmp_path / n for n in ('fit', 'frozen', 'target', 'control'))
     consensus(['--bam', str(bam), '--region', 'chr1:1100-1500', '--daf-snp-mask', str(mask),
                '--cores', '1', '--no-bam', '--output', str(fit)])
     transfer(['--freeze-run', str(fit), '--output', str(frozen)])
     bed = tmp_path / 'windows.bed'; bed.write_text('chr1\t1100\t1500\twindow\t0\t-\n')
-    transfer(['--models', str(frozen), '--bam', str(bam), '--bed', str(bed), '--daf-snp-mask', str(mask),
-              '--include-training-molecules', '--cores', '1', '--no-bam', '--output', str(target)])
+    common = ['--models', str(frozen), '--bam', str(bam), '--bed', str(bed),
+              '--include-training-molecules', '--cores', '1', '--no-bam']
+    transfer(common + ['--daf-snp-mask', str(mask), '--output', str(target)])
+    transfer(common + ['--output', str(control)])
+    # Minus-window orientation into the original frame: 1100 + (1499 - pos).
+    masked_sites = {1100 + (1499 - p) for p in (1279, 1282)}
+    unmasked, = read_json(control / 'evidence.json.gz')['strata']
+    assert masked_sites <= {p for u in unmasked['units'] for p in u['positions']}
     evidence = read_json(target / 'evidence.json.gz')
     source, = evidence['strata']
     assert source['units'] and all(u['strand'] == 'GA' for u in source['units'])
-    # Minus-window orientation into the original frame: 1100 + (1499 - pos).
-    assert all(not set(range(1296, 1300)).intersection(u['positions']) for u in source['units'])
+    assert all(not masked_sites.intersection(u['positions']) for u in source['units'])
     assert source['model_manifest']['daf_snp_mask']['sha256'] == sha256(mask.read_bytes()).hexdigest()
+    assert 'daf_snp_mask' not in unmasked['model_manifest']
     assert read_json(target / 'transfer_manifest.json')['preparation_parameters']['input']['daf_snp_mask'] == str(mask)
     # The evidence is self-contained: replay does not reopen the original BED.
     mask.unlink()
@@ -276,12 +283,13 @@ def test_parallel_windows_keep_mask_and_continue_rejects_changed_content(tmp_pat
     from fiberhmm.inference.consensus.cli import main
     bam = make_windows_bam(tmp_path / 'reads.bam', n_windows=2)
     mask = tmp_path / 'mask.bed'
-    mask.write_text('chr1\t1300\t1304\nchr1\t3300\t3304\n')
+    # Both intervals hold C targets (reference CTAC and GCTG in the fixture).
+    mask.write_text('chr1\t1279\t1283\nchr1\t3300\t3304\n')
     output = tmp_path / 'parallel'
     args = ['--bam', str(bam), '--region', 'chr1:1100-1500', '--region', 'chr1:3100-3500',
             '--daf-snp-mask', str(mask), '--cores', '2', '--window-jobs', '2', '--no-bam', '--output', str(output)]
     main(args)
-    for i, base in enumerate((1300, 3300), 1):
+    for i, base in enumerate((1279, 3300), 1):
         evidence = read_json(output / f'window_{i:06d}' / 'evidence.json.gz')
         source, = evidence['strata']
         assert source['units'] and all(not set(range(base, base + 4)).intersection(u['positions']) for u in source['units'])
