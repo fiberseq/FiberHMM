@@ -103,3 +103,14 @@ def test_omitted_edge_trim_survives_a_round_trip():
     params = NucParams.from_dict(json.loads(json.dumps(NucParams().to_dict())))
     assert DecodeContext(h, params).edge_trim == 25
     assert DecodeContext(h, pickle.loads(pickle.dumps(NucParams()))).edge_trim == 25
+
+
+def test_evidence_replay_reads_the_call_record_past_call_m5c():
+    from fiberhmm.daf.replay import EvidenceReplay, evidence_token
+    h = _header_pgs(
+        {"ID": "fiberhmm-call", "PN": "fiberhmm-call", "CL": _CALL_CL,
+         "DS": "mode=daf " + evidence_token()},
+        {"ID": "fiberhmm-call-m5c", "PN": "fiberhmm-call-m5c", "PP": "fiberhmm-call",
+         "CL": "fiberhmm-call-m5c -i out.bam --tag-bam tagged.bam"},
+    )
+    assert EvidenceReplay(h, "daf").portable
