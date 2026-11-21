@@ -286,6 +286,15 @@
   (248 for Hia5 Nanopore, from `enzyme`/`seq` or the BAM's declaration; new
   `seq` argument) instead of always using 128.
 
+### CI
+
+- A new test runs the real fibertools `ft fire` (fibertools-rs 0.13) on
+  `fiberhmm-call`'s default MA-only output and on `--legacy-tags` output: FIRE
+  elements are found on the MSPs and both inputs give identical FIRE calls.
+  CI installs a pinned, checksum-verified fibertools-rs release binary on
+  Linux and macOS and requires the test to run; locally it skips when `ft`
+  is not installed.
+
 ## 3.2.1
 
 ### Fixed
