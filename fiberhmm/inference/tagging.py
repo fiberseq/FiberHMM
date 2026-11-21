@@ -121,7 +121,9 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
 
     ``harmonize`` (``fiberhmm-apply --harmonize-legacy-tags``) writes ``ns/nl``
     from the MA view instead (footprints outside MSPs), so legacy tags and MA
-    agree as in fiberhmm-call output; ``as/al`` are unchanged. Recall needs the
+    agree as in fiberhmm-call output; ``as/al`` are unchanged. Without
+    ``write_msps`` (``--no-msps``) the MSPs are the record's retained
+    ``as``/``al``, in MA too (with their ``aq`` kept). Recall needs the
     raw footprints, so harmonized output is not recall input.
     """
     # Apply recomputes the read structure, so the footprint groups of any
@@ -134,8 +136,18 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
 
     strip_stale_call_tags(read, legacy_tags=(), keep_m5c_groups=True)
     keeps_m5c = read.has_tag("MA")
+    # The MSPs the output carries: this run's, or under --no-msps the
+    # record's own retained as/al (molecular here; SEQ frame for the MA
+    # writer). The MA nucleosomes (and harmonized ns/nl) lie outside them.
+    if write_msps:
+        out_msps = [(int(s), int(n)) for s, n in zip(result["as"], result["al"]) if int(n) > 0]
+        msp_view = result
+    else:
+        out_msps = _retained_seq_msps(read)
+        msp_view = {**result, "as": [s for s, _ in out_msps], "al": [n for _, n in out_msps]}
     if harmonize:
-        result = _harmonized_result(result, write_msps)
+        result = {**_harmonized_result(msp_view, True),
+                  "as": result["as"], "al": result["al"]}
         # Marks the read so recall refuses it whatever happens to the header.
         read.set_tag(HARMONIZED_LEGACY_TAG, 1, value_type="i")
 
@@ -179,15 +191,10 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
         from fiberhmm.inference.tf_recaller import write_ma_tags
 
         footprints = [(int(s), int(n)) for s, n in zip(result["ns"], result["nl"])]
-        if write_msps:
-            msps = [(int(s), int(n)) for s, n in zip(result["as"], result["al"]) if int(n) > 0]
-            msp_result = result
-        else:
-            # --no-msps: MA carries the record's own retained MSPs (as/al,
-            # already molecular here; back to SEQ frame for the writer), and
-            # their fibertools FIRE aq is kept.
-            msps = _retained_seq_msps(read)
-            msp_result = {**result, "as": [s for s, _ in msps], "al": [n for _, n in msps]}
+        # --no-msps: MA carries the record's own retained MSPs, and their
+        # fibertools FIRE aq is kept (msps_replaced=False).
+        msps = out_msps
+        msp_result = {**result, "as": msp_view["as"], "al": msp_view["al"]}
         scores = scores_to_u8(result.get("ns_scores")) if with_scores else None
         if scores is not None and len(scores) != len(footprints):
             scores = None

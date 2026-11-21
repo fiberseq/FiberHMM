@@ -380,3 +380,21 @@ def test_apply_no_msps_keeps_fibertools_aq_but_not_an_ambiguous_one(tmp_path, ol
                     continue
                 a, n = (int(v) for v in item.split('-'))
                 assert not any(a - 1 < e and s < a - 1 + n for s, e in msps)
+
+
+def test_apply_no_msps_harmonized_ns_matches_ma_nuc(tmp_path):
+    """--harmonize-legacy-tags under --no-msps: ns/nl and MA nuc are the same
+    footprints (those outside the retained MSPs)."""
+    src = tmp_path / 'in.bam'
+    _with_old_apply_pg(FT062, src, old_apply=False, m5c=True)
+    proc = _run('fiberhmm.cli.apply', '-i', src, '-o', tmp_path / 'out', '--enzyme', 'hia5',
+                '--seq', 'pacbio', '--force-seq', '--no-msps', '--harmonize-legacy-tags',
+                '-c', '1')
+    assert proc.returncode == 0, proc.stderr
+    with pysam.AlignmentFile(str(tmp_path / 'out' / 'in_footprints.bam')) as bam:
+        for read in bam:
+            ma_nuc = sorted(i for i in _groups(read).get('nuc', []) if i)
+            ns = list(read.get_tag('ns')) if read.has_tag('ns') else []
+            nl = list(read.get_tag('nl')) if read.has_tag('nl') else []
+            assert sorted(f'{s + 1}-{n}' for s, n in zip(ns, nl)) == ma_nuc, read.is_reverse
+            assert read.has_tag('aq') and read.has_tag('as')
