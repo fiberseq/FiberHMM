@@ -460,13 +460,75 @@ def config_loglik(reads, variants, es):
     return callable_reads, configs, LL
 
 
-def quantify(reads, variants, es, opt, progress=None):
-    """Configuration EM, prevalence (strict to EM), conditional bootstrap intervals, per-read membership, labels."""
+def _posteriors(LL, w):
+    """Per-read configuration posteriors for fixed weights (one E-step of ``_em_dense``)."""
+    a = LL + np.log(np.maximum(w, 1e-300)); m = a.max(1, keepdims=True)
+    p = np.exp(a - m); p /= p.sum(1, keepdims=True)
+    return p
+
+
+def _weighted_median(values, weights):
+    order = np.argsort(values, kind='stable')
+    v, cw = values[order], np.cumsum(weights[order])
+    return float(v[np.searchsorted(cw, cw[-1]/2)])
+
+
+def edge_consistency(callable_reads, configs, P, variants, tolerance_bp):
+    """Per variant, how consistently its member gaps' edges sit at the variant's edges.
+
+    Each gap of a read belongs to variant j with weight = the read's posterior summed over the configurations that
+    label that gap j. Over member gaps (weights): ``member_gaps`` (summed weight), ``edge_within`` (weighted share
+    of member gaps whose left and right edge features both lie within ``tolerance_bp`` of the variant's centre edges,
+    mu), ``edge_mad_L``/``edge_mad_R`` (weighted median absolute deviation of the left/right edge features from
+    mu, bp) and ``edge_dispersion`` ((edge_mad_L + edge_mad_R) / variant width). Edge features are the edge-range
+    midpoints the EM uses. Adds these keys to each variant dict."""
+    k = len(variants)
+    feats = {j: ([], [], []) for j in range(k)}         # L, R, weight
+    by_len = {}
+    for ci, c in enumerate(configs):
+        by_len.setdefault(len(c), []).append(ci)
+    for i, r in enumerate(callable_reads):
+        gaps = r['gaps']
+        if not gaps:
+            continue
+        cols = by_len.get(len(gaps), [])
+        for ci in cols:
+            pw = P[i, ci]
+            if pw <= 0:
+                continue
+            for g, lab in enumerate(configs[ci]):
+                if lab < k:
+                    feats[lab][0].append(gaps[g]['L']); feats[lab][1].append(gaps[g]['R']); feats[lab][2].append(pw)
+    for j, v in enumerate(variants):
+        L, R, W = (np.asarray(x, float) for x in feats[j])
+        mu = np.asarray(v['mu'], float)
+        if not len(W) or W.sum() <= 0:
+            v.update(member_gaps=0.0, edge_within=None, edge_mad_L=None, edge_mad_R=None, edge_dispersion=None)
+            continue
+        dl, dr = np.abs(L - mu[0]), np.abs(R - mu[1])
+        madl, madr = _weighted_median(dl, W), _weighted_median(dr, W)
+        width = float(mu[1] - mu[0])
+        v.update(member_gaps=float(W.sum()),
+                 edge_within=float(W[(dl <= tolerance_bp) & (dr <= tolerance_bp)].sum()/W.sum()),
+                 edge_mad_L=madl, edge_mad_R=madr, edge_dispersion=(madl + madr)/width if width > 0 else None)
+
+
+def quantify(reads, variants, es, opt, progress=None, fit=None):
+    """Configuration EM, prevalence (strict to EM), conditional bootstrap intervals, per-read membership, labels.
+
+    fit: optional set of (dataset, unit_id) keys; the EM (and its bootstrap) then fits the weights on those reads only
+    and every read's membership is its posterior under those weights (cross-fitting, ``fold_weights='heldout'``)."""
     k = len(variants); OTHER = k
     callable_reads, configs, LL = config_loglik(reads, variants, es)
     cidx = {c: i for i, c in enumerate(configs)}
     rows = LL
-    if len(rows):
+    fit_rows = None
+    if fit is not None:
+        fit_rows = np.flatnonzero([(r['dataset'], r['uid']) in fit for r in callable_reads])
+    if fit_rows is not None and len(fit_rows):
+        w, _ = _em(np.ascontiguousarray(LL[fit_rows]))
+        P = _posteriors(LL, w)
+    elif len(rows):
         w, P = _em(LL)
     else:
         w, P = np.ones(len(configs))/len(configs), np.zeros((0, len(configs)))
@@ -474,15 +536,17 @@ def quantify(reads, variants, es, opt, progress=None):
     prev = contains @ w
     rng = np.random.default_rng(opt.seed)
     boots = []
+    LLb = LL if fit_rows is None or not len(fit_rows) else np.ascontiguousarray(LL[fit_rows])
     if len(rows):
         for b in range(opt.bootstrap):
             if progress and b % BOOT_CHUNK == 0:
                 progress(b, opt.bootstrap)
-            s = rng.integers(0, len(LL), len(LL)); wb, _ = _em(LL[s], 500); boots.append(contains @ wb)
+            s = rng.integers(0, len(LLb), len(LLb)); wb, _ = _em(LLb[s], 500); boots.append(contains @ wb)
     boots = np.array(boots)
     ci = dict(lo=np.percentile(boots, 2.5, 0), hi=np.percentile(boots, 97.5, 0)) if len(boots) else None
     Pv = P @ contains.T if len(rows) else np.zeros((0, k + 1))
     describe(variants)
+    edge_consistency(callable_reads, configs, P, variants, getattr(opt, 'edge_tolerance_bp', 25))
     for j, v in enumerate(variants):
         v['prevalence'] = float(prev[j])
         v['ci'] = (float(ci['lo'][j]), float(ci['hi'][j])) if ci else None

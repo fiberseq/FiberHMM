@@ -35,6 +35,28 @@ def _span(parser, value, flag):
     return a, b
 
 
+def parse_parameters(parser, value, flag='--parameters'):
+    """--parameters as a JSON file path or an inline JSON object (text starting with '{')."""
+    from fiberhmm.inference.consensus.artifacts import read_json
+    text = str(value).strip()
+    if text.startswith('{'):
+        try:
+            values = json.loads(text)
+        except ValueError as error:
+            parser.error(f"{flag}: inline JSON does not parse ({error}). Quote it for the shell, which otherwise strips the "
+                         f"double quotes: {flag} '{{\"nfr\":{{\"min_gap_bp\":150}}}}'")
+    elif Path(text).is_file():
+        try:
+            values = read_json(text)
+        except (OSError, ValueError) as error:
+            parser.error(f'{flag} {text}: not readable JSON ({error})')
+    else:
+        parser.error(f"{flag} {value!r}: neither a JSON file nor an inline JSON object (inline JSON starts with '{{')")
+    if not isinstance(values, dict):
+        parser.error(f'{flag}: expected a JSON object of parameter groups, got {type(values).__name__}')
+    return values
+
+
 def _parser():
     p = argparse.ArgumentParser(prog='fiberhmm-nfr', description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     src = p.add_mutually_exclusive_group()
@@ -43,7 +65,11 @@ def _parser():
     src.add_argument('--evidence', help="Saved evidence.json.gz (e.g. a fiberhmm-consensus run's), instead of loading BAMs")
     windows = p.add_mutually_exclusive_group()
     windows.add_argument('--region', help='CHROM:START-END analysis window (0-based, half-open); use this or --bed with BAMs')
-    windows.add_argument('--bed', help='BED3 windows for independent NFR runs, written in BED order to window_XXXXXX directories')
+    windows.add_argument('--bed', '--regions-bed', dest='bed',
+                         help='BED3/BED4 windows for independent NFR runs (one BAM pass per window, windows spread over '
+                              '--cores), written in BED order to window_XXXXXX directories; names, status and a combined '
+                              'variants table in regions.json/regions.tsv/variants.tsv. Add --continue to finish an '
+                              'interrupted run in the same --output')
     p.add_argument('--window-jobs', type=int, default=0, metavar='N',
                    help='Concurrent BED windows (0 = up to --cores; 1 = sequential). Workers are reused across windows')
     p.add_argument('--nfr', action='append', metavar='START-END',
@@ -51,8 +77,29 @@ def _parser():
                         'reads inside a >= 175-bp gap (see --detect-method)')
     p.add_argument('--chemistry', choices=['ddda', 'dddb', 'hia5-pacbio', 'hia5-nanopore'],
                    help='Explicit chemistry for --bam when the BAM header does not declare one')
-    p.add_argument('--parameters', help='JSON: loader groups as for fiberhmm-consensus (input, compute, ...) and an "nfr" group '
-                                        'with any engine parameter (see --schema)')
+    p.add_argument('--parameters', metavar='FILE_OR_JSON',
+                   help='A JSON file, or an inline JSON object (quote it for the shell, e.g. \'{"nfr":{"min_gap_bp":150}}\'): '
+                        'loader groups as for fiberhmm-consensus (input, compute, ...) and an "nfr" group with any engine '
+                        'parameter (see --schema)')
+    from fiberhmm import defaults as D
+    p.add_argument('--skip', metavar='STAGES',
+                   help=f'Comma-separated optional stages to leave out: {", ".join(D.NFR_STAGES)} (pair tests and combination '
+                        'patterns). Variants, configurations and molecules.tsv.gz are unchanged; skipped stages write no '
+                        'coaccess.tsv/combos.tsv (default: none skipped)')
+    p.add_argument('--discover-fold-spec', metavar='SPEC',
+                   help='Cross-fitted discovery: detect NFRs and discover variants on reads whose read-name hash fold is '
+                        'listed, assign membership to every read, and add fold/discovery columns to molecules.tsv.gz. '
+                        'SPEC: "hash=md5,mod=10,discover=0-4" (fold = int(md5(read_name), 16) %% 10; several folds '
+                        '"discover=0+2+4"). Default off')
+    p.add_argument('--fold-weights', choices=['all', 'heldout'],
+                   help='With --discover-fold-spec: fit the configuration EM weights on all reads (default) or on the '
+                        'held-out folds only; memberships of all reads use those weights')
+    p.add_argument('--edge-tolerance-bp', type=int, metavar='BP',
+                   help=f'Edge consistency (variants.tsv edge_within): both edges within BP of the variant\'s edges '
+                        f'(default {D.NFR_EDGE_TOLERANCE_BP})')
+    p.add_argument('--fast-landscape', action='store_true',
+                   help=f'Preset for landscape runs: --skip {",".join(D.NFR_FAST_LANDSCAPE_SKIP)} (variants, configurations and '
+                        'per-read membership only)')
     p.add_argument('--stringency', type=float, help='Prediction strength needed for k (default 0.9; 0.85 admits finer variants)')
     p.add_argument('--mode', choices=['variants', 'depth'], help='variants (discovered, default) or depth (Timer 175/300/500-bp width states)')
     p.add_argument('--elements', choices=['variants', 'nfrs'], help='Co-accessibility elements: each variant (default) or whole NFRs')
@@ -91,7 +138,14 @@ def _parser():
 
 
 def _main(argv=None):
+    from contextlib import ExitStack
+    with ExitStack() as stack:      # the run's worker pool (load and analysis share it) closes with the run
+        return _run(argv, stack)
+
+
+def _run(argv, stack):
     import dataclasses
+    from fiberhmm import defaults as D
     from fiberhmm.inference.consensus.artifacts import read_json
     from fiberhmm.inference.consensus.cli import Progress, check_chemistry, _check_region_contigs, _parse_regions
     from fiberhmm.inference.consensus.parameters import parse_options
@@ -114,7 +168,7 @@ def _main(argv=None):
         p.error('--bam/--datasets need --region CHROM:START-END or --bed')
     if args.bed and (args.nfr or args.classes):
         p.error('--bed detects NFRs independently per window; --nfr and --classes require a single --region')
-    values = read_json(args.parameters) if args.parameters else {}
+    values = parse_parameters(p, args.parameters) if args.parameters is not None else {}
     unknown = sorted(set(values) - set(LOADER_GROUPS) - {'nfr'})
     if unknown:
         p.error(f'--parameters: unknown group(s) {", ".join(unknown)}; use loader groups ({", ".join(LOADER_GROUPS)}) and "nfr"')
@@ -123,13 +177,23 @@ def _main(argv=None):
                         ('within_clusters', args.within_clusters), ('robust', args.robust), ('bootstrap', args.bootstrap),
                         ('detect_threshold', args.detect_threshold), ('detect_method', args.detect_method),
                         ('min_fraction', args.min_fraction), ('min_fold', args.min_fold), ('detect_q', args.detect_q),
-                        ('min_open_reads', args.min_open_reads), ('clip_gaps_to_region', args.clip_gaps_to_region)):
+                        ('min_open_reads', args.min_open_reads), ('clip_gaps_to_region', args.clip_gaps_to_region),
+                        ('discover_fold_spec', args.discover_fold_spec), ('fold_weights', args.fold_weights),
+                        ('edge_tolerance_bp', args.edge_tolerance_bp)):
         if value is not None:
             nfr[name] = value
     from ..depth_cap import NAMES
     for name in NAMES:
         if getattr(args, name) is not None:
             nfr[name] = getattr(args, name)
+    skip = nfr.get('skip') or ()
+    skip = set(skip.split(',') if isinstance(skip, str) else skip)
+    if args.skip is not None:
+        skip |= {x.strip() for x in args.skip.split(',') if x.strip()}
+    if args.fast_landscape:
+        skip |= set(D.NFR_FAST_LANDSCAPE_SKIP)
+    if skip:
+        nfr['skip'] = sorted(skip)
     if args.no_internal_footprint_labels:
         nfr['internal_footprint_labels'] = False
     if args.combo:
@@ -170,7 +234,8 @@ def _main(argv=None):
         if window['end'] - window['start'] > options['compute'].maximum_region_bp:
             p.error(f"--region spans {window['end'] - window['start']:,} bp, more than the "
                     f"{options['compute'].maximum_region_bp:,} bp analysis limit (compute.maximum_region_bp)")
-        from fiberhmm.inference.consensus.execution import single_threaded_blas
+        from fiberhmm.inference.consensus.execution import single_threaded_blas, shared_worker_pool
+        stack.enter_context(shared_worker_pool(options['compute'].cores))
         with single_threaded_blas():
             caps = [opt.max_quantification_molecules]
             if opt.mode != 'depth' or not opt.nfr_regions:
@@ -178,8 +243,8 @@ def _main(argv=None):
             sampling = dict(cap=max(caps) if all(caps) else 0, discovery_cap=opt.max_discovery_molecules,
                             seed=opt.sample_seed, mode='nfr',
                             windows=opt.nfr_regions or None, nfr_options=opt)
-            payload = load_bam_payload(datasets, {k: window[k] for k in ('chrom', 'start', 'end')}, options, progress,
-                                       loader_sampling=sampling)
+            payload = load_payload(datasets, {k: window[k] for k in ('chrom', 'start', 'end')}, values, options, progress,
+                                   sampling, jobs=options['compute'].cores)
     region = payload['region']
     for a, b in opt.nfr_regions:
         if a < region['start'] or b > region['end']:
@@ -193,13 +258,48 @@ def _main(argv=None):
     out.mkdir(parents=True, exist_ok=True)
     from fiberhmm.inference.consensus.execution import single_threaded_blas
     with single_threaded_blas():      # threshold-sensitive clustering: one numerical thread configuration
-        result = run_accessibility(payload, opt, out, progress, classes=classes or None, inputs=inputs)
+        result = run_accessibility(payload, opt, out, progress, classes=classes or None, inputs=inputs,
+                                   jobs=options['compute'].cores)
     summary = [dict(id=n['id'], start=n['start'], end=n['end'], status=n['status'], callable=n['callable'], reads=n['reads'],
                     peak=n.get('profile_peak'), variants=[v['name'] for v in n['variants']]) for n in result['nfrs']]
     det = result.get('detection') or {}
     print(json.dumps(dict(status='complete', experimental=True, output=str(out), nfrs=summary, pairs=len(result['pairs']),
                           detection={k: det.get(k) for k in ('method', 'background', 'enrichment_test', 'enrichment_gates', 'note') if k in det},
                           warnings=result['warnings'])))
+
+
+def _load_dataset_task(args):
+    """One dataset of a run loaded in a worker process (unit_ids keep the dataset's ordinal in the run)."""
+    ordinal, item, region, values, sampling = args
+    from fiberhmm.inference.consensus.bam import load_bam_payload
+    from fiberhmm.inference.consensus.parameters import parse_options
+    from fiberhmm.inference.consensus.execution import single_threaded_blas
+    from .gaps import compact_unit
+    with single_threaded_blas():
+        return load_bam_payload([item], region, parse_options(values), loader_sampling=sampling, unit_hook=compact_unit,
+                                dataset_ordinals={item['dataset_id']: ordinal})
+
+
+def load_payload(datasets, region, values, options, progress=None, sampling=None, jobs=1):
+    """The NFR loader: ``load_bam_payload`` with the compact unit hook. With jobs > 1, several datasets and no molecule
+    cap (a cap samples the datasets jointly), each dataset is loaded in its own worker process; the payload is the
+    one a single sequential load builds (strata and input files in dataset order, the same unit_ids)."""
+    from fiberhmm.inference.consensus.bam import load_bam_payload
+    from .gaps import compact_unit
+    jobs = min(int(jobs or 1), len(datasets))
+    if jobs <= 1 or (sampling and sampling.get('cap')):
+        return load_bam_payload(datasets, region, options, progress, loader_sampling=sampling, unit_hook=compact_unit)
+    from .workflow import worker_pool
+    if progress is not None:
+        progress.report('loading', f'loading {len(datasets)} datasets in {jobs} worker processes')
+    with worker_pool(jobs) as executor:
+        parts = list(executor.map(_load_dataset_task, [(i, item, region, values, sampling) for i, item in enumerate(datasets)]))
+    for item, part in zip(datasets, parts):
+        if progress is not None:
+            progress.report('loading', f"{item['dataset_id']}: {sum(len(s['units']) for s in part['strata'])} molecules loaded",
+                            dataset_id=item['dataset_id'])
+    return dict(parts[0], strata=[s for part in parts for s in part['strata']],
+                input_files=[f for part in parts for f in part['input_files']])
 
 
 def _bed_task(spec):
@@ -215,7 +315,7 @@ def _bed_task(spec):
     sampling = dict(cap=max(caps) if all(caps) else 0, discovery_cap=opt.max_discovery_molecules,
                     seed=opt.sample_seed, mode='nfr', windows=None, nfr_options=opt)
     with single_threaded_blas():
-        payload = load_bam_payload(spec['datasets'], spec['region'], options, loader_sampling=sampling)
+        payload = load_payload(spec['datasets'], spec['region'], spec['values'], options, sampling=sampling)
         if not any(s['units'] for s in payload['strata']):
             raise ValueError(f"{spec['name']}: no molecules in the window (check chromosome, coordinates, MAPQ and chemistry)")
         inputs = dict(datasets=spec['datasets'], evidence=None,

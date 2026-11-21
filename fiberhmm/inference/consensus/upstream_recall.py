@@ -4,6 +4,7 @@ The native query sequence and annotations are used directly. No family posterior
 participates in detection. The caller owns its nuc/MSP topology; the Browser keeps
 the original BAM layers and exposes the replay as a separate analysis baseline.
 """
+from bisect import bisect_left, bisect_right
 from copy import deepcopy
 import numpy as np
 from .adapter import reference_gap_inside
@@ -77,9 +78,7 @@ def recall_hia5_alignment(read, unit, model, strand_mode, mode, context_size,
         return legacy_tag_intervals(read, start_tag, length_tag, legacy_annotation_frame)
 
     nucs=intervals('nuc','ns','nl');msps=intervals('msp','as','al')
-    def project(a,b):
-        values=refs[int(a):int(b)];values=values[values>=0]
-        return [int(values.min()),int(values.max()+1)] if len(values) else None
+    project=_projector(refs)
     def projected(values):
         return sorted(iv for a,b in values if (iv:=project(a,b)) is not None)
     region=unit['_region']
@@ -102,16 +101,19 @@ def recall_hia5_alignment(read, unit, model, strand_mode, mode, context_size,
     recalled_nucs=projected([(a,a+b) for a,b in zip(result['ns'],result['nl'])])
     recalled_msps=projected([(a,a+b) for a,b in zip(result['as'],result['al'])])
     domains=merged(unit['aligned_blocks']);calls=[];excluded=[]
+    gap_inside=_gap_counter(domains)
+    original_nucs=_Overlaps(unit['raw_nuc_intervals']);final_nucs=_Overlaps(recalled_nucs)
+    eligible_msps=[(a,b) for a,b in recalled_msps if b-a>=minimum_nfr_length]
     for call in result['tf_calls']:
         a,b=call.start,call.start+call.length;iv=project(a,b)
         if iv is None:continue
-        gap=reference_gap_inside(*iv,domains)
+        gap=gap_inside(*iv)
         record=dict(interval=iv,query_interval=[int(a),int(b)],llr=float(call.llr),
                     opportunities=int(call.n_opps),source='upstream_nuc_tf_recall',alignment_gap_bp=gap,
-                    released_from_original_nuc=any(iv[0]<nb and iv[1]>na for na,nb in unit['raw_nuc_intervals']))
-        if any(iv[0]<nb and iv[1]>na for na,nb in recalled_nucs):
+                    released_from_original_nuc=original_nucs.any(iv[0],iv[1]))
+        if final_nucs.any(iv[0],iv[1]):
             raise ValueError('Upstream TF overlaps a final nucleosome')
-        if not any(a<=iv[0] and iv[1]<=b and b-a>=minimum_nfr_length for a,b in recalled_msps):
+        if not any(a<=iv[0] and iv[1]<=b for a,b in eligible_msps):
             excluded.append(dict(record,reason='outside_eligible_recalled_MSP'))
         elif gap>maximum_alignment_gap_bp:
             excluded.append(dict(record,reason='alignment_gap_exceeds_input_allowance'))
@@ -121,6 +123,91 @@ def recall_hia5_alignment(read, unit, model, strand_mode, mode, context_size,
         original_tag_msps_absent_from_loaded_scaffold=[list(iv) for iv in sorted(actual_msps-loaded_msps)])
 
 
+def _projector(refs):
+    """project(a, b): the reference span [min, max + 1) of the aligned query positions in [a, b), or None.
+
+    Equal to slicing ``refs[a:b]``, dropping unaligned (-1) entries and taking min and max. When the aligned reference
+    positions never decrease along the query (every linear alignment), the minimum is the first aligned position in
+    the range and the maximum the last, found by bisection; otherwise (or for negative bounds) it slices."""
+    valid = np.flatnonzero(refs >= 0)
+    aligned = refs[valid]
+    def sliced(a, b):
+        values = refs[int(a):int(b)]; values = values[values >= 0]
+        return [int(values.min()), int(values.max()+1)] if len(values) else None
+    if len(aligned) > 1 and not bool(np.all(aligned[1:] >= aligned[:-1])):
+        return sliced
+    index, ref = valid.tolist(), aligned.tolist()
+    def project(a, b):
+        a, b = int(a), int(b)
+        if a < 0 or b < 0:
+            return sliced(a, b)
+        i, j = bisect_left(index, a), bisect_left(index, b)
+        return [ref[i], ref[j-1]+1] if i < j else None
+    return project
+
+
+def _gap_counter(domains):
+    """reference_gap_inside(lo, hi, domains) for sorted, disjoint domains (``geometry.merged``), visiting only the
+    domains that can overlap [lo, hi): the same integer sum, since every other domain adds max(0, ...) = 0."""
+    starts, ends = [d[0] for d in domains], [d[1] for d in domains]
+    if any(s1 <= e0 for e0, s1 in zip(ends, starts[1:])):
+        return lambda lo, hi: reference_gap_inside(lo, hi, domains)
+    def gap(lo, hi):
+        covered = 0
+        for k in range(bisect_right(ends, lo), len(starts)):
+            a = starts[k]
+            if a >= hi:
+                break
+            covered += max(0, min(hi, ends[k])-max(lo, a))
+        return int(hi-lo)-int(covered)
+    return gap
+
+
+class _Overlaps:
+    """any(lo < b and hi > a for a, b in intervals), answered from the intervals sorted by start with running
+    maxima of their ends (intervals with a >= hi can never overlap)."""
+
+    def __init__(self, intervals):
+        pairs = sorted((int(a), int(b)) for a, b in intervals)
+        self.starts = [a for a, _ in pairs]
+        self.max_end = []
+        best = None
+        for _, b in pairs:
+            best = b if best is None or b > best else best
+            self.max_end.append(best)
+
+    def any(self, lo, hi):
+        k = bisect_left(self.starts, hi)          # intervals 0..k-1 start before hi
+        return k > 0 and self.max_end[k-1] > lo
+
+
+def _copy_tree(value, memo):
+    """copy.deepcopy for trees of dicts, lists and scalars (the recall result), keeping deepcopy's sharing of
+    repeated containers through ``memo``; any other type goes to deepcopy with the same memo."""
+    t = type(value)
+    if t in (int, float, str, bool, type(None)):
+        return value
+    key = id(value)
+    if key in memo:
+        return memo[key]
+    if t is list:
+        out = memo[key] = []
+        out.extend(_copy_tree(v, memo) for v in value)
+        memo.setdefault(id(memo), []).append(value)     # keep the original alive while memo is (as deepcopy does)
+        return out
+    if t is dict:
+        out = memo[key] = {}
+        for k, v in value.items():
+            out[_copy_tree(k, memo)] = _copy_tree(v, memo)
+        memo.setdefault(id(memo), []).append(value)
+        return out
+    return deepcopy(value, memo)
+
+
+def _deepcopy(value):
+    return _copy_tree(value, {})
+
+
 def install_recall(unit, result):
     """Install a separate analysis scaffold and preserve all original layers."""
     if 'upstream_nuc_tf_recall' in unit:
@@ -128,9 +215,9 @@ def install_recall(unit, result):
     for original, current in [('original_bam_tf_intervals','raw_tf_intervals'),
                               ('original_bam_nuc_intervals','raw_nuc_intervals'),
                               ('original_bam_msp_intervals','msp_intervals')]:
-        unit.setdefault(original,deepcopy(unit[current]))
-    unit['upstream_nuc_tf_recall']=deepcopy(result)
-    unit['raw_nuc_intervals']=deepcopy(result['nucleosomes'])
-    unit['msp_intervals']=deepcopy(result['msps'])
-    unit['native_multi_interval_calls']=deepcopy(result['calls'])
+        if original not in unit:unit[original]=_deepcopy(unit[current])
+    unit['upstream_nuc_tf_recall']=_deepcopy(result)
+    unit['raw_nuc_intervals']=_deepcopy(result['nucleosomes'])
+    unit['msp_intervals']=_deepcopy(result['msps'])
+    unit['native_multi_interval_calls']=_deepcopy(result['calls'])
     unit['native_multi_interval_tf_intervals']=[list(c['interval']) for c in result['calls']]

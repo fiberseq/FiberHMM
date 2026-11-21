@@ -15,11 +15,13 @@ import hashlib
 import io
 import json
 import math
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 
+from fiberhmm import defaults as D
 from fiberhmm.assoc import coaccess as C
 from . import gaps as G
 from . import variants as V
@@ -84,6 +86,17 @@ class NFROptions:
     combo_elements: tuple = ()       # element ids (3-8); empty: automatic (non-overlapping NFR elements)
     combo_max: int = 6
     combo_samples: int = 300
+    # stages left out (fiberhmm.defaults.NFR_STAGES): 'coaccess' (pair tests: coaccess.tsv) and 'combinations'
+    # (combos.tsv). Variants, configurations and molecules are never skipped and do not change.
+    skip: tuple = D.NFR_SKIP
+    # cross-fitting (fiberhmm.io.folds): NFR detection and variant discovery use only reads whose read-name hash fold is
+    # a discovery fold; membership is assigned to every read. '' = off (every read discovers).
+    discover_fold_spec: str = D.NFR_DISCOVER_FOLD_SPEC
+    # reads whose configuration EM fits the prevalence weights under cross-fitting: 'all' or 'heldout'
+    fold_weights: str = D.NFR_FOLD_WEIGHTS
+    # edge consistency: a member gap's edges count as consistent when both lie within this many bp of the variant's
+    # centre edges (variants.tsv edge_within)
+    edge_tolerance_bp: int = D.NFR_EDGE_TOLERANCE_BP
 
     def __post_init__(self):
         if self.min_fraction is None:
@@ -116,7 +129,7 @@ class NFROptions:
             raise ValueError("detect_method must be 'raw', 'enrichment' or 'fixed'")
         if not isinstance(self.clip_gaps_to_region, bool):
             raise ValueError('clip_gaps_to_region must be a boolean')
-        ints = (*Cap.NAMES, 'min_open_reads', 'kmax', 'splits', 'seed', 'min_gap_bp', 'folds', 'max_gaps', 'bootstrap', 'shift_bp', 'robust', 'per_bin',
+        ints = (*Cap.NAMES, 'min_open_reads', 'edge_tolerance_bp', 'kmax', 'splits', 'seed', 'min_gap_bp', 'folds', 'max_gaps', 'bootstrap', 'shift_bp', 'robust', 'per_bin',
                 'openness_pad_bp', 'min_spanning', 'min_marginal', 'n_perm', 'within_clusters', 'combo_max', 'combo_samples',
                 'internal_footprint_tolerance_bp')
         for name in ints:
@@ -152,6 +165,20 @@ class NFROptions:
             regions.append((a, b))
         self.nfr_regions = tuple(sorted(regions))
         self.combo_elements = tuple(self.combo_elements or ())
+        skip = (self.skip,) if isinstance(self.skip, str) else tuple(self.skip or ())
+        unknown = sorted(set(skip) - set(D.NFR_STAGES))
+        if unknown or not all(isinstance(x, str) for x in skip):
+            raise ValueError(f'skip: unknown stage(s) {", ".join(map(str, unknown))}; choose from {", ".join(D.NFR_STAGES)}')
+        self.skip = tuple(x for x in D.NFR_STAGES if x in skip)
+        from fiberhmm.io.folds import FoldSpec
+        spec = FoldSpec.parse(self.discover_fold_spec or None)
+        self.discover_fold_spec = spec.canonical() if spec is not None else ''
+        if self.fold_weights not in ('all', 'heldout'):
+            raise ValueError("fold_weights must be 'all' or 'heldout'")
+        if self.fold_weights == 'heldout' and (spec is None or spec.all_folds):
+            raise ValueError("fold_weights 'heldout' needs a discover_fold_spec that holds folds out")
+        if self.edge_tolerance_bp < 0:
+            raise ValueError('edge_tolerance_bp must be >= 0')
         if self.combo_elements and not 3 <= len(self.combo_elements) <= 8:
             raise ValueError('combo_elements: choose 3-8 elements')
 
@@ -160,6 +187,12 @@ class NFROptions:
         if receipt and not Cap.enabled(self):
             for name in Cap.NAMES:
                 d.pop(name)
+        if receipt and not self.skip:
+            d.pop('skip')            # receipts of runs that skip nothing keep their earlier bytes
+        else:
+            d['skip'] = list(self.skip)
+        if receipt and not self.discover_fold_spec:
+            d.pop('discover_fold_spec'); d.pop('fold_weights')
         d['nfr_regions'] = [list(r) for r in self.nfr_regions]
         d['combo_elements'] = list(self.combo_elements)
         return d
@@ -295,7 +328,10 @@ def _variant_row(nfr_id, v, by_channel, robust_frac):
                 depth=v['depth'], relation=v['relation'], prevalence=_r(v['prevalence']), strict=_r(v['strict']),
                 ci=[_r(v['ci'][0]), _r(v['ci'][1])] if v.get('ci') else None, only=_r(v['only']), with_ref=_r(v['with_ref']),
                 gain_nats=_r(v['gain'], 1), stability=_r(v['stability'], 3), exp_reads=_r(v['exp_reads'], 1),
-                robust=None if robust_frac is None else _r(robust_frac, 3), by_channel=by_channel)
+                robust=None if robust_frac is None else _r(robust_frac, 3), by_channel=by_channel,
+                member_gaps=_r(v.get('member_gaps'), 1), edge_within=_r(v.get('edge_within')),
+                edge_mad_L=_r(v.get('edge_mad_L'), 1), edge_mad_R=_r(v.get('edge_mad_R'), 1),
+                edge_dispersion=_r(v.get('edge_dispersion')))
 
 
 def _by_channel(reads, Pv, j):
@@ -370,19 +406,58 @@ def _auto_combo(els, opt):
     return chosen if len(chosen) >= 3 else []
 
 
-def run_accessibility(payload, params=None, output_dir=None, progress=None, classes=None, clusters=None, inputs=None):
+def _discover_and_quantify(discovery_reads, reads, nreg, opt, bar=None, ni=0, fit=None):
+    """One NFR region's variant discovery, configuration EM (with its bootstrap) and robustness reruns: a function of
+    the region's reads and the options only, so it gives the same values in any process."""
+    vs, diag, es = V.discover(discovery_reads, nreg, opt, progress=bar.ps(ni) if bar else None,
+                              stage=bar.stage(ni) if bar else None)
+    if bar:
+        bar.step(ni, 3 + bar.kmax, f'prevalence (EM, {opt.bootstrap} bootstrap replicates)')
+    q = V.quantify(reads, vs, es, opt, progress=bar.bootstrap(ni) if bar else None, fit=fit)
+    rob = V.robust(discovery_reads, nreg, vs, opt, n=opt.robust, progress=bar.reruns(ni) if bar else None) if (vs and opt.robust) else None
+    return vs, diag, es, q, rob
+
+
+@contextmanager
+def worker_pool(jobs):
+    """An executor for one stage: the run's shared worker pool when one is open (``shared_worker_pool``; workers keep
+    their imports across stages), else a private pool of ``jobs`` workers for this stage."""
+    from fiberhmm.inference.consensus import execution as E
+    current = E._shared_pool.get()
+    if current is not None:
+        yield current.get()
+        return
+    with E.shared_worker_pool(max(2, int(jobs))) as pool:
+        yield pool.get()
+
+
+def _region_task(args):
+    """Worker-process entry of ``_discover_and_quantify`` (BLAS and OpenMP pinned to one thread by the worker pool)."""
+    work, opt = args
+    from fiberhmm.inference.consensus.execution import single_threaded_blas
+    with single_threaded_blas():
+        return _discover_and_quantify(*work[:3], opt, fit=work[3] if len(work) > 3 else None)
+
+
+def run_accessibility(payload, params=None, output_dir=None, progress=None, classes=None, clusters=None, inputs=None,
+                      jobs=1):
     """NFR variants, membership, prevalence and element co-accessibility for the payload's region.
 
     params: NFROptions fields (dict). classes: footprint-class elements (``load_recaller_classes``) or None.
     clusters: optional {unit_id: label} for the within-cluster check (else ``within_clusters`` k-means, masked).
-    inputs: provenance for the manifest (input files, loader parameters)."""
+    inputs: provenance for the manifest (input files, loader parameters). jobs: worker processes for the NFR regions'
+    discovery and EM (execution only: the results are those of jobs=1)."""
     opt = params if isinstance(params, NFROptions) else NFROptions.from_params(params)
     region = dict(payload['region'])
     units = G.units_of(payload)
     warnings = []; sampling = [] if Cap.enabled(opt) else None
-    detection_units = units
+    from fiberhmm.io.folds import FoldSpec
+    folds = FoldSpec.parse(opt.discover_fold_spec or None)
+    fold_of = {u['unit_id']: folds.fold(u.get('read_name') or u['unit_id']) for u in units} if folds is not None else None
+    in_discovery = (lambda u: fold_of[u['unit_id']] in folds.discover) if folds is not None else (lambda u: True)
+    detection_units = units if folds is None else [u for u in units if in_discovery(u)]
     if opt.max_discovery_molecules:
-        detection_units = [u for u in units if (nucs := G.nucleosomes(u))
+        detection_units = [u for u in detection_units if (nucs := G.nucleosomes(u))
                            and nucs[0][0] < region['end'] and nucs[-1][1] > region['start']]
     discovery_units = Cap.select(detection_units, opt.max_discovery_molecules, opt.sample_seed, G.sampling_channel,
                                  Cap.identity)
@@ -408,14 +483,19 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
         molecules.setdefault(u['unit_id'], dict(read_name=u.get('read_name'), dataset=u['dataset'], strand=u.get('strand'),
                                                 members=sorted({str(m.get('read_name')) for m in u.get('source_members') or () if m.get('read_name')}),
                                                 nfr={}))
+        if folds is not None:
+            molecules[u['unit_id']].update(fold=fold_of[u['unit_id']], discovery=in_discovery(u))
     bar = _NFRProgress(progress, regions, opt)
-    for ni, reg in enumerate(regions):
+
+    def prepare(ni, reg):
+        """Per-read gaps, molecule records and (depth mode) the finished region; variants mode returns the inputs of
+        the region's discovery + EM (``_discover_and_quantify``), which depend on nothing outside the region."""
         nfr_id = f'N{ni + 1}'
         nreg = (reg['start'], reg['end'])
         bar.step(ni, 0, 'per-read gaps')
         usable = [u for u in units if (nucs := G.nucleosomes(u)) and nucs[0][0] < nreg[0] and nucs[-1][1] > nreg[1]]
-        discovered = (Cap.select(usable, opt.max_discovery_molecules, opt.sample_seed, G.sampling_channel, Cap.identity)
-                      if opt.mode == 'variants' else [])
+        discovered = (Cap.select([u for u in usable if in_discovery(u)], opt.max_discovery_molecules, opt.sample_seed,
+                                 G.sampling_channel, Cap.identity) if opt.mode == 'variants' else [])
         quantified = Cap.select(usable, opt.max_quantification_molecules, opt.sample_seed, G.sampling_channel, Cap.identity)
         if sampling is not None:
             sampling.append(Cap.record(usable, discovered, quantified, opt, G.sampling_channel,
@@ -448,7 +528,7 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
                 molecules[r['uid']]['nfr'][nfr_id]['edges'] = [[g['L'], g['R'], g['wL'], g['wR']] for g in r['gaps']]
         if n_call == 0:
             nfr.update(status='not_analysable', message='No read has a nucleosome on both sides of this region.')
-            nfrs.append(nfr); continue
+            return nfr, None
         if opt.mode == 'depth':
             cr, widest, states = V.depth_states(reads)
             for s in states:
@@ -463,16 +543,19 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
                 elements.append(_whole_nfr(nfr_id, nreg, cr))
             for r, w in zip(cr, widest):
                 molecules[r['uid']]['nfr'][nfr_id].update(widest=int(w), map='closed' if not r['gaps'] else f'widest {int(w)} bp')
-            nfrs.append(nfr); continue
+            return nfr, None
+        if opt.fold_weights == 'heldout':
+            discovery_set = {(r['dataset'], r['uid']) for r in discovery_reads if r['callable']}
+            return nfr, (discovery_reads, reads, nreg, {(r['dataset'], r['uid']) for r in reads if (r['dataset'], r['uid']) not in discovery_set})
+        return nfr, (discovery_reads, reads, nreg)
 
-        vs, diag, es = V.discover(discovery_reads, nreg, opt, progress=bar.ps(ni), stage=bar.stage(ni))
+    def assemble(ni, nfr, fitted):
+        nfr_id, nreg = nfr['id'], (nfr['start'], nfr['end'])
+        vs, diag, es, q, rob = fitted
         nfr.update(k=diag['k'], ps_curve=[[k, ps] for k, ps in diag['ps_curve']], gaps=diag['gaps'],
                    candidates=diag['candidates'], merges=[list(m) for m in diag['merges']], dropped=diag['dropped'])
-        bar.step(ni, 3 + bar.kmax, f'prevalence (EM, {opt.bootstrap} bootstrap replicates)')
-        q = V.quantify(reads, vs, es, opt, progress=bar.bootstrap(ni))
         nfr['catalogue'] = catalogue(vs, es, nreg, opt)
         nfr['catalogue']['assignment_regions'] = assignment_regions
-        rob = V.robust(discovery_reads, nreg, vs, opt, n=opt.robust, progress=bar.reruns(ni)) if (vs and opt.robust) else None
         Pv = q['Pv']
         for j, v in enumerate(vs):
             nfr['variants'].append(_variant_row(nfr_id, v, _by_channel(q['reads'], Pv, j), None if rob is None else rob[j]))
@@ -497,7 +580,29 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
                                      state={r['uid']: int(Pv[i, j] >= opt.open_threshold) for i, r in enumerate(q['reads'])}, channel=None))
         else:
             elements.append(_whole_nfr(nfr_id, nreg, q['reads']))
-        nfrs.append(nfr)
+
+    jobs = max(1, min(int(jobs or 1), len(regions)))
+    if jobs <= 1:
+        for ni, reg in enumerate(regions):
+            nfr, work = prepare(ni, reg)
+            if work is not None:
+                assemble(ni, nfr, _discover_and_quantify(*work, opt, bar=bar, ni=ni) if len(work) == 3 else
+                         _discover_and_quantify(*work[:3], opt, bar=bar, ni=ni, fit=work[3]))
+            nfrs.append(nfr)
+    else:
+        # Regions are independent (each discovery and EM is seeded and sees only its own reads): fit them in worker
+        # processes and assemble in region order, so the outputs are those of the sequential loop.
+        prepared = [prepare(ni, reg) for ni, reg in enumerate(regions)]
+        with worker_pool(jobs) as executor:
+            futures = {ni: executor.submit(_region_task, (work, opt)) for ni, (_nfr, work) in enumerate(prepared) if work is not None}
+            done = 0
+            for ni, (nfr, work) in enumerate(prepared):
+                if work is not None:
+                    fitted = futures[ni].result()
+                    done += 1
+                    bar.step(ni, bar.per, f'variants and prevalence done ({done}/{len(futures)} regions fitted)')
+                    assemble(ni, nfr, fitted)
+                nfrs.append(nfr)
     if regions:
         bar.step(len(regions) - 1, bar.per, 'NFR variants done')
     # footprint classes (lattice recaller) overlapping the window
@@ -522,22 +627,30 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
     cov = G.read_covariates(units, region['start'], region['end'])
     _store_molecule_context(molecules, units, cov, region)
     cl = None
-    if clusters is not None:
-        cl = clusters
-    elif opt.within_clusters and len(all_els) >= 2:
-        cl = _masked_clusters(units, cov, all_els, opt.within_clusters, region)
+    pairs, skipped = [], []
+    if 'coaccess' in opt.skip:
+        _report(progress, 'coaccess', 'Pair tests skipped (skip: coaccess)')
+    else:
+        if clusters is not None:
+            cl = clusters
+        elif opt.within_clusters and len(all_els) >= 2:
+            cl = _masked_clusters(units, cov, all_els, opt.within_clusters, region)
 
-    def pair_progress(done, total):
-        _report(progress, 'coaccess', f'Pair tests {done}/{total}', completed=done, total=total)
-    pairs, skipped = C.pair_table(all_els, gaps_by_uid, cov, scope=opt.pairs, clusters=cl, n_perm=opt.n_perm,
-                                  min_reads=opt.min_spanning, min_marginal=opt.min_marginal, per_bin=opt.per_bin,
-                                  q_max=opt.q_max, pad_bp=opt.openness_pad_bp, progress=pair_progress) if len(all_els) >= 2 else ([], [])
+        def pair_progress(done, total):
+            _report(progress, 'coaccess', f'Pair tests {done}/{total}', completed=done, total=total)
+        pairs, skipped = C.pair_table(all_els, gaps_by_uid, cov, scope=opt.pairs, clusters=cl, n_perm=opt.n_perm,
+                                      min_reads=opt.min_spanning, min_marginal=opt.min_marginal, per_bin=opt.per_bin,
+                                      q_max=opt.q_max, pad_bp=opt.openness_pad_bp, progress=pair_progress) if len(all_els) >= 2 else ([], [])
     # combinations
     combo = None
     ids = {e['id']: e for e in all_els}
-    chosen = [ids[i] for i in opt.combo_elements if i in ids] if opt.combo_elements else _auto_combo(all_els, opt)
-    if opt.combo_elements and len(chosen) != len(opt.combo_elements):
-        warnings.append('combo_elements: ' + ', '.join(sorted(set(opt.combo_elements) - set(ids))) + ' not found')
+    chosen = []
+    if 'combinations' in opt.skip:
+        _report(progress, 'combinations', 'Combination patterns skipped (skip: combinations)')
+    else:
+        chosen = [ids[i] for i in opt.combo_elements if i in ids] if opt.combo_elements else _auto_combo(all_els, opt)
+        if opt.combo_elements and len(chosen) != len(opt.combo_elements):
+            warnings.append('combo_elements: ' + ', '.join(sorted(set(opt.combo_elements) - set(ids))) + ' not found')
     if len(chosen) >= 3:
         _report(progress, 'combinations', f'Combination patterns of {len(chosen)} elements')
         try:
@@ -552,11 +665,21 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
                   elements=[{k: (_r(v, 1) if k in ('start', 'end') else _r(v) if k == 'prevalence' else v)
                              for k, v in e.items() if k not in ('state', 'channel')} | dict(n=len(e['state'])) for e in all_els],
                   pairs=[_pair_out(p) for p in pairs], family=dict(tested=len(pairs), scope=opt.pairs, skipped=skipped,
-                                                                   bh='all tested pairs of this run'),
+                                                                   bh='all tested pairs of this run',
+                                                                   **({'stage': 'skipped'} if 'coaccess' in opt.skip else {})),
                   combos=combo, class_join=class_join,
                   within_clusters=dict(mode='labels' if clusters is not None else 'masked_kmeans', k=opt.within_clusters,
                                        molecules=getattr(cl, 'n', None)) if cl is not None else None,
                   warnings=warnings)
+    if opt.skip:
+        result['skipped_stages'] = list(opt.skip)
+    if folds is not None:
+        n_disc = sum(1 for u in units if in_discovery(u))
+        result['cross_fit'] = dict(spec=folds.canonical(), fold='int(%s(read_name).hexdigest(), 16) %% %d' % (folds.hash, folds.mod),
+                                   discover_folds=list(folds.discover), discovery_molecules=n_disc,
+                                   heldout_molecules=len(units) - n_disc, weights=opt.fold_weights,
+                                   note='NFR detection and variant discovery used discovery-fold molecules only; membership '
+                                        'is assigned to every molecule (molecules.tsv.gz fold and discovery columns)')
     result['molecules'] = molecules
     result['element_states'] = encode_element_states(all_els, molecules)
     if output_dir is not None:
@@ -649,7 +772,7 @@ def _pair_out(p):
 # ------------------------------------------------------------------ outputs
 VARIANT_FIELDS = ['nfr', 'nfr_start', 'nfr_end', 'id', 'name', 'L', 'R', 'Lsd', 'Rsd', 'width', 'depth', 'relation', 'prevalence_strict',
                   'prevalence_em', 'ci_lo', 'ci_hi', 'only', 'with_ref', 'gain_nats', 'stability', 'exp_reads', 'robust',
-                  'callable', 'reads', 'by_channel']
+                  'callable', 'reads', 'by_channel', 'member_gaps', 'edge_within', 'edge_mad_L', 'edge_mad_R', 'edge_dispersion']
 CONFIG_FIELDS = ['nfr', 'label', 'weight', 'internal_footprint', 'display_label']
 MOLECULE_FIELDS = ['nfr', 'unit_id', 'read_name', 'dataset', 'strand', 'status', 'map', 'map_posterior', 'p', 'p_other', 'gaps']
 PAIR_FIELDS = ['a', 'b', 'kind_a', 'kind_b', 'n', 'shared', 'n11', 'n10', 'n01', 'n00', 'log2or', 'lo', 'hi', 'fisher_p', 'mh', 'mh_lo',
@@ -696,7 +819,9 @@ def variant_rows(result):
                              prevalence_strict=v['strict'], prevalence_em=v['prevalence'], ci_lo=(v['ci'] or [None])[0],
                              ci_hi=(v['ci'] or [None, None])[1], only=v['only'], with_ref=v['with_ref'], gain_nats=v['gain_nats'],
                              stability=v['stability'], exp_reads=v['exp_reads'], robust=v['robust'], callable=n['callable'],
-                             reads=n['reads'], by_channel=v['by_channel']))
+                             reads=n['reads'], by_channel=v['by_channel'], member_gaps=v.get('member_gaps'),
+                             edge_within=v.get('edge_within'), edge_mad_L=v.get('edge_mad_L'), edge_mad_R=v.get('edge_mad_R'),
+                             edge_dispersion=v.get('edge_dispersion')))
         for s in n.get('depth_states') or ():
             rows.append(dict(nfr=n['id'], nfr_start=n['start'], nfr_end=n['end'], id=s['id'], name=s['name'], depth=s['depth'],
                              relation='depth state', prevalence_strict=s['prevalence'], prevalence_em=s['prevalence'],
@@ -711,6 +836,7 @@ def write_outputs(result, out, payload=None, inputs=None):
     cfg_rows = [dict(nfr=n['id'], **c) for n in result['nfrs'] for c in n['configurations']]
     files['configurations.tsv'] = _tsv(cfg_rows, CONFIG_FIELDS).encode()
     mol_rows = []
+    cross_fit = result.get('cross_fit') is not None
     for uid in sorted(result['molecules']):
         m = result['molecules'][uid]
         for nid in sorted(m['nfr']):
@@ -718,13 +844,18 @@ def write_outputs(result, out, payload=None, inputs=None):
             mol_rows.append(dict(nfr=nid, unit_id=uid, read_name=m['read_name'], dataset=m['dataset'], strand=m['strand'],
                                  status=rec['status'], map=rec.get('map'), map_posterior=rec.get('map_posterior'),
                                  p=';'.join(f'{k}={v}' for k, v in (rec.get('p') or {}).items()), p_other=rec.get('p_other'),
-                                 gaps=';'.join(f'{a}-{b}' for a, b in rec.get('gaps') or ())))
-    files['molecules.tsv.gz'] = _gzip_bytes(_tsv(mol_rows, MOLECULE_FIELDS))
-    prs = [dict(p, n11=p['table'][0], n10=p['table'][1], n01=p['table'][2], n00=p['table'][3]) for p in result['pairs']]
-    files['coaccess.tsv'] = _tsv(prs, PAIR_FIELDS).encode()
-    combo = result.get('combos')
-    crow = [dict(o, elements='+'.join(combo['elements']), n=combo['n']) for o in (combo or {}).get('patterns', [])]
-    files['combos.tsv'] = _tsv(crow, COMBO_FIELDS).encode()
+                                 gaps=';'.join(f'{a}-{b}' for a, b in rec.get('gaps') or ()),
+                                 **(dict(fold=m.get('fold'), discovery=m.get('discovery')) if cross_fit else {})))
+    files['molecules.tsv.gz'] = _gzip_bytes(_tsv(mol_rows, MOLECULE_FIELDS + (['fold', 'discovery'] if cross_fit else [])))
+    # a skipped stage writes no file (an empty table would read as "tested, nothing found")
+    skipped_stages = set(result.get('skipped_stages') or ())
+    if 'coaccess' not in skipped_stages:
+        prs = [dict(p, n11=p['table'][0], n10=p['table'][1], n01=p['table'][2], n00=p['table'][3]) for p in result['pairs']]
+        files['coaccess.tsv'] = _tsv(prs, PAIR_FIELDS).encode()
+    if 'combinations' not in skipped_stages:
+        combo = result.get('combos')
+        crow = [dict(o, elements='+'.join(combo['elements']), n=combo['n']) for o in (combo or {}).get('patterns', [])]
+        files['combos.tsv'] = _tsv(crow, COMBO_FIELDS).encode()
     slim = {k: v for k, v in result.items() if k not in ('molecules', 'element_states')}
     files['result.json'] = (json.dumps(slim, sort_keys=True, indent=1) + '\n').encode()
     # the per-read context the analysis views need (schema v1): analysis.load_result(directory) rebuilds the result
@@ -739,6 +870,7 @@ def write_outputs(result, out, payload=None, inputs=None):
                     inputs=_inputs(payload, inputs), nfr_regions=[dict(id=n['id'], start=n['start'], end=n['end'], source=n['source'])
                                                                for n in result['nfrs']],
                     outputs={name: hashlib.sha256(data).hexdigest() for name, data in sorted(files.items())},
+                    **({'skipped_stages': sorted(skipped_stages, key=D.NFR_STAGES.index)} if skipped_stages else {}),
                     definitions=dict(nfr='gap between consecutive >= 90-bp nucleosome calls (Timer preprint); internal factor-sized '
                                          'protections do not split it',
                                      callable='nucleosome-bounded read coverage spans the NFR region (both edges observed)',

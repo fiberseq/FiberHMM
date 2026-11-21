@@ -18,8 +18,39 @@ def units_of(payload):
     out = []
     for stratum in payload['strata']:
         for u in stratum['units']:
-            out.append(dict(u, dataset=stratum['dataset_id'], chemistry=stratum.get('chemistry')))
+            out.append(index_unit(dict(u, dataset=stratum['dataset_id'], chemistry=stratum.get('chemistry'))))
     return sorted(out, key=lambda u: u['unit_id'])
+
+
+LATTICE_ONLY_FIELDS = ('contexts', 'p_accessible', 'p_protected')
+
+
+def compact_unit(u):
+    """Loader hook (``load_bam_payload(unit_hook=...)``): the unit as fiberhmm-nfr reads it, in a fraction of the
+    memory. Drops the lattice-only fields (contexts and emission probabilities, never read by the NFR analysis) and
+    stores positions and hits as arrays with the same values. A window's units otherwise hold five Python lists per
+    marked position, about 1.3 MB per molecule over an 18-kb window."""
+    for name in LATTICE_ONLY_FIELDS:
+        u.pop(name, None)
+    if u.get('positions') is not None:
+        u['positions'] = np.asarray(u['positions'], dtype=np.int64)
+    if u.get('hits') is not None:
+        u['hits'] = np.asarray(u['hits'], dtype=np.int8)
+    return u
+
+
+def index_unit(u):
+    """Add the per-unit values every NFR region re-reads (private keys on this module's own copy of the unit): the
+    sorted >= NUC_MIN nucleosome calls and the marked positions as an array. They are the exact values
+    :func:`nucleosomes` and :func:`read_gaps` would compute from the unit's lists each time; computing them once per
+    unit instead of once per unit per NFR region is what makes many regions cheap."""
+    u[_NUCS] = tuple(_nucleosomes(u, NUC_MIN))
+    pos = u.get('positions')
+    pos = np.asarray(pos if pos is not None else (), dtype=np.int64)
+    hits = u.get('hits')
+    hit = np.asarray(hits if hits is not None else (), dtype=np.int64) > 0
+    u[_HITPOS] = pos[hit] if len(pos) else pos
+    return u
 
 
 def channel(u):
@@ -31,8 +62,27 @@ def sampling_channel(u):
     return f"{u['dataset']}::{strand}"
 
 
+_NUCS, _HITPOS = '_nfr_nucleosomes', '_nfr_marked_positions'
+
+
 def nucleosomes(u, nuc_min=NUC_MIN):
+    cached = u.get(_NUCS) if nuc_min == NUC_MIN else None
+    return list(cached) if cached is not None else _nucleosomes(u, nuc_min)
+
+
+def _nucleosomes(u, nuc_min):
     return sorted((int(a), int(b)) for a, b in u.get('raw_nuc_intervals') or () if b - a >= nuc_min)
+
+
+def _marked_positions(u):
+    hp = u.get(_HITPOS)
+    if hp is not None:
+        return hp
+    pos = u.get('positions')
+    pos = np.asarray(pos if pos is not None and len(pos) else (), dtype=np.int64)
+    hits = u.get('hits')
+    hit = np.asarray(hits if hits is not None and len(hits) else (), dtype=np.int64) > 0
+    return pos[hit] if len(pos) else pos
 
 
 def read_gaps(u, region, min_gap_bp, nuc_min=NUC_MIN):
@@ -45,9 +95,7 @@ def read_gaps(u, region, min_gap_bp, nuc_min=NUC_MIN):
     nuc = nucleosomes(u, nuc_min)
     if not nuc or nuc[0][0] >= r0 or nuc[-1][1] <= r1:
         return False, []
-    pos = np.asarray(u.get('positions') or (), dtype=np.int64)
-    hit = np.asarray(u.get('hits') or (), dtype=np.int64) > 0
-    hp = pos[hit] if len(pos) else pos
+    hp = _marked_positions(u)
     out = []
     for (_a0, b0), (a1, _b1) in zip(nuc, nuc[1:]):
         g0, g1 = b0, a1
