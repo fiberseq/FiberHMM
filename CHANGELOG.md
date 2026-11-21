@@ -27,6 +27,18 @@
 - Explicit DAF SNP masks remove duplex conversion calls before context
   restoration and adjacent-target thinning, matching single-strand behavior.
   Masked MD extraction also invalidates cached strand decisions.
+- With `--daf-snp-mask`, a read whose chemical strand can no longer be
+  decided once masked sites are removed (an R/Y read without an `st` tag, or
+  an MM-tagged read, whose only marks were masked) is skipped instead of
+  being scored as GA. Unmasked runs are unchanged.
+- Replaying saved masked evidence with `input.correct_native=false` is
+  refused: it would combine the BAM's unmasked TF calls with the masked
+  lattice.
+- Consensus mask positions follow the CIGAR exactly; a `P` operation no
+  longer shifts later positions by one.
+- Staged transfer manifests record each mask's SHA-256 and site count
+  (`daf_snp_masks`), not only its path. Frozen class catalogues record the
+  source run's label rule (`provenance.source_label_semantics`).
 
 ## 3.2.1
 

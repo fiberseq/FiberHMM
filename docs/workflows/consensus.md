@@ -116,8 +116,11 @@ Both converted and unconverted observations at masked coordinates are excluded
 from hit/miss scoring at those coordinates. The same mask
 is used for duplicate fingerprints, the scoring lattices and native TF
 replay, including paired duplex observations. It does not refit the input
-BAM's HMM/MSP scaffold or change the source BAM. Native replay must be on
-(`input.correct_native=true`). For haplotype comparisons, use a common,
+BAM's HMM/MSP scaffold or change the source BAM. A read whose chemical
+strand can no longer be decided after masking (an R/Y read without an `st`
+tag, or an MM-tagged read, whose only marks were masked) is skipped. Native
+replay must be on (`input.correct_native=true`), also when masked saved
+evidence is replayed. For haplotype comparisons, use a common,
 reviewed mask on both haplotypes. A point mask does not make neighboring
 contexts or run-thinning decisions invariant to the site's allele or
 conversion state. Inspect and test a common expanded context/run mask for
