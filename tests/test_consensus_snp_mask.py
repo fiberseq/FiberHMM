@@ -195,14 +195,17 @@ def test_loader_and_native_replay_share_mask_without_mutating_bam(tmp_path, monk
     monkeypatch.setattr(tf_recaller, 'call_tfs_in_interval', capture)
     datasets = [dict(dataset_id='d', paths=[str(bam)])]
     region = dict(chrom='chr1', start=120, end=220)
-    result = load_bam_payload(datasets, region, parse_options({'input': {'daf_snp_mask': str(mask)}}))
+    # Every Y in the 'AYGT' fixture is a CpG; keep CpGs scored so the test isolates the SNP mask
+    # (the production unmethylated-only policy would make them all neutral).
+    cpg = {'ddda_cpg_mask_policy': 'methylated-only'}
+    result = load_bam_payload(datasets, region, parse_options({'input': {'daf_snp_mask': str(mask), **cpg}}))
     source, = result['strata']; unit, = source['units']
     assert 161 not in unit['positions'] and 165 in unit['positions']
     assert seen and all(obs[61] == 8193 for obs in seen)
     assert source['model_manifest']['daf_snp_mask']['sha256'] == sha256(mask.read_bytes()).hexdigest()
     assert source['model_manifest']['daf_snp_mask']['sites'] == 1
     assert sha256(bam.read_bytes()).hexdigest() == original
-    plain = load_bam_payload(datasets, region, parse_options({}))
+    plain = load_bam_payload(datasets, region, parse_options({'input': cpg}))
     assert 161 in plain['strata'][0]['units'][0]['positions']
 
 
