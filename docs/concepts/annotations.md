@@ -4,8 +4,8 @@ FiberHMM writes its calls into the
 [Molecular-annotation](https://github.com/fiberseq/Molecular-annotation-spec)
 tags (`MA`, `AQ`, `AN`), which carry every call type with its quality bytes.
 With `--legacy-tags` it also writes the fibertools-style legacy tags
-(`ns`/`nl`, `as`/`al`) for fibertools ≤ 0.12 and old scripts; FiberHMM,
-fibertools 0.13+ and FiberBrowser read `MA`.
+(`ns`/`nl`, `as`/`al`) for FiberBrowser ≤ 3.1.0, fibertools ≤ 0.12 and old
+scripts; FiberHMM, fibertools 0.13+ and FiberBrowser 3.1.1+ read `MA`.
 This page explains what they mean; [BAM tags](../reference/bam-tags.md) lists
 every tag FiberHMM writes.
 

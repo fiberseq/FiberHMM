@@ -228,29 +228,22 @@ def _matching_legacy_nq(read, ns, nl):
     return [by_interval[(int(s), int(n))] for s, n in zip(ns, nl)]
 
 
-def carry_annotation_msps_as_legacy(read) -> bool:
+def carry_annotation_msps_as_legacy(read, *, ma_molecular: Optional[bool] = None,
+                                    ma_evidence: Optional[bool] = None) -> bool:
     """Write a read's MA/Ma ``msp`` calls as legacy ``as``/``al`` (molecular
-    frame), for a writer that keeps the record's own MSPs (``fiberhmm-apply
-    --no-msps``) but drops the MA footprint groups. A legacy ``aq`` (fibertools
-    FIRE) is kept only when the legacy pair already listed exactly those MSPs.
-    Returns whether the tags were written (False: MSPs not in MA/Ma)."""
-    from fiberhmm.io.legacy_tags import array_tag_pair
+    frame) when it has no legacy as/al pair, for a writer that keeps the
+    record's own MSPs (``fiberhmm-apply --no-msps``) but drops the MA
+    footprint groups first. A legacy pair already on the record is a carried
+    annotation and is left in place. Returns whether the tags were written.
+    ``ma_molecular``/``ma_evidence``: see :func:`resolve_footprint_tags` (a
+    caller that already carried MA into molecular frame passes True, True)."""
+    from fiberhmm.io.legacy_tags import has_array_tag_pair
 
-    calls = resolve_footprint_tags(read, True)
-    if not calls or calls['source'] == 'legacy' or 'as' not in calls:
+    if has_array_tag_pair(read, 'as', 'al'):
         return False
-    starts = [int(s) for s in calls['as']]
-    lengths = [int(n) for n in calls['al']]
-    old = array_tag_pair(read, 'as', 'al')
-    same = old is not None and list(zip(old[0], old[1])) == list(zip(starts, lengths))
-    if not same:
-        if read.has_tag('aq'):
-            read.set_tag('aq', None)
-        if starts:
-            read.set_tag('as', array.array('I', starts))
-            read.set_tag('al', array.array('I', lengths))
-        else:
-            for tag in ('as', 'al'):
-                if read.has_tag(tag):
-                    read.set_tag(tag, None)
+    calls = resolve_footprint_tags(read, True, ma_molecular=ma_molecular, ma_evidence=ma_evidence)
+    if not calls or calls['source'] == 'legacy' or not len(calls.get('as', ())):
+        return False
+    read.set_tag('as', array.array('I', [int(v) for v in calls['as']]))
+    read.set_tag('al', array.array('I', [int(v) for v in calls['al']]))
     return True

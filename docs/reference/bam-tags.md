@@ -11,8 +11,9 @@ Written by `fiberhmm-call`, `fiberhmm-apply`,
 `fiberhmm-recall-tfs`/`-recall-nucs`, and the joint recall of
 `fiberhmm-pair`/`fiberhmm-merge --recall`. Since 3.3.0 they write `MA`/`AQ`
 (and `AN`) only; the legacy `ns`/`nl`/`nq` and `as`/`al` are written only
-with `--legacy-tags`, for fibertools ≤ 0.12 and old scripts. FiberHMM,
-fibertools 0.13+ and FiberBrowser read `MA`. Every FiberHMM reader takes
+with `--legacy-tags`, for FiberBrowser ≤ 3.1.0 (blank read rows without
+them), fibertools ≤ 0.12 and old scripts. FiberHMM, fibertools 0.13+ and
+FiberBrowser 3.1.1+ read `MA`. Every FiberHMM reader takes
 nucleosome and MSP calls from `MA` (else fibertools `Ma`) and reads the
 legacy tags only when a record has no `nuc`/`msp` group
 ([Shared defaults](shared-defaults.md)).

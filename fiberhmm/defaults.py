@@ -38,8 +38,9 @@ FOOTPRINT_CALL_SOURCE = "MA first, legacy fallback"
 
 #: Whether FiberHMM writers also write the legacy ns/nl/nq and as/al/aq tags
 #: beside MA (``--legacy-tags``). Off: MA/AQ carry every call, and FiberHMM,
-#: fibertools >= 0.13 and FiberBrowser read them; fibertools <= 0.12 and old
-#: scripts need ``--legacy-tags``. A writer that rewrites a record's calls
+#: fibertools >= 0.13 and FiberBrowser >= 3.1.1 read them; FiberBrowser
+#: <= 3.1.0 (blank read rows), fibertools <= 0.12 and old scripts need
+#: ``--legacy-tags``. A writer that rewrites a record's calls
 #: without legacy tags removes any it carried, so they cannot go stale.
 WRITE_LEGACY_TAGS = False
 

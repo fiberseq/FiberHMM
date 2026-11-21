@@ -1179,9 +1179,10 @@ def add_legacy_tags_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         '--legacy-tags', action='store_true', default=_D.WRITE_LEGACY_TAGS,
         help='Also write the legacy ns/nl/nq (nucleosomes) and as/al (MSPs) '
-             'tags beside MA/AQ, for fibertools <= 0.12 and old scripts. '
-             'Default: MA/AQ only (FiberHMM, fibertools >= 0.13 and '
-             'FiberBrowser read MA); legacy tags on rewritten records are removed.')
+             'tags beside MA/AQ, for FiberBrowser <= 3.1.0 (blank read rows '
+             'without them), fibertools <= 0.12 and old scripts. Default: '
+             'MA/AQ only (FiberHMM, fibertools >= 0.13 and FiberBrowser >= 3.1.1 '
+             'read MA); legacy tags on rewritten records are removed.')
     parser.add_argument('--no-legacy-tags', action='store_true',
                         help='Deprecated no-op: MA-only output is the default.')
 

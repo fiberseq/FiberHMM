@@ -8,10 +8,12 @@
   `fiberhmm-call`, `-apply`, `-recall-tfs`, `-recall-nucs`, `-merge --recall`
   and `-pipeline` write calls to `MA`/`AQ`/`AN` only, and remove legacy
   `ns/nl/nq/as/al/aq` from every record they rewrite, so legacy tags can no
-  longer go stale beside a newer `MA`. FiberHMM, fibertools 0.13+ and
-  FiberBrowser read `MA`. `--legacy-tags` (on every writer; `fiberhmm-pipeline`
-  passes it to call) writes them as before, for fibertools ≤ 0.12, whose
-  `ft fire` needs `as/al`, and for scripts that read `ns/nl`.
+  longer go stale beside a newer `MA`. FiberHMM and fibertools 0.13+ read
+  `MA`. Files written by FiberHMM 3.3 without `--legacy-tags` need
+  FiberBrowser 3.1.1 or later for their read rows; older FiberBrowser shows
+  blank rows. fibertools 0.12 and older (its `ft fire` needs `as/al`) and
+  scripts that read `ns/nl` need `--legacy-tags` (on every writer;
+  `fiberhmm-pipeline` passes it to call), which writes them as before.
   `--no-legacy-tags` is accepted as a deprecated no-op; `--downstream-compat`
   is unchanged (legacy tags only). `fiberhmm-apply` without `--legacy-tags`
   writes `MA` `nuc` (the footprints outside MSPs) and `msp` on every called
@@ -42,7 +44,10 @@
   that no TF call overlaps are no longer kept as nucleosomes (1.6% of
   nucleosome calls on the Hia5 PacBio demo data). recall-nucs on apply
   output still gives exactly `fiberhmm-call`'s calls. An `MA` that holds only m5C or FIRE groups no
-  longer hides legacy calls from the consensus loaders.
+  longer hides legacy calls from the consensus loaders. `fiberhmm-scan`
+  peaks keeps FiberBrowser 3.1.0's loader rule (legacy pairs only, an
+  `MA`-only record is one neutral row) so its rows match FiberBrowser; it
+  moves to `MA` with FiberBrowser.
 - **DddA consensus numbers change** because `fiberhmm-consensus` now scores
   DddA CpGs with the same unmethylated-only CpG mask as `fiberhmm-call`.
   Earlier versions excluded CpGs only inside methylated islands

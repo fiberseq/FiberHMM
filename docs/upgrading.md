@@ -15,9 +15,10 @@ Since 3.3.0, `fiberhmm-call`, `-apply`, `-recall-tfs`, `-recall-nucs`,
 `-merge --recall` and `-pipeline` write calls only to `MA`/`AQ`/`AN`, not to
 the legacy `ns`/`nl`/`nq` and `as`/`al`, and they remove legacy tags from the
 records they rewrite. FiberHMM, fibertools 0.13+ (`ft fire`, `ft extract`,
-`ft pileup`, `ft qc`, `ft center`, `ft validate`) and FiberBrowser read `MA`.
-Pass `--legacy-tags` for fibertools ≤ 0.12 (its `ft fire` needs `as`/`al`)
-or scripts that read `ns`/`nl`; `fiberhmm-pipeline --legacy-tags` passes it
+`ft pileup`, `ft qc`, `ft center`, `ft validate`) read `MA`. FiberBrowser
+needs 3.1.1 or later to draw read rows from these files; older versions show
+blank rows. Pass `--legacy-tags` for older FiberBrowser, fibertools ≤ 0.12
+(its `ft fire` needs `as`/`al`) or scripts that read `ns`/`nl`; `fiberhmm-pipeline --legacy-tags` passes it
 to `fiberhmm-call`. `--no-legacy-tags` is accepted as a deprecated no-op.
 Every FiberHMM reader takes nucleosome and MSP calls from `MA` first and
 reads the legacy tags only when a record has no `MA`/`Ma` `nuc` or `msp`

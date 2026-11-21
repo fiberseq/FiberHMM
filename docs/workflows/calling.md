@@ -272,9 +272,10 @@ set from the resolved enzyme and platform. `--no-qc` skips it,
 Tag options:
 
 - `--legacy-tags`: also write the legacy `ns`/`nl`/`nq` and `as`/`al`, for
-  fibertools ≤ 0.12 (`ft fire` 0.12 and older needs `as`/`al`) and old
-  scripts. Since 3.3.0 the default is `MA`/`AQ` only, which FiberHMM,
-  fibertools 0.13+ and FiberBrowser read; `--no-legacy-tags` is a
+  FiberBrowser ≤ 3.1.0 (blank read rows without them), fibertools ≤ 0.12
+  (`ft fire` 0.12 and older needs `as`/`al`) and old scripts. Since 3.3.0
+  the default is `MA`/`AQ` only, which FiberHMM, fibertools 0.13+ and
+  FiberBrowser 3.1.1+ read; `--no-legacy-tags` is a
   deprecated no-op.
 - `--downstream-compat`: put TF calls into `ns`/`nl` and write no
   `MA`/`AQ`/`AN`, for tools that read only legacy tags.
