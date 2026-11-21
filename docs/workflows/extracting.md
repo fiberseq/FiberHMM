@@ -231,15 +231,19 @@ discovery to reads of those read groups (one sample of a multiplexed BAM).
 **Cache.** The VCF is written to `--variant-cache DIR` (default: the output
 folder) as `<sample>.<key>.fhvar.vcf.gz`, bgzipped and tabix-indexed, with a
 `<sample>.<key>.fhvar.json` sidecar. The key is a SHA-256 over the input BAMs
-(name, size, modification time and header MD5), the regions, the read
-groups, the caller and its parameters, the reference FASTA (name, size,
-mtime), the chunk size and the FiberHMM version. A rerun with the same key
+(name, size, modification time and header MD5, each with the read groups
+kept from it), the regions, the circular contigs, the VCF sample name, the
+caller and its parameters, the reference FASTA (name, size, mtime), the chunk
+size and the FiberHMM version. A rerun with the same key
 reuses the VCF (logged `reused`); a change to any of these builds a new one
 (logged `rebuilt`). A VCF cached elsewhere is copied next to the var bigBed.
 Discovery runs in `--variants-chunk-size` (1 Mb) chunks on `--cores`
 workers; finished chunks are kept in a hidden `.<sample>.<key>.fhvar.parts`
 folder, so an interrupted run resumes where it stopped. The parts folder is
-removed once the VCF is written. `--cores` does not change the VCF.
+removed once the VCF is written. `--cores` does not change the VCF. Runs
+that share a cache folder and key take turns (an advisory lock on a hidden
+`.<sample>.<key>.fhvar.parts.lock` file): the second waits and then reuses
+the first one's VCF.
 
 `<BAM stem>_var.discovery.json` next to the bigBeds records the caller, the
 VCF and its MD5, the cache key and whether the VCF was reused.

@@ -387,6 +387,8 @@ def test_interrupted_run_resumes(fiberseq, tmp_path):
     bams = vd.pooled_inputs(bam, opts)
     windows = vd.merge_windows([(CHROM, 0, LENGTH)], [CHROM])
     material = vd.cache_material(bams, windows, "pileup", opts, None, vd.detect_platform(bam))
+    material["sample"] = "fs"      # as discover_variants completes the key
+    material["circular"] = []
     key = vd.cache_key(material)
     _vcf, _side, parts = vd.cache_paths(str(tmp_path), "fs", key)
     os.makedirs(parts)
@@ -738,3 +740,86 @@ def test_pool_name_and_sample_name(tmp_path):
     named = _discover(a, tmp_path / "d", sample_name="HG002.1")
     with pysam.VariantFile(named.vcf) as vcf:
         assert list(vcf.header.samples) == ["HG002.1"]
+
+
+def test_homopolymer_run_wraps_on_a_whole_circular_contig():
+    import numpy as np
+    ref = np.array([0, 0, 0, 1, 2, 3, 1, 0, 0, 0], dtype=np.int8)   # AAA ... AAA
+    assert vd._run_length_at(ref, 0) == 3
+    assert vd._run_length_at(ref, 0, wrap=True) == 6
+
+
+def test_pool_must_agree_on_circular_contigs(tmp_path):
+    def empty(path, circular):
+        sq = {"SN": CHROM, "LN": LENGTH}
+        if circular:
+            sq["TP"] = "circular"
+        hdr = pysam.AlignmentHeader.from_dict({"HD": {"VN": "1.6", "SO": "coordinate"},
+                                               "SQ": [sq]})
+        with pysam.AlignmentFile(str(path), "wb", header=hdr):
+            pass
+        pysam.index(str(path))
+        return str(path)
+    a, b = empty(tmp_path / "a.bam", False), empty(tmp_path / "b.bam", True)
+    with pytest.raises(VariantDiscoveryError, match="circular"):
+        vd.check_pool_headers([a, b])
+
+
+def test_sample_name_is_part_of_the_key(fiberseq, tmp_path):
+    _ref, _snvs, bam, _ = fiberseq
+    one = _discover(bam, tmp_path, sample_name="HG002.1")
+    two = _discover(bam, tmp_path, sample_name="HG002_1")
+    assert one.key != two.key and not two.reused
+
+
+def test_truncated_part_is_recomputed(fiberseq, tmp_path):
+    _ref, _snvs, bam, _ = fiberseq
+    opts = DiscoveryOptions(cache_dir=str(tmp_path), chunk_bp=5000)
+    parts = str(tmp_path / "parts")
+    os.makedirs(parts)
+    chunk = (CHROM, 5000, 10000)
+    vd._run_chunk((chunk, "pileup", (bam,), opts, None, False, parts, None))
+    assert vd._part_done(parts, chunk)
+    path = vd._part_path(parts, chunk)
+    lines = open(path).read().splitlines()
+    assert len(lines) > 1
+    open(path, "w").write("\n".join(lines[:-1]) + "\n")   # lose a record
+    assert not vd._part_done(parts, chunk)
+
+
+def test_key_lock_serialises_runs(tmp_path):
+    import threading
+    import time
+    order = []
+
+    def hold(tag):
+        with vd._key_lock(str(tmp_path / "k.lock"), _quiet):
+            order.append(f"{tag}+")
+            time.sleep(0.2)
+            order.append(f"{tag}-")
+    threads = [threading.Thread(target=hold, args=(t,)) for t in "ab"]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert order in (["a+", "a-", "b+", "b-"], ["b+", "b-", "a+", "a-"])
+
+
+def test_daf_fasta_fallback_reads_through_a_circular_origin(tmp_path):
+    from fiberhmm.daf.snps import _aligned_pairs
+    rng = random.Random(99)
+    length = 500
+    ref = "".join(rng.choice("ACGT") for _ in range(length))
+    fasta = tmp_path / "c.fa"
+    fasta.write_text(f">{CHROM}\n{ref}\n")
+    pysam.faidx(str(fasta))
+    hdr = pysam.AlignmentHeader.from_dict({
+        "HD": {"VN": "1.6"}, "SQ": [{"SN": CHROM, "LN": length, "TP": "circular"}]})
+    read = pysam.AlignedSegment(hdr)
+    read.query_name, read.reference_id, read.reference_start = "r", 0, 450
+    seq = (ref + ref)[450:550]
+    read.query_sequence, read.cigartuples = seq, [(0, 100)]
+    with pysam.FastaFile(str(fasta)) as handle:
+        pairs = _aligned_pairs(read, handle)
+    assert pairs is not None and len(pairs) == 100
+    assert all(base == seq[q] for q, _r, base in pairs)

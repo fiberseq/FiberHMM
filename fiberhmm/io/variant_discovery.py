@@ -25,6 +25,7 @@ parameters, FiberHMM version); a later run with the same key reuses it.
 """
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import datetime
 import hashlib
@@ -185,12 +186,18 @@ def check_pool_headers(bams: Sequence[str]) -> List[Tuple[str, int]]:
                 f"pool BAM is empty (0 bytes; an online-only placeholder?): {path}")
         with pysam.AlignmentFile(path, "rb", check_sq=False) as bam:
             contigs = list(zip(bam.references, bam.lengths))
+        circular = _circular_lengths(path)
         if first is None:
-            first = contigs
+            first, first_circular = contigs, circular
         elif contigs != first:
             raise VariantDiscoveryError(
                 f"{os.path.basename(path)} has different @SQ contigs from "
                 f"{os.path.basename(bams[0])}; pooled BAMs must share a reference")
+        elif circular != first_circular:
+            raise VariantDiscoveryError(
+                f"{os.path.basename(path)} declares different circular contigs from "
+                f"{os.path.basename(bams[0])} (TP:circular / FIBERHMM-REFERENCE "
+                "topology); pooled BAMs must agree")
     return list(first or [])
 
 
@@ -286,11 +293,12 @@ def detect_platform(bam_path: str) -> str:
 
 
 def _circular_lengths(bam_path: str) -> Dict[str, int]:
-    """``{contig: length}`` of the header's ``TP:circular`` contigs."""
+    """``{contig: length}`` of the contigs the header declares circular
+    (``TP:circular`` or a ``FIBERHMM-REFERENCE`` topology comment), as the
+    DAF screen reads them."""
+    from fiberhmm.daf.snps import circular_contig_lengths
     with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
-        sqs = bam.header.to_dict().get("SQ", []) or []
-    return {sq["SN"]: int(sq["LN"]) for sq in sqs
-            if str(sq.get("TP", "")).lower() == "circular"}
+        return dict(circular_contig_lengths(bam.header))
 
 
 def homopolymer_active(params: PileupParams, platform: str) -> bool:
@@ -464,26 +472,31 @@ def _fisher_p(a: int, b: int, c: int, d: int) -> float:
     return float(fisher_exact([[a, b], [c, d]])[1])
 
 
-def _run_length_at(ref: np.ndarray, i: int) -> int:
-    """Length of the homopolymer run of ``ref`` containing index ``i`` (4 = N)."""
-    b = ref[i]
+def _run_length_at(ref: np.ndarray, i: int, wrap: bool = False) -> int:
+    """Length of the homopolymer run of ``ref`` containing index ``i`` (4 = N);
+    ``wrap``: ``ref`` is a whole circular contig."""
+    n = len(ref)
+    b = ref[i % n]
     if b > 3:
         return 0
-    lo = i
-    while lo > 0 and ref[lo - 1] == b:
-        lo -= 1
-    hi = i
-    while hi + 1 < len(ref) and ref[hi + 1] == b:
-        hi += 1
-    return hi - lo + 1
+    run = 1
+    j = i - 1
+    while run < n and (wrap or j >= 0) and ref[j % n] == b:
+        run += 1
+        j -= 1
+    j = i + 1
+    while run < n and (wrap or j < n) and ref[j % n] == b:
+        run += 1
+        j += 1
+    return run
 
 
-def _homopolymer_context(ref: np.ndarray, i: int) -> int:
+def _homopolymer_context(ref: np.ndarray, i: int, wrap: bool = False) -> int:
     """Longest run at or next to index ``i``."""
     best = 0
     for j in (i - 1, i, i + 1):
-        if 0 <= j < len(ref):
-            best = max(best, _run_length_at(ref, j))
+        if wrap or 0 <= j < len(ref):
+            best = max(best, _run_length_at(ref, j, wrap))
     return best
 
 
@@ -527,9 +540,24 @@ def pileup_chunk(chrom: str, lo: int, hi: int, bams: Sequence[str],
     On a circular contig of ``circular_length`` every read of the contig is
     read and its coordinates are folded onto the contig, each position
     counted once per read."""
-    w_lo = max(0, lo - _MARGIN)
-    w_hi = hi + _MARGIN
+    clen = int(circular_length) if circular_length else None
+    wrap_context = False
+    if clen is None:
+        w_lo = max(0, lo - _MARGIN)
+        w_hi = hi + _MARGIN
+    elif hi - lo + 2 * _MARGIN >= clen:
+        # The window is the whole circular contig; reference runs wrap.
+        w_lo, w_hi, wrap_context = 0, clen, True
+    else:
+        # Margins wrap round the origin (w_lo may be negative).
+        w_lo, w_hi = lo - _MARGIN, hi + _MARGIN
     L = w_hi - w_lo
+
+    def window(pos):
+        """``(index into the window, mask)`` for reference positions."""
+        idx = (pos - w_lo) % clen if clen else pos - w_lo
+        mask = (idx >= 0) & (idx < L)
+        return idx, mask
     counts = np.zeros(L * 8, dtype=np.int64)     # pos, base(4), strand(2)
     dels = np.zeros(L, dtype=np.int64)
     votes = np.zeros(L * 4, dtype=np.int64)      # reference base votes
@@ -577,8 +605,8 @@ def pileup_chunk(chrom: str, lo: int, hi: int, bams: Sequence[str],
                     rpos, keep = _fold(rpos, circular_length)
                     qpos, is_eq = qpos[keep], is_eq[keep]
                     del_rpos = _fold(del_rpos, circular_length)[0]
-                inside = (rpos >= w_lo) & (rpos < w_hi)
-                qpos, rpos, is_eq = qpos[inside], rpos[inside], is_eq[inside]
+                widx, inside = window(rpos)
+                qpos, rpos, is_eq = qpos[inside], widx[inside], is_eq[inside]
                 codes = _BASE_INDEX[np.frombuffer(seq.encode("ascii", "replace"), dtype=np.uint8)[qpos]]
                 if reference is None:
                     if read.has_tag("MD"):
@@ -588,22 +616,23 @@ def pileup_chunk(chrom: str, lo: int, hi: int, bams: Sequence[str],
                             if circular_length:
                                 mr, keep = _fold(mr, circular_length)
                                 mref = mref[keep]
-                            sel = (mr >= w_lo) & (mr < w_hi)
+                            midx, sel = window(mr)
                             rc = _BASE_INDEX[mref[sel]]
                             ok = rc < 4
-                            batch_v.append((mr[sel][ok] - w_lo) * 4 + rc[ok])
+                            batch_v.append(midx[sel][ok] * 4 + rc[ok])
                     elif is_eq.any():
                         eqc = codes[is_eq]
                         ok = eqc < 4
-                        batch_v.append((rpos[is_eq][ok] - w_lo) * 4 + eqc[ok])
+                        batch_v.append(rpos[is_eq][ok] * 4 + eqc[ok])
                 good = codes < 4
                 if has_quals:
                     good &= np.asarray(quals, dtype=np.int64)[qpos] >= params.min_baseq
                 strand = 1 if read.is_reverse else 0
-                batch_c.append((rpos[good] - w_lo) * 8 + codes[good].astype(np.int64) * 2 + strand)
-                d = del_rpos[(del_rpos >= w_lo) & (del_rpos < w_hi)]
-                if d.size:
-                    np.add.at(dels, d - w_lo, 1)
+                # rpos now holds window indices.
+                batch_c.append(rpos[good] * 8 + codes[good].astype(np.int64) * 2 + strand)
+                didx, dmask = window(del_rpos)
+                if dmask.any():
+                    np.add.at(dels, didx[dmask], 1)
                 batch_n += 1
                 if batch_n >= 256:
                     flush()
@@ -613,11 +642,20 @@ def pileup_chunk(chrom: str, lo: int, hi: int, bams: Sequence[str],
     if reference is not None:
         with pysam.FastaFile(reference) as fasta:
             try:
-                clen = fasta.get_reference_length(chrom)
+                flen = fasta.get_reference_length(chrom)
             except KeyError:
                 raise VariantDiscoveryError(
                     f"contig {chrom} is not in the reference {reference}")
-            text = fasta.fetch(chrom, w_lo, min(w_hi, clen)).upper()
+            if clen:
+                parts, pos = [], w_lo
+                while pos < w_hi:      # turn by turn through the origin
+                    a = pos % clen
+                    b = min(clen, a + (w_hi - pos))
+                    parts.append(fasta.fetch(chrom, a, b))
+                    pos += b - a
+                text = "".join(parts).upper()
+            else:
+                text = fasta.fetch(chrom, w_lo, min(w_hi, flen)).upper()
         ref = np.full(L, 4, dtype=np.int8)
         ref[:len(text)] = _BASE_INDEX[np.frombuffer(text.encode(), dtype=np.uint8)]
     else:
@@ -649,14 +687,14 @@ def pileup_chunk(chrom: str, lo: int, hi: int, bams: Sequence[str],
             sbp = _fisher_p(ref_f, ref_r, alt_f, alt_r)
             if sbp < params.strand_bias_p:
                 filters.append("StrandBias")
-            hp = _homopolymer_context(ref, i)
+            hp = _homopolymer_context(ref, i, wrap_context)
             if homopolymer and hp >= params.homopolymer_len:
                 filters.append("Homopolymer")
             del_frac = int(dels[i]) / (n_dp + int(dels[i]))
             if del_frac >= params.max_indel_fraction:
                 filters.append("IndelNear")
             records.append({
-                "chrom": chrom, "pos0": w_lo + i, "ref": _BASES[r], "alt": _BASES[alt],
+                "chrom": chrom, "pos0": (w_lo + i) % clen if clen else w_lo + i, "ref": _BASES[r], "alt": _BASES[alt],
                 "filters": filters,
                 "info": {"DP": n_dp, "AC": n_alt, "AF": round(af, 6),
                          "SB": f"{ref_f},{ref_r},{alt_f},{alt_r}",
@@ -842,7 +880,8 @@ def _run_chunk(task) -> Tuple[Tuple[str, int, int], dict]:
     path = _part_path(parts_dir, chunk)
     fd, tmp = tempfile.mkstemp(prefix=".part_", suffix=".tmp", dir=parts_dir)
     with os.fdopen(fd, "w") as handle:
-        handle.write(json.dumps({"chunk": list(chunk), "stats": stats}) + "\n")
+        handle.write(json.dumps({"chunk": list(chunk), "stats": stats,
+                                 "n": len(records)}) + "\n")
         for rec in records:
             handle.write(json.dumps(rec) + "\n")
     os.replace(tmp, path)
@@ -856,12 +895,13 @@ def _read_part(path: str) -> Tuple[dict, List[dict]]:
 
 
 def _part_done(parts_dir: str, chunk) -> bool:
-    """A finished part whose recorded chunk is this chunk."""
+    """A finished part: it records this chunk and holds the number of
+    well-formed records its header declares."""
     try:
-        with open(_part_path(parts_dir, chunk)) as handle:
-            head = json.loads(handle.readline())
-        return head.get("chunk") == list(chunk)
-    except (OSError, ValueError):
+        head, records = _read_part(_part_path(parts_dir, chunk))
+        return (head.get("chunk") == list(chunk) and head.get("n") == len(records)
+                and all(isinstance(r, dict) and "pos0" in r for r in records))
+    except (OSError, ValueError, AttributeError):
         return False
 
 
@@ -978,8 +1018,6 @@ def discover_variants(input_bam: str, options: DiscoveryOptions,
         raise VariantDiscoveryError(
             f"--reference needs a FASTA index: samtools faidx {options.reference}")
 
-    material = cache_material(bams, windows, caller, options, read_groups, platform)
-    key = cache_key(material)
     def stem(path):
         name = os.path.basename(path)
         return name[:-4] if name.endswith(".bam") else name
@@ -990,6 +1028,11 @@ def discover_variants(input_bam: str, options: DiscoveryOptions,
         sample = min(stem(p) for p in bams) + "_pool"
     else:
         sample = stem(input_bam)
+    material = cache_material(bams, windows, caller, options, read_groups, platform)
+    # The emitted sample name and the contig topology decide the VCF too.
+    material["sample"] = str(sample)
+    material["circular"] = sorted(_circular_lengths(bams[0]).items())
+    key = cache_key(material)
     cache_dir = options.cache_dir or default_cache_dir or os.path.dirname(os.path.abspath(input_bam))
     os.makedirs(cache_dir, exist_ok=True)
     vcf, sidecar, parts_dir = cache_paths(cache_dir, sample, key)
@@ -1003,64 +1046,39 @@ def discover_variants(input_bam: str, options: DiscoveryOptions,
 
     if usable_cached_vcf(vcf, sidecar, key):
         return reuse()
-    lock = parts_dir + ".lock"
-    _acquire_lock(lock, log)
-    try:
+    with _key_lock(parts_dir + ".lock", log):
         # Another run with the same key may have finished while we waited.
         if usable_cached_vcf(vcf, sidecar, key):
             return reuse()
         return _build(input_bam, options, bams, contigs, contig_names, windows, read_groups,
                       caller, reason, platform, homopolymer, material, key, sample,
                       vcf, sidecar, parts_dir, log)
-    finally:
-        try:
-            os.remove(lock)
-        except OSError:
-            pass
 
 
-def _pid_alive(pid: int) -> bool:
+@contextlib.contextmanager
+def _key_lock(path: str, log):
+    """One discovery per key at a time: an advisory ``flock`` on a lock file
+    that is never removed (so no run can unlink another's lock). The kernel
+    releases it when the holder exits, however it exits. Without ``fcntl``
+    (Windows) runs are not serialised."""
     try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
-def _acquire_lock(lock: str, log, poll: float = 2.0) -> None:
-    """One discovery per key at a time: wait for a live holder, take over a
-    stale lock (holder process gone on this host)."""
-    import socket
-    import time
-    host = socket.gethostname()
-    warned = False
-    while True:
-        try:
-            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            try:
-                with open(lock) as handle:
-                    holder_host, _, holder_pid = handle.read().strip().partition(":")
-                stale = holder_host == host and not _pid_alive(int(holder_pid))
-            except (OSError, ValueError):
-                stale = False  # being written: wait
-            if stale:
-                log(f"[variants] removing stale lock {lock}")
-                try:
-                    os.remove(lock)
-                except OSError:
-                    pass
-                continue
-            if not warned:
-                log(f"[variants] another run is discovering with this key ({lock}); waiting")
-                warned = True
-            time.sleep(poll)
-            continue
-        with os.fdopen(fd, "w") as handle:
-            handle.write(f"{host}:{os.getpid()}")
+        import fcntl
+    except ImportError:  # pragma: no cover - non-POSIX
+        yield
         return
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            log(f"[variants] another run is discovering with this key ({path}); waiting")
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 
 def _build(input_bam, options, bams, contigs, contig_names, windows, read_groups, caller,
@@ -1108,7 +1126,7 @@ def _build(input_bam, options, bams, contigs, contig_names, windows, read_groups
     totals: Dict[str, int] = {}
     for chunk in chunks:
         head, recs = _read_part(_part_path(parts_dir, chunk))
-        if head.get("chunk") != list(chunk):
+        if head.get("chunk") != list(chunk) or head.get("n") != len(recs):
             raise VariantDiscoveryError(f"discovery part for {chunk} is not that chunk; "
                                         f"remove {parts_dir} and rerun")
         records.extend(recs)

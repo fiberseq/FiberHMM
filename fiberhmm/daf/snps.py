@@ -182,7 +182,19 @@ def _aligned_pairs(read, reference_handle=None):
     try:
         start = int(read.reference_start)
         end = int(read.reference_end)
-        reference = reference_handle.fetch(read.reference_name, start, end).upper()
+        length = contig_length_past_end(read)
+        if length:
+            # Through the origin of a circular contig: positions p >= LN are
+            # p mod LN, so the FASTA is read turn by turn.
+            parts, pos = [], start
+            while pos < end:
+                a = pos % length
+                b = min(length, a + (end - pos))
+                parts.append(reference_handle.fetch(read.reference_name, a, b))
+                pos += b - a
+            reference = "".join(parts).upper()
+        else:
+            reference = reference_handle.fetch(read.reference_name, start, end).upper()
         return [
             (query_position, reference_position, reference[reference_position - start])
             for query_position, reference_position in read.get_aligned_pairs(
