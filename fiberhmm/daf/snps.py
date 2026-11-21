@@ -12,6 +12,8 @@ from typing import Optional
 import numpy as np
 import pysam
 
+from fiberhmm import defaults as _defaults
+
 from fiberhmm.daf.aligned_arrays import (
     BASE_A,
     BASE_C,
@@ -37,9 +39,9 @@ _OFFERED_SITES_MAX_BLOCKS = 2048
 # validation.  Keep these values centralized: the Python API and both CLI
 # routes import them, while callers can still override every threshold.
 VALIDATED_SNP_POLICY_NAME = "bidirectional_five_fiber_v1"
-DEFAULT_SNP_MIN_FRACTION = 0.20
-DEFAULT_SNP_MIN_DEPTH = 5
-DEFAULT_SNP_MIN_ALT_FIBERS = 5
+DEFAULT_SNP_MIN_FRACTION = _defaults.DAF_SNP_MIN_FRACTION
+DEFAULT_SNP_MIN_DEPTH = _defaults.DAF_SNP_MIN_DEPTH
+DEFAULT_SNP_MIN_ALT_FIBERS = _defaults.DAF_SNP_MIN_ALT_FIBERS
 
 
 def describe_snp_threshold_policy(

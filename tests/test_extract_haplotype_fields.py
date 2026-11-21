@@ -53,6 +53,8 @@ def test_parallel_extractor_preserves_legacy_positional_parameter_order():
         'variants',
         'sv_min_len',
         'sv_min_clip',
+        'regions',
+        'discovery',
     ]
 
 

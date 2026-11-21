@@ -78,6 +78,25 @@ CANON = {
     # consensus input options added by the consensus parity branches
     "ddda_cpg_mask_policy": (D.CPG_MASK_POLICY, False),
     "molecule_max_end_diff_bp": (D.DEDUP_MAX_END_DIFF, False),
+    # DAF SNP screen thresholds (fiberhmm-call --daf-snp-*, fiberhmm-extract)
+    "daf_snp_min_fraction": (D.DAF_SNP_MIN_FRACTION, False),
+    "daf_snp_min_depth": (D.DAF_SNP_MIN_DEPTH, False),
+    "daf_snp_min_alt_fibers": (D.DAF_SNP_MIN_ALT_FIBERS, False),
+    # fiberhmm-extract --variants discover
+    "variant_caller": (D.VARIANT_CALLER, False),
+    "variants_chunk_size": (D.VARIANT_CHUNK_BP, False),
+    "pileup_min_depth": (D.PILEUP_MIN_DEPTH, False),
+    "pileup_min_alt_reads": (D.PILEUP_MIN_ALT_READS, False),
+    "pileup_min_alt_fraction": (D.PILEUP_MIN_ALT_FRACTION, False),
+    "pileup_min_baseq": (D.PILEUP_MIN_BASEQ, False),
+    "pileup_min_mapq": (D.PILEUP_MIN_MAPQ, False),
+    "pileup_strand_bias_p": (D.PILEUP_STRAND_BIAS_P, False),
+    "pileup_homopolymer": (D.PILEUP_HOMOPOLYMER, False),
+    "pileup_homopolymer_len": (D.PILEUP_HOMOPOLYMER_LEN, False),
+    "pileup_max_indel_fraction": (D.PILEUP_MAX_INDEL_FRACTION, False),
+    "pileup_mod_min_methylation": (D.PILEUP_MOD_MIN_METHYLATION, False),
+    "pileup_mod_max_alt_fraction": (D.PILEUP_MOD_MAX_ALT_FRACTION, False),
+    "pileup_hom_alt_fraction": (D.PILEUP_HOM_ALT_FRACTION, False),
 }
 
 #: Tool-specific option names that mean a canonical setting.
@@ -452,8 +471,52 @@ def check_dataclasses(report):
             report.check(dotted, f.name, f.default, expected, none_ok)
 
 
+#: Variant discovery / DAF SNP screen settings checked by explicit name: the
+#: generic names (min_depth, min_mapq) mean different things per caller.
+VARIANT_DATACLASS_FIELDS = {
+    "fiberhmm.io.variant_discovery.PileupParams": {
+        "min_depth": D.PILEUP_MIN_DEPTH, "min_alt_reads": D.PILEUP_MIN_ALT_READS,
+        "min_alt_fraction": D.PILEUP_MIN_ALT_FRACTION, "min_baseq": D.PILEUP_MIN_BASEQ,
+        "min_mapq": D.PILEUP_MIN_MAPQ, "strand_bias_p": D.PILEUP_STRAND_BIAS_P,
+        "homopolymer": D.PILEUP_HOMOPOLYMER, "homopolymer_len": D.PILEUP_HOMOPOLYMER_LEN,
+        "max_indel_fraction": D.PILEUP_MAX_INDEL_FRACTION,
+        "mod_min_methylation": D.PILEUP_MOD_MIN_METHYLATION,
+        "mod_max_alt_fraction": D.PILEUP_MOD_MAX_ALT_FRACTION,
+        "mod_prob_threshold": D.REREAD_PROB_THRESHOLD,
+        "hom_alt_fraction": D.PILEUP_HOM_ALT_FRACTION,
+    },
+    "fiberhmm.io.variant_discovery.DafScreenParams": {
+        "min_fraction": D.DAF_SNP_MIN_FRACTION, "min_depth": D.DAF_SNP_MIN_DEPTH,
+        "min_alt_fibers": D.DAF_SNP_MIN_ALT_FIBERS, "min_mapq": D.MIN_MAPQ,
+    },
+    "fiberhmm.io.variant_discovery.DiscoveryOptions": {
+        "caller": D.VARIANT_CALLER, "chunk_bp": D.VARIANT_CHUNK_BP,
+    },
+}
+
+
+def check_variant_discovery(report, parsers):
+    from fiberhmm.daf.snps import call_opposite_conversion_snps
+    for dotted, expected in VARIANT_DATACLASS_FIELDS.items():
+        fields = {f.name: f for f in dataclasses.fields(_resolve(dotted))}
+        for name, value in expected.items():
+            report.check(dotted, name, fields[name].default, value)
+    params = inspect.signature(call_opposite_conversion_snps).parameters
+    daf = parsers.get("fiberhmm-daf-snps", {})
+    for name, value in (("min_fraction", D.DAF_SNP_MIN_FRACTION),
+                        ("min_depth", D.DAF_SNP_MIN_DEPTH),
+                        ("min_alt_fibers", D.DAF_SNP_MIN_ALT_FIBERS)):
+        report.check("fiberhmm.daf.snps.call_opposite_conversion_snps", name,
+                     params[name].default, value)
+        report.check("fiberhmm-daf-snps", name, daf.get(name), value)
+    extract = parsers.get("fiberhmm-extract", {})
+    report.check("fiberhmm-extract", "pileup_mod_filter", extract.get("pileup_mod_filter"), True)
+
+
 def run_all(monkeypatch, report):
-    check_parsers(report, capture_parsers(monkeypatch))
+    parsers = capture_parsers(monkeypatch)
+    check_parsers(report, parsers)
+    check_variant_discovery(report, parsers)
     check_resolvers(report)
     check_signatures(report)
     check_dataclasses(report)

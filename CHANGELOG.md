@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`fiberhmm-extract --variants discover`: the var layer without an outside
+  VCF.** Discovery runs inside extract, then the var bigBed is written exactly
+  as from `--variants VCF` (same bytes for the same VCF), so FiberBrowser reads
+  it unchanged. `fiberhmm-extract --variants discover --sv` gives the var and
+  sv layers in one command. DAF-seq BAMs use the DAF SNP screen with
+  `--all-snvs` (support on both conversion directions; deamination is never
+  called as a SNV); Fiber-seq BAMs use a new conservative pileup SNV screen
+  (depth, ALT reads, ALT fraction, base and mapping quality; `StrandBias`,
+  `Homopolymer` (Nanopore), `IndelNear` and `ModArtifact` FILTERs).
+  `--variant-caller {auto,daf,pileup}` overrides the chemistry choice. The
+  pileup screen calls SNVs only and is meant for browsing; DeepVariant or
+  Clair3 remain the tools for publication-grade genotypes.
+- **One cached VCF per pooled sample.** `--variants-pool BAM` pools BAMs of one
+  sample (`--variants-per-bam` opts out; `--variants-read-groups` /
+  `--variants-rg-sample` restrict to read groups). The VCF is bgzipped and
+  indexed in `--variant-cache DIR` (default: the output folder) under a key
+  over the input BAMs, regions, caller, parameters and FiberHMM version, reused
+  while the key holds and rebuilt when anything changes (logged). Discovery
+  runs in chunks on `--cores` workers and resumes after an interruption.
+  `<stem>_var.discovery.json` records the caller, VCF and key.
+- **`fiberhmm-extract --region` / `--regions-bed`** restrict every layer (and
+  discovery) to the reads overlapping the given intervals.
+- The DAF SNP screen thresholds and the discovery defaults are in
+  `fiberhmm.defaults` and checked by the defaults parity test. The Python API
+  takes `extract_tags_parallel(..., variants="discover", discovery=DiscoveryOptions(...), regions=...)`
+  and `fiberhmm.io.variant_discovery.discover_variants`.
+
 ## 3.3.0
 
 ### Changed

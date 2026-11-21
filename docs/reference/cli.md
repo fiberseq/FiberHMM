@@ -350,7 +350,32 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--m5c` | off | Extract DddA MA ddda_mcg spans, or native MM/ML 5mC positions |
 | `--deam` | off | Extract DAF-seq deamination calls. Priority: (1) MM/ML-native dU calls (mod code "u" or ChEBI 55797); (2) IUPAC R/Y codes in the query sequence (fiberhmm-daf-encode output); (3) MD-tag ref mismatches as a fallback for raw DAF BAMs. First non-empty source wins per read. blockMod: 0 = R/GA-dea, 1 = Y/CT-dea, matching FiberBrowser flavor codes. |
 | `--both-strand` / `--bothstrand` | off | Extract the deam+ / deam- intersection of paired DddA consensus reads as a BED12 coverage overlay. |
-| `--variants` | — | Extract the var layer: the allele each read carries at the sites of a VCF/BCF (SNVs, MNVs and indels up to --variants-max-len; symbolic/SV alleles skipped). Any standard VCF works (DeepVariant/Clair3, vg deconstruct, the DAF SNP VCF). "auto" uses the DAF SNP screen VCF of this BAM (qc/&lt;stem&gt;.daf_snps.vcf, or the path its fiberhmm-call @PG records) and fails if there is none. |
+| `--variants` | — | Extract the var layer: the allele each read carries at the sites of a VCF/BCF (SNVs, MNVs and indels up to --variants-max-len; symbolic/SV alleles skipped). Any standard VCF works (DeepVariant/Clair3, vg deconstruct, the DAF SNP VCF). "auto" uses the DAF SNP screen VCF of this BAM (qc/&lt;stem&gt;.daf_snps.vcf, or the path its fiberhmm-call @PG records) and fails if there is none. "discover" finds SNVs in the reads first (DAF SNP screen for DAF data, a conservative pileup screen for Fiber-seq; see --variant-caller), caches the VCF per pooled sample and uses it. |
+| `--variant-caller` | `auto` | auto (default): the DAF SNP screen when the BAM is DAF (header, or reads with R/Y, st or dU), else pileup. Choices: `auto`, `daf`, `pileup`. |
+| `--variant-cache` | — | Folder for the discovered VCF (default: the output folder). A VCF cached elsewhere is copied beside the var bigBed. |
+| `--variants-pool` | — | Another BAM of the same sample, pooled with -i for discovery (repeatable; same reference contigs). |
+| `--variants-per-bam` | off | Discover from the input BAM alone (ignore --variants-pool). |
+| `--variants-read-groups` | — | Discover only from reads of these @RG IDs (repeatable). |
+| `--variants-rg-sample` | — | Discover only from reads of read groups with this SM. |
+| `--variants-pool-name` | — | Sample name for the VCF (default: the BAM stem, "&lt;stem&gt;\_pool" when pooled). |
+| `--variants-chunk-size` | `1000000` | Discovery chunk (bp; default 1000000). Chunks run on --cores workers; finished chunks are kept, so an interrupted run resumes. |
+| `--reference` | — | Indexed reference FASTA. The pileup caller takes REF from it; without it, from MD tags or =/X CIGARs (a site no read matches is then skipped). DAF: the screen's fallback for reads lacking MD. |
+| `--pileup-min-depth` | `8` | Pileup: minimum high-quality depth (default 8). |
+| `--pileup-min-alt-reads` | `3` | Pileup: minimum ALT reads (default 3). |
+| `--pileup-min-alt-fraction` | `0.25` | Pileup: minimum ALT fraction (default 0.25). |
+| `--pileup-min-baseq` | `20` | Pileup: minimum base quality (default 20). |
+| `--pileup-min-mapq` | `20` | Pileup: minimum MAPQ (default 20; independent of -q, which filters the extracted reads). |
+| `--pileup-strand-bias-p` | `0.001` | Pileup: FILTER StrandBias below this Fisher p (default 0.001). |
+| `--pileup-homopolymer` | `auto` | Pileup: FILTER Homopolymer at sites in or next to a reference run of --pileup-homopolymer-len. auto (default): on unless the header says PacBio. Choices: `auto`, `on`, `off`. |
+| `--pileup-homopolymer-len` | `4` | Pileup: homopolymer run length (default 4). |
+| `--pileup-max-indel-fraction` | `0.25` | Pileup: FILTER IndelNear when this fraction of reads delete the site (default 0.25). |
+| `--pileup-mod-filter` / `--no-pileup-mod-filter` | on | Pileup: FILTER ModArtifact at A/T sites whose REF reads are often m6A-called while the ALT fraction is low (default on). |
+| `--pileup-mod-min-methylation` | `0.3` | Pileup: REF-read m6A fraction for ModArtifact (default 0.3). |
+| `--pileup-mod-max-alt-fraction` | `0.4` | Pileup: ModArtifact only below this ALT fraction (default 0.4). |
+| `--pileup-hom-alt-fraction` | `0.85` | Pileup: GT 1/1 at this ALT fraction, else 0/1 (default 0.85). |
+| `--daf-snp-min-fraction` | `0.2` | DAF screen: minimum mismatch fraction in each direction (default 0.2, as fiberhmm-daf-snps). |
+| `--daf-snp-min-depth` | `5` | DAF screen: minimum depth in each direction (default 5). |
+| `--daf-snp-min-alt-fibers` | `5` | DAF screen: minimum mismatch fibers in each direction (default 5). |
 | `--variants-sample` | — | Keep only sites where this VCF sample's GT carries an ALT allele. |
 | `--variants-het-only` | off | With --variants-sample: keep only heterozygous sites. |
 | `--variants-pass-only` / `--no-variants-pass-only` | on | Keep only sites whose FILTER is PASS or missing (default on; --no-variants-pass-only keeps every record). |
@@ -373,6 +398,8 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--region-size` | `10000000` | Region size for parallel |
 | `--skip-scaffolds` | off | Skip scaffold chromosomes |
 | `--chroms` | — | Comma-separated chromosomes to process |
+| `--region` | — | Only reads overlapping this region (1-based inclusive, as samtools; repeatable). Applies to every layer and to --variants discover. |
+| `--regions-bed` | — | Only reads overlapping these BED intervals (0-based); combined with --region. |
 | `--sort-mem` / `-S` | `1G` | Memory buffer for the BED sort, passed to `sort -S` (e.g. 4G, 8G, or 50% on GNU sort). Bigger = fewer temp-file merge passes = faster. Default 1G; pass an empty string to disable. The sort also runs under LC_ALL=C regardless, which alone is a large speedup. |
 | `--sort-parallel` | `0` | Threads for the BED sort (GNU coreutils only; ignored on BSD/macOS sort). 0 = use --cores. Feature-detected, so safe to leave on. |
 
@@ -1061,6 +1088,28 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `-o` / `--output` | — | Output path (single input only). Default: write &lt;name&gt;.fixed.bb alongside each input. |
 
 <!-- END GENERATED CLI REFERENCE -->
+
+## One-command variant workflow
+
+`fiberhmm-extract --variants discover` finds SNVs in the reads, caches one VCF
+per pooled sample and writes the var layer from it; `--sv` adds the sv layer
+from CIGAR, clips and `SA`. One command gives FiberBrowser's variant layers:
+
+```bash
+fiberhmm-extract -i sample.calls.bam -o tracks --variants discover --sv -c 8
+# tracks/sample.calls_var.bb            per-read alleles at the discovered sites
+# tracks/sample.calls_sv.bb             per-read deletions, insertions, clips, SA
+# tracks/sample_calls.<key>.fhvar.vcf.gz (+ .tbi, .json)  the cached VCF
+# tracks/sample.calls_var.discovery.json caller, VCF, cache key, reused or rebuilt
+```
+
+DAF-seq BAMs use the DAF SNP screen (deamination is never called as a SNV);
+Fiber-seq BAMs use a conservative pileup screen (`--variant-caller` overrides
+the choice). Add `--region`/`--regions-bed` to work on part of the genome,
+`--variants-pool` to pool BAMs of one sample, and `--reference` when the BAM
+has `=`/`X` CIGARs without MD tags. The pileup screen is for browsing; for
+publication-grade genotypes, pass a DeepVariant or Clair3 VCF with
+`--variants`. Details: [Discovering variants](../workflows/extracting.md#discovering-variants-variants-discover).
 
 ## NFR detection and diagnostics
 
