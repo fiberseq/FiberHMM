@@ -388,8 +388,10 @@ written:
   the cut, so the cut does not create footprints at the inner edges.
   Breakpoints are anchored on deaminations that pass
   `--chimera-min-baseq`, so a low-quality basecall inside the gap does not
-  extend a piece past the switch.
-- CIGAR, SEQ, QUAL and MD are cut together, `NM` is recomputed and the
+  extend a piece past the switch. An anchor inside an insertion or soft
+  clip (possible with `--no-daf-mask-unaligned`) moves inward to the
+  nearest aligned base, so every piece starts and ends on an aligned base.
+- CIGAR, SEQ, QUAL, MM/ML and MD are cut over the same query range, `NM` is recomputed and the
   reference start is adjusted. Outer soft and hard clips stay with their
   piece.
 - Tags: `xc:Z:split`, `xi:i` (piece index, 0 to n-1 from left to right),

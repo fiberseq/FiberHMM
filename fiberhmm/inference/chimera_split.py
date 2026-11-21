@@ -15,8 +15,12 @@ to right, with ``xc:Z:split``, ``xi:i`` (piece index), ``xn:Z`` (original
 name) and ``xb:B:i`` (every breakpoint gap of the original record on its
 reference as 0-based half-open ``[start, end)`` pairs, left to right; piece
 ``xi`` lies between gap ``xi-1`` and gap ``xi``; a one-switch split has one
-pair, as before 3.1.0). CIGAR, SEQ, QUAL and MD are cut together and NM is
-recomputed. Read-level tags that a cut cannot invalidate are copied
+pair, as before 3.1.0). Breakpoint anchors are moved inward onto aligned
+bases first (:func:`snap_to_aligned`; an event inside an insertion can
+anchor one with ``--no-daf-mask-unaligned``), so every piece starts and ends
+on an aligned base. CIGAR, SEQ, QUAL and MD are cut together over the same
+query range and NM is recomputed; a piece whose cut CIGAR would not match
+its SEQ is not written. Read-level tags that a cut cannot invalidate are copied
 (:data:`KEPT_TAGS`). Base modifications are kept: ``MM``/``ML`` (and the
 legacy ``Mm``/``Ml``) are re-indexed to the piece (:func:`cut_modifications`)
 and ``MN``, if present, is set to the piece's SEQ length. They are dropped for
@@ -255,6 +259,9 @@ def make_piece(read, header, qs, qe, index, gap):
     ops, ref_start = _cut_cigar(read, qs, qe)
     if ref_start is None:
         return None
+    # SEQ/QUAL/MM-ML are cut over [qs, qe): the CIGAR must cover exactly that.
+    if sum(length for op, length in ops if op in (0, 1, 4, 7, 8)) != qe - qs:
+        return None
     ref_len = sum(length for op, length in ops if op in (0, 2, 3, 7, 8))
     piece = pysam.AlignedSegment(header)
     piece.query_name = f'{read.query_name}/c{index}'
@@ -299,6 +306,49 @@ def make_piece(read, header, qs, qe, index, gap):
     return piece
 
 
+def _aligned_query_positions(read):
+    """Sorted query positions of the aligned (M/=/X) bases of ``read``."""
+    positions, qpos = [], 0
+    for op, length in read.cigartuples or ():
+        if op in _ALIGNED:
+            positions.extend(range(qpos, qpos + length))
+            qpos += length
+        elif op in (1, 4):
+            qpos += length
+    return positions
+
+
+def snap_to_aligned(read, split):
+    """``split`` with every breakpoint anchor moved inward onto an aligned base.
+
+    With ``--no-daf-mask-unaligned`` an event inside an insertion (or soft
+    clip) can anchor a breakpoint. A piece's inner end moves back to the
+    previous aligned base and its inner start forward to the next one, so it
+    starts and ends on aligned bases and CIGAR, SEQ, QUAL and MM/ML are cut
+    over the same query range; the gap between the anchors is placed on the
+    reference. Anchors already on aligned bases are unchanged. A piece left
+    with no aligned base becomes empty (``lo > hi``) and is not cut.
+    """
+    aligned = _aligned_query_positions(read)
+    if not aligned:
+        return split
+
+    def back(q):            # last aligned position <= q, else -1
+        i = bisect_left(aligned, q + 1)
+        return aligned[i - 1] if i else -1
+
+    def forward(q):         # first aligned position >= q, else past the end
+        i = bisect_left(aligned, q)
+        return aligned[i] if i < len(aligned) else read.query_length
+
+    if 'pieces' in split:
+        pieces = [(None if lo is None else forward(lo), None if hi is None else back(hi))
+                  for lo, hi in split['pieces']]
+        return {**split, 'pieces': pieces}
+    return {**split, 'left_last': back(split['left_last']),
+            'right_first': forward(split['right_first'])}
+
+
 def piece_intervals(read, split):
     """Query ``(qs, qe)`` of each piece and the query gaps between them.
 
@@ -314,6 +364,7 @@ def piece_intervals(read, split):
     intervals = [(0 if lo is None else lo, qlen if hi is None else hi + 1)
                  for lo, hi in bounds]
     gaps = [(left[1], right[0]) for left, right in zip(bounds, bounds[1:])]
+    # Empty pieces (snapped past each other) give qe <= qs: not cut.
     return intervals, gaps
 
 
@@ -332,14 +383,16 @@ def split_record(read, header, split):
     cannot be placed). Every piece carries all gaps in ``xb`` as flat
     ``[start, end)`` pairs when all of them could be placed.
     """
-    intervals, query_gaps = piece_intervals(read, split)
     if not is_splittable(read):
+        intervals, query_gaps = piece_intervals(read, split)
         return [None] * len(intervals), [None] * len(query_gaps)
+    intervals, query_gaps = piece_intervals(read, snap_to_aligned(read, split))
     name = read.query_name
     suffix = len(f'/c{len(intervals) - 1}')
     if not name or name == '*' or len(name) + suffix > _MAX_QNAME:
         return [None] * len(intervals), [None] * len(query_gaps)
     gaps = [gap_interval(read, {'left_last': left, 'right_first': right})
+            if 0 <= left < right else None
             for left, right in query_gaps]
     flat = (None if any(gap is None for gap in gaps)
             else [value for gap in gaps for value in gap])

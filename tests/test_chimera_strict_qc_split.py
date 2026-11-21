@@ -909,3 +909,63 @@ def test_pieces_keep_mm_without_ml(names, reverse):
     piece = make_piece(single, hdr, first_c, 1500, 0, None)
     assert piece.get_tag('MM') == 'C+m,0;' and not piece.has_tag('ML')
     assert make_piece(single, hdr, first_c + 1, 1500, 0, None).get_tag('MM') == 'C+m;'
+
+
+# --- breakpoint anchors inside an insertion -----------------------------------
+
+@pytest.mark.parametrize('reverse', [False, True])
+@pytest.mark.parametrize('left_last, right_first, expected', [
+    (2100, 2400, [(0, 2000), (2400, 4300)]),    # left anchor in the insertion
+    (1900, 2100, [(0, 1901), (2300, 4300)]),    # right anchor in the insertion
+    (2050, 2200, [(0, 2000), (2300, 4300)]),    # both in the same insertion
+    (1900, 2400, [(0, 1901), (2400, 4300)]),    # aligned anchors: unchanged
+])
+def test_split_moves_insertion_anchors_to_aligned_bases(tmp_path, reverse, left_last,
+                                                        right_first, expected):
+    """2000M300I2000M (--no-daf-mask-unaligned lets an insertion event anchor a
+    breakpoint): pieces start and end on aligned bases, SEQ/QUAL/MM-ML match
+    the CIGAR, xb is placed and the records survive a BAM round trip."""
+    from fiberhmm.inference.chimera_split import piece_intervals, snap_to_aligned, split_record
+    ref = reference()
+    hdr = header()
+    start = 3000
+    read = _with_modifications(
+        make_read(hdr, ref, 'ins', start, [(0, 2000), (1, 300), (0, 2000)],
+                  swap_at(start + 2000), seed=7, flag=16 if reverse else 0))
+    split = {'left_last': left_last, 'right_first': right_first}
+    if (left_last, right_first) == (1900, 2400):
+        assert snap_to_aligned(read, split) == split
+    assert piece_intervals(read, snap_to_aligned(read, split))[0] == expected
+    pieces, gaps = split_record(read, hdr, split)
+    assert all(piece is not None for piece in pieces)
+    path = tmp_path / 'pieces.bam'
+    with pysam.AlignmentFile(str(path), 'wb', header=hdr) as out:
+        for piece in pieces:
+            out.write(piece)
+    back = records(path)
+    assert len(back) == 2
+    left_ref = read.get_reference_positions(full_length=True)
+    gap = (left_ref[expected[0][1] - 1] + 1, left_ref[expected[1][0]])
+    assert gaps == [gap]
+    for piece, (qs, qe) in zip(back, expected):
+        assert piece.query_sequence == read.query_sequence[qs:qe]
+        assert list(piece.query_qualities) == list(read.query_qualities[qs:qe])
+        assert piece.infer_query_length() == qe - qs
+        assert piece.cigartuples[0][0] == 0 and piece.cigartuples[-1][0] == 0
+        assert tuple(piece.get_tag('xb')) == gap
+        assert piece.has_tag('MM') and piece.has_tag('ML')
+        assert _calls(piece) == {k: sorted(v) for k, v in
+                                 _expected_calls(read, qs, qe).items()}
+        assert md_matches_cigar(piece)
+    assert back[0].reference_end == gap[0] and back[1].reference_start == gap[1]
+
+
+def test_make_piece_refuses_a_cut_whose_cigar_would_not_match_seq():
+    """A direct cut inside an insertion is refused, not written invalid."""
+    ref = reference()
+    hdr = header()
+    read = make_read(hdr, ref, 'ins', 3000, [(0, 2000), (1, 300), (0, 2000)],
+                     clean('CT'), seed=7)
+    assert make_piece(read, hdr, 0, 2251, 0, None) is None
+    assert make_piece(read, hdr, 2100, 4300, 1, None) is None
+    assert make_piece(read, hdr, 0, 2000, 0, None) is not None
