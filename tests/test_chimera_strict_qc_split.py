@@ -654,11 +654,18 @@ def test_split_call_end_to_end_and_no_edge_footprint(tmp_path):
 
 def test_pipeline_accepts_split_and_repeats_the_warning(tmp_path):
     from fiberhmm.cli.pipeline import config_from_args, parse_args
-    standard = config_from_args(parse_args(['a.bam', '--reference', 'ref.fa', '--enzyme',
-                                            'dddb', '-o', str(tmp_path), '--chimeras',
-                                            'split']))
+    with pytest.raises(SystemExit):
+        parse_args(['a.bam', '--reference', 'ref.fa', '--enzyme', 'dddb', '-o',
+                    str(tmp_path), '--chimeras', 'split'])
+    from fiberhmm.pipeline.runner import PipelineConfig
+    standard = PipelineConfig(reads=['a.bam'], reference='ref.fa', enzyme='dddb',
+                              outdir=str(tmp_path), chimeras='split')
     with pytest.raises(ValueError, match='needs --chimera-detector strict'):
         standard.resolved_chimeras()
+    via_call_args = parse_args(['a.bam', '--reference', 'ref.fa', '--enzyme', 'dddb',
+                                '-o', str(tmp_path), '--chimeras', 'split',
+                                '--call-args', '--chimera-detector strict'])
+    assert config_from_args(via_call_args).resolved_chimeras() == 'split'
     cfg = config_from_args(parse_args(['a.bam', '--reference', 'ref.fa', '--enzyme',
                                        'dddb', '-o', str(tmp_path), '--chimeras', 'split',
                                        '--chimera-detector', 'strict']))

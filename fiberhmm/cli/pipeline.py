@@ -266,7 +266,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def parse_args(argv=None):
-    return build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.chimeras == "split":
+        from fiberhmm.pipeline.runner import _call_arg_value
+        detector = (_call_arg_value(shlex.split(args.call_args or ""), "--chimera-detector")
+                    or args.chimera_detector)
+        if detector != "strict":
+            parser.error("--chimeras split needs --chimera-detector strict")
+    return args
 
 
 def config_from_args(args):
