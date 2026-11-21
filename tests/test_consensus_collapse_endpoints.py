@@ -1,4 +1,4 @@
-"""Consensus DAF duplicate collapse can apply fiberhmm-dedup's endpoint check (audit fh-audit-core 3.6)."""
+"""Consensus DAF duplicate collapse can apply fiberhmm-dedup's endpoint check."""
 from types import SimpleNamespace
 
 import numpy as np
