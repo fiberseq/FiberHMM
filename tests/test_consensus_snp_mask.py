@@ -293,3 +293,94 @@ def test_parallel_windows_keep_mask_and_continue_rejects_changed_content(tmp_pat
         main(args + ['--continue'])
     assert error.value.code == 2
     assert 'options.daf_snp_mask.file.sha256' in capsys.readouterr().err
+
+
+def single_mark_read(encoding, marked=True):
+    """CT read whose only conversion is at query 61 (reference 161): R/Y without
+    an st tag, or MM-tagged; ``marked=False`` gives the same read with no mark."""
+    import array
+    read, _, _ = read_with_variant('CT', 'md')
+    read.set_tag('MD', None)
+    ref = 'ACGT' * 50
+    q = 61
+    if encoding == 'ry':
+        read.query_sequence = ref[:q] + ('Y' if marked else 'C') + ref[q + 1:]
+    else:
+        read.query_sequence = ref[:q] + ('T' if marked else 'C') + ref[q + 1:]
+        if marked:
+            before = read.query_sequence[:q].count('T')
+            read.set_tag('MM', f'T+u.,{before};')
+            read.set_tag('ML', array.array('B', [255]))
+    return read, q
+
+
+@pytest.mark.parametrize('encoding', ['ry', 'mm'])
+def test_read_whose_only_strand_mark_is_masked_is_skipped_not_called_ga(encoding):
+    read, q = single_mark_read(encoding)
+    assert not read.has_tag('st')
+    plain, strand = hard_observations(read, 'daf', 'daf', 3, None)
+    assert strand == 'CT' and plain[q] < 4096
+    # A mask that leaves the strand mark keeps the read on its strand.
+    with daf_snp_mask_scope({'chr1': frozenset({100 + q + 4})}):
+        kept, kept_strand = hard_observations(read, 'daf', 'daf', 3, None)
+    assert kept_strand == 'CT' and kept[q + 4] == 8193
+    # Masking the only mark leaves no strand evidence: unusable, not GA.
+    with daf_snp_mask_scope({'chr1': frozenset({100 + q})}):
+        assert hard_observations(read, 'daf', 'daf', 3, None) is None
+
+
+@pytest.mark.parametrize('encoding', ['ry', 'mm'])
+def test_read_undecidable_before_masking_keeps_ga_fallback_under_a_mask(encoding):
+    # Strand already undecidable without the mask (R/Y tie without st, or an
+    # MM call below the probability threshold): the "." -> GA fallback stays.
+    import array
+    read, q = single_mark_read(encoding, marked=encoding == 'ry')
+    if encoding == 'ry':
+        sequence = list(read.query_sequence); sequence[q + 5] = 'R'
+        read.query_sequence = ''.join(sequence)
+    else:
+        read.set_tag('MM', 'T+u.,0;'); read.set_tag('ML', array.array('B', [1]))
+    _, strand = hard_observations(read, 'daf', 'daf', 3, None)
+    with daf_snp_mask_scope({'chr1': frozenset({100 + q + 8})}):
+        masked, masked_strand = hard_observations(read, 'daf', 'daf', 3, None)
+    assert strand == masked_strand == 'GA'
+    assert masked[q + 8] == 8193
+
+
+def test_loader_skips_read_whose_strand_the_mask_removes(tmp_path):
+    from fiberhmm.io.bam_header import append_chemistry
+    header = pysam.AlignmentHeader.from_dict(dict(HD={'VN': '1.6', 'SO': 'coordinate'}, SQ=[{'SN': 'chr1', 'LN': 1000}]))
+    header = append_chemistry(header, dict(assay='daf', enzyme='ddda', platform='pacbio', mode='daf'))
+    alt, q = single_mark_read('ry')
+    other, _, _ = read_with_variant('CT', 'ry')
+    bam = tmp_path / 'input.bam'
+    with pysam.AlignmentFile(str(bam), 'wb', header=header) as handle:
+        for name, source in (('only_masked_mark', alt), ('declared_strand', other)):
+            r = pysam.AlignedSegment(header); r.query_name = name; r.query_sequence = source.query_sequence
+            r.reference_id = 0; r.reference_start = 100; r.mapping_quality = 60; r.cigarstring = '200M'
+            if source.has_tag('st'):
+                r.set_tag('st', source.get_tag('st'))
+            r.set_tag('MA', '200;msp.:1-200')
+            handle.write(r)
+    pysam.index(str(bam))
+    mask = tmp_path / 'snps.bed'; mask.write_text(f'chr1\t{100 + q}\t{101 + q}\n')
+    datasets = [dict(dataset_id='d', paths=[str(bam)])]
+    region = dict(chrom='chr1', start=120, end=220)
+    strands = lambda payload: {u['read_name']: u['strand'] for u in payload['strata'][0]['units']}
+    assert strands(load_bam_payload(datasets, region, parse_options({}))) == {
+        'only_masked_mark': 'CT', 'declared_strand': 'CT'}
+    assert strands(load_bam_payload(datasets, region, parse_options({'input': {'daf_snp_mask': str(mask)}}))) == {
+        'declared_strand': 'CT'}
+
+
+def test_replaying_masked_evidence_requires_native_replay():
+    from test_staged_families import payload, parameters
+    from fiberhmm.inference.consensus.harmonized_families.workflow import prepare_sources
+    data = payload()
+    data['strata'][0]['model_manifest'] = dict(daf_snp_mask=dict(path='/x/snps.bed', sha256='0' * 64, sites=1))
+    options = parameters()
+    assert options['input']['correct_native'] is False
+    with pytest.raises(ValueError, match='DAF SNP mask.*input.correct_native=true'):
+        prepare_sources(data, parse_options(options))
+    # Unmasked saved evidence still replays with the BAM's own calls.
+    assert prepare_sources(payload(), parse_options(options))

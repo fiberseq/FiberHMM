@@ -1232,6 +1232,14 @@ def hard_observations(
         if extracted is None:
             return None
         modification_positions, symbol, sequence, unknown_positions = extracted
+        if symbol not in ("+", "-") and snp_sites:
+            # The SNP mask removed the marks that decided this read's chemical
+            # strand. Skip it as unusable instead of falling back to GA (which
+            # would score its Gs as unconverted targets). Reads whose strand
+            # was already undecidable without the mask keep the GA fallback.
+            unmasked = extract_modification_calls(read, "daf", context_size)
+            if unmasked is not None and unmasked[1] in ("+", "-"):
+                return None
         strand = "CT" if symbol == "+" else "GA"
     else:
         if not read.has_tag("MM") or not read.has_tag("ML"):

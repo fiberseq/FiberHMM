@@ -64,6 +64,10 @@ def prepare_sources(payload, options):
         source = deepcopy(original); ds = source['dataset_id']
         if source['chemistry'] not in ('ddda', 'dddb', 'hia5-pacbio', 'hia5-nanopore'):
             raise ValueError('Explicit native chemistry required')
+        if (source.get('model_manifest') or {}).get('daf_snp_mask') and not options['input'].correct_native:
+            # Without replay the BAM's original (unmasked) TF calls would sit beside the masked lattice.
+            raise ValueError(f'{ds}: this evidence was prepared with a DAF SNP mask; replay it with '
+                             'input.correct_native=true so native calls use the same masked observations')
         if ds in grouped and (grouped[ds]['chemistry'] != source['chemistry'] or
                               grouped[ds].get('model_manifest') != source.get('model_manifest')):
             raise ValueError('Conflicting native models within a dataset')
