@@ -146,6 +146,16 @@
 
 ### Fixed
 
+- `fiberhmm-recall-tfs`, `fiberhmm-recall-nucs`, `fiberhmm-consensus`,
+  `fiberhmm-transfer` and `fiberhmm-strand-rescue` read DAF evidence in
+  `fiberhmm-call`'s order: R/Y codes, then the reference comparison (`MD`),
+  then MM/ML-native deamination calls. They used to read MM/ML first, so on
+  DAF reads aligned with `MD` that kept Dorado 5mC/6mA `MM`/`ML` tags they
+  took the basecaller's methylation marks as deaminations and scored
+  different evidence from the call. Those BAMs give different recall,
+  consensus and strand-rescue results now; R/Y-encoded and MD-only BAMs, and
+  `fiberhmm-call` output, are unchanged.
+
 - Lattice-recaller BF labels now use direct log-likelihood ratios against
   the fitted alternative mixture. Clipping posterior odds could erase strong
   evidence when EM weights approached zero or one. EM estimates and scientific

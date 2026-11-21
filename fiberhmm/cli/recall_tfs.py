@@ -444,16 +444,12 @@ def _make_payload(read, mode=None, input_molecular_frame=True) -> dict:
         parts = _insert_evidence_parts(read)
         if parts is not None:
             payload['_daf_insert_mods'] = parts
-        from fiberhmm.inference.engine import _has_mm_tag
-        # Same test as tf_recaller's MM/ML branch (both tags non-empty), so
-        # the stub takes the MD branch exactly when the live read would.
-        if not has_iupac_encoding(read.query_sequence) and not _has_mm_tag(read):
-            from fiberhmm.daf.encoder import get_daf_positions
-            md_result = get_daf_positions(read)
-            if md_result is None:
-                from fiberhmm.inference.engine import _insert_evidence_strand
-                if _insert_evidence_strand(read) is not None:
-                    md_result = ([], [], _insert_evidence_strand(read))
+        # The reference comparison (MD) comes before MM/ML, as in
+        # fiberhmm-call; the stub takes the MD branch exactly when the live
+        # read would (engine.daf_reference_evidence).
+        if not has_iupac_encoding(read.query_sequence):
+            from fiberhmm.inference.engine import daf_reference_evidence
+            md_result = daf_reference_evidence(read)
             if md_result is not None:
                 payload['_daf_md_result'] = md_result
     return payload
@@ -1517,8 +1513,7 @@ def _recall(args, bam_in, model_path, using_bundled_model, n_cores):
         _atexit.register(_shutil.rmtree, tmpdir, True)
         summary = run_insert_consensus_prepass(
             args.in_bam, tmpdir, min_carriers=args.daf_insert_min_carriers,
-            prob_threshold=getattr(args, 'prob_threshold', None),
-            md_first=False)   # tf_recaller reads MM/ML before MD
+            prob_threshold=getattr(args, 'prob_threshold', None))
         configure_daf_insert_evidence(summary['evidence_path'])
         insert_state = (f"on/{summary['clusters_used']}of{summary['clusters']}"
                         f"/min{args.daf_insert_min_carriers}")

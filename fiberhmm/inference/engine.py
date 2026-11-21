@@ -738,6 +738,37 @@ def _daf_insert_mods(read, strand_tag):
     return set(parts[0]) if parts[1] == wanted else set()
 
 
+def daf_reference_evidence(read, ref_fasta=None, excluded_reference_positions=None):
+    """DAF deaminations from the reference comparison, in fiberhmm-call's order.
+
+    fiberhmm-call reads DAF evidence as R/Y codes in SEQ first, then this
+    reference comparison (the MD tag, else ``ref_fasta``), and MM/ML-native
+    deamination calls only when neither applies. A read that also carries
+    MM/ML (for example Dorado 5mC/6mA tags kept through alignment) is
+    therefore read from MD. Returns ``(ct_positions, ga_positions,
+    strand_tag)`` or None (no reference evidence: the caller falls through to
+    MM/ML). Without deaminations on the aligned bases and without MM/ML, the
+    insert consensus decides the strand (``([], [], strand_tag)``).
+
+    The single source of this rule for fiberhmm-call/-apply/-posteriors
+    (``make_apply_payload``, :func:`_extract_fiber_read_from_pysam`) and
+    fiberhmm-recall-tfs/-nucs, the consensus loader and strand rescue
+    (``tf_recaller.extract_modification_calls``).
+    """
+    from fiberhmm.daf.encoder import get_daf_positions
+    md_result = get_daf_positions(
+        read,
+        ref_fasta=ref_fasta,
+        excluded_reference_positions=excluded_reference_positions,
+    )
+    if (md_result is None and not _has_mm_tag(read)
+            and _insert_evidence_strand(read) is not None):
+        # No deamination on the aligned bases: the insert consensus decides
+        # the strand.
+        md_result = ([], [], _insert_evidence_strand(read))
+    return md_result
+
+
 def _has_mm_tag(read):
     """True when the read has usable MM/ML deamination calls (both tags,
     non-empty), the condition of the MM/ML branch."""
@@ -948,17 +979,9 @@ def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None,
         if insert_parts is not None:
             payload['_daf_insert_mods'] = insert_parts
         if not has_iupac_encoding(seq):
-            from fiberhmm.daf.encoder import get_daf_positions
-            md_res = get_daf_positions(
-                read,
-                ref_fasta=ref_fasta,
-                excluded_reference_positions=_daf_reference_mask(read),
-            )
-            if (md_res is None and not _has_mm_tag(read)
-                    and _insert_evidence_strand(read) is not None):
-                # No deamination on the aligned bases: the insert consensus
-                # decides the strand.
-                md_res = ([], [], _insert_evidence_strand(read))
+            md_res = daf_reference_evidence(
+                read, ref_fasta=ref_fasta,
+                excluded_reference_positions=_daf_reference_mask(read))
             if md_res is not None:
                 payload['_daf_md_result'] = md_res   # (ct_list, ga_list, strand_tag)
         elif _DAF_CHIMERA_CFG['filter']:
@@ -1262,15 +1285,9 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
     if mode == 'daf':
         md_result = getattr(read, '_daf_md_result', None)
         if md_result is None and hasattr(read, 'get_aligned_pairs'):
-            from fiberhmm.daf.encoder import get_daf_positions
-            md_result = get_daf_positions(
-                read,
-                ref_fasta=ref_fasta,
-                excluded_reference_positions=_daf_reference_mask(read),
-            )
-            if (md_result is None and not _has_mm_tag(read)
-                    and _insert_evidence_strand(read) is not None):
-                md_result = ([], [], _insert_evidence_strand(read))
+            md_result = daf_reference_evidence(
+                read, ref_fasta=ref_fasta,
+                excluded_reference_positions=_daf_reference_mask(read))
         if md_result is not None:
             ct_pos, ga_pos, strand_tag = md_result
             # Strand-swap chimera filter (DAF only): a read deaminated CT in one
