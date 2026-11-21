@@ -35,7 +35,9 @@ Some commands support a subset:
 The resolved chemistry (`--enzyme`, the given or
 [detected](../getting-started/choosing-chemistry.md#automatic-detection-of-seq)
 `--seq`, or the input's `FIBERHMM-CHEMISTRY` declaration for tools without
-`--enzyme`) sets these defaults. An explicit option always wins.
+`--enzyme`) sets these defaults. An explicit option always wins. Defaults
+that do not depend on the chemistry, and the tools that differ on purpose, are
+listed in [Shared defaults](../reference/shared-defaults.md).
 
 | Setting | Hia5 PacBio | Hia5 Nanopore | DddB | DddA |
 |---|---|---|---|---|

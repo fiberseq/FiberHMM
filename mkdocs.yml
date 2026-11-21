@@ -112,6 +112,7 @@ nav:
       - Footprint-tag coordinate frame: reference/footprint-tag-frame.md
       - Checking outputs for re-runs: reference/advisories.md
       - Bundled models: reference/models.md
+      - Shared defaults: reference/shared-defaults.md
       - Consensus output files: reference/consensus-outputs.md
       - Scan directory format: reference/scan-format.md
       - Scan performance: reference/scan-performance.md
