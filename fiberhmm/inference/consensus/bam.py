@@ -521,4 +521,6 @@ def _load_payload_once(state,request,options,progress):
                        if chemistry=='ddda' else {}),
                     m5c_conditioned_opportunities=sum(u['provenance'].get('native_m5c_excluded_opportunities',0) for u in units)),
                 evidence_units=dict(**collapse,physical_duplex_independence_established=bool(units) and all(u.get('physical_source_names') for u in units),joint_duplex_units=sum(bool(u.get('physical_source_names')) for u in units)),load=diagnostics))
+            # Release this dataset's decoded reads before the next dataset decodes (they are not part of the payload).
+            reads=representatives=projections=lookup=None
     return dict(region=dict(chrom=chrom,start=start,end=end),strata=strata)
