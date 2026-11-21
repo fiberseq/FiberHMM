@@ -179,19 +179,40 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
         from fiberhmm.inference.tf_recaller import write_ma_tags
 
         footprints = [(int(s), int(n)) for s, n in zip(result["ns"], result["nl"])]
-        msps = ([(int(s), int(n)) for s, n in zip(result["as"], result["al"]) if int(n) > 0]
-                if write_msps else [])
+        if write_msps:
+            msps = [(int(s), int(n)) for s, n in zip(result["as"], result["al"]) if int(n) > 0]
+            msp_result = result
+        else:
+            # --no-msps: MA carries the record's own retained MSPs (as/al,
+            # already molecular here; back to SEQ frame for the writer), and
+            # their fibertools FIRE aq is kept.
+            msps = _retained_seq_msps(read)
+            msp_result = {**result, "as": [s for s, _ in msps], "al": [n for _, n in msps]}
         scores = scores_to_u8(result.get("ns_scores")) if with_scores else None
         if scores is not None and len(scores) != len(footprints):
             scores = None
         # Legacy ns also lists sub-nucleosomal footprints inside MSPs; in MA
         # (where nuc and msp tile the read) only footprints outside MSPs are
         # nucleosomes. TF-sized footprints are left to recall, as in call.
-        keep = _footprints_outside_msps(result, write_msps)
+        keep = _footprints_outside_msps(msp_result, True)
         nucs = [footprints[i] for i in keep]
         nq = [scores[i] for i in keep] if scores is not None else None
         write_ma_tags(read, len(read.query_sequence or "") or int(read.query_length or 0),
-                      [], nucs, msps, nq_for_kept_nucs=nq, also_write_legacy=False)
+                      [], nucs, msps, nq_for_kept_nucs=nq, also_write_legacy=False,
+                      msps_replaced=write_msps)
+
+
+def _retained_seq_msps(read) -> list:
+    """The record's own ``as``/``al`` MSPs (molecular frame) in SEQ frame,
+    ``[]`` unless they are two integer arrays of equal length."""
+    from fiberhmm.io.legacy_tags import array_tag_pair
+    from fiberhmm.io.ma_tags import flip_intervals_to_seq
+
+    pair = array_tag_pair(read, "as", "al")
+    if pair is None:
+        return []
+    starts, lengths = flip_intervals_to_seq(pair[0], pair[1], read)
+    return [(int(s), int(n)) for s, n in zip(starts, lengths) if int(n) > 0]
 
 
 def unify_nucs_with_tf_calls(

@@ -302,23 +302,29 @@ def test_aq_is_ambiguous_only_after_an_old_fiberhmm_apply_without_the_contract()
                                           'CO': [ANNOTATION_CONTRACT_V2]})
 
 
-def _with_old_apply_pg(src, dst):
+def _with_old_apply_pg(src, dst, *, old_apply=True, m5c=False):
     with pysam.AlignmentFile(str(src)) as bam:
         header = bam.header.to_dict()
-        header['PG'] = [{'ID': 'fiberhmm-apply', 'PN': 'fiberhmm-apply', 'VN': '3.2.1'},
-                        *header['PG']]
+        if old_apply:
+            header['PG'] = [{'ID': 'fiberhmm-apply', 'PN': 'fiberhmm-apply', 'VN': '3.2.1'},
+                            *header['PG']]
         with pysam.AlignmentFile(str(dst), 'wb', header=header) as out:
             for read in bam:
+                if m5c:   # a DddA CpG-island group (molecular, no AQ bytes)
+                    read.set_tag('MA', str(read.get_tag('MA')) + ';ddda_ucg.:101-50')
                 out.write(read)
     pysam.index(str(dst))
 
 
+@pytest.mark.parametrize('m5c', [False, True], ids=['no-m5c', 'm5c'])
 @pytest.mark.parametrize('old_apply', [False, True])
-def test_apply_no_msps_keeps_fibertools_aq_but_not_an_ambiguous_one(tmp_path, old_apply):
+def test_apply_no_msps_keeps_fibertools_aq_but_not_an_ambiguous_one(tmp_path, old_apply, m5c):
     src = FT062
-    if old_apply:
+    if old_apply or m5c:
         src = tmp_path / 'in.bam'
-        _with_old_apply_pg(FT062, src)
+        _with_old_apply_pg(FT062, src, old_apply=old_apply, m5c=m5c)
+    with pysam.AlignmentFile(str(src)) as bam:
+        before = {r.is_reverse: r for r in bam}
     proc = _run('fiberhmm.cli.apply', '-i', src, '-o', tmp_path / 'out', '--enzyme', 'hia5',
                 '--seq', 'pacbio', '--force-seq', '--no-msps', '-c', '1')
     assert proc.returncode == 0, proc.stderr
@@ -327,3 +333,22 @@ def test_apply_no_msps_keeps_fibertools_aq_but_not_an_ambiguous_one(tmp_path, ol
         reads = list(bam)
     assert all(r.has_tag('as') for r in reads)            # --no-msps keeps the input's MSPs
     assert all(r.has_tag('aq') != old_apply for r in reads)
+    for read in reads:
+        orig = before[read.is_reverse]
+        assert list(read.get_tag('as')) == list(orig.get_tag('as'))
+        if not old_apply:
+            assert list(read.get_tag('aq')) == list(orig.get_tag('aq'))
+        if m5c:
+            # MA (present for the kept island) carries the retained MSPs,
+            # molecular frame like as/al, and nucleosomes only outside them
+            groups = _groups(read)
+            assert groups['ddda_ucg'] == ['101-50']
+            want = [f'{s + 1}-{n}' for s, n in zip(orig.get_tag('as'), orig.get_tag('al'))
+                    if n > 0]
+            assert sorted(groups['msp']) == sorted(want), read.is_reverse
+            msps = [(s, s + n) for s, n in zip(orig.get_tag('as'), orig.get_tag('al'))]
+            for item in groups.get('nuc', []):
+                if not item:
+                    continue
+                a, n = (int(v) for v in item.split('-'))
+                assert not any(a - 1 < e and s < a - 1 + n for s, e in msps)

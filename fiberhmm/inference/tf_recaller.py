@@ -1336,7 +1336,8 @@ def write_ma_tags(read, read_length: int,
                   also_write_legacy: bool = True,
                   downstream_compat: bool = False,
                   nuc_el_for_kept: Optional[Sequence[int]] = None,
-                  nuc_er_for_kept: Optional[Sequence[int]] = None) -> None:
+                  nuc_er_for_kept: Optional[Sequence[int]] = None,
+                  msps_replaced: bool = True) -> None:
     """Set MA/AQ (and optionally legacy ns/nl/as/al) tags on the read in place.
 
     Three output modes:
@@ -1362,6 +1363,10 @@ def write_ma_tags(read, read_length: int,
 
     ``downstream_compat=True`` and ``also_write_legacy=False`` are mutually
     exclusive; compat mode always writes the legacy track.
+
+    ``msps_replaced=False`` (``fiberhmm-apply --no-msps``) means ``msps`` are
+    the record's own retained MSPs, not new calls: a legacy ``aq`` scoring
+    them (fibertools FIRE) is kept. Otherwise any ``aq`` is removed.
     """
     import array as pyarray
 
@@ -1390,7 +1395,8 @@ def write_ma_tags(read, read_length: int,
     # FiberHMM writes no MSP score; a legacy aq (fibertools <= 0.12 FIRE, or
     # an older fiberhmm-apply --scores) scores MSPs this write replaces, even
     # when the legacy as/al are left in place (also_write_legacy=False).
-    if read.has_tag('aq'):
+    # Retained MSPs (msps_replaced=False) keep their FIRE aq.
+    if msps_replaced and read.has_tag('aq'):
         read.set_tag('aq', None)
 
     # Default nq for kept nucs to 0 (sentinel for "unverified") if not provided.
