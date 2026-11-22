@@ -45,9 +45,11 @@
   nucleosome calls on the Hia5 PacBio demo data). recall-nucs on apply
   output still gives exactly `fiberhmm-call`'s calls. An `MA` that holds only m5C or FIRE groups no
   longer hides legacy calls from the consensus loaders. `fiberhmm-scan`
-  peaks keeps FiberBrowser 3.1.0's loader rule (legacy pairs only, an
-  `MA`-only record is one neutral row) so its rows match FiberBrowser; it
-  moves to `MA` with FiberBrowser.
+  peaks builds its read rows with FiberBrowser 3.1.1's rule (MA `nuc`/`msp`
+  first, per family; legacy pairs only for a family MA does not carry; an
+  empty MA footprint set is one neutral row), and its parity golden is
+  regenerated from FiberBrowser 3.1.1: peak scores on files whose legacy
+  `ns` carried TF calls, or with MA-only reads, change accordingly.
 - **DddA consensus numbers change** because `fiberhmm-consensus` now scores
   DddA CpGs with the same unmethylated-only CpG mask as `fiberhmm-call`.
   Earlier versions excluded CpGs only inside methylated islands

@@ -317,6 +317,64 @@ def ma_footprint_query_spans(ma_tags, *, read_length, is_reverse, molecular_laye
     return spans
 
 
+def ma_call_arrays(ma_tags, *, read_length, is_reverse, molecular_layers=frozenset()):
+    """A record's MA ``nuc`` / ``msp`` groups as the legacy arrays a read row is built from (FiberBrowser
+    3.1.1 ``bam_tags.ma_call_arrays``): ``{'nuc': (starts, lengths, nq), 'msp': (starts, lengths)}`` for the
+    groups present, SEQ-frame query coordinates, sorted by start. ``nq`` is each nuc call's first AQ byte, or
+    None when the group has no quality bytes. Section rules as the layer parser: a nameless section's AQ bytes
+    are stepped over, a later same-name section with another quality spec is skipped (bytes stepped over), a
+    second strand section of the same group is merged."""
+    if ma_tags is None or not ma_tags[0] or not isinstance(ma_tags[0], str):
+        return {}
+    try:
+        aq = list(ma_tags[1]) if ma_tags[1] is not None else []
+    except TypeError:
+        aq = []
+    cursor = 0
+    spec_by_name: Dict[str, str] = {}
+    rows_by_name: Dict[str, list] = {}
+    for part in ma_tags[0].split(';')[1:]:
+        type_sig, sep, body = part.partition(':')
+        if not sep:
+            continue
+        strand_idx = next((i for i in (type_sig.find(c) for c in '+-.') if i >= 0), -1)
+        if strand_idx < 0:
+            continue
+        name, qualspec = type_sig[:strand_idx], type_sig[strand_idx + 1:]
+        items = [iv.strip() for iv in body.split(',') if iv.strip() and '-' in iv]
+        n_qual = len(qualspec)
+        if not name or spec_by_name.setdefault(name, qualspec) != qualspec:
+            cursor += n_qual * len(items)
+            continue
+        base, cursor = cursor, cursor + n_qual * len(items)
+        if name not in ('nuc', 'msp'):
+            continue
+        molecular = _group_is_molecular(ma_tags[3], name, type_sig[strand_idx]) or name in molecular_layers
+        flip = bool(molecular and is_reverse and read_length)
+        rows = rows_by_name.setdefault(name, [])
+        for k, iv in enumerate(items):
+            try:
+                s_str, l_str = iv.split('-', 1)
+                q_start, length = int(s_str) - 1, int(l_str)
+            except ValueError:
+                continue
+            if flip:
+                q_start = read_length - (q_start + length)
+            off = base + k * n_qual
+            q = aq[off] if n_qual and off < len(aq) else None
+            rows.append((q_start, length, q))
+    out = {}
+    for name, rows in rows_by_name.items():
+        rows.sort(key=lambda r: r[0])
+        starts, lengths = [r[0] for r in rows], [r[1] for r in rows]
+        if name == 'nuc':
+            quals = [r[2] for r in rows]
+            out[name] = (starts, lengths, None if any(q is None for q in quals) else quals)
+        else:
+            out[name] = (starts, lengths)
+    return out
+
+
 def ma_footprint_call_extent(spans, mapper, ref_start, ref_end, skip=None):
     if ref_end <= ref_start:
         return None
@@ -695,19 +753,38 @@ def _record_tiles(read, lo, hi, *, legacy, group_frame, hide_terminal_gaps, term
     if read.is_supplementary and any(op == 5 for op, _n in read.cigartuples or []):
         return None if min_fp_quality > 0 else neutral()
     ns_tag = nl_tag = nq_tag = None
-    # Only two integer arrays of equal length are a pair (FiberBrowser's array-pair rule): a missing partner, a
-    # string or scalar in either position, or unequal lengths give no footprint calls; MSPs, MA or a neutral
-    # tile decide the row, as in FiberBrowser.
-    nuc_pair = array_tag_pair(read, 'ns', 'nl')
-    if nuc_pair is not None:
-        ns_tag, nl_tag = nuc_pair
-        nq_tag = read.get_tag('nq') if read.has_tag('nq') else None
-    msp_pair = array_tag_pair(read, 'as', 'al') if ns_tag is None else None
-    if msp_pair is not None:
-        try:
-            ns_tag, nl_tag = msp_complement(msp_pair[0], msp_pair[1], read.query_length or 0)
-        except (TypeError, ValueError):
-            return None          # an MSP stream FiberBrowser cannot read either: no row
+    read_length = read.query_length or 0
+    # MA first (FiberBrowser 3.1.1): footprints come from the MA nuc group, accessible stretches from the MA
+    # msp group, in the SEQ frame. Per family, a record whose MA has a nuc group never reads ns/nl and one
+    # whose MA has an msp group never reads as/al, so stale legacy tags beside MA never win. Legacy tags fill
+    # only a family MA does not carry. Only two integer arrays of equal length are a legacy pair (the
+    # array-pair rule): a missing partner, a string or scalar, or unequal lengths give no calls.
+    ma_tags = ma_tags_of(read, group_frame)
+    ma_arrays = ma_call_arrays(ma_tags, read_length=read_length, is_reverse=read.is_reverse,
+                               molecular_layers=molecular_layers)
+    from_ma = False
+    if 'nuc' in ma_arrays:
+        ns_tag, nl_tag, nq_tag = ma_arrays['nuc']
+        from_ma = True
+    else:
+        nuc_pair = array_tag_pair(read, 'ns', 'nl')
+        if nuc_pair is not None:
+            ns_tag, nl_tag = nuc_pair
+            nq_tag = read.get_tag('nq') if read.has_tag('nq') else None
+    if ns_tag is None:
+        if 'msp' in ma_arrays:
+            ns_tag, nl_tag = msp_complement(ma_arrays['msp'][0], ma_arrays['msp'][1], read_length)
+            nq_tag = None
+            from_ma = True
+        else:
+            msp_pair = array_tag_pair(read, 'as', 'al')
+            if msp_pair is not None:
+                try:
+                    ns_tag, nl_tag = msp_complement(msp_pair[0], msp_pair[1], read_length)
+                except (TypeError, ValueError):
+                    return None          # an MSP stream FiberBrowser cannot read either: no row
+    if from_ma and ns_tag is not None and len(ns_tag) == 0:
+        ns_tag = nl_tag = None   # MA calls with no footprint at all: a neutral row, as FiberBrowser
     if ns_tag is None:
         # No legacy footprints (MA-only or untagged): FiberBrowser shows the read as one neutral tile.
         return neutral()
@@ -721,11 +798,9 @@ def _record_tiles(read, lo, hi, *, legacy, group_frame, hide_terminal_gaps, term
     nq = _optional_ints(nq_tag)
     if len(ns) != len(nl):
         return None
-    read_length = read.query_length or 0
-    if read.is_reverse and read_length > 0 and read_legacy_is_molecular(read, legacy):
+    if not from_ma and read.is_reverse and read_length > 0 and read_legacy_is_molecular(read, legacy):
         ns = [read_length - (s + l) for s, l in zip(ns, nl)]
     mapper = CigarCoordMapper(read.cigartuples, ref_start)
-    ma_tags = ma_tags_of(read, group_frame)
     footprints = map_tagged_footprints(ns, nl, nq, mapper, min_fp_quality=min_fp_quality)
     ma_spans = None
     terminal_drop = set()
