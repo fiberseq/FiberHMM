@@ -17,6 +17,7 @@ from fiberhmm import defaults
 REPO = Path(__file__).resolve().parents[1]
 SRC = REPO / 'tests' / 'fixtures' / 'fire_contract' / 'fiberhmm3.2.1_call_ft0.6.2_fire.bam'
 CALL_TAGS = ('MA', 'ns', 'nl', 'as', 'al')
+LEGACY_TAGS = ('ns', 'nl', 'as', 'al')
 
 
 @pytest.fixture(scope='module')
@@ -56,7 +57,10 @@ def test_low_mapq_reads_are_called_by_default_and_left_uncalled_with_an_explicit
     assert len(reads) == 2
     for r in reads:
         assert r.mapping_quality == 3
-        assert all(r.has_tag(t) for t in CALL_TAGS), (r.query_name, [t for t, _ in r.get_tags()])
+        # Called: calls in MA (legacy ns/nl/as/al are written only with --legacy-tags since 3.3.0).
+        assert r.has_tag('MA') and any(g in str(r.get_tag('MA')) for g in ('nuc', 'msp')), \
+            (r.query_name, [t for t, _ in r.get_tags()])
+        assert not any(r.has_tag(t) for t in LEGACY_TAGS), r.query_name
 
     strict_out = tmp_path / 'mapq20.bam'
     proc = _call(low_mapq_bam, strict_out, '--min-mapq', '20')
