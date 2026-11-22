@@ -227,7 +227,7 @@ def until_done(step):
             pass
 
 def run():
-    while time.monotonic() < end:
+    while time.monotonic() < state['end']:
         try:
             progress('region', region=['chr1', 0, 2000], regions_done=3, regions_total=12, reads=160)
         except RunInterrupted:
@@ -239,11 +239,20 @@ def finish():
     sys.stderr.flush()
     os._exit(0)
 
+state = {}
+
+def main():
+    # Everything the barrage can reach runs under until_done, set-up and teardown included.
+    if 'end' not in state:
+        state['end'] = time.monotonic() + duration
+    if 'ready' not in state:
+        os.write(1, b'ready\n')
+        state['ready'] = True
+    run()
+    finish()
+
 with interrupt_on_terminate():
-    os.write(1, b'ready\n')
-    end = time.monotonic() + duration
-    until_done(run)
-    until_done(finish)
+    until_done(main)
 '''
 
 
@@ -256,7 +265,8 @@ def test_progress_lines_stay_whole_when_a_signal_interrupts_a_write(tmp_path, to
     import random
     script = tmp_path/'emit.py'; script.write_text(PROGRESS_UNDER_SIGNALS)
     out = tmp_path/'p.jsonl'; log = out if to_stderr else tmp_path/'stderr.txt'
-    env = dict(os.environ, PYTHONPATH=str(REPO_ROOT)+os.pathsep+os.environ.get('PYTHONPATH', ''))
+    env = dict(os.environ, PYTHONWARNINGS='ignore',
+               PYTHONPATH=str(REPO_ROOT)+os.pathsep+os.environ.get('PYTHONPATH', ''))
     with open(log, 'w') as stderr:
         child = subprocess.Popen([sys.executable, str(script), '-' if to_stderr else str(out), '3'],
                                  cwd=tmp_path, env=env, stdout=subprocess.PIPE, stderr=stderr)
