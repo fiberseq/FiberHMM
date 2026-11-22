@@ -112,6 +112,13 @@ SPLIT_MIN_OPPS = 3
 #: DddA radial nucleosome recall: largest derived-TF edge gap (bp).
 DDDA_DERIVED_TF_MAX_EDGE_GAP = 12
 
+#: Nucleosome recall policy (``--nuc-recall-policy``). ``auto`` resolves to
+#: ``conservative`` for every chemistry
+#: (``fiberhmm.inference.fused_stages.resolve_nuc_recall_policy``); engine
+#: functions take the resolved value. ``topology`` is opt-in (tuned on ONT
+#: Hia5) and refused for DddA, whose radial recall has no topology policy.
+NUC_RECALL_POLICY = "auto"
+
 # ---------------------------------------------------------------------------
 # DAF chimeras, duplicates and inserts
 # ---------------------------------------------------------------------------

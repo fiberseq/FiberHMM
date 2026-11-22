@@ -120,6 +120,10 @@ class CallerSettings:
                 # call's; the recall settings are the defaults (it ran none).
                 notes.append('the header call ran --hmm-only (HMM calls, no recall); '
                              'the caller replays HMM + recall with its HMM settings')
+            from fiberhmm.nuc.records import recorded_nuc_recall_policy
+            recorded_policy = recorded_nuc_recall_policy(hd)
+            if recorded_policy:
+                kw['nuc_recall_policy'] = recorded_policy
             m = re.search(r'phase_nrl=(\d+)', str(pg.get('DS', '')))
             if m:
                 kw['phase_nrl'] = int(m.group(1))
@@ -198,6 +202,17 @@ class CallerSettings:
                 upd['cpg_mask_policy'] = resolve_cpg_mask_policy(use_m5c, policy_flag, enzyme, upd['mode'])
             except ValueError:
                 upd['cpg_mask_policy'] = None
+        from fiberhmm.inference.fused_stages import (nuc_recall_policy_error,
+                                                     resolve_nuc_recall_policy)
+        policy = resolve_nuc_recall_policy(base.nuc_recall_policy, upd['mode'])
+        if nuc_recall_policy_error(policy, enzyme):
+            if 'nuc_recall_policy' in overrides:
+                raise ValueError(nuc_recall_policy_error(policy, enzyme))
+            # An older DddA call recorded topology, which radial recall ignored.
+            notes.append('the header records nuc_recall_policy=topology for DddA, '
+                         'whose radial recall has no topology policy; conservative used')
+            policy = 'conservative'
+        upd['nuc_recall_policy'] = policy
         upd['notes'] = tuple(notes)
         return replace(base, **upd)
 

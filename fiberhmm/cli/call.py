@@ -255,8 +255,11 @@ def parse_args():
     p.add_argument(
         '--nuc-recall-policy',
         choices=['auto', 'conservative', 'topology'],
-        default='auto',
-        help=argparse.SUPPRESS)  # retired experimental mode (3.0); kept only to reproduce earlier calls
+        default=_D.NUC_RECALL_POLICY,
+        help='Nucleosome recall policy: conservative (default; auto resolves '
+             'to it) or topology (keeps fragment structure in nucleosome '
+             'recall; works well on some ONT Hia5 datasets). Not available '
+             'for DddA.')
     p.add_argument('--phase-nrl', default='off',
                    help=argparse.SUPPRESS)  # retired experimental mode (3.0); kept only to reproduce earlier calls
 
@@ -514,6 +517,12 @@ def parse_args():
     if args.keep_msps and not args.hmm_only:
         p.error('--keep-msps requires --hmm-only (recall re-derives MSPs from '
                 'the recalled nucleosomes)')
+    # Explicit --enzyme ddda fails here; an enzyme inherited from the input
+    # header is checked after chemistry resolution (_main).
+    from fiberhmm.inference.fused_stages import nuc_recall_policy_error
+    policy_error = nuc_recall_policy_error(args.nuc_recall_policy, args.enzyme)
+    if policy_error:
+        p.error(policy_error)
     if args.hmm_only:
         if args.recall_nucs:
             p.error('--recall-nucs conflicts with --hmm-only (no recall runs; '
@@ -693,6 +702,16 @@ def _resolve_nuc_recall_policy(args, mode: str) -> str:
     """Resolve the public auto policy to the core recaller policy."""
     from fiberhmm.inference.fused_stages import resolve_nuc_recall_policy
     return resolve_nuc_recall_policy(getattr(args, 'nuc_recall_policy', 'auto'), mode)
+
+
+def _refuse_nuc_recall_policy(policy: str, enzyme, prog: str) -> None:
+    """Exit 2 (argparse's usage-error status) for a policy the resolved
+    enzyme cannot run, e.g. topology on a DddA input whose header names it."""
+    from fiberhmm.inference.fused_stages import nuc_recall_policy_error
+    message = nuc_recall_policy_error(policy, enzyme)
+    if message:
+        print(f"{prog}: error: {message}", file=sys.stderr)
+        sys.exit(2)
 
 
 def _resolve_dedup(args, mode: str) -> bool:
@@ -1451,6 +1470,7 @@ def _main(args):
     else:
         recall_nucs = bool(args.recall_nucs)
     nuc_recall_policy = _resolve_nuc_recall_policy(args, mode)
+    _refuse_nuc_recall_policy(nuc_recall_policy, args.enzyme, 'fiberhmm-call')
 
     # Fast-fail sniff for DAF mode BEFORE any BAM scanning (e.g. --phase-nrl
     # auto estimation): the DAF path needs R/Y in the stored sequence, MD tags,
