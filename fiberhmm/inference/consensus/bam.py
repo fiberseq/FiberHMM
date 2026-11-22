@@ -129,11 +129,16 @@ def check_dataset_chemistries(datasets):
             _dataset_chemistry(item,paths)
 
 
-def load_bam_payload(datasets, region, options=None, progress=None, *, loader_sampling=None, read_names=None):
+def load_bam_payload(datasets, region, options=None, progress=None, *, loader_sampling=None, read_names=None,
+                     unit_hook=None, dataset_ordinals=None):
     """datasets: [{dataset_id, paths, chemistry?}]; metadata conflicts are errors.
 
     loader_sampling is an internal phase-policy override (cap, seed, mode,
     optional margin), used by NFR and quantification-only frozen transfer.
+    unit_hook(unit) -> unit: applied to every evidence unit as soon as native replay no longer needs its full
+    fields (fiberhmm-nfr drops the lattice fields it never reads, which bounds memory). dataset_ordinals
+    {dataset_id: ordinal}: the ordinal a dataset's unit_ids name, for loading the datasets of one run separately
+    (default: its position in ``datasets``).
     """
     from .parameters import parse_options
     options=options or parse_options({'cr':{'engine':STAGED_MODE}})
@@ -155,7 +160,10 @@ def load_bam_payload(datasets, region, options=None, progress=None, *, loader_sa
         result=_load_payload_once(state,dict(region,dataset_ids=list(rows),_read_names={k:set(read_names.get(k,()))
                                   for k in rows}),options,progress or (lambda *a:None))
     else:
-        result=_load_payload(state,dict(region,dataset_ids=list(rows)),options,progress or (lambda *a:None),
+        request=dict(region,dataset_ids=list(rows))
+        if unit_hook is not None:request['_unit_hook']=unit_hook
+        if dataset_ordinals is not None:request['_dataset_ordinals']=dict(dataset_ordinals)
+        result=_load_payload(state,request,options,progress or (lambda *a:None),
                              loader_sampling=loader_sampling)
     result['input_files']=[dict(dataset_id=k,path=str(Path(p).resolve()),size=Path(p).stat().st_size,
         mtime_ns=Path(p).stat().st_mtime_ns) for k,ds in rows.items() for p in ds.paths]
@@ -337,7 +345,9 @@ def _load_payload_once(state,request,options,progress):
     from .snp_mask import read_mask
     from fiberhmm.inference.engine import daf_snp_mask_scope
     snp_mask,snp_receipt=read_mask(options['input'].daf_snp_mask)
+    unit_hook=request.get('_unit_hook')
     for ordinal,dsid in enumerate(request['dataset_ids']):
+        ordinal=request.get('_dataset_ordinals',{}).get(dsid,ordinal)
         ds=state.get_dataset(dsid)
         chemistry=request.get('chemistry_overrides',{}).get(dsid) or getattr(ds,'family_scan_chemistry',None)
         if chemistry not in ('ddda','dddb','hia5-pacbio','hia5-nanopore'):
@@ -373,9 +383,11 @@ def _load_payload_once(state,request,options,progress):
             projections=_projection_members(reads,representatives,exact_records=True)
             # unit_id names the dataset by its ordinal in this run and the file by its index in the dataset's paths,
             # never by label or path: the same BAM bytes must give the same classes from any location.
-            units=[evidence_unit(read,model,dsid,projections.get(_projection_member_key(read),[]),start,end,dataset_ordinal=ordinal)
-                   for read in representatives]
             use_m5c=chemistry=='ddda' and options['input'].ddda_m5c_correction
+            # m5C conditioning reads and edits the lattice fields during replay: such units take the hook after it
+            early_hook=unit_hook if unit_hook is not None and not use_m5c else (lambda unit:unit)
+            units=[early_hook(evidence_unit(read,model,dsid,projections.get(_projection_member_key(read),[]),start,end,dataset_ordinal=ordinal))
+                   for read in representatives]
             cpg_policy=options['input'].ddda_cpg_mask_policy
             if use_m5c and ds.data_type!='bam' and ds.available_layers.get('ddda_mcg'):
                 raise ValueError('Tagged DddA mCG conditioning currently needs BAM query coordinates; use BAM or explicitly disable that input option')
@@ -482,6 +494,8 @@ def _load_payload_once(state,request,options,progress):
                         uid=unit['unit_id']
                         if uid in before_replay:
                             replayed[uid]=_replay_changes(before_replay[uid],unit)
+            if unit_hook is not None and use_m5c:
+                units=[unit_hook(unit) for unit in units]
             # Keep chemical CT/GA order, but never split Hia5 by mapping orientation.
             units.sort(key=lambda u:((0 if u['strand']=='CT' else 1),u['unit_id']) if chemistry in ('ddda','dddb') else (0,u['unit_id']))
             model_hash=hashlib.sha256(model.emissionprob_.astype('<f8').tobytes()).hexdigest()
@@ -507,4 +521,6 @@ def _load_payload_once(state,request,options,progress):
                        if chemistry=='ddda' else {}),
                     m5c_conditioned_opportunities=sum(u['provenance'].get('native_m5c_excluded_opportunities',0) for u in units)),
                 evidence_units=dict(**collapse,physical_duplex_independence_established=bool(units) and all(u.get('physical_source_names') for u in units),joint_duplex_units=sum(bool(u.get('physical_source_names')) for u in units)),load=diagnostics))
+            # Release this dataset's decoded reads before the next dataset decodes (they are not part of the payload).
+            reads=representatives=projections=lookup=None
     return dict(region=dict(chrom=chrom,start=start,end=end),strata=strata)

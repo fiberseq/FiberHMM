@@ -625,11 +625,17 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--datasets` | — | JSON list of {dataset_id, paths: [BAMs], chemistry?} |
 | `--evidence` | — | Saved evidence.json.gz (e.g. a fiberhmm-consensus run's), instead of loading BAMs |
 | `--region` | — | CHROM:START-END analysis window (0-based, half-open); use this or --bed with BAMs |
-| `--bed` | — | BED3 windows for independent NFR runs, written in BED order to window_XXXXXX directories |
-| `--window-jobs` | `0` | Concurrent BED windows (0 = up to --cores; 1 = sequential). Workers are reused across windows |
+| `--bed` / `--regions-bed` | — | BED3/BED4 windows for independent NFR runs (one BAM pass per window, windows spread over --cores), written in BED order to window_XXXXXX directories; names, status and a combined variants table in regions.json/regions.tsv/variants.tsv. Add --continue to finish an interrupted run in the same --output |
+| `--window-jobs` | `0` | Concurrent BED windows, one core each (0 = up to --cores; 1 = sequential, in this process). Workers are reused across windows |
+| `--continue` | off | --bed: finish an interrupted run in the same --output, skipping windows already complete (refused when the BAMs, BED or parameters differ) |
 | `--nfr` | — | NFR region inside the window (repeat for several). Default: detected from the share of callable reads inside a &gt;= 175-bp gap (see --detect-method) |
 | `--chemistry` | — | Explicit chemistry for --bam when the BAM header does not declare one Choices: `ddda`, `dddb`, `hia5-pacbio`, `hia5-nanopore`. |
-| `--parameters` | — | JSON: loader groups as for fiberhmm-consensus (input, compute, ...) and an "nfr" group with any engine parameter (see --schema) |
+| `--parameters` | — | A JSON file, or an inline JSON object (quote it for the shell, e.g. '{"nfr":{"min_gap_bp":150}}'): loader groups as for fiberhmm-consensus (input, compute, ...) and an "nfr" group with any engine parameter (see --schema) |
+| `--skip` | — | Comma-separated optional stages to leave out: coaccess, combinations (pair tests and combination patterns). Variants, configurations and molecules.tsv.gz are unchanged; skipped stages write no coaccess.tsv/combos.tsv (default: none skipped) |
+| `--discover-fold-spec` | — | Cross-fitted discovery: detect NFRs and discover variants on reads whose read-name hash fold is listed, assign membership to every read, and add fold/discovery columns to molecules.tsv.gz. SPEC: "hash=md5,mod=10,discover=0-4" (fold = int(md5(read_name), 16) % 10; several folds "discover=0+2+4"). Default off |
+| `--fold-weights` | — | With --discover-fold-spec: fit the configuration EM weights on all reads (default) or on the held-out folds only; memberships of all reads use those weights Choices: `all`, `heldout`. |
+| `--edge-tolerance-bp` | — | Edge consistency (variants.tsv edge_within): both edges within BP of the variant's edges (default 25) |
+| `--fast-landscape` | off | Preset for landscape runs: --skip coaccess,combinations (variants, configurations and per-read membership only) |
 | `--stringency` | — | Prediction strength needed for k (default 0.9; 0.85 admits finer variants) |
 | `--mode` | — | variants (discovered, default) or depth (Timer 175/300/500-bp width states) Choices: `variants`, `depth`. |
 | `--elements` | — | Co-accessibility elements: each variant (default) or whole NFRs Choices: `variants`, `nfrs`. |

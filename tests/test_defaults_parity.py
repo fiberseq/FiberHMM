@@ -452,8 +452,32 @@ def check_dataclasses(report):
             report.check(dotted, f.name, f.default, expected, none_ok)
 
 
+def check_nfr_defaults(report, parsers):
+    """fiberhmm-nfr stage, cross-fit, edge and BED-run defaults: the engine dataclass, the parser and the
+    --fast-landscape preset all take them from fiberhmm.defaults."""
+    from fiberhmm.inference.accessibility.workflow import NFROptions
+
+    opt = NFROptions()
+    for field, value in (("skip", D.NFR_SKIP), ("discover_fold_spec", D.NFR_DISCOVER_FOLD_SPEC),
+                         ("fold_weights", D.NFR_FOLD_WEIGHTS), ("edge_tolerance_bp", D.NFR_EDGE_TOLERANCE_BP)):
+        report.check("fiberhmm.inference.accessibility.NFROptions", field, getattr(opt, field), value)
+    nfr = parsers.get("fiberhmm-nfr", {})
+    report.check("fiberhmm-nfr", "window_jobs", nfr.get("window_jobs"), D.NFR_WINDOW_JOBS)
+    for dest in ("skip", "discover_fold_spec", "fold_weights", "edge_tolerance_bp"):
+        # unset on the command line: the NFROptions default (checked above) applies
+        report.check("fiberhmm-nfr", dest, nfr.get(dest, "missing"), None)
+    report.check("fiberhmm-nfr", "fast_landscape", nfr.get("fast_landscape"), False)
+    report.check("fiberhmm-nfr", "fast_landscape.skip",
+                 NFROptions.from_params(dict(skip=list(D.NFR_FAST_LANDSCAPE_SKIP))).skip,
+                 tuple(s for s in D.NFR_STAGES if s in D.NFR_FAST_LANDSCAPE_SKIP))
+    report.check("fiberhmm.defaults", "NFR_FAST_LANDSCAPE_SKIP within NFR_STAGES",
+                 set(D.NFR_FAST_LANDSCAPE_SKIP) <= set(D.NFR_STAGES), True)
+
+
 def run_all(monkeypatch, report):
-    check_parsers(report, capture_parsers(monkeypatch))
+    parsers = capture_parsers(monkeypatch)
+    check_parsers(report, parsers)
+    check_nfr_defaults(report, parsers)
     check_resolvers(report)
     check_signatures(report)
     check_dataclasses(report)

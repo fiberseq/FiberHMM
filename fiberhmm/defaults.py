@@ -116,6 +116,39 @@ DEDUP_MAX_END_DIFF = 50
 DAF_INSERT_MIN_CARRIERS = 20
 
 
+# ---------------------------------------------------------------------------
+# fiberhmm-nfr (EXPERIMENTAL preview) stages and run controls
+# ---------------------------------------------------------------------------
+
+#: Optional fiberhmm-nfr stages, in run order: element co-accessibility pair
+#: tests (coaccess.tsv) and combination patterns (combos.tsv). NFR variants,
+#: configurations and per-read membership are always computed.
+NFR_STAGES = ("coaccess", "combinations")
+
+#: Stages fiberhmm-nfr skips by default (none: every output is written).
+NFR_SKIP = ()
+
+#: Stages ``fiberhmm-nfr --fast-landscape`` skips: the run keeps variants,
+#: configurations and molecules.tsv.gz (byte-identical to a full run).
+NFR_FAST_LANDSCAPE_SKIP = ("coaccess", "combinations")
+
+#: fiberhmm-nfr cross-fitting (fiberhmm.io.folds spec, e.g.
+#: "hash=md5,mod=10,discover=0-4"): '' = off, every read discovers.
+NFR_DISCOVER_FOLD_SPEC = ""
+
+#: Under cross-fitting, the reads whose configuration EM fits the prevalence
+#: weights: "all" reads, or the "heldout" folds only.
+NFR_FOLD_WEIGHTS = "all"
+
+#: fiberhmm-nfr edge consistency (variants.tsv edge_within): a member gap is
+#: consistent when both edges lie within this many bp of the variant's edges.
+NFR_EDGE_TOLERANCE_BP = 25
+
+#: Concurrent fiberhmm-nfr BED windows (0 = automatic: up to --cores), one
+#: core each.
+NFR_WINDOW_JOBS = 0
+
+
 #: Documented differences from the canonical values:
 #: ``(tool, setting) -> (value, reason)`` or ``(value, reason, "pending")``.
 #: ``tool`` is a console script (``fiberhmm-train``) or a dotted Python object
