@@ -101,7 +101,24 @@ CANON = {
     "legacy_tags": (D.WRITE_LEGACY_TAGS, False),
     "write_legacy_tags": (D.WRITE_LEGACY_TAGS, False),
     "also_write_legacy": (D.WRITE_LEGACY_TAGS, True),   # None: defaults.WRITE_LEGACY_TAGS
+    # --nuc-recall-policy: parsers say 'auto', engines and dataclasses take the
+    # resolved value; compared after resolve_nuc_recall_policy (see _same_setting)
+    "nuc_recall_policy": (D.NUC_RECALL_POLICY, False),
 }
+
+#: Settings compared after a resolver: equivalent spellings (auto == the
+#: policy it resolves to) are the same default.
+NORMALIZERS = {
+    "nuc_recall_policy": lambda v: _resolve_policy(v),
+}
+
+
+def _resolve_policy(value):
+    from fiberhmm.inference.fused_stages import resolve_nuc_recall_policy
+    try:
+        return resolve_nuc_recall_policy(value, "pacbio-fiber")
+    except ValueError:
+        return value
 
 #: Tool-specific option names that mean a canonical setting.
 ALIASES = {
@@ -189,6 +206,9 @@ class Report:
 
     def check(self, tool, setting, actual, expected, none_ok=False):
         key = (tool, setting)
+        normalize = NORMALIZERS.get(setting.split(".")[-1].split("[")[0])
+        if normalize is not None and actual is not None:
+            actual, expected = normalize(actual), normalize(expected)
         if key in self.overrides:
             self.visited.add(key)
             entry = self.overrides[key]
@@ -343,6 +363,14 @@ def check_resolvers(report):
                      DecodeContext(header).mark_threshold, expected)
         report.check("fiberhmm.nuc CallerSettings", f"prob_threshold[{chem}]",
                      CallerSettings.from_header(header).prob_threshold, expected)
+        # --nuc-recall-policy: the default resolves to conservative everywhere
+        from fiberhmm.inference.fused_stages import resolve_nuc_recall_policy
+        mode_ = MODES[(enzyme, seq)]
+        report.check("resolve_nuc_recall_policy", f"default[{chem}]",
+                     resolve_nuc_recall_policy(D.NUC_RECALL_POLICY, mode_), "conservative")
+        report.check("fiberhmm.nuc CallerSettings", f"nuc_recall_policy[{chem}]",
+                     CallerSettings.from_header(header).nuc_recall_policy,
+                     resolve_nuc_recall_policy(D.NUC_RECALL_POLICY, mode_))
         # DddA CpG mask (call, apply, recall, posteriors, pair/merge share it)
         mode = MODES[(enzyme, seq)]
         report.check("resolve_cpg_mask_policy", f"default[{chem}]",
@@ -603,6 +631,15 @@ def test_the_guard_reports_a_diverging_default(monkeypatch):
     report = run_all(monkeypatch, Report(canon=canon))
     flagged = {p.split()[0] for p in report.problems if " edge_trim " in p}
     assert {"fiberhmm-call", "fiberhmm-apply", "fiberhmm-posteriors"} <= flagged
+
+
+def test_the_guard_reports_a_diverging_nuc_recall_policy(monkeypatch):
+    canon = dict(CANON)
+    canon["nuc_recall_policy"] = ("topology", False)
+    report = run_all(monkeypatch, Report(canon=canon))
+    flagged = {p.split()[0] for p in report.problems if " nuc_recall_policy " in p}
+    assert {"fiberhmm-call", "fiberhmm-recall-tfs", "fiberhmm-recall-nucs",
+            "fiberhmm.nuc.recall.CallerSettings"} <= flagged
 
 
 def test_the_guard_reports_a_drifting_override(monkeypatch):

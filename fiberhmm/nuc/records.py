@@ -364,6 +364,32 @@ def last_call_record(header) -> Optional[dict]:
 _last_call_record = last_call_record
 
 
+def recorded_nuc_recall_policy(header) -> Optional[str]:
+    """The nucleosome recall policy (``conservative``/``topology``) that made
+    the header's current nucleosome calls, or None when no record says.
+
+    Reads ``nuc_recall_policy=`` from the ``@PG`` DS of the latest record that
+    ran nucleosome recall: ``fiberhmm-call`` or ``fiberhmm-recall-nucs``/
+    ``-tfs --recall-nucs`` (both write ``recall_nucs=True``). A later
+    ``fiberhmm-recall-tfs`` without nucleosome recall is skipped; a later
+    ``fiberhmm-call`` that ran no nucleosome recall (``--hmm-only``,
+    ``--no-recall-nucs``) ends the search with None. Shared by
+    ``CallerSettings.from_header`` and the consensus Hia5 replay.
+    """
+    hd = header.to_dict() if hasattr(header, 'to_dict') else dict(header or {})
+    for pg in reversed(hd.get('PG', [])):
+        tokens = str(pg.get('DS', '')).split()
+        values = dict(t.split('=', 1) for t in tokens if '=' in t)
+        policy = values.get('nuc_recall_policy')
+        ran_nucs = (values.get('recall_nucs') == 'True'
+                    and values.get('hmm_only') != 'on')
+        if policy in ('conservative', 'topology') and ran_nucs:
+            return policy
+        if is_call_record(pg):
+            return None
+    return None
+
+
 def _cl_option(toks, *names) -> Optional[str]:
     for i, t in enumerate(toks):
         for n in names:

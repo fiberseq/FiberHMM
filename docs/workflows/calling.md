@@ -223,6 +223,32 @@ and platform (and their defaults) when the observation mode matches.
 | `--nuc-min-size` | 85 | minimum nucleosome size; also what bounds an MSP |
 | `--msp-min-size` | 0 | minimum MSP size |
 | `--ddda-derived-tf-max-edge-gap` | 12 | DddA: evidence needed on both sides of TFs exposed by radial recall (`-1` off) |
+| `--nuc-recall-policy` | `auto` (= `conservative`) | `topology` keeps fragment structure in nucleosome recall (below) |
+
+### Nucleosome recall policy
+
+`--nuc-recall-policy` chooses how nucleosome recall treats the HMM's
+footprints. `conservative` (the default; `auto` resolves to it) cuts every
+qualifying accessible run inside a footprint and trims each nucleosome to
+conservative edges from its protected evidence. `topology` keeps fragment
+structure: it accepts a cut only when every resulting piece can still hold a
+nucleosome (`--nuc-min-size`), and each piece keeps its HMM extent instead of
+turning unresolved edges into accessible sequence. It works well on some
+ONT Hia5 datasets, where it was tuned, and also runs for Hia5 PacBio and
+DddB. Compare it against the default on your data before using it.
+
+```bash
+fiberhmm-call -i ont.bam -o ont.topology.bam --enzyme hia5 --seq nanopore \
+    --nuc-recall-policy topology
+```
+
+DddA refuses `topology` (exit 2), whether `--enzyme ddda` is given or
+inherited from the input header: DddA nucleosome recall uses the radial
+model, which has no topology policy. The resolved policy is written to the
+`@PG` `DS` (`nuc_recall_policy=`), and `fiberhmm-recall-nucs`,
+`fiberhmm.nuc` and the consensus Hia5 replay take it from there.
+`fiberhmm-pipeline` has no option of its own; pass
+`--call-args "--nuc-recall-policy topology"`.
 
 ## DAF options
 

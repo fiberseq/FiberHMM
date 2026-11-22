@@ -118,7 +118,8 @@ class StateReader:
                     split_minimum_llr=opt['families'].nuc_split_minimum_llr,
                     maximum_alignment_gap_bp=opt['input'].native_maximum_alignment_gap_bp,
                     minimum_nfr_length=opt['input'].minimum_nfr_length,
-                    legacy_annotation_frame=rt['legacy_frame_recall'])
+                    legacy_annotation_frame=rt['legacy_frame_recall'],
+                    nuc_recall_policy=rt['nuc_recall_policy'])
             except ValueError as error:
                 if str(error).startswith(MOLECULE_RECALL_FAILURES):
                     return None
@@ -176,6 +177,7 @@ class StateReader:
         if self._runtime is None:
             from fiberhmm.inference.consensus.bam import STAGED_LIKE, _chemistry_runtime, loader_runtime
             from fiberhmm.inference.tf_recaller import ENZYME_PRESETS
+            from fiberhmm.nuc.records import recorded_nuc_recall_policy
             chem = self.chemistry
             if not chem:
                 raise ValueError('state_at needs the dataset chemistry: the BAM header declares none; pass chemistry=')
@@ -196,6 +198,8 @@ class StateReader:
                 model=model, context=context, mode=mode, strand_mode=preset['strand_mode'],
                 prob_threshold=preset.get('prob_threshold'), minimum_llr=minimum_llr,
                 legacy_frame_loader=legacy_loader, legacy_frame_recall=legacy_recall,
+                # the policy the BAM's nucleosome calls were made with (as the consensus replay)
+                nuc_recall_policy=recorded_nuc_recall_policy(self.header) or 'auto',
                 replay=bool(hia5 and opt['input'].correct_native and engine in STAGED_LIKE
                             and opt['families'].recall_hia5_nucleosomes))
         return self._runtime

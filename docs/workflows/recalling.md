@@ -148,6 +148,7 @@ PacBio pass `--prob-threshold 128`, since the recallers default to 125 where
 | `-c/--cores` | 1 | `0` = all CPUs |
 | `--chunk-size` | 1024 | reads per worker chunk |
 | `--recall-nucs` | off (`recall-tfs`), on (`recall-nucs`) | |
+| `--nuc-recall-policy` | `auto` (= `conservative`) | same as `fiberhmm-call` ([Nucleosome recall policy](calling.md#nucleosome-recall-policy)); `topology` is refused for DddA. Not taken from the input's call record: give it again to reproduce a `topology` call (`fiberhmm-recall-nucs` prints a note when the input's calls used `topology`) |
 
 Input and output may be `-` (stdin/stdout) for piping. `fiberhmm-recall-nucs`
 handles linear reads only; circular molecules need `fiberhmm-call -r`.

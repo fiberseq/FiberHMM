@@ -301,8 +301,10 @@ def check_saved_evidence(payload, options):
     Evidence (``--evidence``, ``--resume``, transfer) carries lattices and
     native calls that were already conditioned. DddA CpG handling must be the
     one this run asks for (the production mask, ``model_manifest.cpg_mask_policy``),
-    and the Hia5 Nanopore replay must have used the nucleosome policy
-    fiberhmm-call resolves for Nanopore (``resolve_nuc_recall_policy``).
+    and the Hia5 Nanopore replay must have used the nucleosome policy the
+    calls were made with: ``call_nuc_recall_policy`` when the manifest
+    records one (a topology call), else the policy fiberhmm-call's default
+    resolves to for Nanopore (``resolve_nuc_recall_policy``).
     Evidence written before FiberHMM 3.3.0 records no CpG policy (it used the
     methylated-only rule); reload it from the BAMs. Unrecorded Hia5 replay
     policies were conservative, which is still fiberhmm-call's default.
@@ -321,10 +323,10 @@ def check_saved_evidence(payload, options):
                     'Reload the evidence from the BAMs (or set input.ddda_cpg_mask_policy / ddda_m5c_correction to match).')
         if chemistry == 'hia5-nanopore' and manifest.get('upstream_nuc_tf_recall'):
             recorded = (manifest.get('upstream_nuc_tf_settings') or {}).get('nuc_recall_policy') or 'conservative'
-            expected = resolve_nuc_recall_policy('auto', 'nanopore-fiber')
+            expected = manifest.get('call_nuc_recall_policy') or resolve_nuc_recall_policy('auto', 'nanopore-fiber')
             if recorded != expected:
                 raise ValueError(f'{label}: saved Hia5 Nanopore evidence was replayed with the {recorded} '
-                    f'nucleosome policy, not the {expected} policy fiberhmm-call uses for Nanopore. '
+                    f'nucleosome policy, not the {expected} policy its calls use. '
                     'Reload the evidence from the BAMs.')
 
 
@@ -410,6 +412,7 @@ def _load_payload_once(state,request,options,progress):
                 found=set()
                 _,_,context_size,mode,_,_=_chemistry_runtime(runtime,chemistry,allow_population=True)
                 enzyme='hia5' if chemistry.startswith('hia5') else chemistry
+                topology_replay=False;dataset_call_policy=None
                 minimum_llr=getattr(options['input'],chemistry.replace('-','_')+'_minimum_llr')
                 if minimum_llr<0:minimum_llr=ENZYME_PRESETS[enzyme]['min_llr']
                 alignment_cache=request.get('_alignment_cache',{}).get(dsid)
@@ -424,6 +427,19 @@ def _load_payload_once(state,request,options,progress):
                             legacy_frame=(resolve_disabled_legacy_frame(bam.header) or ('disabled',))[0]
                         from fiberhmm.inference.consensus.adapter import called_circular
                         circular_calls=called_circular(bam.header)
+                        # The Hia5 replay re-calls nucleosomes with the policy the BAM's
+                        # calls were made with (auto: conservative when none is recorded).
+                        from fiberhmm.nuc.records import recorded_nuc_recall_policy
+                        from fiberhmm.inference.fused_stages import resolve_nuc_recall_policy
+                        call_policy=recorded_nuc_recall_policy(bam.header) or 'auto'
+                        if chemistry.startswith('hia5'):
+                            resolved_policy=resolve_nuc_recall_policy(call_policy,mode)
+                            if dataset_call_policy not in (None,resolved_policy):
+                                raise ValueError(f'{ds.label}: its BAMs were called with different nucleosome recall '
+                                    f'policies ({dataset_call_policy} and {resolved_policy}); the Hia5 replay needs one. '
+                                    'Load them as separate datasets or re-call them with one --nuc-recall-policy.')
+                            dataset_call_policy=resolved_policy
+                        topology_replay=topology_replay or call_policy=='topology'
                         cached_file=alignment_cache.get(input_index,{}) if alignment_cache is not None else None
                         cached_keys={id(a):k for k,a in cached_file.items()} if cached_file is not None else None
                         alignments=(a for k,a in cached_file.items() if k in lookup) if cached_file is not None else bam.fetch(actual,lo,hi)
@@ -450,7 +466,7 @@ def _load_payload_once(state,request,options,progress):
                                                 split_minimum_llr=options['families'].nuc_split_minimum_llr,
                                                 maximum_alignment_gap_bp=options['input'].native_maximum_alignment_gap_bp,
                                                 minimum_nfr_length=options['input'].minimum_nfr_length,
-                                                legacy_annotation_frame=legacy_frame)
+                                                legacy_annotation_frame=legacy_frame,nuc_recall_policy=call_policy)
                                         except ValueError as error:
                                             # One inconsistent molecule (e.g. a whole-read nucleosome
                                             # annotation) must not abort the dataset: exclude it, with a receipt.
@@ -515,6 +531,9 @@ def _load_payload_once(state,request,options,progress):
                     native_minimum_opportunities=options['input'].native_minimum_opportunities,
                     upstream_nuc_tf_recall=any('upstream_nuc_tf_recall' in u for u in units),
                     upstream_nuc_tf_settings=next((u['upstream_nuc_tf_recall']['settings'] for u in units if 'upstream_nuc_tf_recall' in u),None),
+                    # Only when a BAM's calls used topology, so default manifests (and digests) are unchanged.
+                    **(dict(call_nuc_recall_policy='topology')
+                       if options['input'].correct_native and topology_replay and any('upstream_nuc_tf_recall' in u for u in units) else {}),
                     # DddA only, so DddB/Hia5 manifests (and their digests) are unchanged.
                     **(dict(cpg_mask_policy=cpg_policy if use_m5c else 'off',
                             ddda_ucg_molecules=sum(bool(u['provenance'].get('ddda_ucg_islands')) for u in units))

@@ -1004,8 +1004,11 @@ def parse_args(default_recall_nucs: bool = False):
     nuc.add_argument(
         '--nuc-recall-policy',
         choices=['auto', 'conservative', 'topology'],
-        default='auto',
-        help=argparse.SUPPRESS)  # retired experimental mode (3.0); kept only to reproduce earlier calls
+        default=_D.NUC_RECALL_POLICY,
+        help='Nucleosome recall policy: conservative (default; auto resolves '
+             'to it) or topology (keeps fragment structure in nucleosome '
+             'recall; works well on some ONT Hia5 datasets). Not available '
+             'for DddA.')
     nuc.add_argument('--nuc-min-size', type=int, default=_D.NUC_MIN_SIZE,
                      help='Min refined nucleosome size; smaller footprints are '
                           'demoted to accessible/MSP (default 85)')
@@ -1015,7 +1018,14 @@ def parse_args(default_recall_nucs: bool = False):
                      help=argparse.SUPPRESS)  # retired experimental mode (3.0); kept only to reproduce earlier calls
     from fiberhmm.cli.common import add_version_args
     add_version_args(p)
-    return p.parse_args()
+    args = p.parse_args()
+    # Explicit --enzyme ddda fails here; an enzyme inherited from the input
+    # header is checked after chemistry resolution (_main).
+    from fiberhmm.inference.fused_stages import nuc_recall_policy_error
+    policy_error = nuc_recall_policy_error(args.nuc_recall_policy, args.enzyme)
+    if policy_error:
+        p.error(policy_error)
+    return args
 
 
 def _resolve_model_metadata(model_path):
@@ -1436,6 +1446,21 @@ def _recall(args, bam_in, model_path, using_bundled_model, n_cores):
         else preset.get('emission_uplift', 1.0)
 
     nuc_recall_policy = _resolve_nuc_recall_policy(args, mode)
+    from fiberhmm.inference.fused_stages import nuc_recall_policy_error
+    policy_error = nuc_recall_policy_error(nuc_recall_policy, args.enzyme)
+    if policy_error:
+        prog = ('fiberhmm-recall-nucs' if getattr(args, 'recall_nucs', False)
+                else 'fiberhmm-recall-tfs')
+        print(f"{prog}: error: {policy_error}", file=sys.stderr)
+        sys.exit(2)
+    if (getattr(args, 'recall_nucs', False) and args.nuc_recall_policy == 'auto'
+            and nuc_recall_policy != 'topology'):
+        from fiberhmm.nuc.records import recorded_nuc_recall_policy
+        if recorded_nuc_recall_policy(bam_in.header) == 'topology':
+            print("  NOTE: the input's nucleosome calls used --nuc-recall-policy "
+                  "topology; this recall uses conservative (the default). Pass "
+                  "--nuc-recall-policy topology to reproduce them.",
+                  file=sys.stderr)
     # Same observation lattice as the first pass: unset means the chemistry
     # default (DddA keep-one on runs >= 2). Configured before any worker starts.
     from fiberhmm.core.bam_reader import configure_daf_run_mask, resolve_daf_run_mask

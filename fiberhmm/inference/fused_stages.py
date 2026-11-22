@@ -119,11 +119,14 @@ def apply_result_has_footprints(apply_result: Optional[Mapping[str, Any]]) -> bo
 def resolve_nuc_recall_policy(policy: str, mode: str) -> str:
     """The nucleosome recall policy a ``--nuc-recall-policy`` value means for ``mode``.
 
-    ``auto`` is ``conservative`` on every platform (the 3.0 default; ``topology``
-    is a retired experimental mode, still accepted when named explicitly to
-    reproduce earlier calls). ``fiberhmm-call``, ``fiberhmm-recall-tfs`` and the
-    consensus Hia5 replay all resolve it here, so they cannot drift apart.
-    ``mode`` is accepted so a platform-specific default can live in one place.
+    ``auto`` is ``conservative`` on every platform (the default since 3.0).
+    ``topology`` keeps fragment structure in nucleosome recall; it is opt-in,
+    was tuned on ONT Hia5, and applies to the accessible-cut recaller (Hia5,
+    DddB). DddA uses radial recall, which has no topology policy
+    (:func:`nuc_recall_policy_error`). ``fiberhmm-call``,
+    ``fiberhmm-recall-tfs``/``-nucs``, ``fiberhmm.nuc`` and the consensus Hia5
+    replay all resolve it here, so they cannot drift apart. ``mode`` is
+    accepted so a platform-specific default can live in one place.
     """
     policy = str(policy).lower()
     if policy == 'auto':
@@ -131,6 +134,21 @@ def resolve_nuc_recall_policy(policy: str, mode: str) -> str:
     if policy not in ('conservative', 'topology'):
         raise ValueError(f"nuc recall policy must be 'auto', 'conservative' or 'topology', got {policy!r}")
     return policy
+
+
+#: Enzymes whose nucleosome recall is radial (bundled nucleosome profile) and
+#: therefore has no topology policy.
+RADIAL_NUC_RECALL_ENZYMES = ('ddda',)
+
+
+def nuc_recall_policy_error(policy: str, enzyme: Optional[str]) -> Optional[str]:
+    """One-line refusal for a policy the enzyme's nucleosome recall cannot run, else None."""
+    if (str(policy).lower() == 'topology'
+            and str(enzyme or '').lower() in RADIAL_NUC_RECALL_ENZYMES):
+        return ('--nuc-recall-policy topology is not available for DddA: DddA '
+                'nucleosome recall uses the radial model, which has no topology '
+                'policy (use conservative, the default)')
+    return None
 
 
 def payload_cpg_mask(payload: Mapping[str, Any], read_length: int,
