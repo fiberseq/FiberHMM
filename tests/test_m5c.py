@@ -1502,9 +1502,13 @@ def test_m5c_observations_resolve_stripped_headers_per_read(tmp_path):
     resolver = m5c._default_input_frame(stripped)
     # Legacy tags only: SEQ assumed.
     assert m5c._nucleosome_intervals_seq(read, resolver) == [(100, 150)]
-    # A '.' msp group from the same writer: the legacy tags are molecular.
-    read.set_tag("MA", "1000;msp.:301-200", value_type="Z")
+    # A '.' tf group from the same writer: the legacy tags are molecular.
+    read.set_tag("MA", "1000;tf.:301-20", value_type="Z")
     assert m5c._nucleosome_intervals_seq(read, resolver) == [(850, 900)]
+    # An MA msp group makes MA the read's nuc/msp source (3.3.0, MA first):
+    # it lists no nucleosomes, so the legacy ns/nl are not read.
+    read.set_tag("MA", "1000;msp.:301-200", value_type="Z")
+    assert m5c._nucleosome_intervals_seq(read, resolver) == []
     # An m5C layer alone decides nothing.
     read.set_tag("MA", "1000;ddda_mcg.:301-200", value_type="Z")
     assert m5c._nucleosome_intervals_seq(read, resolver) == [(100, 150)]

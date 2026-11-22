@@ -264,17 +264,17 @@ def test_both_strand_cpg_targets_cover_both_strands():
     assert np.flatnonzero(plus_only).tolist() == [1, 5]
 
 
-def test_apply_records_the_first_pass_mask_in_its_pg_record():
-    from types import SimpleNamespace
+def test_apply_alias_passes_the_cpg_policy_to_call():
+    """fiberhmm-apply is fiberhmm-call --hmm-only: its CpG options reach the
+    call, which records the first-pass mask in its DS (cpg_mask/hmm_cpg_mask)."""
+    from fiberhmm.cli.apply import call_argv, parse_args
 
-    from fiberhmm.cli.apply import _apply_pg_record
-
-    args = SimpleNamespace(enzyme='ddda', prob_threshold=128, alignments='primary',
-                           daf_mask_unaligned=True)
-    on = _apply_pg_record(args, 'daf', 3, {}, (2, 'keep-one'), POLICY)['DS']
-    off = _apply_pg_record(args, 'daf', 3, {}, (2, 'keep-one'), None)['DS']
-    assert f'cpg_mask={POLICY} hmm_cpg_mask=on' in on
-    assert 'cpg_mask=off hmm_cpg_mask=off' in off
+    argv, _ = call_argv(parse_args(['-i', 'x.bam', '-o', 'out', '--enzyme', 'ddda',
+                                    '--cpg-mask-policy', POLICY]))
+    assert argv[argv.index('--cpg-mask-policy') + 1] == POLICY
+    argv, _ = call_argv(parse_args(['-i', 'x.bam', '-o', 'out', '--enzyme', 'ddda',
+                                    '--no-use-m5c']))
+    assert '--no-use-m5c' in argv and '--hmm-only' in argv
 
 
 def test_posteriors_record_the_cpg_policy(tmp_path):

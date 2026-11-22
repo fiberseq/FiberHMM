@@ -432,14 +432,18 @@ def test_integrated_ddda_mcg_region_parallel_matches_streaming(tmp_path):
 
 def test_integrated_ddda_mcg_spans_match_standalone_tagger(tmp_path):
     _raw_md, iupac, ref_fasta = _write_mcg_daf_fixture_bams(tmp_path)
-    apply_output = str(tmp_path / "mcg_apply.bam")
+    apply_output = str(tmp_path / "mcg_hmm_only.bam")
     standalone_output = str(tmp_path / "mcg_standalone.bam")
     integrated_output = str(tmp_path / "mcg_integrated.bam")
 
-    _process_bam_streaming_pipeline(
+    # fiberhmm-call --hmm-only, MA only (the default output): tag-m5c masks
+    # nuc + tf of an hmm-only call, i.e. every HMM footprint -- the same mask
+    # the integrated caller uses -- so no legacy ns/nl are needed.
+    _process_bam_streaming_pipeline_fused(
         input_bam=str(iupac),
         output_bam=apply_output,
         model_path=get_model_path("ddda", tool="apply"),
+        recall_model_path=None,
         train_rids=set(),
         edge_trim=10,
         circular=False,
@@ -451,10 +455,22 @@ def test_integrated_ddda_mcg_spans_match_standalone_tagger(tmp_path):
         prob_threshold=0,
         min_read_length=0,
         with_scores=True,
+        min_llr=1000.0,
+        min_opps=3,
+        unify_threshold=90,
+        emission_uplift=1.0,
+        also_write_legacy=False,
+        downstream_compat=False,
+        max_reads=0,
         n_cores=1,
         chunk_size=10,
         io_threads=1,
+        hmm_only=True,
+        pg_record={"PN": "fiberhmm-call", "VN": "test",
+                   "DS": "FiberHMM HMM-only call; coord=molecular; hmm_only=on mode=daf"},
     )
+    with pysam.AlignmentFile(apply_output, "rb", check_sq=False) as bam:
+        assert all(not read.has_tag("ns") for read in bam.fetch(until_eof=True))
     annotate_bam_per_read(
         apply_output,
         standalone_output,
@@ -463,7 +479,8 @@ def test_integrated_ddda_mcg_spans_match_standalone_tagger(tmp_path):
         threads=1,
     )
     with pysam.AlignmentFile(standalone_output, "rb", check_sq=False) as bam:
-        assert declared_ma_types(bam.header) == ["ddda_mcg", "ddda_mcg_hemi"]
+        assert declared_ma_types(bam.header) == [
+            "nuc", "msp", "tf", "ddda_mcg", "ddda_mcg_hemi"]
     _run_daf_fused_streaming(
         str(iupac), integrated_output,
         ref_fasta_path=str(ref_fasta), ddda_mcg=True,

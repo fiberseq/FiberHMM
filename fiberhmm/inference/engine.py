@@ -479,7 +479,7 @@ def detect_mode_from_bam(bam_path: str, n_sample: int = 100) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Slim IPC support for fiberhmm-apply (mirrors the recall_tfs pattern).
+# Slim IPC support for the HMM step of fiberhmm-call (mirrors the recall_tfs pattern).
 #
 # The serial main process used to call _extract_fiber_read_from_pysam per
 # read — which decodes the query sequence (1-2 ms for a 20 kb PacBio read)

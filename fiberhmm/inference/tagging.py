@@ -101,8 +101,15 @@ def _harmonized_result(result: dict, write_msps: bool) -> dict:
 
 
 def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: bool = True,
-                          harmonize: bool = False) -> None:
-    """Write legacy apply tags (`ns/nl/as/al`, optional `nq`) in place.
+                          harmonize: bool = False, write_legacy: bool = True) -> None:
+    """Write apply's tags in place: MA, and legacy `ns/nl/as/al` (optional `nq`).
+
+    Used by the legacy apply engine (internal since 3.3, when ``fiberhmm-apply``
+    became an alias of ``fiberhmm-call --hmm-only``). ``write_legacy=False`` (the
+    function default stays True for API callers) writes MA/AQ only -- the
+    footprints outside MSPs as ``nuc`` and the MSPs as ``msp`` -- and removes
+    any legacy ns/nl/nq/as/al/aq the record carried. With ``write_legacy``
+    (``--legacy-tags``) the legacy views below are written as before.
 
     No MSP score is written: ``with_scores`` adds the nucleosome ``nq`` only,
     and any ``aq`` is removed when MSPs are written (an MSP quality in a
@@ -119,7 +126,7 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
     nucleosomes are the footprints outside MSPs, so nuc and msp tile the read
     and ``ns/nl`` may list more footprints than MA ``nuc``.
 
-    ``harmonize`` (``fiberhmm-apply --harmonize-legacy-tags``) writes ``ns/nl``
+    ``harmonize`` (the pre-3.3 ``--harmonize-legacy-tags``) writes ``ns/nl``
     from the MA view instead (footprints outside MSPs), so legacy tags and MA
     agree as in fiberhmm-call output; ``as/al`` are unchanged. Without
     ``write_msps`` (``--no-msps``) the MSPs are the record's retained
@@ -134,6 +141,9 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
 
     from fiberhmm.inference.read_filters import HARMONIZED_LEGACY_TAG
 
+    # --no-msps keeps the record's own MSPs: read them (MA msp first, else
+    # legacy as/al) before the stale MA footprint groups are dropped.
+    retained_msps = None if write_msps else _retained_seq_msps(read)
     strip_stale_call_tags(read, legacy_tags=(), keep_m5c_groups=True)
     keeps_m5c = read.has_tag("MA")
     # The MSPs the output carries: this run's, or under --no-msps the
@@ -143,8 +153,16 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
         out_msps = [(int(s), int(n)) for s, n in zip(result["as"], result["al"]) if int(n) > 0]
         msp_view = result
     else:
-        out_msps = _retained_seq_msps(read)
+        out_msps = retained_msps
         msp_view = {**result, "as": [s for s, _ in out_msps], "al": [n for _, n in out_msps]}
+    if not (write_legacy or harmonize):
+        from fiberhmm.inference.read_filters import LEGACY_CALL_TAGS
+        for tag in LEGACY_CALL_TAGS + (HARMONIZED_LEGACY_TAG,):
+            if read.has_tag(tag):
+                read.set_tag(tag, None)
+        _write_apply_ma(read, result, with_scores, write_msps, out_msps, msp_view,
+                        legacy_written=False)
+        return
     if harmonize:
         result = {**_harmonized_result(msp_view, True),
                   "as": result["as"], "al": result["al"]}
@@ -188,37 +206,46 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
     if keeps_m5c:
         # The kept CpG-island groups make MA present, and MA is authoritative
         # for readers, so it also carries this run's nucleosomes and MSPs.
-        from fiberhmm.inference.tf_recaller import write_ma_tags
+        _write_apply_ma(read, result, with_scores, write_msps, out_msps, msp_view,
+                        legacy_written=True)
 
-        footprints = [(int(s), int(n)) for s, n in zip(result["ns"], result["nl"])]
-        # --no-msps: MA carries the record's own retained MSPs, and their
-        # fibertools FIRE aq is kept (msps_replaced=False).
-        msps = out_msps
-        msp_result = {**result, "as": msp_view["as"], "al": msp_view["al"]}
-        scores = scores_to_u8(result.get("ns_scores")) if with_scores else None
-        if scores is not None and len(scores) != len(footprints):
-            scores = None
-        # Legacy ns also lists sub-nucleosomal footprints inside MSPs; in MA
-        # (where nuc and msp tile the read) only footprints outside MSPs are
-        # nucleosomes. TF-sized footprints are left to recall, as in call.
-        keep = _footprints_outside_msps(msp_result, True)
-        nucs = [footprints[i] for i in keep]
-        nq = [scores[i] for i in keep] if scores is not None else None
-        write_ma_tags(read, len(read.query_sequence or "") or int(read.query_length or 0),
-                      [], nucs, msps, nq_for_kept_nucs=nq, also_write_legacy=False,
-                      msps_replaced=write_msps)
+
+def _write_apply_ma(read, result, with_scores, write_msps, out_msps, msp_view, *,
+                    legacy_written) -> None:
+    """MA/AQ of an apply result: nucleosomes = footprints outside the MSPs."""
+    from fiberhmm.inference.tf_recaller import write_ma_tags
+
+    footprints = [(int(s), int(n)) for s, n in zip(result["ns"], result["nl"])]
+    # --no-msps: MA carries the record's own retained MSPs; with legacy
+    # tags written their fibertools FIRE aq is kept (msps_replaced=False).
+    msps = out_msps
+    msp_result = {**result, "as": msp_view["as"], "al": msp_view["al"]}
+    scores = scores_to_u8(result.get("ns_scores")) if with_scores else None
+    if scores is not None and len(scores) != len(footprints):
+        scores = None
+    # Legacy ns also lists sub-nucleosomal footprints inside MSPs; in MA
+    # (where nuc and msp tile the read) only footprints outside MSPs are
+    # nucleosomes. TF-sized footprints are left to recall, as in call.
+    keep = _footprints_outside_msps(msp_result, True)
+    nucs = [footprints[i] for i in keep]
+    nq = [scores[i] for i in keep] if scores is not None else None
+    write_ma_tags(read, len(read.query_sequence or "") or int(read.query_length or 0),
+                  [], nucs, msps, nq_for_kept_nucs=nq, also_write_legacy=False,
+                  msps_replaced=write_msps or not legacy_written,
+                  remove_legacy=not legacy_written)
 
 
 def _retained_seq_msps(read) -> list:
-    """The record's own ``as``/``al`` MSPs (molecular frame) in SEQ frame,
-    ``[]`` unless they are two integer arrays of equal length."""
-    from fiberhmm.io.legacy_tags import array_tag_pair
+    """The record's own MSPs in SEQ frame: its MA (else fibertools Ma) msp
+    group, or, without MA/Ma nuc/msp groups, its legacy ``as``/``al``
+    (molecular frame; two integer arrays of equal length). ``[]`` without."""
+    from fiberhmm.io.footprint_calls import resolve_footprint_tags
     from fiberhmm.io.ma_tags import flip_intervals_to_seq
 
-    pair = array_tag_pair(read, "as", "al")
-    if pair is None:
+    footprints = resolve_footprint_tags(read, True) or {}
+    if "as" not in footprints:
         return []
-    starts, lengths = flip_intervals_to_seq(pair[0], pair[1], read)
+    starts, lengths = flip_intervals_to_seq(footprints["as"], footprints["al"], read)
     return [(int(s), int(n)) for s, n in zip(starts, lengths) if int(n) > 0]
 
 
@@ -297,16 +324,43 @@ def split_intervals(intervals: Sequence[Interval]) -> tuple[np.ndarray, np.ndarr
     return starts, lengths
 
 
+def kept_seq_msps(read) -> list:
+    """The MSPs ``--keep-msps`` keeps, in SEQ frame: the record's MA/Ma
+    ``msp`` group (already carried into molecular frame by the strip), else
+    its legacy ``as``/``al`` (molecular). ``[]`` without."""
+    from fiberhmm.io.footprint_calls import resolve_footprint_tags
+
+    calls = resolve_footprint_tags(read, False, ma_molecular=True, ma_evidence=True) or {}
+    if "as" not in calls:
+        return []
+    starts, lengths = list(calls["as"]), list(calls["al"])
+    if calls.get("source") == "legacy" and getattr(read, "is_reverse", False):
+        from fiberhmm.io.ma_tags import flip_intervals_to_seq
+        starts, lengths = flip_intervals_to_seq(starts, lengths, read)
+    return [(int(s), int(n)) for s, n in zip(starts, lengths) if int(n) > 0]
+
+
 def write_fused_recall_tags(
     read,
     read_length: int,
     result: dict,
     also_write_legacy: bool,
     downstream_compat: bool,
+    keep_msps: bool = False,
 ) -> None:
-    """Apply a fused apply+TF-recall result to a pysam read."""
+    """Apply a fused apply+TF-recall result to a pysam read.
+
+    ``keep_msps`` (``fiberhmm-call --hmm-only --keep-msps``): the MSPs
+    written are the record's own (:func:`kept_seq_msps`), not the result's;
+    their legacy ``as``/``al``/``aq`` stay on the record and a fibertools
+    ``fire`` group that scores them is kept."""
     kept_nucs = result.get("circular_ns") or intervals_from_arrays(result["ns"], result["nl"])
-    msps = result.get("circular_as") or intervals_from_arrays(result["as"], result["al"])
+    if keep_msps:
+        msps = kept_seq_msps(read)
+        kept = dict(msps_replaced=False, remove_legacy=False)
+    else:
+        msps = result.get("circular_as") or intervals_from_arrays(result["as"], result["al"])
+        kept = {}
     write_ma_tags(
         read,
         read_length=read_length,
@@ -318,6 +372,7 @@ def write_fused_recall_tags(
         downstream_compat=downstream_compat,
         nuc_el_for_kept=result.get("nuc_el_for_kept"),
         nuc_er_for_kept=result.get("nuc_er_for_kept"),
+        **kept,
     )
     if "ddda_mcg_spans" in result:
         # The fused caller generated these in SEQ/query coordinates. Append

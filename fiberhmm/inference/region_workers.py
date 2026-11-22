@@ -1,6 +1,7 @@
 """Multiprocessing worker entry points for region-parallel inference."""
 
 from __future__ import annotations
+from fiberhmm import defaults as _D
 
 import sys
 from typing import Optional
@@ -28,6 +29,7 @@ from fiberhmm.inference.chimeras import (
 from fiberhmm.inference.fused_stages import (
     apply_result_has_footprints,
     build_fused_recall_result,
+    build_hmm_only_result,
     payload_cpg_mask,
     run_ddda_mcg_stage,
     run_hmm_apply_stage,
@@ -322,7 +324,8 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
 
                             set_legacy_apply_tags(
                                 read, result, with_scores, write_msps,
-                                harmonize=bool(params.get('harmonize_legacy_tags')))
+                                harmonize=bool(params.get('harmonize_legacy_tags')),
+                                write_legacy=bool(params.get('write_legacy_tags', _D.WRITE_LEGACY_TAGS)))
 
                             # Stream posteriors to TSV immediately (no memory accumulation).
                             if tsv_file and result.get('posteriors') is not None:
@@ -534,6 +537,19 @@ def _init_fused_region_worker(
         params = dict(params)   # don't mutate the shared-across-workers dict
         params['ref_fasta'] = _pysam.FastaFile(ref_path)
     _worker_region_params = params
+    if params.get('hmm_only', False):
+        # fiberhmm-call --hmm-only: the HMM alone, no recall tables.
+        _worker_recall_state['hmm_only'] = True
+        _worker_recall_state['ddda_mcg'] = bool(params.get('ddda_mcg', False))
+        _worker_recall_state['cpg_mask_policy'] = params.get('cpg_mask_policy')
+        _configure_chimera_filter(params)
+        configure_daf_snp_mask(params.get('daf_snp_mask_path'))
+        from fiberhmm.inference.engine import configure_daf_insert_evidence
+        configure_daf_insert_evidence(params.get('daf_insert_evidence_path'))
+        from fiberhmm.core.hmm import HAS_NUMBA
+        if HAS_NUMBA:
+            _ = _worker_model.predict(np.array([0, 1, 2, 3], dtype=np.int32))
+        return
 
     from fiberhmm.core.model_io import load_model_with_metadata
     from fiberhmm.inference.tf_recaller import (
@@ -648,8 +664,10 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
 
         params = _worker_region_params
         model = _worker_model
-        llr_hit = _worker_recall_state['llr_hit']
-        llr_miss = _worker_recall_state['llr_miss']
+        hmm_only = bool(_worker_recall_state.get('hmm_only'))
+        keep_msps = bool(params.get('keep_msps', False))
+        llr_hit = _worker_recall_state.get('llr_hit')
+        llr_miss = _worker_recall_state.get('llr_miss')
 
         edge_trim = int(params['edge_trim'])
         circular = params['circular']
@@ -686,7 +704,7 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
             from .chimeras import clear_chimera_mark, is_precalled_chimera, mark_chimera
 
         def strip(read):
-            strip_for_fused_call(read, also_write_legacy)
+            strip_for_fused_call(read, also_write_legacy, keep_msps)
 
         pysam.set_verbosity(0)
 
@@ -830,35 +848,39 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                         elif _worker_recall_state.get('cpg_mask_policy'):
                             m5c_mask = hmm_cpg_mask
 
-                        fused_result = build_fused_recall_result(
-                            fiber_read,
-                            apply_result,
-                            llr_hit,
-                            llr_miss,
-                            min_llr,
-                            min_opps,
-                            unify_threshold,
-                            with_scores,
-                            recall_nucs=recall_nucs,
-                            split_min_llr=split_min_llr,
-                            split_min_opps=split_min_opps,
-                            nuc_recall_policy=nuc_recall_policy,
-                            nuc_min_size=nuc_min_size,
-                            msp_min_size=msp_min_size,
-                            phase_nrl=phase_nrl,
-                            nuc_profile=nuc_profile,
-                            derived_tf_max_edge_ambiguity=(
-                                derived_tf_max_edge_ambiguity),
-                            m5c_mask=m5c_mask,
-                            m5c_llr_hit=_worker_recall_state.get('m5c_llr_hit'),
-                            m5c_llr_miss=_worker_recall_state.get('m5c_llr_miss'),
-                            nuc_llr_hit=_worker_recall_state.get('nuc_llr_hit'),
-                            nuc_llr_miss=_worker_recall_state.get('nuc_llr_miss'),
-                            nuc_m5c_llr_hit=_worker_recall_state.get(
-                                'nuc_m5c_llr_hit'),
-                            nuc_m5c_llr_miss=_worker_recall_state.get(
-                                'nuc_m5c_llr_miss'),
-                        )
+                        if hmm_only:
+                            fused_result = build_hmm_only_result(
+                                fiber_read, apply_result, nuc_min_size, with_scores)
+                        else:
+                            fused_result = build_fused_recall_result(
+                                fiber_read,
+                                apply_result,
+                                llr_hit,
+                                llr_miss,
+                                min_llr,
+                                min_opps,
+                                unify_threshold,
+                                with_scores,
+                                recall_nucs=recall_nucs,
+                                split_min_llr=split_min_llr,
+                                split_min_opps=split_min_opps,
+                                nuc_recall_policy=nuc_recall_policy,
+                                nuc_min_size=nuc_min_size,
+                                msp_min_size=msp_min_size,
+                                phase_nrl=phase_nrl,
+                                nuc_profile=nuc_profile,
+                                derived_tf_max_edge_ambiguity=(
+                                    derived_tf_max_edge_ambiguity),
+                                m5c_mask=m5c_mask,
+                                m5c_llr_hit=_worker_recall_state.get('m5c_llr_hit'),
+                                m5c_llr_miss=_worker_recall_state.get('m5c_llr_miss'),
+                                nuc_llr_hit=_worker_recall_state.get('nuc_llr_hit'),
+                                nuc_llr_miss=_worker_recall_state.get('nuc_llr_miss'),
+                                nuc_m5c_llr_hit=_worker_recall_state.get(
+                                    'nuc_m5c_llr_hit'),
+                                nuc_m5c_llr_miss=_worker_recall_state.get(
+                                    'nuc_m5c_llr_miss'),
+                            )
                         if _worker_recall_state.get('ddda_mcg'):
                             fused_result['ddda_mcg_spans'] = m5c_spans
                             fused_result['ddda_mcg_failed'] = m5c_failed
@@ -868,6 +890,7 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                             result=fused_result,
                             also_write_legacy=also_write_legacy,
                             downstream_compat=downstream_compat,
+                            keep_msps=keep_msps,
                         )
                     except Exception:
                         # Same contract as the streaming worker: the read is

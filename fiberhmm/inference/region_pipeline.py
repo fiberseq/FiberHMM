@@ -1,6 +1,7 @@
 """Region-parallel BAM and BED pipeline coordinators."""
 
 from __future__ import annotations
+from fiberhmm import defaults as _D
 
 import os
 import shutil
@@ -110,6 +111,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
                                    io_threads: int = 4,
                                    cpg_mask_policy: Optional[str] = None,
                                    harmonize_legacy_tags: bool = False,
+                                   write_legacy_tags: bool = _D.WRITE_LEGACY_TAGS,
                                    pg_record: Optional[dict] = None) -> Tuple[int, int]:
     """
     Process BAM using region-based parallelism with indexed access.
@@ -166,6 +168,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
             'io_threads': io_threads,
             'cpg_mask_policy': cpg_mask_policy,
             'harmonize_legacy_tags': bool(harmonize_legacy_tags),
+            'write_legacy_tags': bool(write_legacy_tags),
             'pg_record': pg_record,
         }
 
@@ -478,8 +481,13 @@ def _process_bam_region_parallel_fused(
     progress=None,
     precall_chimeric_names=None,
     chimera_mode: str = 'flag',
+    hmm_only: bool = False,
+    keep_msps: bool = False,
 ):
     """Region-parallel fused apply+recall.
+
+    ``hmm_only``/``keep_msps``: ``fiberhmm-call --hmm-only [--keep-msps]``
+    (see :func:`_process_bam_streaming_pipeline_fused`).
 
     ``cpg_mask_policy`` enables DddA CpG-aware recall (None = off).
 
@@ -503,8 +511,9 @@ def _process_bam_region_parallel_fused(
     from fiberhmm.inference.tf_recaller import require_recall_models
 
     # Refuse a recall table the workers cannot use before any work starts.
-    require_recall_models(recall_model_path or apply_model_path,
-                          nuc_model_path if recall_nucs else None)
+    if not hmm_only:
+        require_recall_models(recall_model_path or apply_model_path,
+                              nuc_model_path if recall_nucs else None)
     require_indexed_bam(input_bam)
     # Validate the plan (unknown --chroms, nothing left to process) before
     # creating any temporary state.
@@ -548,6 +557,11 @@ def _process_bam_region_parallel_fused(
         # so each worker opens it lazily in _init_fused_region_worker.
         'ref_fasta_path': ref_fasta_path,
     }
+    if hmm_only:
+        # Only when on, so a default call keeps its resume identity; --resume
+        # refuses a work directory of the other kind.
+        params['hmm_only'] = True
+        params['keep_msps'] = bool(keep_msps)
     if chimera_detector == 'strict':
         # Strict-detector settings only; standard runs keep the 3.2.1 params
         # (and so the 3.2.1 resume identity).

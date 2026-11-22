@@ -539,7 +539,7 @@ How it works:
   observation except those inside `ddda_ucg` islands the read carries. The
   mask applies to the first-pass HMM and to nucleosome and TF recall in
   `fiberhmm-call` (and so in `fiberhmm-pipeline`), to the HMM of
-  `fiberhmm-apply` and `fiberhmm-posteriors`, to the joint HMM and recall of
+  `fiberhmm-call --hmm-only` and `fiberhmm-posteriors`, to the joint HMM and recall of
   `fiberhmm-pair`/`-merge`, to `fiberhmm-recall-tfs`/`-recall-nucs`, and to
   the light call of `fiberhmm-qc`, so every tool segments a read the same
   way. Each of these except `fiberhmm-qc` takes `--use-m5c`/`--no-use-m5c`

@@ -284,8 +284,13 @@ def test_apply_output_declares_its_chemistry_and_pg(tmp_path, pacbio_bam):
                       "--min-read-length", "0")
     assert result.returncode == 0, result.stderr
     applied = outdir / "pacbio_footprints.bam"
-    (program,) = _programs(applied, "fiberhmm-apply")
-    assert program["VN"] and "fiberhmm" in program["CL"]
+    # fiberhmm-apply is the deprecated alias of fiberhmm-call --hmm-only: the
+    # record is fiberhmm-call's, with the translated command line.
+    assert not _programs(applied, "fiberhmm-apply")
+    (program,) = _programs(applied, "fiberhmm-call")
+    assert program["VN"] and program["CL"].startswith("fiberhmm-call ")
+    assert "--hmm-only" in program["CL"].split()
+    assert "hmm_only=on" in program["DS"].split()
     assert "coord=molecular" in program["DS"]
     assert "enzyme=hia5" in program["DS"] and "prob_threshold=248" in program["DS"]
     with pysam.AlignmentFile(str(applied), "rb", check_sq=False) as bam:

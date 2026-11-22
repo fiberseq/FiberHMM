@@ -141,6 +141,7 @@ def test_recall_reads_ma_footprints_despite_a_scalar_ns():
     assert _annotation_footprints_as_legacy_tags(r, True) == expected
     r.set_tag("ns", 5000, value_type="i")
     assert _annotation_footprints_as_legacy_tags(r, True) == expected
-    # A real legacy pair still wins over MA.
-    r.set_tag("ns", array("i", [10])); r.set_tag("nl", array("i", [20]))
-    assert _annotation_footprints_as_legacy_tags(r, True) == {}
+    # MA nuc/msp groups are authoritative (3.3.0): a real, disagreeing legacy
+    # pair beside them is ignored.
+    r.set_tag("ns", array("i", [70])); r.set_tag("nl", array("i", [25]))
+    assert _annotation_footprints_as_legacy_tags(r, True) == expected

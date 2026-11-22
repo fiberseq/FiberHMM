@@ -47,10 +47,10 @@ from fiberhmm.inference.tf_recaller import (
 )
 from fiberhmm.inference.tf_sites import bounded_edge_components
 from fiberhmm.io.bam_header import declared_ma_types
+from fiberhmm.inference.legacy_annotations import legacy_calls_apply
 from fiberhmm.io.ma_tags import (
     annotation_tags,
     flip_interval_frame,
-    has_annotation_tag,
     parse_ma_tag,
 )
 
@@ -1516,13 +1516,16 @@ def load_region_evidence(
                     group_frame=group_frame) or {}
             except (KeyError, TypeError, ValueError):
                 parsed_annotations = {}
-            if legacy_annotation_frame is not None and not has_annotation_tag(read):
+            if legacy_annotation_frame is not None and legacy_calls_apply(read):
+                # No MA/Ma nuc/msp groups: legacy tags hold the calls; the
+                # MA's other groups (m5C, FIRE) are kept beside them.
                 from .legacy_annotations import has_legacy_tags, legacy_annotations
                 read_legacy_frame = legacy_annotation_frame
                 if provenance_legacy_frame is not None and has_legacy_tags(read):
                     read_legacy_frame = provenance_legacy_frame[0]
                     provenance_legacy_frame_used = True
-                parsed_annotations = legacy_annotations(read, read_legacy_frame) or {}
+                parsed_annotations = {**parsed_annotations,
+                                      **(legacy_annotations(read, read_legacy_frame) or {})}
             projected_full = projection == "full"
             tf_calls = (
                 _mapped_annotations(

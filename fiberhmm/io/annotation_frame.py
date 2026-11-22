@@ -549,11 +549,11 @@ def read_has_frame_dependent_annotations(read) -> bool:
     the header: legacy ns/nl or as/al arrays, or MA groups other than m5C
     (always molecular). fibertools ``Ma`` is always molecular."""
     try:
+        from fiberhmm.io.legacy_tags import array_tag_pair
         for start_tag, length_tag in (("ns", "nl"), ("as", "al")):
-            if read.has_tag(start_tag) and read.has_tag(length_tag):
-                value = read.get_tag(start_tag)
-                if hasattr(value, "__len__") and len(value):
-                    return True
+            pair = array_tag_pair(read, start_tag, length_tag)
+            if pair is not None and len(pair[0]):
+                return True
         if read.has_tag("MA"):
             for group in str(read.get_tag("MA")).split(";")[1:]:
                 head, _, body = group.partition(":")

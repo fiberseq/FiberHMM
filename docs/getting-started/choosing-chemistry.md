@@ -12,7 +12,7 @@ the bundled model, the observation mode and every chemistry-dependent default.
 | DAF-seq with the double-stranded deaminase DddB | `dddb` | C→T / G→A conversions |
 | DAF-seq with the single-strand-preferring deaminase DddA | `ddda` | C→T / G→A conversions |
 
-`fiberhmm-pipeline`, `fiberhmm-call`, `fiberhmm-apply`,
+`fiberhmm-pipeline`, `fiberhmm-call`,
 `fiberhmm-recall-tfs`/`-recall-nucs` and `fiberhmm-posteriors` take
 `--enzyme`. Only these three presets are accepted. `fiberhmm-qc` also takes
 `--enzyme` (default `auto`, read from the header).
@@ -41,7 +41,7 @@ the header (`@RG PL`, aligner or basecaller `@PG`) and otherwise records
 ## Automatic detection of `--seq`
 
 When `--seq` is omitted for Hia5, `fiberhmm-pipeline`, `fiberhmm-call`,
-`fiberhmm-apply`, `fiberhmm-posteriors` and
+`fiberhmm-posteriors` and
 `fiberhmm-recall-tfs`/`-recall-nucs` look at the input, strongest evidence
 first:
 
@@ -103,7 +103,7 @@ The full table, including the thresholds of the other tools, is in
 
 ## Re-calling a BAM FiberHMM already called
 
-`fiberhmm-call`, `fiberhmm-apply` and `fiberhmm-recall-tfs`/`-recall-nucs` write a
+`fiberhmm-call` and `fiberhmm-recall-tfs`/`-recall-nucs` write a
 [`FIBERHMM-CHEMISTRY`](../reference/headers.md#fiberhmm-chemistry) line into
 the output header. Tools that read such a BAM take the chemistry from it:
 

@@ -17,6 +17,7 @@ from typing import Iterable, Sequence
 
 import numpy as np
 
+from fiberhmm.io.footprint_calls import footprint_annotation_tag
 from fiberhmm.io.legacy_tags import array_tag_pair
 from fiberhmm.io.ma_tags import (
     DDDA_MCG_FEATURE,
@@ -968,6 +969,37 @@ def ma_intervals(read, feature: str, frame_context=None) -> list[tuple[int, int]
     return intervals
 
 
+_HMM_ONLY_HEADERS: dict = {}
+
+
+def _header_is_hmm_only(header) -> bool:
+    """:func:`fiberhmm.io.footprint_calls.hmm_only_calls`, cached per header
+    object (it is asked once per read)."""
+    if header is None:
+        return False
+    key = id(header)
+    cached = _HMM_ONLY_HEADERS.get(key)
+    if cached is None or cached[0] is not header:
+        from fiberhmm.io.footprint_calls import hmm_only_calls
+        if len(_HMM_ONLY_HEADERS) > 64:
+            _HMM_ONLY_HEADERS.clear()
+        cached = (header, hmm_only_calls(header))
+        _HMM_ONLY_HEADERS[key] = cached
+    return cached[1]
+
+
+def _footprint_ma_intervals(read, frame_context=None) -> list[tuple[int, int]]:
+    """The read's MA footprints that mask accessibility, SEQ frame: ``nuc``,
+    plus ``tf`` when the file is ``fiberhmm-call --hmm-only`` output (its
+    ``tf`` group is the HMM's TF-sized footprints, so ``nuc`` + ``tf`` are
+    every HMM footprint -- the mask the integrated caller and legacy apply
+    ``ns/nl`` give)."""
+    intervals = ma_intervals(read, "nuc", frame_context)
+    if _header_is_hmm_only(getattr(read, "header", None)):
+        intervals = sorted(intervals + ma_intervals(read, "tf", frame_context))
+    return intervals
+
+
 def collect_bam_observations(bam, fasta, chrom: str, start: int, end: int,
                              molecule_offset: int = 0, min_deaminations: int = 20,
                              max_strand_impurity: float = 0.05,
@@ -1041,9 +1073,9 @@ def collect_read_observations(read, fasta, chrom: str | None = None,
     original_base = ord("C") if top else ord("G")
     deamination_mark = ord("Y") if top else ord("R")
     excluded = np.zeros(len(sequence), dtype=bool)
-    nuc_intervals = (ma_intervals(read, "nuc", input_molecular_frame)
-                     if read.has_tag("MA") else [])
-    legacy_nucs = None if nuc_intervals else array_tag_pair(read, "ns", "nl")
+    from_ma = footprint_annotation_tag(read) == "MA"   # MA first; legacy only without nuc/msp groups
+    nuc_intervals = _footprint_ma_intervals(read, input_molecular_frame) if from_ma else []
+    legacy_nucs = None if from_ma else array_tag_pair(read, "ns", "nl")
     if legacy_nucs is not None:
         starts, lengths = legacy_nucs
         if _legacy_molecular(read, input_molecular_frame):
@@ -1111,9 +1143,9 @@ def _interval_mask(length: int, intervals: Sequence[tuple[int, int]]) -> np.ndar
 
 
 def _nucleosome_intervals_seq(read, input_molecular_frame: bool) -> list[tuple[int, int]]:
-    intervals = (ma_intervals(read, "nuc", input_molecular_frame)
-                 if read.has_tag("MA") else [])
-    legacy_nucs = None if intervals else array_tag_pair(read, "ns", "nl")
+    from_ma = footprint_annotation_tag(read) == "MA"   # MA first; legacy only without nuc/msp groups
+    intervals = _footprint_ma_intervals(read, input_molecular_frame) if from_ma else []
+    legacy_nucs = None if from_ma else array_tag_pair(read, "ns", "nl")
     if legacy_nucs is not None:
         starts, lengths = legacy_nucs
         if _legacy_molecular(read, input_molecular_frame):
@@ -1938,9 +1970,9 @@ def write_cpg_island_bed(
 
 def _initial_msp_intervals_seq(read, input_molecular_frame: bool) -> list[tuple[int, int]]:
     """Return initial MSPs in SEQ coordinates from MA or legacy as/al tags."""
-    intervals = (ma_intervals(read, "msp", input_molecular_frame)
-                 if read.has_tag("MA") else [])
-    legacy_msps = None if intervals else array_tag_pair(read, "as", "al")
+    from_ma = footprint_annotation_tag(read) == "MA"   # MA first; legacy only without nuc/msp groups
+    intervals = ma_intervals(read, "msp", input_molecular_frame) if from_ma else []
+    legacy_msps = None if from_ma else array_tag_pair(read, "as", "al")
     if legacy_msps is None:
         return intervals
     starts, lengths = legacy_msps

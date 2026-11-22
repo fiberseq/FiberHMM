@@ -36,7 +36,7 @@ def ensure_parent_dir(path: str) -> str:
     """Create the directory that will hold output ``path`` (like ``mkdir -p``).
 
     Every FiberHMM writer creates missing output directories, as
-    ``fiberhmm-apply``/``-extract`` always did for their output directory.
+    ``fiberhmm-extract`` (and the old ``fiberhmm-apply``) always did for their output directory.
     Returns the directory.
     """
     directory = os.path.dirname(os.path.abspath(path))
@@ -863,12 +863,15 @@ def extract_bed_from_tagged_bam(input_bam: str, output_bed: str,
             if read.is_unmapped or read.is_secondary or read.is_supplementary:
                 continue
 
-            # Footprint tags in SEQ/query coords (molecular tags are flipped)
-            try:
-                ns, nl = read.get_tag('ns'), read.get_tag('nl')
-            except KeyError:
-                continue  # No footprint tags
-            if legacy_frame.is_molecular(read):
+            # Nucleosome calls MA first (legacy ns/nl only without MA/Ma
+            # nuc/msp groups), in SEQ/query coords (molecular ones flipped).
+            from fiberhmm.io.footprint_calls import resolve_footprint_tags
+            molecular = legacy_frame.is_molecular(read)
+            footprints = resolve_footprint_tags(read, molecular) or {}
+            if 'ns' not in footprints:
+                continue  # No nucleosome calls
+            ns, nl = footprints['ns'], footprints['nl']
+            if molecular:
                 ns, nl = flip_intervals_to_seq(ns, nl, read)
             else:
                 ns, nl = [int(x) for x in ns], [int(x) for x in nl]
@@ -879,10 +882,7 @@ def extract_bed_from_tagged_bam(input_bam: str, output_bed: str,
             # Get scores if requested
             nq = None
             if with_scores:
-                try:
-                    nq = read.get_tag('nq')
-                except KeyError:
-                    pass
+                nq = footprints.get('nq')   # MA nuc Q, else legacy nq
 
             # Convert query coords to reference coords
             chrom = read.reference_name

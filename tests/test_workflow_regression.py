@@ -351,6 +351,7 @@ def test_hmm_apply_to_tf_recall_to_label_extraction_workflow_by_mode(
         streaming_pipeline=False,
         region_parallel=False,
         io_threads=1,
+        write_legacy_tags=True,  # the fibertools-compatibility checks below read them
     ) == (1, 1)
 
     applied_read = _read_only_record(applied_bam)
@@ -379,6 +380,7 @@ def test_hmm_apply_to_tf_recall_to_label_extraction_workflow_by_mode(
             emission_uplift=None,
             unify_threshold=90,
             no_legacy_tags=False,
+            legacy_tags=True,
             min_opps=1,
             io_threads=1,
             mode=None,

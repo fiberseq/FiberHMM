@@ -1,5 +1,6 @@
 """FiberHMM BAM processing compatibility orchestration."""
 
+from fiberhmm import defaults as _D
 from typing import Optional, Set, Tuple
 
 import pysam
@@ -78,7 +79,8 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                                 fail_on_mostly_unmapped: bool = False,
                                 pg_record: Optional[dict] = None,
                                 cpg_mask_policy: Optional[str] = None,
-                                harmonize_legacy_tags: bool = False) -> Tuple[int, int]:
+                                harmonize_legacy_tags: bool = False,
+                                write_legacy_tags: bool = _D.WRITE_LEGACY_TAGS) -> Tuple[int, int]:
     """
     Process BAM file and add footprint tags - SINGLE PASS STREAMING.
 
@@ -144,6 +146,7 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                 io_threads=io_threads,
                 cpg_mask_policy=cpg_mask_policy,
                 harmonize_legacy_tags=harmonize_legacy_tags,
+                write_legacy_tags=write_legacy_tags,
                 pg_record=pg_record,
             )
 
@@ -180,6 +183,7 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                 pg_record=pg_record,
                 cpg_mask_policy=cpg_mask_policy,
                 harmonize_legacy_tags=harmonize_legacy_tags,
+                write_legacy_tags=write_legacy_tags,
             )
 
     if model is None and model_path is not None and n_cores <= 1:
@@ -211,4 +215,5 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
         pg_record=pg_record,
         cpg_mask_policy=cpg_mask_policy,
         harmonize_legacy_tags=harmonize_legacy_tags,
+        write_legacy_tags=write_legacy_tags,
     )

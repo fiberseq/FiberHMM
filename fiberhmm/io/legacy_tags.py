@@ -51,6 +51,14 @@ def array_tag_pair(read, start_tag: str, length_tag: str) -> Optional[Tuple[List
     return starts, lengths
 
 
+def raw_array_tag_pair(read, start_tag: str, length_tag: str):
+    """The tags' own values (pysam B-arrays, compact to pickle) when they form a
+    valid pair by :func:`array_tag_pair`'s rule, else None."""
+    if array_tag_pair(read, start_tag, length_tag) is None:
+        return None
+    return read.get_tag(start_tag), read.get_tag(length_tag)
+
+
 def has_array_tag_pair(read, start_tag: str, length_tag: str) -> bool:
     """True when ``read`` carries a valid (possibly empty) legacy pair."""
     return array_tag_pair(read, start_tag, length_tag) is not None

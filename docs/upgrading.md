@@ -9,6 +9,50 @@ lists what 2.x users need to act on. The full list of changes is in the
 pip install --upgrade fiberhmm      # Python 3.10 to 3.14
 ```
 
+## Legacy tags are no longer written by default (3.3)
+
+Since 3.3.0, `fiberhmm-call` (also `--hmm-only`), `-recall-tfs`, `-recall-nucs`,
+`-merge --recall` and `-pipeline` write calls only to `MA`/`AQ`/`AN`, not to
+the legacy `ns`/`nl`/`nq` and `as`/`al`, and they remove legacy tags from the
+records they rewrite. FiberHMM, fibertools 0.13+ (`ft fire`, `ft extract`,
+`ft pileup`, `ft qc`, `ft center`, `ft validate`) read `MA`. FiberBrowser
+needs 3.1.1 or later to draw read rows from these files; older versions show
+blank rows. Pass `--legacy-tags` for older FiberBrowser, fibertools ≤ 0.12
+(its `ft fire` needs `as`/`al`) or scripts that read `ns`/`nl`; `fiberhmm-pipeline --legacy-tags` passes it
+to `fiberhmm-call`. `--no-legacy-tags` is accepted as a deprecated no-op.
+Every FiberHMM reader takes nucleosome and MSP calls from `MA` first and
+reads the legacy tags only when a record has no `MA`/`Ma` `nuc` or `msp`
+group, so older BAMs with legacy tags only still work.
+
+## `fiberhmm-apply` is `fiberhmm-call --hmm-only` (3.3)
+
+`fiberhmm-call --hmm-only` runs the HMM alone and writes every HMM call to
+`MA`: footprints of `--nuc-min-size` (85) bp or more as `nuc`, smaller ones
+as `tf` (inside MSPs too), the MSPs as `msp`
+([Calling](workflows/calling.md#-hmm-only-hmm-calls-only)). Its output is
+input for `fiberhmm-recall-nucs`/`-recall-tfs`, which read `nuc` + `tf` of
+an hmm-only call as the HMM footprints.
+
+`fiberhmm-apply` is kept for 3.3 as a deprecated alias: it prints a notice,
+maps its options onto `fiberhmm-call --hmm-only` and runs it. It is removed
+in the release after 3.3. Change scripts as follows:
+
+| Before | Now |
+|---|---|
+| `fiberhmm-apply -i in.bam -o out/ ...` | `fiberhmm-call -i in.bam -o out/in_footprints.bam --hmm-only ...` |
+| `--no-msps` | `--keep-msps` (also keeps fibertools FIRE) |
+| `-t reads.tsv` | `--train-reads reads.tsv` |
+| `--stats`, `--stats-sample`, `--stats-seed` | `fiberhmm-call` QC (on by default; `--qc-sample-reads`, `--qc-seed`) |
+| `--output-posteriors FILE` | `fiberhmm-posteriors` |
+| `--harmonize-legacy-tags` | `--legacy-tags` (its `ns`/`nl` are the `MA` nucleosomes) |
+| `--debug-timing`, `--streaming` | drop them |
+
+The output differs from 3.2 `fiberhmm-apply` output in three ways: TF-sized
+footprints are in `MA` as `tf` (apply's `MA` held only the footprints
+outside MSPs, as `nuc`), the `@PG` record is `fiberhmm-call`'s with
+`hmm_only=on`, and DAF input gets `fiberhmm-call`'s pre-passes (PCR
+duplicate marking, chimera flagging, SNP screen, insert consensus).
+
 ## Check which outputs need re-running
 
 `fiberhmm-check` reads what each output records about how it was made and
@@ -148,7 +192,8 @@ These now either work or stop with a clear message:
   nucleosomes of the `MA` view, so they tile with `as/al`. Each such read
   carries `hl:i:1`, and `fiberhmm-recall-tfs`/`-recall-nucs` refuse it,
   because recall needs every HMM footprint in `ns/nl`. Re-calling or
-  re-applying without the option removes the tag.
+  re-applying without the option removes the tag. (3.3 drops the option:
+  `fiberhmm-apply` became `fiberhmm-call --hmm-only`, see above.)
 - `fiberhmm-call` output carries `@CO fiberhmm:coord=molecular`, so its
   footprint frame survives a pipeline that strips `@PG`
   ([Coordinate frames](concepts/coordinates.md)).

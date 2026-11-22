@@ -257,6 +257,9 @@ class RecallContext:
             resolve_cpg_mask_policy,
         )
         from fiberhmm.models import _bundled_model_path, get_model_path
+        from fiberhmm import defaults as _D
+        #: Also write legacy ns/nl/as/al (fiberhmm-merge --legacy-tags).
+        self.write_legacy = _D.WRITE_LEGACY_TAGS
         self.apply_model, self.k, _ = load_model_with_metadata(get_model_path(enzyme, tool='apply'))
         recall_model, _, _ = load_model_with_metadata(get_model_path(enzyme, tool='recall'))
         self.llr_hit, self.llr_miss = build_llr_tables(recall_model)
@@ -300,7 +303,7 @@ def recall_consensus_full(seg, ctx: RecallContext, *, edge_trim: int = 10,
                           derived_tf_max_edge_ambiguity: int | None = 12,
                           cpg_intervals: dict | None = None) -> bool:
     """Full both-strand recall (HMM + nucleosome recaller + TF recaller) on one
-    consensus read, writing MA/AQ + legacy tags in place. Returns False if the
+    consensus read, writing MA/AQ (+ legacy tags with ``ctx.write_legacy``) in place. Returns False if the
     read is not a both-strand consensus.
 
     Reuses the canonical fused recall (``build_fused_recall_result``) on the
@@ -364,7 +367,8 @@ def recall_consensus_full(seg, ctx: RecallContext, *, edge_trim: int = 10,
     write_ma_tags(seg, seg.query_length, res['tf_calls'], kept_nucs, msps,
                   nq_for_kept_nucs=res.get('nq_for_kept_nucs'),
                   nuc_el_for_kept=res.get('nuc_el_for_kept'),
-                  nuc_er_for_kept=res.get('nuc_er_for_kept'))
+                  nuc_er_for_kept=res.get('nuc_er_for_kept'),
+                  also_write_legacy=bool(getattr(ctx, 'write_legacy', False)))
     # write_ma_tags carries the strand-regime (deam+/deam-) groups and their
     # AN names through unchanged, so nothing needs re-appending here.
     return True

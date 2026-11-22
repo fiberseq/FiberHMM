@@ -289,10 +289,11 @@ def _parse_footprints_from_bam_read(read, molecular=True):
 
     footprint_mask = np.zeros(seq_len, dtype=bool)
 
-    # The shared array-pair rule: a scalar (Dorado's ns:i), a string or
-    # unequal lengths mean no legacy calls.
-    from fiberhmm.io.legacy_tags import array_tag_pair
-    pair = array_tag_pair(read, 'ns', 'nl')
+    # Nucleosome calls MA first; legacy ns/nl (array-pair rule) only without
+    # MA/Ma nuc/msp groups. Expressed in the frame ``molecular`` names.
+    from fiberhmm.io.footprint_calls import resolve_footprint_tags
+    footprints = resolve_footprint_tags(read, molecular) or {}
+    pair = (footprints['ns'], footprints['nl']) if 'ns' in footprints else None
 
     if pair is not None:
         starts, lengths = pair

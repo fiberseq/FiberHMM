@@ -8,6 +8,7 @@ valid-looking BAM at the output path.
 """
 
 from __future__ import annotations
+from fiberhmm import defaults as _D
 
 import os
 import sys
@@ -137,19 +138,25 @@ def _process_bam_streaming_pipeline_fused(
     index_output: bool = False,
     precall_chimeric_names=None,
     chimera_mode: str = 'flag',
+    hmm_only: bool = False,
+    keep_msps: bool = False,
 ):
     """Fused apply+recall streaming pipeline.
 
     ``cpg_mask_policy`` enables DddA CpG-aware recall (None = off).
     ``index_output`` indexes a file output before it is published (best
     effort: unsorted output stays unindexed, as before).
+    ``hmm_only`` (``fiberhmm-call --hmm-only``) runs the HMM alone and writes
+    every HMM call; ``keep_msps`` (``--keep-msps``, hmm-only) keeps each
+    record's own MSPs (and FIRE) instead of the HMM's.
     """
     from fiberhmm.cli.provenance import output_header_with_provenance
     from fiberhmm.inference.tf_recaller import require_recall_models
 
     # Refuse a recall table the workers cannot use before any work starts.
-    require_recall_models(recall_model_path or model_path,
-                          nuc_model_path if recall_nucs else None)
+    if not hmm_only:
+        require_recall_models(recall_model_path or model_path,
+                              nuc_model_path if recall_nucs else None)
     configure_daf_snp_mask(daf_snp_mask_path)
     if precall_chimeric_names is not None:
         from .chimeras import clear_chimera_mark, is_precalled_chimera, mark_chimera
@@ -226,7 +233,7 @@ def _process_bam_streaming_pipeline_fused(
                               nuc_model_path, cpg_mask_policy,
                               chimera_min_baseq, chimera_min_span,
                               chimera_multi_switch, chimera_error_mask_path,
-                              chimera_detector),
+                              chimera_detector, hmm_only),
                 )
 
                 inflight = deque()
@@ -248,6 +255,7 @@ def _process_bam_streaming_pipeline_fused(
                     _drain_oldest_fused_chunk(
                         inflight, outbam, with_scores,
                         also_write_legacy, downstream_compat, counters,
+                        keep_msps=keep_msps,
                     )
 
                 def _submit():
@@ -397,6 +405,7 @@ def _process_bam_streaming_pipeline(
     pg_record: Optional[dict] = None,
     cpg_mask_policy: Optional[str] = None,
     harmonize_legacy_tags: bool = False,
+    write_legacy_tags: bool = _D.WRITE_LEGACY_TAGS,
 ) -> Tuple[int, int]:
     """Streaming producer-consumer pipeline for BAM processing.
 
@@ -501,6 +510,7 @@ def _process_bam_streaming_pipeline(
                         inflight, outbam, with_scores, write_msps,
                         posterior_writer, counters,
                         harmonize_legacy_tags=harmonize_legacy_tags,
+                        write_legacy_tags=write_legacy_tags,
                     )
 
                 def _submit():

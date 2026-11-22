@@ -186,13 +186,14 @@ def test_direct_footprint_writers_clear_hl_only_when_they_replace_legacy_tags():
         return read
 
     read = harmonized()
-    write_ma_tags(read, 400, [], [(30, 150)], [(200, 100)])
+    write_ma_tags(read, 400, [], [(30, 150)], [(200, 100)], also_write_legacy=True)
     assert list(read.get_tag('ns')) == [30] and not read.has_tag(HARMONIZED_LEGACY_TAG)
 
-    read = harmonized()
-    write_ma_tags(read, 400, [], [(30, 150)], [(200, 100)], also_write_legacy=False)
-    assert read.has_tag(HARMONIZED_LEGACY_TAG)            # MA-only write
-    assert list(read.get_tag('ns')) == [10, 260]
+    # An MA-only write (the default since 3.3.0) removes the legacy tags and hl.
+    for kwargs in ({}, {'also_write_legacy': False}):
+        read = harmonized()
+        write_ma_tags(read, 400, [], [(30, 150)], [(200, 100)], **kwargs)
+        assert not read.has_tag(HARMONIZED_LEGACY_TAG) and not read.has_tag('ns')
 
     read = harmonized()
     attach_footprint_tags(read, {'footprint_starts': [30], 'footprint_sizes': [150],

@@ -12,6 +12,13 @@ tags, in order), the BAM header, the chimeras/dedup/DAF SNP sidecars (the SNP
 screen's background site profile as a SHA-256 of its normalised JSON), the
 QC JSON and TSV, and the list of QC files written.
 
+Since 3.3.0 ``fiberhmm-call`` writes no legacy ``ns/nl/nq``, ``as/al`` by
+default (MA/AQ carry every call). The 3.2.1 golden holds them, so it is
+compared with a run given ``--legacy-tags``: the chimera, dedup, SNP and QC
+paths are the same with or without legacy tags. The default (MA-only) run is
+checked to write exactly those records minus their legacy tags. The golden
+is never regenerated from new code.
+
 Excluded, because they name the code or the run rather than the result:
   * ``VN`` of FiberHMM ``@PG`` lines and ``CL`` of every ``@PG`` line
     (version, command line with temporary paths);
@@ -173,14 +180,15 @@ def _records(path):
             'sha256': [hashlib.sha256(line.encode()).hexdigest() for line in lines]}
 
 
-def default_outputs(tmp):
+def default_outputs(tmp, extra=()):
     """Run the default fiberhmm-call (with its QC) and collect normalised outputs."""
     tmp = Path(tmp)
+    tmp.mkdir(parents=True, exist_ok=True)
     source = build_library(tmp / 'lib.bam')
     target = tmp / 'calls.bam'
     command = [sys.executable, '-m', 'fiberhmm.cli.call', '-i', source, '-o', str(target),
                '--enzyme', 'dddb', '--seq', 'nanopore', '-c', '1', '--io-threads', '1',
-               '--qc-sample-reads', '500']
+               '--qc-sample-reads', '500', *extra]
     run = subprocess.run(command, capture_output=True, text=True, timeout=900, cwd=tmp)
     assert run.returncode == 0, run.stderr
     qc = tmp / 'qc'
@@ -202,7 +210,7 @@ def test_default_call_and_qc_match_321_golden(tmp_path):
     import pytest
     pytest.importorskip("matplotlib")  # the golden QC includes the PDF/PNG report
     golden = json.loads(GOLDEN.read_text())
-    got = default_outputs(tmp_path)
+    got = default_outputs(tmp_path / 'legacy', ['--legacy-tags'])
     # The fixture exercises what the strict detector would change.
     assert golden['records']['marked_chimeras'] and golden['records']['duplicates']
     assert any(name.startswith('weak') for name in golden['records']['marked_chimeras'])
@@ -214,6 +222,42 @@ def test_default_call_and_qc_match_321_golden(tmp_path):
             assert _tsv_cells(got[key]) == _tsv_cells(golden[key]), key
         else:
             assert got[key] == golden[key], key
+
+
+LEGACY_TAGS = ('ns', 'nl', 'nq', 'as', 'al', 'aq')
+
+
+def _record_texts(path, drop=()):
+    import pysam
+    with pysam.AlignmentFile(str(path), check_sq=False) as bam:
+        out = []
+        for read in bam:
+            for tag in drop:
+                if read.has_tag(tag):
+                    read.set_tag(tag, None)
+            out.append(read.to_string())
+        return out
+
+
+def test_default_call_is_the_legacy_tag_run_without_legacy_tags(tmp_path):
+    """MA-only default output = the --legacy-tags output minus ns/nl/nq/as/al/aq."""
+    import pysam
+    runs = {}
+    for name, extra in (('default', []), ('legacy', ['--legacy-tags'])):
+        tmp = tmp_path / name
+        tmp.mkdir()
+        source = build_library(tmp / 'lib.bam')
+        target = tmp / 'calls.bam'
+        command = [sys.executable, '-m', 'fiberhmm.cli.call', '-i', source, '-o', str(target),
+                   '--enzyme', 'dddb', '--seq', 'nanopore', '-c', '1', '--io-threads', '1',
+                   '--no-qc', *extra]
+        run = subprocess.run(command, capture_output=True, text=True, timeout=900, cwd=tmp)
+        assert run.returncode == 0, run.stderr
+        runs[name] = target
+    with pysam.AlignmentFile(str(runs['default']), check_sq=False) as bam:
+        assert not any(read.has_tag(tag) for read in bam for tag in LEGACY_TAGS)
+    assert any('\tns:B:' in t for t in _record_texts(runs['legacy']))
+    assert _record_texts(runs['default']) == _record_texts(runs['legacy'], LEGACY_TAGS)
 
 
 _FLOAT_CELL = re.compile(r'^-?\d+\.\d*(e[-+]?\d+)?$|^-?\d+e[-+]?\d+$', re.IGNORECASE)

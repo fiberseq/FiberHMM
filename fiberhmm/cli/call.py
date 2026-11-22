@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """fiberhmm-call — fused apply + recall-tfs in a single Python process.
 
-Eliminates the streaming-pipeline pipe serialization between `fiberhmm-apply`
-and `fiberhmm-recall-tfs` by running the 2-state HMM (nucleosome/MSP calls)
-and native-LLR multi-interval decoding (TF calls) in the same worker per read. Uses the
-same slim-IPC main→worker payload as `fiberhmm-apply`.
+Runs the 2-state HMM (nucleosome/MSP calls) and native-LLR multi-interval
+decoding (TF calls) in the same worker per read, with nucleosome recall in
+between. ``--hmm-only`` stops after the HMM and writes every HMM call (the
+former ``fiberhmm-apply``); ``fiberhmm-recall-nucs`` finishes such a file.
 
-Output BAM has BOTH:
-  - Legacy ns/nl/as/al tags (post-unification: short nucs overlapping TF
-    calls are demoted to the tf track)
-  - MA/AQ spec tags (Molecular-annotation with tf.QQQ quality scoring)
+Output BAM: MA/AQ spec tags (Molecular-annotation, nuc/msp/tf with quality
+bytes); --legacy-tags also writes legacy ns/nl/as/al.
 
 Examples:
   # Hia5 PacBio, fused apply+recall (bundled model)
   fiberhmm-call -i aligned.bam -o out.bam --enzyme hia5 --seq pacbio -c 8
+
+  # HMM calls only (nuc >= 85 bp, tf smaller, msp); recall later
+  fiberhmm-call -i aligned.bam -o hmm.bam --enzyme hia5 --seq pacbio --hmm-only
+  fiberhmm-recall-nucs -i hmm.bam -o out.bam --enzyme hia5 --seq pacbio
 
   # DddB DAF-seq with custom recall threshold
   fiberhmm-call -i aligned.bam -o out.bam --enzyme dddb --min-llr 6.0 -c 8
@@ -28,6 +30,8 @@ from fiberhmm.cli.common import (
     add_basecaller_provenance_args,
     add_force_seq_arg,
     add_legacy_mode_override,
+    add_legacy_tags_args,
+    resolve_write_legacy,
     ml_threshold,
     non_negative_int,
     refuse_model_enzyme_assay_conflict,
@@ -145,17 +149,40 @@ def parse_args():
     p.add_argument('--min-read-length', type=non_negative_int, default=_D.MIN_READ_LENGTH,
                    help='Min read length: the full SEQ, soft clips included (DAF with '
                         '--daf-mask-unaligned: the aligned length). Default 1000, '
-                        'as fiberhmm-apply.')
+                        'as the HMM step has always used.')
     p.add_argument('--msp-min-size', type=int, default=_D.MSP_MIN_SIZE,
                    help='Min MSP size (default 0)')
     p.add_argument('--nuc-min-size', type=int, default=_D.NUC_MIN_SIZE,
-                   help='Min footprint size to count as nucleosome (default 85)')
+                   help='Min footprint size to count as nucleosome (default 85): '
+                        'only footprints this size or larger bound an MSP; with '
+                        '--hmm-only it also splits footprints into nuc and tf.')
+    p.add_argument('--hmm-only', action='store_true',
+                   help='Run the HMM step only (no nucleosome recall, no TF '
+                        'recall) and write every HMM call to MA/AQ: footprints '
+                        '>= --nuc-min-size bp as nuc (nuc.Q: 0, or the HMM '
+                        'posterior-mean byte with --scores), smaller footprints '
+                        'as tf (tf+QQQ, bytes 0: no LLR), wherever they lie '
+                        '(inside MSPs too), and the HMM MSPs as msp. Nothing is '
+                        'dropped, so the output is input for '
+                        'fiberhmm-recall-nucs / fiberhmm-recall-tfs (they read '
+                        'nuc + tf of an hmm-only call as the HMM footprints). '
+                        'Replaces fiberhmm-apply. --legacy-tags adds ns/nl = nuc, '
+                        'as/al = msp.')
+    p.add_argument('--keep-msps', action='store_true',
+                   help='With --hmm-only: keep the input\'s own MSPs (MA/Ma msp, '
+                        'legacy as/al/aq), fibertools FIRE and other non-footprint '
+                        'groups instead of writing the HMM\'s MSPs (e.g. MSPs from '
+                        'fibertools). Replaces fiberhmm-apply --no-msps.')
+    p.add_argument('-t', '--train-reads', default=None, metavar='TSV',
+                   help='TSV with a "rid" column of read names to leave uncalled '
+                        '(passed through), e.g. the reads a custom model was '
+                        'trained on.')
     p.add_argument('--with-scores', '--scores', dest='with_scores',
                    action='store_true',
                    help='Write the HMM posterior-mean nq score of baseline '
                         'nucleosomes (with --no-recall-nucs; nucleosome recall '
                         'writes its own LLR-based nq). No aq is written. '
-                        '--scores is the fiberhmm-apply spelling.')
+                        'With --hmm-only: the HMM nq of every nuc.')
     p.add_argument('-r', '--circular', action='store_true',
                    help='Enable circular molecule mode (3x tile internally, '
                         'emit wrapped MA/AQ/AN annotations).')
@@ -186,7 +213,7 @@ def parse_args():
                         'recall, except inside confident unmethylated island '
                         'calls (MA ddda_ucg from fiberhmm-tag-m5c) the input '
                         'already carries. The same mask applies in '
-                        'fiberhmm-apply, -posteriors and -pair/-merge. '
+                        'fiberhmm-call --hmm-only, -posteriors and -pair/-merge. '
                         'Default: on for --enzyme ddda, off otherwise; '
                         '--no-use-m5c for an ablation.')
     p.add_argument('--cpg-mask-policy',
@@ -196,8 +223,7 @@ def parse_args():
                         'inside ddda_ucg islands (default unmethylated-only), or '
                         'mask only ddda_mcg spans (methylated-only, the former '
                         'behaviour). DddA only; ignored with a warning otherwise.')
-    p.add_argument('--no-legacy-tags', action='store_true',
-                   help='Skip ns/nl/as/al, emit only MA/AQ.')
+    add_legacy_tags_args(p)
     p.add_argument('--downstream-compat', action='store_true',
                    help='Skip MA/AQ; write TF calls into legacy ns/nl track.')
 
@@ -485,6 +511,15 @@ def parse_args():
     _resolve_chimera_detector_args(p, args)
     if args.chimera_min_seg < 1 or not 0.5 < args.chimera_purity <= 1:
         p.error('--chimera-min-seg must be >= 1 and --chimera-purity in (0.5, 1]')
+    if args.keep_msps and not args.hmm_only:
+        p.error('--keep-msps requires --hmm-only (recall re-derives MSPs from '
+                'the recalled nucleosomes)')
+    if args.hmm_only:
+        if args.recall_nucs:
+            p.error('--recall-nucs conflicts with --hmm-only (no recall runs; '
+                    'run fiberhmm-recall-nucs on the output)')
+        if args.recall_model:
+            p.error('--recall-model has no effect with --hmm-only (no recall runs)')
     return args
 
 
@@ -999,6 +1034,22 @@ def _resolve_call_prob_threshold(args, chemistry=None):
     return resolve_prob_threshold(args.prob_threshold, enzyme, seq)
 
 
+def _load_train_reads(path):
+    """Read names to leave uncalled (``--train-reads``: a TSV with a ``rid``
+    column, as fiberhmm-train writes); an empty set without a path."""
+    if not path:
+        return set()
+    import csv
+    with open(path, newline='') as handle:
+        reader = csv.DictReader(handle, delimiter='\t')
+        if not reader.fieldnames or 'rid' not in reader.fieldnames:
+            print(f"error: --train-reads {path} has no 'rid' column", file=sys.stderr)
+            sys.exit(2)
+        rids = {row['rid'] for row in reader if row.get('rid')}
+    print(f"  Excluding {len(rids):,} training reads (--train-reads)", file=sys.stderr)
+    return rids
+
+
 def _validate_model_context(model_paths, k):
     """Exit with a clear message if ``k`` cannot index every model table."""
     seen = set()
@@ -1135,7 +1186,10 @@ def _standard_chimera_pass(args, mode, working_input, snp_mask_path,
     return working_input, chimeric_names, chimera_stats, chimera_tmpdir
 
 
-def main():
+def main(chemistry_error_hint=None):
+    """Console entry point. ``chemistry_error_hint`` rewrites a chemistry
+    conflict message for a wrapper whose own options differ (the deprecated
+    fiberhmm-apply alias has no --replace-chemistry)."""
     args = parse_args()
     from fiberhmm.inference.read_filters import MostlyUnmappedError
     from fiberhmm.inference.region_planning import RegionPlanError
@@ -1159,7 +1213,10 @@ def main():
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(2)
     except ChemistryConflictError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        message = str(exc)
+        if chemistry_error_hint is not None:
+            message = chemistry_error_hint(message)
+        print(f"error: {message}", file=sys.stderr)
         sys.exit(2)
     except RegionPlanError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -1281,7 +1338,8 @@ def _main(args):
     refuse_non_bam_output(args.output, 'fiberhmm-call')
 
     apply_model_path = _resolve_apply_model(args)
-    recall_model_path = _resolve_recall_model(args)
+    # --hmm-only runs no recall pass: no recall table is read or declared.
+    recall_model_path = None if args.hmm_only else _resolve_recall_model(args)
     # Before anything is written (everything above only reads).
     _refuse_call_path_aliases(args, apply_model_path, recall_model_path)
 
@@ -1380,7 +1438,9 @@ def _main(args):
     # accessible-cut Kadane split shatters DddA nucleosomes because DddA
     # deaminates inside them); other enzymes use the Kadane split. Explicit
     # --recall-nucs / --no-recall-nucs wins.
-    if args.recall_nucs is None:
+    if args.hmm_only:
+        recall_nucs = False
+    elif args.recall_nucs is None:
         recall_nucs = True
         if args.enzyme == 'ddda':
             print(
@@ -1784,11 +1844,39 @@ def _main(args):
             apply_model_path,
             # The recall pass reuses the apply table when no separate recall
             # table is resolved: record the table it actually read.
-            recall_model_path or apply_model_path,
+            # --hmm-only runs no recall pass: no recall table is declared.
+            None if args.hmm_only else (recall_model_path or apply_model_path),
             nuc_profile_identity,
             nuc_profile_sha256,
             nuc_model_path=nuc_model_path,
         )
+        if args.hmm_only:
+            # A different description and token set, so readers (recall,
+            # FiberBrowser) can tell an hmm-only call; the default call's DS
+            # below is unchanged.
+            call_ds = (
+                f"FiberHMM HMM-only call (no nucleosome or TF recall: nuc = HMM "
+                f"footprints >= {args.nuc_min_size} bp, tf = smaller HMM footprints, "
+                f"msp = {'the input MSPs' if args.keep_msps else 'HMM MSPs'}); "
+                f"coord=molecular "
+                f"(ns/nl/as/al/MA in molecular original-fiber coordinates); "
+                f"hmm_only=on mode={mode} enzyme={args.enzyme or 'custom'} "
+                f"prob_threshold={args.prob_threshold} "
+                f"primary_only={'on' if args.alignments == 'primary' else 'off'} alignments={args.alignments} "
+                f"recall_nucs=False tf_recall=off "
+                f"nuc_min_size={args.nuc_min_size} msp_min_size={args.msp_min_size} "
+                f"msps={'kept' if args.keep_msps else 'hmm'} "
+                f"chimera_filter={chimera_filter_state} chimeras={chimera_state} "
+                f"chimera_min_seg={args.chimera_min_seg} chimera_purity={args.chimera_purity} "
+                + strict_chimera_ds +
+                f"dedup={dedup_state} "
+                f"daf_snp_mask={snp_state} "
+                f"daf_unaligned_mask={unaligned_state} "
+                f"daf_insert_consensus={insert_state} "
+                f"daf_run_mask={('>=' + str(args.daf_mask_runs) + '/' + args.daf_run_policy) if args.daf_mask_runs else 'off'} "
+                f"cpg_mask={cpg_mask_policy or 'off'} "
+                f"hmm_cpg_mask={'on' if cpg_mask_policy and not ddda_mcg else 'off'}"
+                + " " + basecaller_ds_tokens(basecaller))
         pg_record = {
             'PN': 'fiberhmm-call',
             'VN': getattr(_fh, '__version__', 'unknown'),
@@ -1807,7 +1895,7 @@ def _main(args):
             # The `coord=molecular` token is a stable, version-independent contract
             # for downstream consumers (e.g. FiberBrowser) to detect that ns/nl/as/al
             # and MA are in molecular (original-fiber) frame -- keep the exact token.
-            'DS': (f"FiberHMM fused apply+recall; coord=molecular "
+            'DS': call_ds if args.hmm_only else (f"FiberHMM fused apply+recall; coord=molecular "
                    f"(ns/nl/as/al/MA in molecular original-fiber coordinates); "
                    f"mode={mode} enzyme={args.enzyme or 'custom'} "
                    f"prob_threshold={args.prob_threshold} "
@@ -1842,31 +1930,50 @@ def _main(args):
                 mask_unaligned=args.daf_mask_unaligned)
 
         mode_label = 'region-parallel' if args.region_parallel else 'streaming'
-        print(
-            "\n=========================================================================\n"
-            f"  fiberhmm-call — fused apply + recall-tfs ({mode_label})\n"
-            f"  apply model:  {apply_model_path}\n"
-            f"  recall model: {recall_model_path or '(reuse apply model)'}\n"
-            f"  nuc likelihood model: {nuc_model_path or '(reuse recall model)'}\n"
-            f"  mode={mode} k={k} enzyme={args.enzyme or 'custom'} "
-            f"prob-threshold={args.prob_threshold} "
-            f"alignments={args.alignments}\n"
-            f"  min_llr={min_llr} min_opps={args.min_opps} "
-            f"unify_threshold={args.unify_threshold} uplift={uplift}\n"
-            f"  tf-decoder={TF_DECODER_VERSION} interval-penalty={min_llr}\n"
-            + (f"  nuc-recall-policy={nuc_recall_policy} phase-nrl={phase_nrl}\n"
-               if (nuc_recall_policy != 'conservative' or phase_nrl) else '') +
-            f"  ddda-derived-tf-edge-gap="
-            f"{derived_tf_max_edge_ambiguity if derived_tf_max_edge_ambiguity is not None else 'off'}\n"
-            f"  cores={args.cores} io-threads={args.io_threads} "
-            f"cpg_mask={cpg_mask_policy or 'off'} "
-            f"daf_run_mask={('>=' + str(args.daf_mask_runs) + '/' + args.daf_run_policy) if args.daf_mask_runs else 'off'}"
-            f"{' circular=on' if args.circular else ''}\n"
-            "=========================================================================\n",
-            file=sys.stderr,
-        )
+        if args.hmm_only:
+            print(
+                "\n=========================================================================\n"
+                f"  fiberhmm-call --hmm-only — HMM calls, no recall ({mode_label})\n"
+                f"  apply model:  {apply_model_path}\n"
+                f"  mode={mode} k={k} enzyme={args.enzyme or 'custom'} "
+                f"prob-threshold={args.prob_threshold} "
+                f"alignments={args.alignments}\n"
+                f"  nuc >= {args.nuc_min_size} bp, tf < {args.nuc_min_size} bp, "
+                f"msp: {'kept from the input' if args.keep_msps else 'HMM'}\n"
+                f"  cores={args.cores} io-threads={args.io_threads} "
+                f"cpg_mask={cpg_mask_policy or 'off'} "
+                f"daf_run_mask={('>=' + str(args.daf_mask_runs) + '/' + args.daf_run_policy) if args.daf_mask_runs else 'off'}"
+                f"{' circular=on' if args.circular else ''}\n"
+                "=========================================================================\n",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "\n=========================================================================\n"
+                f"  fiberhmm-call — fused apply + recall-tfs ({mode_label})\n"
+                f"  apply model:  {apply_model_path}\n"
+                f"  recall model: {recall_model_path or '(reuse apply model)'}\n"
+                f"  nuc likelihood model: {nuc_model_path or '(reuse recall model)'}\n"
+                f"  mode={mode} k={k} enzyme={args.enzyme or 'custom'} "
+                f"prob-threshold={args.prob_threshold} "
+                f"alignments={args.alignments}\n"
+                f"  min_llr={min_llr} min_opps={args.min_opps} "
+                f"unify_threshold={args.unify_threshold} uplift={uplift}\n"
+                f"  tf-decoder={TF_DECODER_VERSION} interval-penalty={min_llr}\n"
+                + (f"  nuc-recall-policy={nuc_recall_policy} phase-nrl={phase_nrl}\n"
+                   if (nuc_recall_policy != 'conservative' or phase_nrl) else '') +
+                f"  ddda-derived-tf-edge-gap="
+                f"{derived_tf_max_edge_ambiguity if derived_tf_max_edge_ambiguity is not None else 'off'}\n"
+                f"  cores={args.cores} io-threads={args.io_threads} "
+                f"cpg_mask={cpg_mask_policy or 'off'} "
+                f"daf_run_mask={('>=' + str(args.daf_mask_runs) + '/' + args.daf_run_policy) if args.daf_mask_runs else 'off'}"
+                f"{' circular=on' if args.circular else ''}\n"
+                "=========================================================================\n",
+                file=sys.stderr,
+            )
 
-        also_write_legacy = True if args.downstream_compat else (not args.no_legacy_tags)
+        also_write_legacy = resolve_write_legacy(args, 'fiberhmm-call')
+        train_rids = _load_train_reads(args.train_reads)
 
         progress = None
         if args.progress_json:
@@ -1909,7 +2016,7 @@ def _main(args):
                 output_bam=args.output,
                 apply_model_path=apply_model_path,
                 recall_model_path=recall_model_path,
-                train_rids=set(),
+                train_rids=train_rids,
                 edge_trim=args.edge_trim,
                 circular=args.circular,
                 mode=mode,
@@ -1957,6 +2064,8 @@ def _main(args):
                 keep_work_dir=args.keep_work_dir,
                 run_identity=run_identity,
                 progress=progress,
+                hmm_only=bool(args.hmm_only),
+                keep_msps=bool(args.keep_msps),
             )
         else:
             if progress is not None:
@@ -1967,7 +2076,7 @@ def _main(args):
                 output_bam=args.output,
                 model_path=apply_model_path,
                 recall_model_path=recall_model_path,
-                train_rids=set(),
+                train_rids=train_rids,
                 edge_trim=args.edge_trim,
                 circular=args.circular,
                 mode=mode,
@@ -2015,6 +2124,8 @@ def _main(args):
                 # region-parallel already indexes; streaming indexes the
                 # temporary before publishing BAM + index together.
                 index_output=not stdout_mode,
+                hmm_only=bool(args.hmm_only),
+                keep_msps=bool(args.keep_msps),
             )
             if progress is not None:
                 progress('done', output=None if stdout_mode else str(args.output),

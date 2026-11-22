@@ -4,15 +4,16 @@
 Per-enzyme defaults are calibrated for Hia5 (PacBio, Nanopore), DddB and
 DddA DAF-seq.
 
-Runs as a 2nd pass on a BAM already tagged by ``fiberhmm-apply``.
+Runs as a 2nd pass on a BAM of HMM calls (``fiberhmm-call --hmm-only``;
+the ``nuc`` + ``tf`` MA groups of such a file are read as the HMM footprints).
 Writes spec-compliant ``MA``/``AQ`` Molecular-annotation tags
 (https://github.com/fiberseq/Molecular-annotation-spec) plus refreshed
 legacy ``ns``/``nl``/``as``/``al`` tags reflecting the unified call set.
 
 Supports stdin/stdout piping (``-i -`` / ``-o -``) for composition with
-``fiberhmm-apply`` and downstream fibertools stages:
+``fiberhmm-call --hmm-only`` and downstream fibertools stages:
 
-    fiberhmm-apply -o - ... | fiberhmm-recall-tfs -i - -o - --enzyme hia5 | ft fire
+    fiberhmm-call --hmm-only -o - ... | fiberhmm-recall-tfs -i - -o - --enzyme hia5 | ft fire
 
 By default, v2 short nuc calls (``nl < --unify-threshold``) that overlap
 a recaller TF call are demoted out of the ``nuc+`` annotation -- the
@@ -23,24 +24,24 @@ them in the ``tf+`` annotation.
 per-read nucleosome recaller BEFORE TF recall: it splits over-merged HMM
 footprints on accessible evidence and refines each nucleosome's conservative
 edges + quality (nuc+QQQ), re-derives MSPs, then runs TF recall over the
-cleaner accessible space. It reuses the apply-tagged ``ns``/``nl``/``as``/``al``
--- the HMM is NOT re-run -- so its footprint tags are equivalent to
-``fiberhmm-call --recall-nucs`` (linear reads only). The BAM headers retain
+cleaner accessible space. It reuses the HMM calls of the input -- the HMM is
+NOT re-run -- so on ``fiberhmm-call --hmm-only`` output its calls equal
+``fiberhmm-call``'s (linear reads only). The BAM headers retain
 distinct command provenance.
 
 Examples:
-  # Add nucleosome recall to an apply-tagged BAM (no HMM re-run)
-  fiberhmm-recall-nucs -i apply_footprints.bam -o recalled.bam \\
+  # Add nucleosome + TF recall to HMM-only calls (no HMM re-run)
+  fiberhmm-recall-nucs -i hmm_calls.bam -o recalled.bam \\
                         --enzyme hia5 --seq pacbio -c 8
   # equivalent: fiberhmm-recall-tfs --recall-nucs ...
 
   # DddA DAF-seq BAM (two-pass workflow) -- bundled models, no -m needed
-  fiberhmm-apply -i input.bam --enzyme ddda -o tmp/
-  fiberhmm-recall-nucs -i tmp/input_footprints.bam -o recalled.bam \\
+  fiberhmm-call -i input.bam --enzyme ddda --hmm-only -o hmm_calls.bam
+  fiberhmm-recall-nucs -i hmm_calls.bam -o recalled.bam \\
                         --enzyme ddda -c 8
 
   # Hia5 streaming composition
-  fiberhmm-apply -i input.bam --enzyme hia5 -o - | \\
+  fiberhmm-call -i input.bam --enzyme hia5 --hmm-only -o - | \\
       fiberhmm-recall-tfs -i - -o recalled.bam --enzyme hia5 -c 8
 
   # Override with a custom model
@@ -55,11 +56,18 @@ from collections import deque, namedtuple
 
 import pysam
 from fiberhmm import defaults as _D
-from fiberhmm.io.legacy_tags import has_array_tag_pair, has_legacy_pair
+from fiberhmm.io.legacy_tags import has_legacy_pair
+from fiberhmm.io.footprint_calls import (
+    annotation_nuc_msp,
+    footprint_annotation_tag,
+    resolve_footprint_tags,
+)
 from fiberhmm.inference.chimeras import is_marked_chimera
 
 from fiberhmm.cli.common import (
     add_force_seq_arg,
+    add_legacy_tags_args,
+    resolve_write_legacy,
     add_legacy_mode_override,
     refuse_non_bam_output,
     require_model_files,
@@ -96,18 +104,12 @@ from fiberhmm.io.annotation_frame import (
     header_has_frame_evidence,
     legacy_tag_frame,
     ma_annotation_frame,
-    ma_group_is_molecular,
     read_has_dot_footprint_group,
 )
 from fiberhmm.io.bam_header import call_writer_header
 from fiberhmm.io.ma_tags import drop_derived_groups
 from fiberhmm.inference.read_filters import strip_ambiguous_aq
-from fiberhmm.io.ma_tags import (
-    fibertools_ma_intervals,
-    flip_intervals_to_seq,
-    parse_aq_array,
-    parse_ma_tag,
-)
+from fiberhmm.io.ma_tags import flip_intervals_to_seq
 from fiberhmm.inference.fused_stages import build_fused_recall_result
 from fiberhmm.inference.tagging import write_fused_recall_tags
 from fiberhmm.inference.tf_recaller import (
@@ -289,43 +291,10 @@ class _PayloadRead:
 
 
 def _fiberhmm_ma_footprints(read) -> dict | None:
-    """Nucleosomes, MSPs and nucleosome ``nq`` bytes from a FiberHMM ``MA``.
-
-    ``{'nuc': [(start, length), ...], 'msp': [...], 'nq': [...] or None}``,
-    0-based, in the frame the MA was written in; ``None`` without a parsable
-    ``MA``. ``nq`` is the first quality byte of each ``nuc`` annotation (the
-    ``Q`` of ``nuc.Q``/``nuc.QQQ``), or None when AQ carries no nuc quality.
-    """
-    if not read.has_tag('MA'):
-        return None
-    try:
-        parsed = parse_ma_tag(str(read.get_tag('MA')))
-    except ValueError:
-        return None
-    aq = read.get_tag('AQ') if read.has_tag('AQ') else None
-    raw_types = parsed['raw_types']
-    quals = parse_aq_array(aq, [rt[2] for rt in raw_types],
-                           [len(rt[3]) for rt in raw_types])
-    nucs, msps, nq = [], [], []
-    strands = {'nuc': [], 'msp': []}
-    has_nq = aq is not None
-    index = 0
-    for name, strand, qual_spec, intervals in raw_types:
-        for start, length in intervals:
-            q = quals[index]
-            index += 1
-            if name == 'nuc':
-                nucs.append((int(start), int(length)))
-                strands['nuc'].append(strand)
-                if q and qual_spec.startswith('Q'):
-                    nq.append(int(q[0]))
-                else:
-                    has_nq = False
-            elif name == 'msp':
-                msps.append((int(start), int(length)))
-                strands['msp'].append(strand)
-    return {'nuc': nucs, 'msp': msps, 'nq': nq if has_nq and nucs else None,
-            'strands': strands}
+    """Nucleosomes, MSPs and nucleosome ``nq`` bytes from a FiberHMM ``MA``
+    (:func:`fiberhmm.io.footprint_calls.annotation_nuc_msp`), in the frame the
+    MA was written in; ``None`` without a parsable ``MA``."""
+    return annotation_nuc_msp(read, 'MA')
 
 
 # Frame of FiberHMM MA intervals in the input (molecular when the header
@@ -334,58 +303,31 @@ def _fiberhmm_ma_footprints(read) -> dict | None:
 _MA_FRAME = {'molecular': True, 'evidence': True}
 
 
-def _annotation_footprints_as_legacy_tags(read, input_molecular_frame=True) -> dict:
-    """``ns/nl/as/al`` (and ``nq``) for a read whose footprints are only in ``MA``/``Ma``.
+def _footprint_tags(read, input_molecular_frame=True) -> dict | None:
+    """The read's nucleosome/MSP calls as ``ns/nl/as/al`` (+ ``nq``) in the
+    run's input frame, MA first (:func:`fiberhmm.io.footprint_calls.resolve_footprint_tags`).
 
-    fibertools-rs >= 0.13 writes nucleosomes and MSPs only to ``Ma`` (always
-    molecular frame), and ``fiberhmm-call``/``-recall-tfs --no-legacy-tags``
-    only to FiberHMM's ``MA`` (molecular when the header declares
-    coord=molecular, else SEQ). Without this the recaller saw no footprints
-    and stripped every annotation. The recaller reads ns/nl/as/al in the
-    run's input frame, so the intervals are expressed in that frame: molecular
-    for molecular runs, SEQ otherwise (``--input-frame query`` or an
-    undecided legacy-tag frame). Reads that carry legacy tags keep them.
-    Circular reads' MA pieces are used as linear pieces, like their legacy
-    tags.
-    """
-    # A scalar or string tag (Dorado's ns:i signal count) is not a legacy
-    # call (fiberhmm.io.legacy_tags) and must not hide the MA footprints.
-    if has_array_tag_pair(read, 'ns', 'nl') or has_array_tag_pair(read, 'as', 'al'):
+    MA/Ma ``nuc``/``msp`` groups are authoritative (what call, recall-tfs and
+    recall-nucs write); legacy tags are read only when the read has no such
+    group. MA intervals are expressed in the frame the recaller reads its
+    input in: molecular for molecular runs, SEQ otherwise (``--input-frame
+    query`` or an undecided legacy-tag frame)."""
+    return resolve_footprint_tags(
+        read, bool(input_molecular_frame),
+        ma_molecular=bool(_MA_FRAME['molecular']),
+        ma_evidence=bool(_MA_FRAME.get('evidence', True)),
+        # fiberhmm-call --hmm-only input: nuc + tf are the HMM footprints.
+        hmm_footprints=bool(_MA_FRAME.get('hmm_only', False)))
+
+
+def _annotation_footprints_as_legacy_tags(read, input_molecular_frame=True) -> dict:
+    """``ns/nl/as/al`` (and ``nq``) from the read's ``MA``/``Ma`` nuc/msp groups,
+    as lists in the run's input frame; ``{}`` when the footprints are not in
+    MA/Ma (legacy tags, or none)."""
+    tags = _footprint_tags(read, input_molecular_frame)
+    if not tags or tags['source'] == 'legacy':
         return {}
-    ma = fibertools_ma_intervals(read)
-    ma_molecular = True
-    if ma is None:
-        ma = _fiberhmm_ma_footprints(read)
-        ma_molecular = bool(_MA_FRAME['molecular'])
-    if not ma or not (ma['nuc'] or ma['msp']):
-        return {}
-    want_molecular = bool(input_molecular_frame)
-    header_ma_frame = MOLECULAR if ma_molecular else 'seq'
-    tags = {}
-    for (start_tag, length_tag), feature in ((('ns', 'nl'), 'nuc'), (('as', 'al'), 'msp')):
-        starts = [int(s) for s, _ in ma[feature]]
-        lengths = [int(n) for _, n in ma[feature]]
-        strands = (ma.get('strands') or {}).get(feature)
-        if strands is None or _MA_FRAME.get('evidence', True):
-            if ma_molecular != want_molecular:
-                # flip_intervals_to_seq mirrors reverse reads' intervals; it is
-                # its own inverse, so it also takes SEQ intervals to molecular.
-                starts, lengths = flip_intervals_to_seq(starts, lengths, read)
-        else:
-            # No header evidence: each MA group's own strand decides its frame.
-            converted = []
-            for start, length, strand in zip(starts, lengths, strands):
-                molecular = ma_group_is_molecular(strand, header_ma_frame, False)
-                if molecular != want_molecular:
-                    flipped = flip_intervals_to_seq([start], [length], read)
-                    start, length = flipped[0][0], flipped[1][0]
-                converted.append((int(start), int(length)))
-            starts = [s for s, _ in converted]
-            lengths = [n for _, n in converted]
-        tags[start_tag], tags[length_tag] = starts, lengths
-    if ma.get('nq') is not None:
-        tags['nq'] = list(ma['nq'])
-    return tags
+    return {key: [int(v) for v in value] for key, value in tags.items() if key != 'source'}
 
 
 # Name kept for callers of the fibertools-only helper it generalises.
@@ -405,7 +347,9 @@ def _make_payload(read, mode=None, input_molecular_frame=True) -> dict:
     bytes is a straight memcpy vs. pickling a Python list.
     parse_mm_tag_query_positions accepts bytes directly via np.frombuffer.
     """
-    if input_molecular_frame is None and has_legacy_pair(read):
+    if (input_molecular_frame is None and footprint_annotation_tag(read) is None
+            and has_legacy_pair(read)):
+        # Only legacy calls need the legacy-tag frame; MA calls carry their own.
         raise SystemExit("error: " + ambiguous_frame_message(
             _UNDECIDED_FRAME['reason'] or 'the header does not decide it'))
     read_frame = input_molecular_frame
@@ -414,8 +358,15 @@ def _make_payload(read, mode=None, input_molecular_frame=True) -> dict:
         # No header evidence: a '.' nuc/msp/tf MA group marks FiberHMM
         # >= 2.13.2, whose legacy tags are molecular too.
         read_frame = True
-    tags = {}
-    for t in ('MM', 'Mm', 'ML', 'Ml', 'ns', 'nl', 'as', 'al', 'nq', 'st', 'MA'):
+    if read_frame is None:
+        # Undecided legacy frame, MA calls: hand them over in SEQ frame.
+        read_frame = False
+    # Nucleosome/MSP calls, MA first (legacy ns/nl/as/al only without MA/Ma
+    # nuc/msp groups), resolved here in the main process, where the input
+    # header's MA frame is known, in the frame the worker reads them in.
+    footprints = _footprint_tags(read, read_frame) or {}
+    tags = {key: value for key, value in footprints.items() if key != 'source'}
+    for t in ('MM', 'Mm', 'ML', 'Ml', 'st', 'MA'):
         if read.has_tag(t):
             val = read.get_tag(t)
             if t in ('ML', 'Ml'):
@@ -425,7 +376,6 @@ def _make_payload(read, mode=None, input_molecular_frame=True) -> dict:
                 except TypeError:
                     pass  # scalar or already bytes
             tags[t] = val
-    tags.update(_annotation_footprints_as_legacy_tags(read, read_frame))
 
     payload = {
         '_chimera': is_marked_chimera(read),
@@ -463,6 +413,12 @@ def _make_payload(read, mode=None, input_molecular_frame=True) -> dict:
             if md_result is not None:
                 payload['_daf_md_result'] = md_result
     return payload
+
+
+def _payload_footprints(tags) -> dict:
+    """The ``ns/nl/as/al`` _make_payload resolved (MA first), for recall_read:
+    the worker never re-reads MA, whose frame only the main process knows."""
+    return {key: tags[key] for key in ('ns', 'nl', 'as', 'al') if key in tags}
 
 
 def _process_payload_record(payload) -> tuple:
@@ -514,6 +470,7 @@ def _process_payload_record(payload) -> tuple:
         m5c_llr_miss=_WORKER.get('m5c_llr_miss'),
         cpg_mask_policy=_WORKER.get('cpg_mask_policy', 'unmethylated-only'),
         prob_threshold=_WORKER.get('prob_threshold', RECALL_PROB_THRESHOLD),
+        footprints=_payload_footprints(tags),
     )
     stats['tf'] = len(tf_calls)
     survived_short = sum(1 for _, length in kept_nucs if length < unify_threshold)
@@ -588,16 +545,10 @@ def _process_nuc_payload_record(read, payload, nuc_cfg) -> tuple:
     else:
         v2_short_count = 0
 
-    try:
-        ns_raw = read.get_tag('ns')
-        nl_raw = read.get_tag('nl')
-    except KeyError:
-        ns_raw, nl_raw = (), ()
-    try:
-        as_raw = read.get_tag('as')
-        al_raw = read.get_tag('al')
-    except KeyError:
-        as_raw, al_raw = (), ()
+    # Calls resolved by _make_payload (MA first, legacy fallback).
+    footprints = _payload_footprints(tags)
+    ns_raw, nl_raw = footprints.get('ns', ()), footprints.get('nl', ())
+    as_raw, al_raw = footprints.get('as', ()), footprints.get('al', ())
 
     if len(ns_raw) == 0 and len(as_raw) == 0:
         return (None, None, None, None, None), stats
@@ -914,7 +865,8 @@ def parse_args(default_recall_nucs: bool = False):
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument('-i', '--in-bam', required=True,
-                   help='Input BAM tagged by fiberhmm-apply (has ns/nl/as/al). '
+                   help='Input BAM with HMM calls (fiberhmm-call --hmm-only; '
+                        'MA first, legacy ns/nl/as/al without MA). '
                         'Use "-" for stdin.')
     p.add_argument('-o', '--out-bam', required=True,
                    help='Output BAM with MA/AQ + refreshed legacy tags. '
@@ -1003,8 +955,7 @@ def parse_args(default_recall_nucs: bool = False):
                         'at the first read with these tags. A wrong frame '
                         'mirrors reverse-strand calls. fibertools Ma tags are '
                         'always molecular.')
-    p.add_argument('--no-legacy-tags', action='store_true',
-                   help='Skip refreshed ns/nl/as/al -- emit only MA/AQ.')
+    add_legacy_tags_args(p)
     p.add_argument('--downstream-compat', action='store_true',
                    help='Downstream-compatibility mode: skip MA/AQ entirely '
                         'and write TF calls INTO the legacy ns/nl tag '
@@ -1114,18 +1065,13 @@ def _estimate_phase_nrl_from_tags(path, nuc_min_size, sample_target=20000):
     bam = pysam.AlignmentFile(path, 'rb', check_sq=False)
     try:
         for read in bam:
-            if read.has_tag('ns') and read.has_tag('nl'):
-                ns = list(read.get_tag('ns'))
-                nl = list(read.get_tag('nl'))
-            else:
-                # fibertools >= 0.13 keeps nucleosomes only in Ma, and
-                # --no-legacy-tags output only in FiberHMM's MA. Spacing is
-                # the same in either frame, so no flip is needed here.
-                ma = fibertools_ma_intervals(read) or _fiberhmm_ma_footprints(read)
-                if not ma or not ma['nuc']:
-                    continue
-                ns = [s for s, _ in ma['nuc']]
-                nl = [n for _, n in ma['nuc']]
+            # MA/Ma nucleosomes first, legacy ns/nl only without MA/Ma
+            # nuc/msp groups. Spacing is the same in either frame, so the
+            # intervals are read in the frame they were written in.
+            footprints = resolve_footprint_tags(read, True, ma_molecular=True, ma_evidence=True)
+            if not footprints or not len(footprints.get('ns', ())):
+                continue
+            ns, nl = footprints['ns'], footprints['nl']
             centers = sorted(
                 s + length / 2.0
                 for s, length in zip(ns, nl)
@@ -1399,13 +1345,13 @@ def _main(args):
 
 
 class HarmonizedInputError(ValueError):
-    """A read carries the fiberhmm-apply --harmonize-legacy-tags marker."""
+    """A read carries the marker of (pre-3.3) fiberhmm-apply --harmonize-legacy-tags."""
 
 
 _HARMONIZED_MESSAGE = (
-    "the input is fiberhmm-apply --harmonize-legacy-tags output, whose ns/nl "
-    "no longer list every HMM footprint that recall needs; re-run "
-    "fiberhmm-apply without --harmonize-legacy-tags (or use fiberhmm-call)")
+    "the input is fiberhmm-apply --harmonize-legacy-tags output (before 3.3), "
+    "whose ns/nl no longer list every HMM footprint that recall needs; re-run "
+    "fiberhmm-call --hmm-only (or fiberhmm-call)")
 
 
 def _refuse_harmonized_read(read) -> None:
@@ -1646,6 +1592,13 @@ def _recall(args, bam_in, model_path, using_bundled_model, n_cores):
         # output) are read in the MA frame rule's frame.
         _MA_FRAME['molecular'] = ma_annotation_frame(bam_in.header) == MOLECULAR
         _MA_FRAME['evidence'] = header_has_frame_evidence(bam_in.header)
+        # fiberhmm-call --hmm-only output: its tf group holds the HMM's
+        # TF-sized footprints, read with nuc as the HMM footprint list.
+        from fiberhmm.io.footprint_calls import hmm_only_calls
+        _MA_FRAME['hmm_only'] = hmm_only_calls(bam_in.header)
+        if _MA_FRAME['hmm_only']:
+            print("[recall_tfs] input is fiberhmm-call --hmm-only output: "
+                  "MA nuc + tf are read as the HMM footprints", file=sys.stderr)
         # ML threshold for re-reading MM/ML: explicit, else the chemistry
         # preset (Hia5 Nanopore 248, otherwise 125), taken from --enzyme/--seq
         # or the input's own chemistry declaration.
@@ -1679,8 +1632,7 @@ def _recall(args, bam_in, model_path, using_bundled_model, n_cores):
             header_text = str(bam_in.header)
 
             # Compat mode always writes legacy tags (TFs live in ns/nl there).
-            also_write_legacy = (True if args.downstream_compat
-                                 else (not args.no_legacy_tags))
+            also_write_legacy = resolve_write_legacy(args, 'fiberhmm-recall-tfs')
 
             if n_cores == 1:
                 n_reads, n_v2, n_tf, n_demoted, n_failed = _single_thread_loop(

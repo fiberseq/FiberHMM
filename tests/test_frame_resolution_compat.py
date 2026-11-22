@@ -162,6 +162,15 @@ def _cases():
 
 EXPECTED = json.loads(FIXTURE.read_text())
 
+# 3.3.0, MA first: a read's MA nuc/msp groups are authoritative over legacy
+# ns/nl/as/al (fiberhmm.io.footprint_calls). Under a fibertools header the MA
+# is SEQ frame and the legacy tags molecular, so on a reverse read the two
+# disagree; recall now reads the MA (SEQ 100 = molecular 850), as QC and the
+# m5C extraction already did, instead of the legacy tags.
+EXPECTED['fibertools|legacy_and_ma_dot|rev'] = dict(
+    EXPECTED['fibertools|legacy_and_ma_dot|rev'],
+    recall={'frame': True, 'tags': {'al': [200], 'as': [500], 'nl': [50], 'ns': [850]}})
+
 
 @pytest.mark.parametrize("key", sorted(EXPECTED))
 def test_frames_with_header_evidence_are_unchanged(key, monkeypatch):

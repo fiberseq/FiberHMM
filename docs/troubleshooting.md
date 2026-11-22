@@ -134,8 +134,16 @@ from `SEQ` and `MD`, so hard-clipped DAF supplementary records are called.
 
 ### `fiberhmm-apply` rejects `--chroms`, `--skip-scaffolds`, `--region-size`, `--scores-db`, `-l`
 
-These never had an effect in `fiberhmm-apply`. Use
-`fiberhmm-call --region-parallel` for region selection.
+These never had an effect in `fiberhmm-apply`, which is now a deprecated
+alias of `fiberhmm-call --hmm-only` (removed after 3.3). Use
+`fiberhmm-call --hmm-only --region-parallel` for region selection.
+
+### `fiberhmm-apply is deprecated`
+
+Every `fiberhmm-apply` run prints this: it runs `fiberhmm-call --hmm-only`
+with the options mapped ([Calling](workflows/calling.md#fiberhmm-apply-deprecated)).
+Switch scripts to `fiberhmm-call --hmm-only` (`-o` names the BAM, not a
+directory) before the release after 3.3 removes the alias.
 
 ### A failed run left no output
 
@@ -173,9 +181,10 @@ index the input to make a long run resumable.
 ## DAF-seq
 
 **`fiberhmm-recall-tfs`/`-recall-nucs`: `the input is fiberhmm-apply --harmonize-legacy-tags output`.**
-Reads marked `hl:i:1` have `ns`/`nl` that no longer list every HMM footprint
-recall needs. Re-run `fiberhmm-apply` without `--harmonize-legacy-tags`, or
-use `fiberhmm-call` ([Re-calling](workflows/recalling.md)).
+Reads marked `hl:i:1` (written by `fiberhmm-apply` before 3.3) have `ns`/`nl`
+that no longer list every HMM footprint recall needs. Re-run
+`fiberhmm-call --hmm-only` (its `MA` keeps every footprint), or use
+`fiberhmm-call` ([Re-calling](workflows/recalling.md)).
 
 **`fiberhmm-check` reports `ddda-hmm-cpg-mask`.** DddA calls from before 3.0
 decoded CpG observations in the first-pass HMM. Re-run `fiberhmm-call` (then

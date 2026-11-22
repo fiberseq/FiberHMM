@@ -40,7 +40,7 @@ NOTE_ONLY_SKIP_KEYS = frozenset({"too_short_soft_clipped"})
 
 # Legacy footprint tags written by FiberHMM (and fibertools) call passes.
 LEGACY_CALL_TAGS = ("ns", "nl", "as", "al", "nq", "aq")
-# Per-read marker of fiberhmm-apply --harmonize-legacy-tags: this read's ns/nl
+# Per-read marker of (pre-3.3) fiberhmm-apply --harmonize-legacy-tags: this read's ns/nl
 # hold only the MA-view nucleosomes, not every HMM footprint recall needs.
 # Every writer that rewrites ns/nl removes it.
 HARMONIZED_LEGACY_TAG = "hl"
@@ -448,6 +448,41 @@ def strip_stale_call_tags(read, *, legacy_tags=LEGACY_CALL_TAGS,
                          value_type="Z")
         else:
             _strip_tag(read, "AN")
+
+
+def strip_footprint_calls_keep_msps(read) -> None:
+    """``strip_stale_call_tags`` for ``fiberhmm-call --hmm-only --keep-msps``:
+    remove the footprint calls a new HMM pass replaces and keep the record's
+    MSPs and everything scored on them.
+
+    Removed: legacy ``ns``/``nl``/``nq`` (and the harmonized marker), and the
+    MA ``nuc``/``tf`` groups with the groups derived from the calls
+    (:func:`fiberhmm.io.ma_tags.derived_ma_groups`). Kept: legacy
+    ``as``/``al``/``aq``, the MA ``msp`` group and every other group (fibertools
+    ``fire``, DddA m5C islands, other tools' layers). A fibertools ``Ma`` is
+    taken as the read's ``MA`` first, as :func:`strip_stale_call_tags` does. A
+    read whose AQ does not match its MA cannot be realigned: its MSPs are
+    carried as legacy ``as``/``al`` and the MA is reduced as in a normal call.
+    """
+    if not hasattr(read, "has_tag"):
+        return
+    for tag in ("ns", "nl", "nq", HARMONIZED_LEGACY_TAG):
+        _strip_tag(read, tag)
+    if not read.has_tag("MA") and read.has_tag("Ma"):
+        _adopt_fibertools_ma(read)
+    for tag in ("Ma", "Aq", "An"):
+        _strip_tag(read, tag)
+    if not read.has_tag("MA"):
+        for tag in ("AQ", "AN"):
+            _strip_tag(read, tag)
+        return
+    from fiberhmm.io.ma_tags import derived_ma_groups, drop_ma_groups
+
+    if drop_ma_groups(read, {"nuc", "tf"} | set(derived_ma_groups())) is None:
+        from fiberhmm.io.footprint_calls import carry_annotation_msps_as_legacy
+        carry_annotation_msps_as_legacy(read, ma_molecular=True, ma_evidence=True)
+        strip_stale_call_tags(
+            read, legacy_tags=("ns", "nl", "nq"), keep_m5c_groups=True)
 
 
 def mostly_unmapped_message(skip_reasons: Mapping[str, int],

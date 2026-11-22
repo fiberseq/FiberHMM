@@ -7,23 +7,29 @@ written 1-based). The meaning of the scores is explained in
 
 ## Footprint calls
 
-Written by `fiberhmm-call`, `fiberhmm-apply` (legacy tags, plus `MA`
-`nuc`/`msp` groups on reads that already carry DddA island groups),
+Written by `fiberhmm-call` (also `--hmm-only`),
 `fiberhmm-recall-tfs`/`-recall-nucs`, and the joint recall of
-`fiberhmm-pair`/`fiberhmm-merge --recall`.
+`fiberhmm-pair`/`fiberhmm-merge --recall`. Since 3.3.0 they write `MA`/`AQ`
+(and `AN`) only; the legacy `ns`/`nl`/`nq` and `as`/`al` are written only
+with `--legacy-tags`, for FiberBrowser ≤ 3.1.0 (blank read rows without
+them), fibertools ≤ 0.12 and old scripts. FiberHMM, fibertools 0.13+ and
+FiberBrowser 3.1.1+ read `MA`. Every FiberHMM reader takes
+nucleosome and MSP calls from `MA` (else fibertools `Ma`) and reads the
+legacy tags only when a record has no `nuc`/`msp` group
+([Shared defaults](shared-defaults.md)).
 
 | Tag | Type | Content |
 |---|---|---|
-| `ns` / `nl` | `B:I` | nucleosome starts / lengths; with `--downstream-compat` also TF calls |
-| `as` / `al` | `B:I` | MSP starts / lengths (`fiberhmm-apply --no-msps` omits them) |
-| `nq` | `B:C` | one byte per `ns` entry: with nucleosome recall the LLR ×10 (0 = unresolved); otherwise the HMM posterior mean ×255 (`--scores`), the input's `nq`, or 0 |
+| `ns` / `nl` | `B:I` | with `--legacy-tags`: nucleosome starts / lengths; with `--downstream-compat` also TF calls |
+| `as` / `al` | `B:I` | with `--legacy-tags`: MSP starts / lengths (`fiberhmm-call --hmm-only --keep-msps` keeps the input's, with their `aq`) |
+| `nq` | `B:C` | with `--legacy-tags`, one byte per `ns` entry: with nucleosome recall the LLR ×10 (0 = unresolved); otherwise the HMM posterior mean ×255 (`--scores`), the input's `nq`, or 0 |
 | `MA` | `Z` | molecular annotations (groups below) |
 | `AQ` | `B:C` | quality bytes of every `MA` annotation, in `MA` order |
 | `AN` | `Z` | one name per `MA` annotation (`.` for unnamed); written when a call wraps a circular origin (`fhw_*`), for strand-rescue roles, consensus class tokens, or when preserved groups carry names |
-| `hl` | `i` | `1` on reads written by `fiberhmm-apply --harmonize-legacy-tags` (opt-in): `ns`/`nl` hold only the nucleosomes of the `MA` view, not every HMM footprint, so `fiberhmm-recall-tfs`/`-nucs` refuse the read. A later run removes it only when it replaces `ns`/`nl` (call, apply, recall, duplex joint recall); a run that leaves `ns`/`nl` in place, such as an `MA`-only write, keeps it |
+| `hl` | `i` | `1` on reads written by `fiberhmm-apply --harmonize-legacy-tags` before 3.3 (no longer written): `ns`/`nl` hold only the nucleosomes of the `MA` view, not every HMM footprint, so `fiberhmm-recall-tfs`/`-nucs` refuse the read. A later run removes it only when it replaces `ns`/`nl` (call, recall, duplex joint recall); a run that leaves `ns`/`nl` in place, such as an `MA`-only write, keeps it |
 
 FiberHMM writes no MSP quality score (since 3.3.0; `fiberhmm-apply --scores`
-used to write its MSP posterior as `aq`). An MSP quality is fibertools FIRE:
+in 3.2.1 and older used to write its MSP posterior as `aq`). An MSP quality is fibertools FIRE:
 the `fire` group of `Ma`/`MA`, or fibertools ≤ 0.12's `aq`. A command that
 rewrites MSPs removes any `aq` and fibertools `Ma`/`Aq`/`An` it finds,
 keeps `fire` groups only when they still match the MSPs exactly, and declares
@@ -35,8 +41,10 @@ always molecular frame) as input; it never writes them, and a command that
 copies them into `MA` removes them. See
 [Coordinate frames](../concepts/coordinates.md#fibertools-ma-tags).
 
-`--no-legacy-tags` writes only `MA`/`AQ` (existing legacy tags are left as
-they were); `--downstream-compat` writes TF calls into `ns`/`nl` and no
+Without `--legacy-tags` (the default) a run writes only `MA`/`AQ` and removes
+any `ns`/`nl`/`nq`/`as`/`al`/`aq` from the records it rewrites, so stale
+legacy tags never sit beside a new `MA`; `--no-legacy-tags` is accepted as a
+deprecated no-op. `--downstream-compat` writes TF calls into `ns`/`nl` and no
 `MA`/`AQ`/`AN`. Records a run skips are written without this run's call tags;
 DddA island groups are kept.
 

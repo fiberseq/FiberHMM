@@ -106,11 +106,11 @@ def _preflight_input(path: str, max_primary_reads: int = 5000) -> None:
     if not has_iupac:
         raise SystemExit(
             "input BAM has no Y/R-encoded DAF sequence in the first "
-            f"{seen:,} primary reads; run fiberhmm-daf-encode before apply/tagging"
+            f"{seen:,} primary reads; run fiberhmm-daf-encode before calling and tagging"
         )
     raise SystemExit(
         "input BAM has no FiberHMM nuc/MSP structure in the first "
-        f"{seen:,} primary reads; run fiberhmm-apply before fiberhmm-tag-m5c"
+        f"{seen:,} primary reads; run fiberhmm-call (or fiberhmm-call --hmm-only) before fiberhmm-tag-m5c"
     )
 
 

@@ -138,29 +138,29 @@ def test_call_threshold_follows_resolved_chemistry(monkeypatch):
 
 
 def test_apply_threshold_default_is_chemistry_preset(monkeypatch, tmp_path):
-    from fiberhmm.cli import apply
+    """fiberhmm-apply (alias of fiberhmm-call --hmm-only) leaves an unset
+    threshold to fiberhmm-call's chemistry preset (Hia5 Nanopore 248, else
+    128, also inherited from a declaring input)."""
+    from fiberhmm.cli import apply, call
 
     monkeypatch.setattr(sys, "argv", ["fiberhmm-apply", "-i", "x.bam", "-o", "out",
                                       "--enzyme", "hia5"])
     args = apply.parse_args()
     assert args.prob_threshold is None
+    argv, _ = apply.call_argv(args)
+    assert "--prob-threshold" not in argv
+    args.prob_threshold = 10
+    argv, _ = apply.call_argv(args)
+    assert argv[argv.index("--prob-threshold") + 1] == "10"
 
     def resolve(**kw):
         base = dict(prob_threshold=None, enzyme=None, seq=None, input="-")
         base.update(kw)
-        return apply._resolve_apply_prob_threshold(SimpleNamespace(**base))
+        return call._resolve_call_prob_threshold(SimpleNamespace(**base))
 
     assert resolve(enzyme="hia5", seq="nanopore") == 248
     assert resolve(enzyme="hia5", seq="pacbio") == 128
     assert resolve(enzyme="hia5", seq="nanopore", prob_threshold=10) == 10
-
-    # A custom -m (no --enzyme) on a BAM that declares Hia5 Nanopore.
-    bam = tmp_path / "declared.bam"
-    with pysam.AlignmentFile(str(bam), "wb",
-                             header=_chemistry_header("hia5", "nanopore",
-                                                      "nanopore-fiber")):
-        pass
-    assert resolve(input=str(bam)) == 248
 
 
 def test_recall_threshold_default_uses_declared_chemistry():
@@ -297,8 +297,8 @@ def test_call_supplementary_by_default(tmp_path, benchmark_model_path,
     assert len(reads) == 3                       # nothing is dropped
     supplementary = [read for read in reads if read.is_supplementary]
     assert len(supplementary) == 1
-    assert supplementary[0].has_tag("ns") is supplementary_called
-    assert all(read.has_tag("ns") for read in reads if not read.is_supplementary)
+    assert supplementary[0].has_tag("MA") is supplementary_called
+    assert all(read.has_tag("MA") for read in reads if not read.is_supplementary)
 
 
 @pytest.mark.parametrize("mode_args", [(), ("--streaming",)])
@@ -325,8 +325,8 @@ def test_apply_supplementary_by_default(tmp_path, benchmark_model_path,
     assert len(reads) == 3
     supplementary = [read for read in reads if read.is_supplementary]
     assert len(supplementary) == 1
-    assert supplementary[0].has_tag("ns") is supplementary_called
-    assert all(read.has_tag("ns") for read in reads if not read.is_supplementary)
+    assert supplementary[0].has_tag("MA") is supplementary_called
+    assert all(read.has_tag("MA") for read in reads if not read.is_supplementary)
 
 
 # --------------------------------------------------------------------------

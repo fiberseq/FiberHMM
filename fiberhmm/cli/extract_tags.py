@@ -81,7 +81,7 @@ def get_chrom_sizes(bam_path: str) -> Dict[str, int]:
     if os.path.getsize(bam_path) == 0:
         raise ValueError(
             f"BAM file is empty: {bam_path}\n"
-            f"  This usually means the upstream tool (e.g. fiberhmm-apply) "
+            f"  This usually means the upstream tool (e.g. fiberhmm-call) "
             f"failed mid-stream. Re-run with -c 1 to surface the underlying error."
         )
     try:
@@ -91,7 +91,7 @@ def get_chrom_sizes(bam_path: str) -> Dict[str, int]:
         raise ValueError(
             f"Could not read BAM {bam_path}: {e}\n"
             f"  The file may be truncated or header-only. If it was produced "
-            f"by fiberhmm-apply, that run likely failed mid-stream — re-run "
+            f"by fiberhmm-call, that run likely failed mid-stream — re-run "
             f"with -c 1 to surface the underlying error."
         ) from e
 

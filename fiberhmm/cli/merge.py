@@ -35,6 +35,7 @@ from collections import defaultdict
 import numpy as np
 import pysam
 
+from fiberhmm.cli.common import add_legacy_tags_args, resolve_write_legacy
 from fiberhmm.models import DEFAULT_PROB_THRESHOLD
 from fiberhmm.crossstrand.consensus import build_consensus
 from fiberhmm.crossstrand.pairing import FLAVOR_CT, read_flavor
@@ -162,7 +163,7 @@ def run_merge(in_bam, out_bam, prob_threshold=0, pairs_only=False, io_threads=4,
               recall=False, enzyme='ddda', phase_nrl=0,
               nuc_recall_policy='conservative',
               derived_tf_max_edge_ambiguity=12, use_m5c=None,
-              cpg_mask_policy=None, tool='fiberhmm-merge'):
+              cpg_mask_policy=None, tool='fiberhmm-merge', legacy_tags=None):
     from fiberhmm.io.annotation_frame import warn_if_frames_unverifiable
     warn_if_frames_unverifiable(str(in_bam) if in_bam is not None else None)
     t0 = time.time()
@@ -170,6 +171,8 @@ def run_merge(in_bam, out_bam, prob_threshold=0, pairs_only=False, io_threads=4,
     if recall:
         ctx = RecallContext(enzyme, use_m5c=use_m5c,
                             cpg_mask_policy=cpg_mask_policy, tool=tool)
+        if legacy_tags is not None:
+            ctx.write_legacy = bool(legacy_tags)
         print(f"merge-recall: loaded {enzyme} apply+recall models (k={ctx.k}); "
               f"re-calling footprints (HMM + nuc + TF recallers) on both-strand "
               f"consensus reads; CpG-aware calling (HMM + recall) "
@@ -377,7 +380,7 @@ Examples:
     p.add_argument('--recall', action='store_true',
                    help='Re-call footprints on each both-strand consensus read (HMM, '
                         'nucleosome and TF recall over both strands; writes '
-                        'ns/nl/as/al + MA nuc/msp/tf). '
+                        'MA nuc/msp/tf, plus ns/nl/as/al with --legacy-tags). '
                         'Reads the deam+/deam- regime and uses C and G targets jointly.')
     p.add_argument('--enzyme', default='ddda', help='Model preset for --recall (default ddda)')
     p.add_argument('--phase-nrl', type=int, default=0,
@@ -412,6 +415,7 @@ Examples:
     add_daf_run_mask_arguments(p)
     from fiberhmm.cli.common import add_version_args
     add_version_args(p)
+    add_legacy_tags_args(p)
     args = p.parse_args()
     try:
         apply_daf_run_mask_arguments(args, args.enzyme)
@@ -439,7 +443,8 @@ Examples:
               derived_tf_max_edge_ambiguity=(
                   None if args.ddda_derived_tf_max_edge_gap < 0
                   else args.ddda_derived_tf_max_edge_gap),
-              use_m5c=args.use_m5c, cpg_mask_policy=args.cpg_mask_policy)
+              use_m5c=args.use_m5c, cpg_mask_policy=args.cpg_mask_policy,
+              legacy_tags=resolve_write_legacy(args, 'fiberhmm-merge'))
 
 
 if __name__ == '__main__':

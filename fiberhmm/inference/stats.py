@@ -405,20 +405,26 @@ def collect_stats_from_bam(bam_path: str, n_samples: int = 10000,
                     return flip_intervals_to_seq(starts, lengths, read)
                 return [int(x) for x in starts], [int(x) for x in lengths]
 
-            try:
-                _ns, _nl = to_seq(read.get_tag('ns'), read.get_tag('nl'))
+            # Calls MA first (legacy ns/nl/as/al only without MA/Ma nuc/msp
+            # groups), expressed in the legacy-tag frame used by to_seq.
+            from fiberhmm.io.footprint_calls import resolve_footprint_tags
+            footprints = resolve_footprint_tags(read, molecular) or {}
+            pair = (footprints['ns'], footprints['nl']) if 'ns' in footprints else None
+            if pair is not None:
+                _ns, _nl = to_seq(*pair)
                 ns = np.array(_ns)
                 nl = np.array(_nl)
-            except KeyError:
+            else:
                 ns = np.array([])
                 nl = np.array([])
 
             # Get MSP tags
-            try:
-                _as, _al = to_seq(read.get_tag('as'), read.get_tag('al'))
+            pair = (footprints['as'], footprints['al']) if 'as' in footprints else None
+            if pair is not None:
+                _as, _al = to_seq(*pair)
                 as_starts = np.array(_as)
                 al_lengths = np.array(_al)
-            except KeyError:
+            else:
                 as_starts = None
                 al_lengths = None
 
@@ -426,11 +432,9 @@ def collect_stats_from_bam(bam_path: str, n_samples: int = 10000,
             ns_scores = None
             as_scores = None
             if with_scores:
-                try:
-                    nq = np.array(read.get_tag('nq'))
-                    ns_scores = nq / 255.0  # Scale back to 0-1
-                except KeyError:
-                    pass
+                # nq of the resolved nucleosomes (MA nuc Q, else legacy nq).
+                if footprints.get('nq') is not None:
+                    ns_scores = np.array(footprints['nq']) / 255.0  # Scale back to 0-1
                 try:
                     aq = np.array(read.get_tag('aq'))
                     as_scores = aq / 255.0

@@ -97,6 +97,10 @@ CANON = {
     "pileup_mod_min_methylation": (D.PILEUP_MOD_MIN_METHYLATION, False),
     "pileup_mod_max_alt_fraction": (D.PILEUP_MOD_MAX_ALT_FRACTION, False),
     "pileup_hom_alt_fraction": (D.PILEUP_HOM_ALT_FRACTION, False),
+    # legacy ns/nl/nq, as/al beside MA (--legacy-tags; off since 3.3.0)
+    "legacy_tags": (D.WRITE_LEGACY_TAGS, False),
+    "write_legacy_tags": (D.WRITE_LEGACY_TAGS, False),
+    "also_write_legacy": (D.WRITE_LEGACY_TAGS, True),   # None: defaults.WRITE_LEGACY_TAGS
 }
 
 #: Tool-specific option names that mean a canonical setting.
@@ -124,7 +128,8 @@ RESOLVERS = {
 
 #: Module(s) whose source holds a console script's resolution code.
 TOOL_MODULES = {
-    "fiberhmm-apply": ("fiberhmm.cli.apply", "fiberhmm.cli.common"),
+    # The deprecated alias resolves nothing itself: fiberhmm-call --hmm-only does.
+    "fiberhmm-apply": ("fiberhmm.cli.apply", "fiberhmm.cli.call", "fiberhmm.cli.common"),
     "fiberhmm-call": ("fiberhmm.cli.call",),
     "fiberhmm-pair": ("fiberhmm.cli.pair", "fiberhmm.crossstrand.recall"),
     "fiberhmm-merge": ("fiberhmm.cli.merge", "fiberhmm.crossstrand.recall"),

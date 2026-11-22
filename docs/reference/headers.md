@@ -133,7 +133,7 @@ valid declarations as dictionaries.
 ```
 
 Written once (never duplicated on re-runs) by the commands that rewrite MSPs:
-`fiberhmm-call`, `fiberhmm-apply`, `fiberhmm-recall-tfs`/`-recall-nucs` and
+`fiberhmm-call` (also `--hmm-only`), `fiberhmm-recall-tfs`/`-recall-nucs` and
 `fiberhmm-merge`. It means:
 
 - **FiberHMM writes no MSP quality score**: no `aq`, and no quality bytes on
@@ -152,24 +152,25 @@ Written once (never duplicated on re-runs) by the commands that rewrite MSPs:
   match) and every element is exactly one of the record's MSPs; otherwise it
   is dropped with its `AQ` bytes and `AN` names.
 
-`fiberhmm-call` and `fiberhmm-apply` clear the earlier run's calls from every
-record they write, including reads they skip (length, MAPQ, unmapped,
+`fiberhmm-call` clears the earlier run's calls from every
+record it writes, including reads it skips (length, MAPQ, unmapped,
 unselected contigs, chimeras) and reads that yield no calls: such a record
 leaves with no nucleosome/MSP/TF tags and no `Ma`/`Aq`/`An`, keeping only its
 DddA m5C groups (in `MA`). Two options leave legacy tags in place instead:
 `call --no-legacy-tags` keeps a skipped read's `ns`/`nl`/`as`/`al`/`nq`/`aq`
-(it never rewrites legacy tags), and `apply --no-msps` keeps every record's
-`as`/`al` and their `aq`, and, for reads it calls, writes those MSPs into
-`MA` when the record keeps DddA m5C groups (a read skipped under
-`--no-msps` keeps its legacy `as`/`al`/`aq` beside an `MA` that holds only
-the m5C groups). A fibertools 0.13 `fire` group (in `Ma`) is not kept
-under `apply --no-msps`: only the legacy `as`/`al` survive.
+(it never rewrites legacy tags), and `call --hmm-only --keep-msps` keeps
+every record's MSPs: its `MA`/`Ma` `msp` group (written back into `MA`, the
+HMM footprints beside it), legacy `as`/`al` with their `aq`, a fibertools
+0.13 `fire` group (revalidated as above, so it survives when the MSPs are
+unchanged) and every other non-footprint group; only `nuc`/`tf`, the groups
+derived from them and legacy `ns`/`nl`/`nq` are removed, also on reads it
+skips.
 
 Records written without rewriting their MSPs keep their MSP tags: reads
 `fiberhmm-recall-tfs`/`-recall-nucs` fail to recall (recall's chimeras are
 cleared like call's) and unpaired reads in `merge`. On those records, and under
-`apply --no-msps`, an `aq` is removed when the input has a `fiberhmm-apply`
-`@PG` and no contract line, since it may be FiberHMM's.
+`call --hmm-only --keep-msps`, an `aq` is removed when the input has a
+`fiberhmm-apply` `@PG` and no contract line, since it may be FiberHMM's.
 
 Files without the line come from FiberHMM 3.2.1 or older, where
 `fiberhmm-apply --scores` wrote its MSP posterior as `aq`; there an `aq`

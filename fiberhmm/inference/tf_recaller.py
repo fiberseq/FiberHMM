@@ -1,6 +1,6 @@
 """LLR-based TF footprint recaller -- second pass on FiberHMM-tagged BAMs.
 
-The first pass (``fiberhmm-apply``) calls nucleosomes and MSPs with a trained
+The first pass (the HMM step of ``fiberhmm-call``; ``--hmm-only`` alone) calls nucleosomes and MSPs with a trained
 2-state HMM. This second pass scans MSPs and short sub-nucleosomal calls for
 sequence-context-aware TF footprints. The result is ``MA``/``AQ``
 spec-compliant output with a ``tf.QQQ`` annotation type.
@@ -18,7 +18,7 @@ Algorithm summary
 For each read:
 
 1. Build per-position observation array using the same encoder as
-   ``fiberhmm-apply`` (``encode_from_query_sequence``).
+   the HMM step (``encode_from_query_sequence``).
 2. From v2 tags, derive the scan space:
      - all MSPs (``as``/``al``)
      - all short v2 nucs (``ns``/``nl`` with ``nl < unify_threshold``)
@@ -1121,6 +1121,7 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
                 m5c_llr_miss: Optional[np.ndarray] = None,
                 cpg_mask_policy: str = "unmethylated-only",
                 prob_threshold: int = RECALL_PROB_THRESHOLD,
+                footprints: Optional[dict] = None,
                 ) -> Tuple[List[TFCall], List[Tuple[int, int]], List[Tuple[int, int]]]:
     """Process one read.
 
@@ -1131,22 +1132,23 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
                               (>= unify_threshold OR no overlapping TF call)
         - msp_intervals: v2 MSPs unchanged
 
-    ``input_molecular_frame`` controls how the read's existing ns/nl/as/al are
-    interpreted: True (default) = molecular frame (current FiberHMM output),
-    flipped to seq for recall; False = legacy/v1.0 SEQ-frame tags, used as-is.
-    Pass the wrong value and reverse-strand calls get mis-placed (they land on
-    accessible m6A-rich DNA -- e.g. open promoters fill with spurious nuc).
+    The v2 nucleosomes and MSPs come from the read's ``MA`` (else fibertools
+    ``Ma``) ``nuc``/``msp`` groups; legacy ``ns/nl/as/al`` only when it has no
+    such group (:func:`fiberhmm.io.footprint_calls.resolve_footprint_tags`;
+    the MA frame comes from ``read.header``). ``footprints`` passes calls
+    already resolved that way (``ns/nl/as/al`` in the input frame) instead.
+
+    ``input_molecular_frame`` is the frame of those intervals: True (default)
+    = molecular frame (current FiberHMM output), flipped to seq for recall;
+    False = legacy/v1.0 SEQ-frame tags, used as-is. Pass the wrong value and
+    reverse-strand calls get mis-placed (they land on accessible m6A-rich DNA
+    -- e.g. open promoters fill with spurious nuc).
     """
-    try:
-        ns_raw = read.get_tag('ns')
-        nl_raw = read.get_tag('nl')
-    except KeyError:
-        ns_raw, nl_raw = (), ()
-    try:
-        as_raw = read.get_tag('as')
-        al_raw = read.get_tag('al')
-    except KeyError:
-        as_raw, al_raw = (), ()
+    if footprints is None:
+        from fiberhmm.io.footprint_calls import resolve_footprint_tags
+        footprints = resolve_footprint_tags(read, input_molecular_frame) or {}
+    ns_raw, nl_raw = footprints.get('ns', ()), footprints.get('nl', ())
+    as_raw, al_raw = footprints.get('as', ()), footprints.get('al', ())
 
     if len(ns_raw) == 0 and len(as_raw) == 0:
         return [], [], []
@@ -1370,21 +1372,27 @@ def write_ma_tags(read, read_length: int,
                   kept_nucs: Sequence[Tuple[int, int]],
                   msps: Sequence[Tuple[int, int]],
                   nq_for_kept_nucs: Optional[Sequence[int]] = None,
-                  also_write_legacy: bool = True,
+                  also_write_legacy: Optional[bool] = None,
                   downstream_compat: bool = False,
                   nuc_el_for_kept: Optional[Sequence[int]] = None,
                   nuc_er_for_kept: Optional[Sequence[int]] = None,
-                  msps_replaced: bool = True) -> None:
+                  msps_replaced: bool = True,
+                  remove_legacy: bool = True) -> None:
     """Set MA/AQ (and optionally legacy ns/nl/as/al) tags on the read in place.
 
     Three output modes:
 
-    - **Default** (``also_write_legacy=True, downstream_compat=False``):
-      Write MA/AQ per the Molecular-annotation spec. Also refresh legacy
+    - **Default** (``also_write_legacy`` unset: ``defaults.WRITE_LEGACY_TAGS``,
+      off): Write MA/AQ only, per the Molecular-annotation spec, and remove
+      any legacy ns/nl/nq/as/al/aq the read carried so they cannot go stale
+      (``remove_legacy=False`` leaves them, for a caller that has just
+      written them itself). FiberHMM, fibertools >= 0.13 and FiberBrowser
+      read MA.
+
+    - ``also_write_legacy=True`` (``--legacy-tags``): also refresh legacy
       ns/nl/as/al to reflect the unified call set (v2 short-nucs demoted
       to tf+ in MA are removed from ns/nl). TF calls live ONLY in
-      MA/AQ. This is the preferred output for tools that understand the
-      spec (FiberBrowser, future fibertools-rs releases).
+      MA/AQ.
 
     - ``downstream_compat=True``: **Skip MA/AQ entirely**. Write TF calls
       INTO the legacy ns/nl tag alongside nucleosomes, with entries
@@ -1394,18 +1402,24 @@ def write_ma_tags(read, read_length: int,
       preserved -- only positions and lengths. Use this only when you
       need to feed older downstream tools.
 
-    - ``also_write_legacy=False``: Write MA/AQ only; leave existing
-      ns/nl/as/al in place (they will be stale vs. the unified set but
-      preserved unchanged for reference).
-
     ``downstream_compat=True`` and ``also_write_legacy=False`` are mutually
     exclusive; compat mode always writes the legacy track.
 
-    ``msps_replaced=False`` (``fiberhmm-apply --no-msps``) means ``msps`` are
+    ``msps_replaced=False`` (``fiberhmm-call --hmm-only --keep-msps``) means ``msps`` are
     the record's own retained MSPs, not new calls: a legacy ``aq`` scoring
     them (fibertools FIRE) is kept. Otherwise any ``aq`` is removed.
     """
     import array as pyarray
+
+    if also_write_legacy is None:
+        from fiberhmm import defaults as _D
+        also_write_legacy = bool(downstream_compat) or _D.WRITE_LEGACY_TAGS
+    if not also_write_legacy and remove_legacy:
+        # MA-only output: legacy tags left on the record would be stale.
+        from fiberhmm.inference.read_filters import HARMONIZED_LEGACY_TAG, LEGACY_CALL_TAGS
+        for tag in LEGACY_CALL_TAGS + (HARMONIZED_LEGACY_TAG,):
+            if read.has_tag(tag):
+                read.set_tag(tag, None)
 
     # Groups this writer does not regenerate (ddda_mcg/ddda_ucg/hemi from
     # tag-m5c, deam+/deam- from the duplex merge, or any other tool's layer)
@@ -1430,7 +1444,7 @@ def write_ma_tags(read, read_length: int,
             read.set_tag(tag, None)
 
     # FiberHMM writes no MSP score; a legacy aq (fibertools <= 0.12 FIRE, or
-    # an older fiberhmm-apply --scores) scores MSPs this write replaces, even
+    # an older fiberhmm-apply --scores, before 3.0) scores MSPs this write replaces, even
     # when the legacy as/al are left in place (also_write_legacy=False).
     # Retained MSPs (msps_replaced=False) keep their FIRE aq.
     if msps_replaced and read.has_tag('aq'):

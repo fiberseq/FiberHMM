@@ -1,9 +1,11 @@
 # Annotations and scores
 
-FiberHMM writes its calls into the BAM in two forms: the fibertools-style
-legacy tags (`ns`/`nl`, `as`/`al`) that every Fiber-seq tool reads, and the
+FiberHMM writes its calls into the
 [Molecular-annotation](https://github.com/fiberseq/Molecular-annotation-spec)
-tags (`MA`, `AQ`, `AN`) that carry every call type with its quality bytes.
+tags (`MA`, `AQ`, `AN`), which carry every call type with its quality bytes.
+With `--legacy-tags` it also writes the fibertools-style legacy tags
+(`ns`/`nl`, `as`/`al`) for FiberBrowser ≤ 3.1.0, fibertools ≤ 0.12 and old
+scripts; FiberHMM, fibertools 0.13+ and FiberBrowser 3.1.1+ read `MA`.
 This page explains what they mean; [BAM tags](../reference/bam-tags.md) lists
 every tag FiberHMM writes.
 
@@ -123,7 +125,7 @@ for read in bam:
     tf_query = flip_intervals_to_seq(starts, lengths, read)   # query frame
 ```
 
-The legacy tags hold the same nucleosome and MSP calls:
+With `--legacy-tags`, the legacy tags hold the same nucleosome and MSP calls:
 
 ```python
 ns, nl = list(read.get_tag("ns")), list(read.get_tag("nl"))

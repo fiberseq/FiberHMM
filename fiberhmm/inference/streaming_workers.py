@@ -27,6 +27,7 @@ from fiberhmm.inference.chimeras import (
 from fiberhmm.inference.fused_stages import (
     apply_result_has_footprints,
     build_fused_recall_result,
+    build_hmm_only_result,
     payload_cpg_mask,
     run_ddda_mcg_stage,
     run_hmm_apply_stage,
@@ -95,8 +96,13 @@ def _init_fused_worker(
     chimera_multi_switch=STRICT_MULTI_SWITCH,
     chimera_error_mask_path=None,
     chimera_detector='standard',
+    hmm_only=False,
 ):
     """Initialize worker process for the fused apply+recall pipeline.
+
+    ``hmm_only`` (``fiberhmm-call --hmm-only``): the workers run the HMM only
+    and write every HMM call (:func:`build_hmm_only_result`); no recall
+    table is loaded, so a model of any context size works, as in apply.
 
     ``cpg_mask_policy`` (e.g. ``'unmethylated-only'``) turns on DddA
     CpG-aware recall exactly as in ``fiberhmm-recall-tfs``; ``None`` = off.
@@ -110,6 +116,19 @@ def _init_fused_worker(
     _worker_recall_state = {}
     _worker_model = freeze_model_for_inference(load_model(apply_model_path))
     _worker_debug_timing = debug_timing
+    if hmm_only:
+        _worker_recall_state['hmm_only'] = True
+        _worker_recall_state['ddda_mcg'] = bool(ddda_mcg)
+        _worker_recall_state['cpg_mask_policy'] = cpg_mask_policy
+        configure_daf_chimera_filter(filter_chimeras, chimera_min_seg, chimera_purity,
+                                     detector=chimera_detector,
+                                     min_baseq=chimera_min_baseq, min_span=chimera_min_span,
+                                     multi_switch=chimera_multi_switch,
+                                     error_mask=chimera_error_mask_path)
+        from fiberhmm.core.hmm import HAS_NUMBA
+        if HAS_NUMBA:
+            _ = _worker_model.predict(np.array([0, 1, 2, 3], dtype=np.int32))
+        return
 
     # Build TF-recall LLR tables from the recall model (or reuse apply model).
     from fiberhmm.core.model_io import load_model_with_metadata
@@ -281,9 +300,10 @@ def _process_fused_payload_chunk_worker(
     global _worker_model, _worker_recall_state
 
     # Model/params set once per worker; TF LLR tables attached to the
-    # worker globals via _init_fused_worker.
-    llr_hit = _worker_recall_state['llr_hit']
-    llr_miss = _worker_recall_state['llr_miss']
+    # worker globals via _init_fused_worker (none with --hmm-only).
+    hmm_only = bool(_worker_recall_state.get('hmm_only'))
+    llr_hit = _worker_recall_state.get('llr_hit')
+    llr_miss = _worker_recall_state.get('llr_miss')
 
     results = []
     read_failures = 0
@@ -347,34 +367,38 @@ def _process_fused_payload_chunk_worker(
             elif _worker_recall_state.get('cpg_mask_policy'):
                 m5c_mask = hmm_cpg_mask
 
-            fused_result = build_fused_recall_result(
-                fiber_read,
-                apply_result,
-                llr_hit,
-                llr_miss,
-                min_llr,
-                min_opps,
-                unify_threshold,
-                with_scores,
-                recall_nucs=_worker_recall_state.get('recall_nucs', False),
-                split_min_llr=_worker_recall_state.get('split_min_llr', 4.0),
-                split_min_opps=_worker_recall_state.get('split_min_opps', 3),
-                nuc_recall_policy=_worker_recall_state.get(
-                    'nuc_recall_policy', 'conservative'),
-                nuc_min_size=nuc_min_size,
-                msp_min_size=msp_min_size,
-                phase_nrl=_worker_recall_state.get('phase_nrl', 0),
-                nuc_profile=_worker_recall_state.get('nuc_profile'),
-                derived_tf_max_edge_ambiguity=_worker_recall_state.get(
-                    'derived_tf_max_edge_ambiguity'),
-                m5c_mask=m5c_mask,
-                m5c_llr_hit=_worker_recall_state.get('m5c_llr_hit'),
-                m5c_llr_miss=_worker_recall_state.get('m5c_llr_miss'),
-                nuc_llr_hit=_worker_recall_state.get('nuc_llr_hit'),
-                nuc_llr_miss=_worker_recall_state.get('nuc_llr_miss'),
-                nuc_m5c_llr_hit=_worker_recall_state.get('nuc_m5c_llr_hit'),
-                nuc_m5c_llr_miss=_worker_recall_state.get('nuc_m5c_llr_miss'),
-            )
+            if hmm_only:
+                fused_result = build_hmm_only_result(
+                    fiber_read, apply_result, nuc_min_size, with_scores)
+            else:
+                fused_result = build_fused_recall_result(
+                    fiber_read,
+                    apply_result,
+                    llr_hit,
+                    llr_miss,
+                    min_llr,
+                    min_opps,
+                    unify_threshold,
+                    with_scores,
+                    recall_nucs=_worker_recall_state.get('recall_nucs', False),
+                    split_min_llr=_worker_recall_state.get('split_min_llr', 4.0),
+                    split_min_opps=_worker_recall_state.get('split_min_opps', 3),
+                    nuc_recall_policy=_worker_recall_state.get(
+                        'nuc_recall_policy', 'conservative'),
+                    nuc_min_size=nuc_min_size,
+                    msp_min_size=msp_min_size,
+                    phase_nrl=_worker_recall_state.get('phase_nrl', 0),
+                    nuc_profile=_worker_recall_state.get('nuc_profile'),
+                    derived_tf_max_edge_ambiguity=_worker_recall_state.get(
+                        'derived_tf_max_edge_ambiguity'),
+                    m5c_mask=m5c_mask,
+                    m5c_llr_hit=_worker_recall_state.get('m5c_llr_hit'),
+                    m5c_llr_miss=_worker_recall_state.get('m5c_llr_miss'),
+                    nuc_llr_hit=_worker_recall_state.get('nuc_llr_hit'),
+                    nuc_llr_miss=_worker_recall_state.get('nuc_llr_miss'),
+                    nuc_m5c_llr_hit=_worker_recall_state.get('nuc_m5c_llr_hit'),
+                    nuc_m5c_llr_miss=_worker_recall_state.get('nuc_m5c_llr_miss'),
+                )
             if _worker_recall_state.get('ddda_mcg'):
                 fused_result['ddda_mcg_spans'] = m5c_spans
                 fused_result['ddda_mcg_failed'] = m5c_failed
