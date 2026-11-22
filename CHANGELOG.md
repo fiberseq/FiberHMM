@@ -249,6 +249,12 @@
 
 ### Fixed
 
+- `fiberhmm-call --progress-json` writes every event as one complete line. A
+  SIGTERM (or Ctrl-C) that arrived while an event was being written could
+  leave it without its newline, so the following `stopped` event shared its
+  line and progress readers failed on it or dropped both events.
+  `fiberhmm-consensus --json-progress` writes each stderr line in one call
+  for the same reason.
 - `fiberhmm-recall-tfs`, `fiberhmm-recall-nucs`, `fiberhmm-consensus`,
   `fiberhmm-transfer` and `fiberhmm-strand-rescue` read DAF evidence in
   `fiberhmm-call`'s order: R/Y codes, then the reference comparison (`MD`),
