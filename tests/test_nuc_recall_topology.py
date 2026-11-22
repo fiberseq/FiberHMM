@@ -172,6 +172,12 @@ def test_ddda_topology_is_refused_when_the_enzyme_is_inherited(demo):
         assert proc.returncode == 2, proc.stderr[-2000:]
         assert REFUSAL in proc.stderr
     assert not (demo['root'] / 'y.bam').exists()
+    # fiberhmm-call: a custom -m without --enzyme on a DddA-declared input
+    proc = _run('fiberhmm.cli.call', '-i', called, '-o', demo['root'] / 'z.bam',
+                '-m', get_model_path('ddda', tool='apply'), '--nuc-recall-policy', 'topology')
+    assert proc.returncode == 2, proc.stderr[-2000:]
+    assert REFUSAL in proc.stderr
+    assert not (demo['root'] / 'z.bam').exists()
 
 
 # --------------------------------------------------------------------------- #
@@ -246,3 +252,59 @@ def test_saved_nanopore_evidence_accepts_a_recorded_topology_call():
         check_saved_evidence(stratum(call_nuc_recall_policy='topology',
                                      upstream_nuc_tf_settings=dict(nuc_recall_policy='conservative')),
                              options)
+
+
+# --------------------------------------------------------------------------- #
+#  consensus and scan replay                                                   #
+# --------------------------------------------------------------------------- #
+
+def _load(paths):
+    from fiberhmm.inference.consensus import bam
+    from fiberhmm.inference.consensus.parameters import parse_options
+
+    opt = parse_options(dict(cr=dict(engine='lattice_recaller'),
+                             recaller=dict(max_discovery_molecules=0, max_quantification_molecules=0)))
+    ds = [dict(dataset_id='D', paths=[str(p) for p in paths], chemistry='hia5-nanopore')]
+    payload = bam.load_bam_payload(ds, dict(chrom='chrDemo', start=9000, end=11000), opt)
+    return payload, opt
+
+
+def test_consensus_replay_uses_the_recorded_policy(ont):
+    from fiberhmm.inference.consensus.bam import check_saved_evidence
+
+    for tag, stamp in (('conservative', None), ('topology', 'topology')):
+        payload, opt = _load([ont[tag]])
+        manifest = payload['strata'][0]['model_manifest']
+        assert manifest['upstream_nuc_tf_recall']
+        assert manifest['upstream_nuc_tf_settings']['nuc_recall_policy'] == tag
+        assert manifest.get('call_nuc_recall_policy') == stamp
+        if stamp is None:
+            assert 'call_nuc_recall_policy' not in manifest   # default manifests unchanged
+        check_saved_evidence(payload, opt)
+
+
+def test_consensus_refuses_a_dataset_with_mixed_policies(ont):
+    with pytest.raises(ValueError, match='different nucleosome recall policies'):
+        _load([ont['conservative'], ont['topology']])
+
+
+def test_scan_state_replay_uses_the_recorded_policy(ont, monkeypatch):
+    from fiberhmm.inference.consensus import upstream_recall
+    from fiberhmm.scan.states import StateReader
+
+    seen = []
+    real = upstream_recall.recall_hia5_alignment
+
+    def spy(*args, **kwargs):
+        seen.append(kwargs.get('nuc_recall_policy'))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(upstream_recall, 'recall_hia5_alignment', spy)
+    for tag, want in (('default', 'conservative'), ('topology', 'topology')):
+        seen.clear()
+        with pysam.AlignmentFile(str(ont[tag])) as bam:
+            reader = StateReader(bam.header)
+            assert reader._chemistry_runtime()['replay']
+            read = next(bam.fetch('chrDemo', 10_000, 10_001))
+            assert reader.state_at(read, 'nfr.region', 'chrDemo', 10_050) in {'0', '1', '.'}
+        assert seen and set(seen) == {want}

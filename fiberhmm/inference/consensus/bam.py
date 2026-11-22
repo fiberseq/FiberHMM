@@ -400,7 +400,7 @@ def _load_payload_once(state,request,options,progress):
                 found=set()
                 _,_,context_size,mode,_,_=_chemistry_runtime(runtime,chemistry,allow_population=True)
                 enzyme='hia5' if chemistry.startswith('hia5') else chemistry
-                topology_replay=False
+                topology_replay=False;dataset_call_policy=None
                 minimum_llr=getattr(options['input'],chemistry.replace('-','_')+'_minimum_llr')
                 if minimum_llr<0:minimum_llr=ENZYME_PRESETS[enzyme]['min_llr']
                 alignment_cache=request.get('_alignment_cache',{}).get(dsid)
@@ -418,7 +418,15 @@ def _load_payload_once(state,request,options,progress):
                         # The Hia5 replay re-calls nucleosomes with the policy the BAM's
                         # calls were made with (auto: conservative when none is recorded).
                         from fiberhmm.nuc.records import recorded_nuc_recall_policy
+                        from fiberhmm.inference.fused_stages import resolve_nuc_recall_policy
                         call_policy=recorded_nuc_recall_policy(bam.header) or 'auto'
+                        if chemistry.startswith('hia5'):
+                            resolved_policy=resolve_nuc_recall_policy(call_policy,mode)
+                            if dataset_call_policy not in (None,resolved_policy):
+                                raise ValueError(f'{ds.label}: its BAMs were called with different nucleosome recall '
+                                    f'policies ({dataset_call_policy} and {resolved_policy}); the Hia5 replay needs one. '
+                                    'Load them as separate datasets or re-call them with one --nuc-recall-policy.')
+                            dataset_call_policy=resolved_policy
                         topology_replay=topology_replay or call_policy=='topology'
                         cached_file=alignment_cache.get(input_index,{}) if alignment_cache is not None else None
                         cached_keys={id(a):k for k,a in cached_file.items()} if cached_file is not None else None
