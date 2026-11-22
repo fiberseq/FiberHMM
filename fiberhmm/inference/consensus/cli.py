@@ -27,7 +27,8 @@ class Progress:
         if not self.json_output and stage==self.last_stage and now-self.last_time<.25 and work.get('completed')!=work.get('total',-1): return
         self.last_stage=stage;self.last_time=now
         if self.json_output:
-            print(json.dumps(dict(stage=stage,message=message,**work)),file=sys.stderr,flush=True)
+            # One write per event (print() writes the newline separately; an interrupt between them glues lines).
+            sys.stderr.write(json.dumps(dict(stage=stage,message=message,**work))+'\n');sys.stderr.flush()
         else:
             done,total=work.get('completed'),work.get('total');bar=''
             if done is not None and total:

@@ -335,15 +335,24 @@ class ProgressJSON:
     def __init__(self, target, tool):
         self.tool = tool
         self.target = target
-        self.handle = None if target in (None, '-') else open(target, 'a', buffering=1)
+        # A raw O_APPEND descriptor: each event is one os.write of the whole line, so an interrupt (SIGTERM is
+        # raised as RunInterrupted at any bytecode) lands before or after an event, never inside one.
+        self.fd = None if target in (None, '-') else os.open(target, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o666)
 
     def __call__(self, event, **fields):
         line = json.dumps(dict(schema=PROGRESS_SCHEMA, tool=self.tool, event=event, time=round(time.time(), 3),
-                               **jsonable(fields)), sort_keys=False)
-        handle = self.handle or sys.stderr
-        print(line, file=handle, flush=True)
+                               **jsonable(fields)), sort_keys=False) + '\n'
+        if self.fd is None:
+            # One write call: print() writes the newline separately, and an interrupt between the two glued the
+            # next event onto this line.
+            sys.stderr.write(line)
+            sys.stderr.flush()
+            return
+        data = line.encode('utf-8')
+        while data:
+            data = data[os.write(self.fd, data):]
 
     def close(self):
-        if self.handle is not None:
-            self.handle.close()
-            self.handle = None
+        if self.fd is not None:
+            fd, self.fd = self.fd, None
+            os.close(fd)

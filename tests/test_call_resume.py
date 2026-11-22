@@ -206,3 +206,87 @@ def test_sigterm_leaves_resumable_work_dir(tmp_path, benchmark_model_path):
     fresh = [reference if a == str(output) else a for a in argv]
     assert subprocess.run(fresh, cwd=REPO_ROOT, env=env, capture_output=True, timeout=300).returncode == 0
     assert records(output) == records(reference)
+
+
+
+PROGRESS_UNDER_SIGNALS = r'''
+import os, sys, time
+from fiberhmm.inference.region_resume import ProgressJSON, RunInterrupted, interrupt_on_terminate
+target, duration = sys.argv[1], float(sys.argv[2])
+progress = ProgressJSON(target, 'fiberhmm-call')
+
+def until_done(step):
+    # Retry through interrupts, including one that lands in the except clause itself.
+    while True:
+        try:
+            try:
+                return step()
+            except RunInterrupted:
+                pass
+        except RunInterrupted:
+            pass
+
+def run():
+    while time.monotonic() < state['end']:
+        try:
+            progress('region', region=['chr1', 0, 2000], regions_done=3, regions_total=12, reads=160)
+        except RunInterrupted:
+            progress('stopped', reason='RunInterrupted', regions_done=3, regions_total=12)
+
+def finish():
+    # Exit from inside the handler's scope: leaving it would restore the default action mid-barrage.
+    progress.close()
+    sys.stderr.flush()
+    os._exit(0)
+
+state = {}
+
+def main():
+    # Everything the barrage can reach runs under until_done, set-up and teardown included.
+    if 'end' not in state:
+        state['end'] = time.monotonic() + duration
+    if 'ready' not in state:
+        os.write(1, b'ready\n')
+        state['ready'] = True
+    run()
+    finish()
+
+with interrupt_on_terminate():
+    until_done(main)
+'''
+
+
+@pytest.mark.parametrize('to_stderr', [False, True], ids=['file', 'stderr'])
+def test_progress_lines_stay_whole_when_a_signal_interrupts_a_write(tmp_path, to_stderr):
+    """A SIGTERM barrage while events are written: every event stays one complete line.
+
+    print() wrote the line and its newline separately; a SIGTERM raised between the two glued the next event
+    ('stopped') onto the same line, and progress readers failed on it (or dropped both events)."""
+    import random
+    script = tmp_path/'emit.py'; script.write_text(PROGRESS_UNDER_SIGNALS)
+    out = tmp_path/'p.jsonl'; log = out if to_stderr else tmp_path/'stderr.txt'
+    env = dict(os.environ, PYTHONWARNINGS='ignore',
+               PYTHONPATH=str(REPO_ROOT)+os.pathsep+os.environ.get('PYTHONPATH', ''))
+    with open(log, 'w') as stderr:
+        child = subprocess.Popen([sys.executable, str(script), '-' if to_stderr else str(out), '3'],
+                                 cwd=tmp_path, env=env, stdout=subprocess.PIPE, stderr=stderr)
+        try:
+            assert child.stdout.readline() == b'ready\n'
+            while child.poll() is None:
+                try:
+                    child.send_signal(signal.SIGTERM)
+                except ProcessLookupError:
+                    break
+                time.sleep(random.uniform(0, 0.002))
+            child.wait(timeout=60)
+        finally:
+            if child.poll() is None:
+                child.kill()
+    assert child.returncode == 0, log.read_text()[-2000:]
+    lines = out.read_bytes().split(b'\n')
+    assert out.read_bytes().count(b'"stopped"') > 100, 'too few interrupts to exercise the writer'
+    assert lines[-1] == b'', 'last event lacks its newline'
+    glued = [line for line in lines[:-1] if line.count(b'{"schema"') != 1]
+    assert not glued, f'{len(glued)} lines hold more than one event: {glued[:2]}'
+    for line in lines[:-1]:
+        assert json.loads(line)['event'] in ('region', 'stopped')
