@@ -26,8 +26,14 @@ written instead. `-o` defaults to the BAM's directory.
 
 With no type flag, every type is extracted (`--all`); `deam` is skipped on
 Fiber-seq BAMs. `--all` includes `sv`, and includes `var` when a VCF is
-available: `--variants VCF`, or the DAF SNP screen VCF found next to a DAF
-BAM (logged). Without a VCF, `--all` skips `var` with a one-line note.
+available: `--variants VCF`, `--variants discover`, or the DAF SNP screen VCF
+found next to a DAF BAM (logged). Without a VCF, `--all` skips `var` with a
+one-line note.
+
+`--region CHROM[:START-END]` (repeatable, 1-based inclusive as in samtools)
+and `--regions-bed BED` restrict every layer to the reads that overlap those
+intervals, and `--variants discover` to those intervals; each read is
+written once.
 
 | Flag | File suffix | Source | Block score |
 |---|---|---|---|
@@ -38,7 +44,7 @@ BAM (logged). Without a VCF, `--all` skips `var` with a one-line note.
 | `--m5c` | `_m5c` | DddA `ddda_mcg` spans, or native `MM`/`ML` 5mC | ML (0 for `ddda_mcg`) |
 | `--deam` | `_deam` | DAF deaminations: MM/ML dU, else R/Y, else `MD` mismatches (first non-empty source per read) | |
 | `--both-strand` | `_bothstrand` | the `deam+` ∩ `deam-` region of joint duplex molecules | |
-| `--variants VCF` | `_var` | the allele each read carries at the sites of a VCF/BCF ([below](#variant-alleles-var)) | `blockAllele`, `blockBq` (always written) |
+| `--variants VCF` / `discover` | `_var` | the allele each read carries at the sites of a VCF/BCF, or of the SNVs discovered in the reads ([below](#variant-alleles-var), [discovery](#discovering-variants-variants-discover)) | `blockAllele`, `blockBq` (always written) |
 | `--sv` | `_sv` | CIGAR deletions/insertions, long clips and the `SA` tag ([below](#structural-events-sv)) | `blockType`, `blockLen` (always written) |
 
 ¹ A BAM whose header has a `fiberhmm-apply` `@PG` but no
@@ -149,6 +155,98 @@ size = REF length. `score` is the mean base quality of the sites.
 
 The autoSQL description records the VCF:
 `Sample: <name>. VCF: name=<basename>; md5=<md5 of the file>; sample=<NAME or *>. ...`.
+
+## Discovering variants (`--variants discover`)
+
+The var layer needs a VCF. `--variants discover` makes one from the reads,
+so one command gives the var and sv bigBeds for FiberBrowser:
+
+```bash
+fiberhmm-extract -i sample.calls.bam -o tracks --variants discover --sv -c 8
+# [variants] building VCF (key 5fdbcdc0bde8): caller=pileup (...); 1 BAM(s), ...
+# var layer: discovered VCF tracks/sample_calls.5fdbcdc0bde8.fhvar.vcf.gz (caller=pileup, rebuilt, ...)
+# -> tracks/sample.calls_var.bb, tracks/sample.calls_sv.bb,
+#    tracks/sample.calls_var.discovery.json
+```
+
+The var bigBed is the one `--variants <that VCF>` writes, byte for byte, so
+FiberBrowser's var layers read it unchanged; the VCF sits next to it, where
+FiberBrowser looks for the allele letters. `sv` is unchanged: it still reads
+CIGAR, clips and `SA`.
+
+**Caller.** `--variant-caller auto` (the default) picks by chemistry:
+
+- **DAF-seq (DddA/DddB):** the DAF SNP screen (`fiberhmm-daf-snps
+  --all-snvs`). A site is called only with support on fibers of both
+  conversion directions, so a C→T or G→A deamination is never called as a
+  SNV, and a real C>T/G>A SNP still is. The BAM is DAF when its header says
+  so (`fiberhmm-daf-encode`, or `fiberhmm-call` with `mode=daf`) or its reads
+  carry R/Y, `st` or an MM dU code. `--daf-snp-min-fraction` (0.2),
+  `--daf-snp-min-depth` (5) and `--daf-snp-min-alt-fibers` (5) are the
+  screen's validated thresholds. QC-fail (strand-swap chimera) and duplicate
+  records are left out.
+- **Fiber-seq (Hia5, PacBio or Nanopore):** a conservative pileup SNV screen.
+  It counts bases of quality ≥ `--pileup-min-baseq` (20) on primary reads of
+  MAPQ ≥ `--pileup-min-mapq` (20), leaving out duplicates and QC-fail
+  records, and keeps a site with depth ≥ `--pileup-min-depth` (8), at least
+  `--pileup-min-alt-reads` (3) ALT reads and an ALT fraction ≥
+  `--pileup-min-alt-fraction` (0.25). Soft filters go into the VCF `FILTER`
+  column, so the var layer (`--variants-pass-only`, on) leaves them out while
+  the VCF keeps them for inspection:
+
+| FILTER | When |
+|---|---|
+| `StrandBias` | ALT and REF strand counts differ: two-sided Fisher p < `--pileup-strand-bias-p` (0.001) |
+| `Homopolymer` | the site is in or next to a reference run of ≥ `--pileup-homopolymer-len` (4); `--pileup-homopolymer auto` applies it unless the header says PacBio (Nanopore and unknown platforms) |
+| `IndelNear` | ≥ `--pileup-max-indel-fraction` (0.25) of the reads delete the site |
+| `ModArtifact` | an A/T site whose REF reads carry an m6A call (ML ≥ `-p`) at ≥ `--pileup-mod-min-methylation` (0.3) while the ALT fraction is below `--pileup-mod-max-alt-fraction` (0.4); `--no-pileup-mod-filter` turns it off |
+
+m6A calling does not change bases. On PacBio HiFi Hia5 data, mismatches at
+m6A-called A/T are about as rare as at uncalled ones (both below 0.1%), far
+below any ALT fraction the screen accepts, so `ModArtifact` is a guard for
+chemistries with stronger modification basecalling errors.
+
+The pileup screen takes REF from `--reference FASTA`, else from MD tags, else
+from `=` CIGAR bases. With `=`/`X` CIGARs and no MD (pbmm2 output), a
+homozygous-ALT site has no `=` read, so it is not called without
+`--reference`; the run logs how many covered positions lack REF evidence.
+
+**Limits of the pileup screen.** It calls SNVs only (no indels, no MNVs),
+takes one ALT per site, and estimates GT from the ALT fraction (1/1 at ≥
+`--pileup-hom-alt-fraction` 0.85, else 0/1). It does no local realignment
+and has no error model beyond the thresholds; low-coverage sites and
+low-fraction alleles (mosaic, pooled samples below 25%) are missed. It is a
+screen for browsing alleles on fibers, not a genotyper: for
+publication-grade genotypes, call with DeepVariant or Clair3 and pass the VCF
+with `--variants`.
+
+**Pooled samples.** Discovery runs once per pooled sample: the input BAM plus
+every `--variants-pool BAM` (repeatable, same reference contigs). Run each
+BAM of the pool with the same pool and cache folder and the first run builds
+the VCF, the others reuse it. `--variants-per-bam` discovers from the input
+alone. `--variants-read-groups ID[,ID]` and `--variants-rg-sample SM` restrict
+discovery to reads of those read groups (one sample of a multiplexed BAM).
+`--variants-pool-name` names the VCF sample.
+
+**Cache.** The VCF is written to `--variant-cache DIR` (default: the output
+folder) as `<sample>.<key>.fhvar.vcf.gz`, bgzipped and tabix-indexed, with a
+`<sample>.<key>.fhvar.json` sidecar. The key is a SHA-256 over the input BAMs
+(name, size, modification time and header MD5, each with the read groups
+kept from it), the regions, the circular contigs, the VCF sample name, the
+caller and its parameters, the reference FASTA (name, size, mtime), the chunk
+size and the FiberHMM version. A rerun with the same key
+reuses the VCF (logged `reused`); a change to any of these builds a new one
+(logged `rebuilt`). A VCF cached elsewhere is copied next to the var bigBed.
+Discovery runs in `--variants-chunk-size` (1 Mb) chunks on `--cores`
+workers; finished chunks are kept in a hidden `.<sample>.<key>.fhvar.parts`
+folder, so an interrupted run resumes where it stopped. The parts folder is
+removed once the VCF is written. `--cores` does not change the VCF. Runs
+that share a cache folder and key take turns (an advisory lock on a hidden
+`.<sample>.<key>.fhvar.parts.lock` file): the second waits and then reuses
+the first one's VCF.
+
+`<BAM stem>_var.discovery.json` next to the bigBeds records the caller, the
+VCF and its MD5, the cache key and whether the VCF was reused.
 
 ## Structural events (`sv`)
 

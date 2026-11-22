@@ -12,6 +12,8 @@ from typing import Optional
 import numpy as np
 import pysam
 
+from fiberhmm import defaults as _defaults
+
 from fiberhmm.daf.aligned_arrays import (
     BASE_A,
     BASE_C,
@@ -37,9 +39,9 @@ _OFFERED_SITES_MAX_BLOCKS = 2048
 # validation.  Keep these values centralized: the Python API and both CLI
 # routes import them, while callers can still override every threshold.
 VALIDATED_SNP_POLICY_NAME = "bidirectional_five_fiber_v1"
-DEFAULT_SNP_MIN_FRACTION = 0.20
-DEFAULT_SNP_MIN_DEPTH = 5
-DEFAULT_SNP_MIN_ALT_FIBERS = 5
+DEFAULT_SNP_MIN_FRACTION = _defaults.DAF_SNP_MIN_FRACTION
+DEFAULT_SNP_MIN_DEPTH = _defaults.DAF_SNP_MIN_DEPTH
+DEFAULT_SNP_MIN_ALT_FIBERS = _defaults.DAF_SNP_MIN_ALT_FIBERS
 
 
 def describe_snp_threshold_policy(
@@ -180,7 +182,19 @@ def _aligned_pairs(read, reference_handle=None):
     try:
         start = int(read.reference_start)
         end = int(read.reference_end)
-        reference = reference_handle.fetch(read.reference_name, start, end).upper()
+        length = contig_length_past_end(read)
+        if length:
+            # Through the origin of a circular contig: positions p >= LN are
+            # p mod LN, so the FASTA is read turn by turn.
+            parts, pos = [], start
+            while pos < end:
+                a = pos % length
+                b = min(length, a + (end - pos))
+                parts.append(reference_handle.fetch(read.reference_name, a, b))
+                pos += b - a
+            reference = "".join(parts).upper()
+        else:
+            reference = reference_handle.fetch(read.reference_name, start, end).upper()
         return [
             (query_position, reference_position, reference[reference_position - start])
             for query_position, reference_position in read.get_aligned_pairs(

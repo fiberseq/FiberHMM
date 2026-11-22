@@ -56,6 +56,7 @@ from typing import Dict, Optional, Set, Tuple
 import numpy as np
 import pysam
 
+from fiberhmm import defaults as D
 from fiberhmm.core.bam_reader import cigar_to_query_ref
 from fiberhmm.core.progress import progress, progress_end
 from fiberhmm.inference.bam_output import atomic_output, temporary_output_path
@@ -533,6 +534,137 @@ def _extract_ma_interval_type(
     return len(blocks)
 
 
+def _earliest_overlapping_start(input_bam: str, index_filename, chrom: str,
+                                pos: int) -> int:
+    """Smallest reference_start among alignments covering ``pos`` (else pos)."""
+    best = pos
+    with pysam.AlignmentFile(input_bam, "rb", check_sq=False,
+                             index_filename=index_filename) as bam:
+        try:
+            for read in bam.fetch(chrom, pos, pos + 1):
+                if read.reference_start < best:
+                    best = read.reference_start
+        except ValueError:
+            pass
+    return best
+
+
+def parse_region_arg(text: str, contig_lengths: Dict[str, int]) -> Tuple[str, int, int]:
+    """``CHROM`` or ``CHROM:START-END`` (1-based inclusive, samtools style;
+    commas allowed) -> 0-based half-open ``(chrom, start, end)``."""
+    text = text.strip()
+    if text in contig_lengths:
+        return text, 0, contig_lengths[text]
+    chrom, sep, span = text.rpartition(':')
+    if not sep or chrom not in contig_lengths:
+        raise ValueError(f"--region {text!r}: contig not in the BAM header")
+    span = span.replace(',', '')
+    try:
+        a, _dash, b = span.partition('-')
+        start = int(a) - 1
+        end = int(b) if b else contig_lengths[chrom]
+    except ValueError:
+        raise ValueError(f"--region {text!r}: expected CHROM:START-END") from None
+    start = max(0, start)
+    end = min(end, contig_lengths[chrom])
+    if end <= start:
+        raise ValueError(f"--region {text!r}: empty interval")
+    return chrom, start, end
+
+
+def read_regions_bed(path: str, contig_lengths: Dict[str, int]) -> list:
+    """``(chrom, start, end)`` from a BED (0-based); header/comment lines skipped."""
+    out = []
+    with open(path) as handle:
+        for n, line in enumerate(handle, 1):
+            if not line.strip() or line.startswith(('#', 'track', 'browser')):
+                continue
+            fields = line.rstrip('\n').split('\t')
+            if len(fields) < 3:
+                raise ValueError(f"{path}:{n}: a BED line needs chrom, start, end")
+            chrom = fields[0]
+            if chrom not in contig_lengths:
+                raise ValueError(f"{path}:{n}: contig {chrom!r} not in the BAM header")
+            start, end = int(fields[1]), min(int(fields[2]), contig_lengths[chrom])
+            if end > start:
+                out.append((chrom, max(0, start), end))
+    if not out:
+        raise ValueError(f"{path}: no intervals")
+    return out
+
+
+def plan_extract_regions(input_bam: str, region_size: int, skip_scaffolds: bool,
+                         chroms, windows=None):
+    """``(regions, left_open)`` for the region workers.
+
+    Without ``windows`` this is the whole-genome plan (each read is written by
+    the region its alignment starts in). With windows (``--region`` /
+    ``--regions-bed``) the merged windows on selected contigs are split into
+    ``region_size`` pieces; the first piece of each window also takes the
+    reads that start before the window but not before the end of the
+    previous window (``left_open[(chrom, start)]``, -1 for the first), so
+    every alignment overlapping the windows is written once, by the first
+    window it overlaps.
+    """
+    if int(region_size) <= 0:
+        raise RegionPlanError("--region-size must be a positive number of bp")
+    if windows is None:
+        return _get_genome_regions(input_bam, region_size, skip_scaffolds, chroms), {}
+    from fiberhmm.inference.region_planning import _selected
+    from fiberhmm.io.variant_discovery import merge_windows
+    with pysam.AlignmentFile(input_bam, 'rb', check_sq=False) as bam:
+        order = list(bam.references)
+    merged = [w for w in merge_windows(windows, order)
+              if _selected(w[0], skip_scaffolds, chroms)]
+    if not merged:
+        raise RegionPlanError("no genomic regions to process: --region/--regions-bed "
+                              "left nothing on the selected contigs")
+    regions, left_open = [], {}
+    prev_end = {}
+    for chrom, s, e in merged:
+        # A read starting before this window belongs here only when it does
+        # not overlap the previous window on the contig (it is written
+        # there), so a read spanning two windows is written once.
+        left_open[(chrom, s)] = prev_end.get(chrom, -1)
+        prev_end[chrom] = e
+        for a in range(s, e, int(region_size)):
+            regions.append((chrom, a, min(e, a + int(region_size))))
+    return regions, left_open
+
+
+def resolve_discovered_variants(input_bam: str, discovery=None, *, regions=None,
+                                chroms=None, skip_scaffolds: bool = False,
+                                out_dir: Optional[str] = None, log=print):
+    """Run (or reuse) variant discovery and return ``(VariantOptions,
+    DiscoveryResult)`` for the ``var`` layer.
+
+    The discovered VCF is placed in ``out_dir`` (copied there when the cache
+    is elsewhere) so a viewer finds it next to the var bigBed. Discovery
+    covers ``regions`` when given, else every contig ``chroms`` /
+    ``skip_scaffolds`` select.
+    """
+    from fiberhmm.io.read_layers import VariantOptions, bam_looks_daf
+    from fiberhmm.io.variant_discovery import (
+        DiscoveryOptions, discover_variants, place_beside,
+    )
+    from fiberhmm.inference.region_planning import _selected
+    discovery = discovery or DiscoveryOptions()
+    out_dir = out_dir or os.path.dirname(os.path.abspath(input_bam))
+    with pysam.AlignmentFile(input_bam, 'rb', check_sq=False) as bam:
+        contigs = list(zip(bam.references, bam.lengths))
+    if regions is not None:
+        windows = [w for w in regions if _selected(w[0], skip_scaffolds, chroms)]
+    else:
+        windows = [(c, 0, n) for c, n in contigs if _selected(c, skip_scaffolds, chroms)]
+    result = discover_variants(input_bam, discovery, windows=windows,
+                               default_cache_dir=out_dir, log=log)
+    os.makedirs(out_dir, exist_ok=True)
+    path = place_beside(result.vcf, out_dir)
+    options = VariantOptions(path=path, source_path=path,
+                             bam_is_daf=bam_looks_daf(input_bam))
+    return options, result
+
+
 def _extract_region_worker(args) -> Tuple[dict, int, dict]:
     """Multi-type region worker.
 
@@ -569,6 +701,10 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
         variant_options = params.get('variants')
         sv_min_len = int(params.get('sv_min_len', 30))
         sv_min_clip = int(params.get('sv_min_clip', 100))
+        # The first region of a --region window also takes the reads that
+        # start before it (they overlap the window).
+        left_open_from = (params.get('left_open') or {}).get((chrom, start))
+        left_open = left_open_from is not None
         want_sv = 'sv' in extract_types
         want_var = 'var' in extract_types and variant_options is not None
         site_window = None
@@ -586,7 +722,13 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
             if want_var:
                 from fiberhmm.io.read_layers import SiteWindow
                 vcf = stack.enter_context(pysam.VariantFile(variant_options.path))
-                site_window = SiteWindow(vcf, chrom, variant_options, start)
+                origin = start
+                if left_open:
+                    # Reads starting before the window: sites from the
+                    # earliest start among the reads over its first base.
+                    origin = _earliest_overlapping_start(
+                        input_bam, params.get('index_filename'), chrom, start)
+                site_window = SiteWindow(vcf, chrom, variant_options, origin)
             with pysam.AlignmentFile(
                     input_bam, "rb", check_sq=False,
                     index_filename=params.get('index_filename')) as inbam:
@@ -608,7 +750,10 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                     # Supplementary records feed only the sv layer.
                     if read.is_supplementary and not want_sv:
                         continue
-                    if read.reference_start < start or read.reference_start >= end:
+                    if read.reference_start >= end:
+                        continue
+                    if read.reference_start < start and (
+                            not left_open or read.reference_start < left_open_from):
                         continue
                     if read.mapping_quality < min_mapq:
                         continue
@@ -1599,7 +1744,9 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
                           input_frame: str = 'auto',
                           variants=None,
                           sv_min_len: int = 30,
-                          sv_min_clip: int = 100):
+                          sv_min_clip: int = 100,
+                          regions=None,
+                          discovery=None):
     """Extract one or more tag types from BAM in a single region-parallel pass.
 
     All requested extract types share a single BAM traversal + a single
@@ -1614,8 +1761,15 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
         input_frame: frame of legacy ns/nl/as/al: ``auto`` (the @PG
             provenance rule, as recall-tfs), ``molecular`` or ``query``.
         variants: :class:`fiberhmm.io.read_layers.VariantOptions` for the
-            ``var`` type (required with it). An unindexed VCF/BCF is indexed
-            into the run's temporary directory.
+            ``var`` type (required with it), or ``'discover'``: discover the
+            sites from the reads first (:func:`resolve_discovered_variants`,
+            with ``discovery`` a
+            :class:`fiberhmm.io.variant_discovery.DiscoveryOptions`; the VCF is
+            cached in ``discovery.cache_dir`` or next to the var BED). An
+            unindexed VCF/BCF is indexed into the run's temporary directory.
+        regions: ``(chrom, start, end)`` windows to extract (reads overlapping
+            them); None = every selected contig. ``chroms`` /
+            ``skip_scaffolds`` still apply.
         sv_min_len / sv_min_clip: ``sv`` thresholds (CIGAR I/D length, end
             clip length).
 
@@ -1641,6 +1795,13 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
 
     if 'var' in extract_types and variants is None:
         raise ValueError("the 'var' type needs variants=VariantOptions(...)")
+    if 'var' in extract_types and isinstance(variants, str):
+        if variants != 'discover':
+            raise ValueError("variants must be VariantOptions(...) or 'discover'")
+        variants, _result = resolve_discovered_variants(
+            input_bam, discovery, regions=regions, chroms=chroms,
+            skip_scaffolds=skip_scaffolds,
+            out_dir=os.path.dirname(os.path.abspath(output_beds['var'])))
     with pysam.AlignmentFile(input_bam, 'rb', check_sq=False) as bam:
         frames = resolve_extract_frames(bam.header, input_frame)
     if set(extract_types) & {'nucleosome', 'msp', 'tf', 'm5c', 'bothstrand'}:
@@ -1655,7 +1816,9 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
             print(f"Legacy ns/nl/as/al frame: {frames['legacy']} ({frames['legacy_reason']})")
 
     # Get regions
-    regions = _get_genome_regions(input_bam, region_size, skip_scaffolds, chroms)
+    windows = regions
+    regions, left_open = plan_extract_regions(input_bam, region_size, skip_scaffolds,
+                                              chroms, windows)
     print(f"Processing {len(regions)} regions with {n_cores} cores "
           f"(types: {', '.join(extract_types)})...")
 
@@ -1689,6 +1852,7 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
             'variants': variants,
             'sv_min_len': sv_min_len,
             'sv_min_clip': sv_min_clip,
+            'left_open': left_open,
         }
 
         # Work items: per region, a dict of {type: temp_bed_path}
@@ -2141,30 +2305,119 @@ def _default_extract_prob_threshold(path: str) -> int:
     return default_prob_threshold(enzyme, seq, EXTRACT_PROB_THRESHOLD)
 
 
-def _resolve_variants(args, all_mode: bool, extract_types: list):
-    """``(VariantOptions or None, autoSQL source note or None)`` for the var
-    layer; drops ``var`` from ``extract_types`` when ``--all`` finds no VCF.
-    Exits 2 on an unusable ``--variants``."""
+def discovery_options_from_args(args):
+    """:class:`fiberhmm.io.variant_discovery.DiscoveryOptions` from the CLI."""
+    from fiberhmm.io.variant_discovery import (
+        DafScreenParams, DiscoveryOptions, PileupParams,
+    )
+    read_groups = []
+    for item in args.variants_read_groups or ():
+        read_groups.extend(x for x in item.split(',') if x)
+    return DiscoveryOptions(
+        caller=args.variant_caller,
+        pool=tuple(args.variants_pool or ()),
+        per_bam=args.variants_per_bam,
+        read_groups=tuple(read_groups),
+        rg_sample=args.variants_rg_sample,
+        sample_name=args.variants_pool_name,
+        cache_dir=args.variant_cache,
+        reference=args.reference,
+        chunk_bp=args.variants_chunk_size,
+        cores=max(1, args.cores),
+        pileup=PileupParams(
+            min_depth=args.pileup_min_depth,
+            min_alt_reads=args.pileup_min_alt_reads,
+            min_alt_fraction=args.pileup_min_alt_fraction,
+            min_baseq=args.pileup_min_baseq,
+            min_mapq=args.pileup_min_mapq,
+            strand_bias_p=args.pileup_strand_bias_p,
+            homopolymer=args.pileup_homopolymer,
+            homopolymer_len=args.pileup_homopolymer_len,
+            max_indel_fraction=args.pileup_max_indel_fraction,
+            mod_filter=args.pileup_mod_filter,
+            mod_min_methylation=args.pileup_mod_min_methylation,
+            mod_max_alt_fraction=args.pileup_mod_max_alt_fraction,
+            mod_prob_threshold=args.prob_threshold,
+            hom_alt_fraction=args.pileup_hom_alt_fraction,
+        ),
+        daf=DafScreenParams(
+            min_fraction=args.daf_snp_min_fraction,
+            min_depth=args.daf_snp_min_depth,
+            min_alt_fibers=args.daf_snp_min_alt_fibers,
+        ),
+    )
+
+
+def write_discovery_sidecar(path: str, result, vcf_path: str, var_output: Optional[str]) -> None:
+    """``<dataset>_var.discovery.json``: which caller and VCF made the var layer."""
+    import json
+
+    from fiberhmm import __version__
+    from fiberhmm.io.read_layers import vcf_md5
+    payload = {
+        'fiberhmm_version': __version__,
+        'variants': 'discover',
+        'caller': result.caller,
+        'caller_reason': result.caller_reason,
+        'vcf': os.path.basename(vcf_path),
+        'vcf_md5': vcf_md5(vcf_path),
+        'cache_vcf': result.vcf,
+        'cache_key': result.key,
+        'cache_sidecar': result.sidecar,
+        'reused': result.reused,
+        'n_records': result.n_records,
+        'n_pass': result.n_pass,
+        'var_output': os.path.basename(var_output) if var_output else None,
+    }
+    tmp = path + '.tmp'
+    with open(tmp, 'w') as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+        handle.write('\n')
+    os.replace(tmp, path)
+
+
+def _resolve_variants(args, all_mode: bool, extract_types: list, windows=None,
+                      chroms=None):
+    """``(VariantOptions or None, autoSQL source note or None, discovery
+    result or None)`` for the var layer; drops ``var`` from ``extract_types``
+    when ``--all`` finds no VCF. ``--variants discover`` runs (or reuses)
+    variant discovery and then takes the VCF path. Exits 2 on an unusable
+    ``--variants``."""
     from fiberhmm.io.autosql import vcf_source_note
     from fiberhmm.io.read_layers import (
         VariantOptions, bam_looks_daf, find_daf_snp_vcf, vcf_contigs, vcf_md5, vcf_samples,
     )
     path = args.variants
-    if path == 'auto' or (path is None and all_mode):
+    discovery = None
+    if path == 'discover':
+        from fiberhmm.io.variant_discovery import VariantDiscoveryError
+        try:
+            found, discovery = resolve_discovered_variants(
+                args.input, discovery_options_from_args(args), regions=windows,
+                chroms=chroms, skip_scaffolds=args.skip_scaffolds, out_dir=args.outdir)
+        except (VariantDiscoveryError, ValueError, OSError) as exc:
+            print(f"fiberhmm-extract: error: --variants discover: {exc}", file=sys.stderr)
+            sys.exit(2)
+        path = found.path
+        print(f"var layer: discovered VCF {path} (caller={discovery.caller}, "
+              f"{'reused' if discovery.reused else 'rebuilt'}, key {discovery.key[:12]}, "
+              f"{discovery.n_pass:,} PASS of {discovery.n_records:,} records)")
+    elif path == 'auto' or (path is None and all_mode):
         found, tried = find_daf_snp_vcf(args.input)
         if found is None:
             if path == 'auto':
                 print("fiberhmm-extract: error: --variants auto found no DAF SNP VCF; "
                       "looked for:\n  " + "\n  ".join(tried), file=sys.stderr)
                 sys.exit(2)
-            print("Note: no VCF for the var layer (pass --variants VCF); skipping var.")
-            return None, None
+            print("Note: no VCF for the var layer (pass --variants VCF or "
+                  "--variants discover); skipping var.")
+            return None, None, None
         path = found
         print(f"var layer: using the DAF SNP screen VCF {path}")
         if 'var' not in extract_types:
             extract_types.append('var')
     if path is None:
-        return None, None
+        return None, None, None
     if not os.path.isfile(path):
         print(f"fiberhmm-extract: error: --variants file not found: {path}", file=sys.stderr)
         sys.exit(2)
@@ -2200,7 +2453,7 @@ def _resolve_variants(args, all_mode: bool, extract_types: list):
     print(f"var layer: {path} (sample={args.variants_sample or '*'}, "
           f"pass_only={'on' if args.variants_pass_only else 'off'}, "
           f"DAF handling={'on' if args.variants_daf == 'on' or bam_is_daf else args.variants_daf})")
-    return options, vcf_source_note(path, vcf_md5(path), args.variants_sample)
+    return options, vcf_source_note(path, vcf_md5(path), args.variants_sample), discovery
 
 
 def main():
@@ -2224,6 +2477,9 @@ Examples:
     # Per-read alleles at a sample's heterozygous sites, and SV signatures
     fiberhmm-extract -i tagged.bam --variants calls.vcf.gz \\
         --variants-sample HG002 --variants-het-only --sv
+
+    # One command: discover SNVs in the reads, then var + sv bigBeds
+    fiberhmm-extract -i tagged.bam --variants discover --sv -c 8
         """
     )
 
@@ -2262,14 +2518,106 @@ Examples:
                         action='store_true',
                         help='Extract the deam+ / deam- intersection of paired '
                              'DddA consensus reads as a BED12 coverage overlay.')
-    parser.add_argument('--variants', metavar='VCF|auto', default=None,
+    parser.add_argument('--variants', metavar='VCF|auto|discover', default=None,
                         help='Extract the var layer: the allele each read carries at the '
                              'sites of a VCF/BCF (SNVs, MNVs and indels up to '
                              '--variants-max-len; symbolic/SV alleles skipped). Any standard '
                              'VCF works (DeepVariant/Clair3, vg deconstruct, the DAF SNP VCF). '
                              '"auto" uses the DAF SNP screen VCF of this BAM '
                              '(qc/<stem>.daf_snps.vcf, or the path its fiberhmm-call @PG '
-                             'records) and fails if there is none.')
+                             'records) and fails if there is none. "discover" finds SNVs in '
+                             'the reads first (DAF SNP screen for DAF data, a conservative '
+                             'pileup screen for Fiber-seq; see --variant-caller), caches the '
+                             'VCF per pooled sample and uses it.')
+    discover = parser.add_argument_group(
+        'variant discovery (--variants discover)',
+        'One VCF per pooled sample (the input BAM plus --variants-pool BAMs), cached '
+        'in --variant-cache (default: the output folder) under a key over the inputs, '
+        'regions, caller, parameters and FiberHMM version; reused while the key holds. '
+        'The pileup caller is a screen for browsing, not a genotyper: for '
+        'publication-grade genotypes call with DeepVariant or Clair3 and pass the VCF.')
+    discover.add_argument('--variant-caller', choices=['auto', 'daf', 'pileup'],
+                          default=D.VARIANT_CALLER,
+                          help='auto (default): the DAF SNP screen when the BAM is DAF '
+                               '(header, or reads with R/Y, st or dU), else pileup.')
+    discover.add_argument('--variant-cache', metavar='DIR', default=None,
+                          help='Folder for the discovered VCF (default: the output folder). '
+                               'A VCF cached elsewhere is copied beside the var bigBed.')
+    discover.add_argument('--variants-pool', metavar='BAM', action='append', default=None,
+                          help='Another BAM of the same sample, pooled with -i for '
+                               'discovery (repeatable; same reference contigs).')
+    discover.add_argument('--variants-per-bam', action='store_true',
+                          help='Discover from the input BAM alone (ignore --variants-pool).')
+    discover.add_argument('--variants-read-groups', metavar='ID[,ID]', action='append',
+                          default=None,
+                          help='Discover only from reads of these @RG IDs (repeatable).')
+    discover.add_argument('--variants-rg-sample', metavar='SM', default=None,
+                          help='Discover only from reads of read groups with this SM.')
+    discover.add_argument('--variants-pool-name', metavar='NAME', default=None,
+                          help='Sample name for the VCF (default: the BAM stem, '
+                               '"<stem>_pool" when pooled).')
+    discover.add_argument('--variants-chunk-size', type=int, default=D.VARIANT_CHUNK_BP,
+                          help='Discovery chunk (bp; default %(default)s). Chunks run on '
+                               '--cores workers; finished chunks are kept, so an '
+                               'interrupted run resumes.')
+    discover.add_argument('--reference', metavar='FASTA', default=None,
+                          help='Indexed reference FASTA. The pileup caller takes REF from '
+                               'it; without it, from MD tags or =/X CIGARs (a site no read '
+                               'matches is then skipped). DAF: the screen\'s fallback for '
+                               'reads lacking MD.')
+    discover.add_argument('--pileup-min-depth', type=int, default=D.PILEUP_MIN_DEPTH,
+                          help='Pileup: minimum high-quality depth (default %(default)s).')
+    discover.add_argument('--pileup-min-alt-reads', type=int, default=D.PILEUP_MIN_ALT_READS,
+                          help='Pileup: minimum ALT reads (default %(default)s).')
+    discover.add_argument('--pileup-min-alt-fraction', type=float,
+                          default=D.PILEUP_MIN_ALT_FRACTION,
+                          help='Pileup: minimum ALT fraction (default %(default)s).')
+    discover.add_argument('--pileup-min-baseq', type=int, default=D.PILEUP_MIN_BASEQ,
+                          help='Pileup: minimum base quality (default %(default)s).')
+    discover.add_argument('--pileup-min-mapq', type=int, default=D.PILEUP_MIN_MAPQ,
+                          help='Pileup: minimum MAPQ (default %(default)s; independent '
+                               'of -q, which filters the extracted reads).')
+    discover.add_argument('--pileup-strand-bias-p', type=float, default=D.PILEUP_STRAND_BIAS_P,
+                          help='Pileup: FILTER StrandBias below this Fisher p '
+                               '(default %(default)s).')
+    discover.add_argument('--pileup-homopolymer', choices=['auto', 'on', 'off'],
+                          default=D.PILEUP_HOMOPOLYMER,
+                          help='Pileup: FILTER Homopolymer at sites in or next to a '
+                               'reference run of --pileup-homopolymer-len. auto (default): '
+                               'on unless the header says PacBio.')
+    discover.add_argument('--pileup-homopolymer-len', type=int,
+                          default=D.PILEUP_HOMOPOLYMER_LEN,
+                          help='Pileup: homopolymer run length (default %(default)s).')
+    discover.add_argument('--pileup-max-indel-fraction', type=float,
+                          default=D.PILEUP_MAX_INDEL_FRACTION,
+                          help='Pileup: FILTER IndelNear when this fraction of reads '
+                               'delete the site (default %(default)s).')
+    discover.add_argument('--pileup-mod-filter', action=argparse.BooleanOptionalAction,
+                          default=True,
+                          help='Pileup: FILTER ModArtifact at A/T sites whose REF reads are '
+                               'often m6A-called while the ALT fraction is low (default on).')
+    discover.add_argument('--pileup-mod-min-methylation', type=float,
+                          default=D.PILEUP_MOD_MIN_METHYLATION,
+                          help='Pileup: REF-read m6A fraction for ModArtifact '
+                               '(default %(default)s).')
+    discover.add_argument('--pileup-mod-max-alt-fraction', type=float,
+                          default=D.PILEUP_MOD_MAX_ALT_FRACTION,
+                          help='Pileup: ModArtifact only below this ALT fraction '
+                               '(default %(default)s).')
+    discover.add_argument('--pileup-hom-alt-fraction', type=float,
+                          default=D.PILEUP_HOM_ALT_FRACTION,
+                          help='Pileup: GT 1/1 at this ALT fraction, else 0/1 '
+                               '(default %(default)s).')
+    discover.add_argument('--daf-snp-min-fraction', type=float, default=D.DAF_SNP_MIN_FRACTION,
+                          help='DAF screen: minimum mismatch fraction in each direction '
+                               '(default %(default)s, as fiberhmm-daf-snps).')
+    discover.add_argument('--daf-snp-min-depth', type=int, default=D.DAF_SNP_MIN_DEPTH,
+                          help='DAF screen: minimum depth in each direction '
+                               '(default %(default)s).')
+    discover.add_argument('--daf-snp-min-alt-fibers', type=int,
+                          default=D.DAF_SNP_MIN_ALT_FIBERS,
+                          help='DAF screen: minimum mismatch fibers in each direction '
+                               '(default %(default)s).')
     parser.add_argument('--variants-sample', metavar='NAME', default=None,
                         help='Keep only sites where this VCF sample\'s GT carries an ALT allele.')
     parser.add_argument('--variants-het-only', action='store_true',
@@ -2348,6 +2696,13 @@ Examples:
     parser.add_argument('--region-size', type=int, default=10_000_000, help='Region size for parallel')
     parser.add_argument('--skip-scaffolds', action='store_true', help='Skip scaffold chromosomes')
     parser.add_argument('--chroms', type=str, help='Comma-separated chromosomes to process')
+    parser.add_argument('--region', metavar='CHROM[:START-END]', action='append', default=None,
+                        help='Only reads overlapping this region (1-based inclusive, as '
+                             'samtools; repeatable). Applies to every layer and to '
+                             '--variants discover.')
+    parser.add_argument('--regions-bed', metavar='BED', default=None,
+                        help='Only reads overlapping these BED intervals (0-based); '
+                             'combined with --region.')
 
     # Sort tuning (the post-extract BED sort can dominate runtime on
     # deep/whole-genome BAMs).
@@ -2415,8 +2770,6 @@ Examples:
         if args.variants is not None:
             extract_types.append('var')
 
-    variant_options, variant_note = _resolve_variants(args, all_mode, extract_types)
-
     # Default to bigbed unless --bed-only specified
     make_bigbed = not args.bed_only
 
@@ -2427,6 +2780,20 @@ Examples:
     chroms = None
     if args.chroms:
         chroms = set(args.chroms.split(','))
+
+    windows = None
+    if args.region or args.regions_bed:
+        lengths = get_chrom_sizes(args.input)
+        try:
+            windows = [parse_region_arg(r, lengths) for r in args.region or ()]
+            if args.regions_bed:
+                windows += read_regions_bed(args.regions_bed, lengths)
+        except (OSError, ValueError) as exc:
+            print(f"fiberhmm-extract: error: {exc}", file=sys.stderr)
+            sys.exit(2)
+
+    variant_options, variant_note, discovery = _resolve_variants(
+        args, all_mode, extract_types, windows=windows, chroms=chroms)
 
     # Get dataset name (file prefix + default sample_name).
     dataset = os.path.basename(args.input).replace('.bam', '').replace('_footprints', '')
@@ -2506,6 +2873,7 @@ Examples:
             variants=variant_options,
             sv_min_len=args.sv_min_len,
             sv_min_clip=args.sv_min_clip,
+            regions=windows,
         )
     except ExtractFrameError as exc:
         print(f"fiberhmm-extract: error: {exc}", file=sys.stderr)
@@ -2571,6 +2939,15 @@ Examples:
                 # A missing bedToBigBed is a documented soft fallback (BED
                 # only); a failing one is an error.
                 bigbed_failures.append(extract_type)
+
+    if discovery is not None and 'var' in extract_types:
+        var_out = None
+        if n_features.get('var', 0):
+            var_out = (bb_paths['var'] if make_bigbed and os.path.exists(bb_paths['var'])
+                       else output_beds['var'])
+        sidecar = os.path.join(args.outdir, f"{dataset}_var.discovery.json")
+        write_discovery_sidecar(sidecar, discovery, variant_options.path, var_out)
+        print(f"  [var] discovery record: {sidecar}")
 
     if bigbed_failures:
         print(f"error: bedToBigBed failed for {', '.join(bigbed_failures)}; "

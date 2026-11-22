@@ -115,6 +115,52 @@ DEDUP_MAX_END_DIFF = 50
 #: DAF insert consensus: carriers needed before an insert is scored.
 DAF_INSERT_MIN_CARRIERS = 20
 
+# ---------------------------------------------------------------------------
+# DAF SNP screen (fiberhmm-daf-snps, fiberhmm-call --daf-snp-*,
+# fiberhmm-extract --variants discover on DAF data)
+# ---------------------------------------------------------------------------
+
+#: The validated bidirectional policy: every threshold must pass on fibers of
+#: both conversion directions.
+DAF_SNP_MIN_FRACTION = 0.20
+DAF_SNP_MIN_DEPTH = 5
+DAF_SNP_MIN_ALT_FIBERS = 5
+
+# ---------------------------------------------------------------------------
+# Variant discovery (fiberhmm-extract --variants discover)
+# ---------------------------------------------------------------------------
+
+#: Caller: auto picks the DAF screen for DAF data, else the pileup caller.
+VARIANT_CALLER = "auto"
+
+#: Discovery chunk size (bp); chunks run in parallel and resume.
+VARIANT_CHUNK_BP = 1_000_000
+
+#: Pileup SNV caller (non-DAF Fiber-seq). Conservative screen, not a
+#: genotyper: a site needs depth, recurrent alternate reads and an alternate
+#: fraction; soft filters are written as VCF FILTER values.
+PILEUP_MIN_DEPTH = 8
+PILEUP_MIN_ALT_READS = 3
+PILEUP_MIN_ALT_FRACTION = 0.25
+PILEUP_MIN_BASEQ = 20
+#: Discovery MAPQ: stricter than the calling default (MIN_MAPQ = 0) because
+#: multi-mapped reads create false SNVs; a separate setting, not min_mapq.
+PILEUP_MIN_MAPQ = 20
+#: Strand balance: FILTER StrandBias below this two-sided Fisher p-value.
+PILEUP_STRAND_BIAS_P = 0.001
+#: Homopolymer filter: auto = on for Nanopore or an unknown platform, off for
+#: PacBio HiFi; sites in or next to a reference run this long are filtered.
+PILEUP_HOMOPOLYMER = "auto"
+PILEUP_HOMOPOLYMER_LEN = 4
+#: FILTER IndelNear when this fraction of reads delete the site.
+PILEUP_MAX_INDEL_FRACTION = 0.25
+#: FILTER ModArtifact at an A/T site whose REF reads carry m6A calls at this
+#: fraction or more while the alternate fraction stays below the cap.
+PILEUP_MOD_MIN_METHYLATION = 0.30
+PILEUP_MOD_MAX_ALT_FRACTION = 0.40
+#: Genotype written to the VCF: 1/1 at this alternate fraction, else 0/1.
+PILEUP_HOM_ALT_FRACTION = 0.85
+
 
 # ---------------------------------------------------------------------------
 # fiberhmm-nfr (EXPERIMENTAL preview) stages and run controls
