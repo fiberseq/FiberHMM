@@ -887,14 +887,13 @@ def _version():
     import scipy
     import sklearn
     info = dict(version=__version__, numpy=np.__version__, scipy=scipy.__version__, sklearn=sklearn.__version__)
-    root = Path(__file__).resolve().parents[3]
-    try:
-        import subprocess
-        sha = subprocess.run(['git', '-C', str(root), 'rev-parse', 'HEAD'], capture_output=True, text=True, timeout=5)
-        if sha.returncode == 0:
-            info['git'] = sha.stdout.strip()
-    except Exception:
-        pass
+    # The commit of the running code: from a source checkout (git runs only when .git sits beside the package),
+    # else the one recorded at build time. An installed wheel never runs git (macOS would offer to install the
+    # command-line developer tools on every run).
+    from fiberhmm.identity import fiberhmm_commit
+    commit = fiberhmm_commit()
+    if commit:
+        info['git'] = commit.split('+', 1)[0]
     return info
 
 

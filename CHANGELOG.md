@@ -325,6 +325,12 @@
   `export_posteriors_from_bam` resolves the ML threshold like the command line
   (248 for Hia5 Nanopore, from `enzyme`/`seq` or the BAM's declaration; new
   `seq` argument) instead of always using 128.
+- An installed FiberHMM never runs `git`. The NFR/accessibility analysis and
+  the consensus frozen catalogue ran `git rev-parse` to record the commit
+  wherever the package was installed; on a Mac without the command-line
+  developer tools that opened macOS's "install developer tools" dialog on
+  every run. git now runs only from a source checkout; installed wheels use
+  the commit recorded at build time.
 
 ## 3.2.1
 

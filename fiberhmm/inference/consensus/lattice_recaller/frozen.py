@@ -25,7 +25,6 @@ from __future__ import annotations
 import copy
 import hashlib
 import math
-import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -46,12 +45,10 @@ def code_identity():
     """Version, git commit (when run from a checkout) and hashes of the recaller sources of the running code."""
     import fiberhmm
     here = Path(__file__).parent
-    commit = None
-    try:
-        out = subprocess.run(['git', '-C', str(here), 'rev-parse', 'HEAD'], capture_output=True, text=True, timeout=5)
-        commit = out.stdout.strip() or None if out.returncode == 0 else None
-    except (OSError, subprocess.SubprocessError):
-        pass
+    # From a source checkout only (git runs only when .git sits beside the package), else the commit recorded
+    # at build time; an installed wheel never runs git.
+    from fiberhmm.identity import fiberhmm_commit
+    commit = (fiberhmm_commit() or '').split('+', 1)[0] or None
     files = sorted(here.glob('*.py')) + [here.parent/'parameters.py']
     return dict(fiberhmm_version=getattr(fiberhmm, '__version__', None), git_commit=commit,
                 implementation_sha256={str(p.relative_to(here.parent)): hashlib.sha256(p.read_bytes()).hexdigest() for p in files})
