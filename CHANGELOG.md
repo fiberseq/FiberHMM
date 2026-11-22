@@ -325,6 +325,7 @@
   `export_posteriors_from_bam` resolves the ML threshold like the command line
   (248 for Hia5 Nanopore, from `enzyme`/`seq` or the BAM's declaration; new
   `seq` argument) instead of always using 128.
+
 ## 3.2.2
 
 ### Fixed
