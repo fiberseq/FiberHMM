@@ -134,8 +134,12 @@
   and so is default output. The resolved policy is recorded in `@PG` `DS`
   (`nuc_recall_policy=`); `fiberhmm.nuc.CallerSettings.from_header` and the
   consensus/scan Hia5 replay read it back from the latest record that ran
-  nucleosome recall, so re-calls reproduce it. `fiberhmm-pipeline` passes it
-  through `--call-args "--nuc-recall-policy topology"`.
+  nucleosome recall, so re-calls reproduce it (a consensus dataset whose BAMs
+  record different policies is refused). BAMs called before 3.0 with the
+  then-default `auto` on Hia5 Nanopore record `topology` (2.16.7, 2.16.8),
+  so their consensus/scan replay now uses topology, as their calls did.
+  `fiberhmm-pipeline` passes it through
+  `--call-args "--nuc-recall-policy topology"`.
 - `fiberhmm-call --hmm-only` (see Changed), `--keep-msps` (with
   `--hmm-only`: keep each record's own MSPs, legacy `as`/`al`/`aq`,
   fibertools `fire` and other non-footprint groups instead of writing the

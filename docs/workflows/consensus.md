@@ -158,8 +158,11 @@ each class is then scored on each channel.
 
 1. **Evidence.** Native calls are replayed with the multi-interval TF decoder
    (`input.*` settings); for Hia5, nucleosome and TF boundaries are replayed
-   first (`families.recall_hia5_nucleosomes`). The complete prepared payload
-   is saved as `evidence.json.gz`.
+   first (`families.recall_hia5_nucleosomes`), with the nucleosome recall
+   policy the BAM's calls were made with (`nuc_recall_policy=` in `@PG`;
+   conservative when none is recorded). A dataset whose BAMs record different
+   policies is refused. The complete prepared payload is saved as
+   `evidence.json.gz`.
 2. **Discovery, per tile.** The window is cut into tiles of `tile_bp` (350)
    every `tile_step_bp` (250). Discovery uses native calls with LLR ≥
    `call_min_llr` (5.0) and width ≤ `call_max_bp` (100) that lie inside one
