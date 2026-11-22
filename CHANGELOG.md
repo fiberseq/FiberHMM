@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.3.0 (unreleased)
+
+### Fixed
+
+- An installed FiberHMM never runs `git`. The NFR/accessibility analysis and
+  the consensus frozen catalogue ran `git rev-parse` to record the commit
+  wherever the package was installed; on a Mac without the command-line
+  developer tools that opened macOS's "install developer tools" dialog on
+  every run. git now runs only from a source checkout; installed wheels use
+  the commit recorded at build time.
+
 ## 3.2.1
 
 ### Fixed
