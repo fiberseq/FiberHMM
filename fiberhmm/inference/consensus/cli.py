@@ -121,8 +121,10 @@ def _main(argv=None):
     p.add_argument('--stop-after',choices=['native','parents','consolidated','resolved'],help='staged_native_families only: last stage to compute (the lattice recaller runs in one pass)')
     p.add_argument('--start-at',choices=['native','consolidation'],default='native',help='staged_native_families only: consolidation restarts from saved native fits')
     p.add_argument('--cores',type=int,help='Worker processes (sets compute.cores; default 4)')
-    p.add_argument('--max-memory-gb',type=float,metavar='GB',help='--pool-loci runs: refuse to start, or lower --cores, when the '
-                   'pre-run peak-memory estimate (always logged) exceeds GB. The estimate is a planning figure (~30%%)')
+    p.add_argument('--max-memory-gb',type=float,metavar='GB',help='Refuse to start, or lower the parallelism, when the pre-run '
+                   'peak-memory estimate exceeds GB: --pool-loci runs lower --cores (the estimate is always logged); independent '
+                   '--bed/--region windows count each window\'s molecules first and lower --window-jobs, then --cores, so the largest '
+                   'window fits (execution only: --continue accepts it). The estimate is a planning figure (~30%%)')
     p.add_argument('--evidence-pad',metavar='BP|full',help='Keep each loaded read\'s calls, MSPs, nucleosomes and aligned blocks '
                    f'that overlap the window plus BP (sets input.evidence_pad_bp; default {CLI_EVIDENCE_PAD_BP} here, whole reads in '
                    'the Python API and FiberBrowser). Calls crossing the pad boundary are kept whole. "full" keeps whole-read '
@@ -132,6 +134,26 @@ def _main(argv=None):
                    'recaller.order_robust_fraction; classes.tsv columns '
                    'order_robustness and robust). Takes about N+1 times as long; the classes themselves are unchanged. Sets '
                    'recaller.order_replicates (default 0 = off)')
+    crossfit=p.add_argument_group('per-read tables and cross-fitting (lattice_recaller)')
+    crossfit.add_argument('--discover-fold-spec',metavar='SPEC',help='Cross-fitted discovery: discover classes only from reads whose '
+                          'read-name hash fold is listed, and score every read (sets recaller.discover_fold_spec). SPEC as fiberhmm-nfr: '
+                          '"hash=md5,mod=10,discover=0-4" (fold = int(md5(read_name), 16) %% 10; "+" lists folds, "-" gives ranges)')
+    crossfit.add_argument('--fold-weights',choices=['all','heldout'],help='With --discover-fold-spec: fit each scoring group\'s EM '
+                          'weights, spots and edge contraction on all reads (default) or on the held-out folds only (recaller.fold_weights)')
+    crossfit.add_argument('--read-table',action='store_true',help='Write read_posteriors.tsv.gz per window: every read x class with its '
+                          'posterior, label, fold and the group\'s broader/other/accessible posteriors (recaller.read_table). '
+                          'With --bed/--region, the windows are also merged into read_table/ (see --role-rules)')
+    crossfit.add_argument('--role-rules',metavar='JSON',help='With --read-table over BED windows: a role rule file mapping class '
+                          'position relative to each window\'s anchor and width to role names (schema fiberhmm.consensus.roles.v1; '
+                          'see docs/reference/consensus-read-table.md). No roles are built in. Applied when the merged tables '
+                          'are written, so --continue with a new rule file relabels without recomputing')
+    crossfit.add_argument('--anchor-offset',type=int,default=0,metavar='BP',help='Anchor (e.g. TSS) of each BED window for --role-rules '
+                          'and the relative columns: the window\'s 5\' end in BED6 strand orientation plus BP (default 0; '
+                          '300 for TSS-300..+800 windows)')
+    crossfit.add_argument('--nfr-states',metavar='DIR',help='With --read-table over BED windows: a fiberhmm-nfr output directory '
+                          '(one run or a --bed run). Joins each read\'s NFR variant state (molecules.tsv.gz map) by read name and writes '
+                          'read_table/class_by_nfr_state.tsv: per window x NFR x state x class, the reads and mean posterior, and the '
+                          'class prevalence refitted by EM within each state (classes fixed)')
     p.add_argument('--cache',help='staged_native_families only: persistent exact native-fit cache directory')
     p.add_argument('--json-progress','--progress-json',action='store_true',help='Structured progress on stderr (JSON lines)')
     p.add_argument('--daf-mask-runs',type=int,default=None,metavar='N',help='DAF only: thin targets in same-strand runs of >= N original C (CT) or G (GA) bases in lattices and native replay (2 = CC/GG and longer; 0 = off). Default: per dataset chemistry, DddA keep-one on runs >= 2 (duplex-validated), DddB off')
@@ -145,9 +167,13 @@ def _main(argv=None):
     p.add_argument('--continue',dest='continue_run',action='store_true',
                    help='Finish an interrupted --bam + --bed/--region run in its existing --output directory: windows whose '
                         'completion marker matches are kept, missing or partial windows are rerun, and the aggregate outputs '
-                        '(regions.json, report.html, BAMs) are rebuilt. Refused if the BAMs, windows or parameters differ from '
+                        '(regions.json, report.html, BAMs, read_table/) are rebuilt. Refused if the BAMs, windows or parameters differ from '
                         "the run's consensus_run.json (--cores, --window-jobs and --json-progress may change). Not the same as "
                         '--resume, which starts a new run from saved evidence')
+    p.add_argument('--keep-going',action='store_true',help='--bed/--region runs: a window that fails is logged and left without a '
+                   'completion marker, the other windows keep running, the aggregates cover the completed windows, and the '
+                   'command exits 1 listing the failed windows (rerun with --continue to retry them). Default: the first '
+                   'failure stops the run')
     p.add_argument('--window-jobs',type=int,default=0,metavar='N',
                    help='Independent BED windows analysed at the same time (default 0 = automatic: up to --cores windows, '
                         'each with an equal share of --cores; one at a time for staged_native_families, whose per-window '
@@ -215,6 +241,25 @@ def _main(argv=None):
     else:
         # The command is meant for motif-scale windows: crop by default (the library default keeps whole reads).
         values.setdefault('input',{}).setdefault('evidence_pad_bp',CLI_EVIDENCE_PAD_BP)
+    if (args.role_rules or args.nfr_states) and not args.read_table:
+        p.error('--role-rules and --nfr-states label the per-read table: add --read-table')
+    if (args.role_rules or args.nfr_states) and not (args.bed or args.region):
+        p.error('--role-rules and --nfr-states apply to --bam/--datasets runs over --bed/--region windows')
+    if args.role_rules:
+        from .read_table import parse_role_rules
+        try: parse_role_rules(args.role_rules)
+        except (OSError, ValueError) as error: p.error(f'--role-rules {args.role_rules}: {error}')
+    if args.nfr_states:
+        from .nfr_states import find_tables
+        try: find_tables(args.nfr_states)
+        except ValueError as error: p.error(f'--nfr-states {args.nfr_states}: {error}')
+    if args.fold_weights and not (args.discover_fold_spec or values.get('recaller',{}).get('discover_fold_spec')):
+        p.error('--fold-weights applies with --discover-fold-spec')
+    for group,name,value in [('recaller','discover_fold_spec',args.discover_fold_spec),('recaller','fold_weights',args.fold_weights),
+                             ('recaller','read_table',True if args.read_table else None)]:
+        if value is not None:
+            if engine!='lattice_recaller': p.error('--discover-fold-spec, --fold-weights and --read-table apply to --engine lattice_recaller')
+            values.setdefault(group,{})[name]=value
     for group,name,value in [('families','physical_radius_bp',args.consolidation_bp),('families','stop_after',args.stop_after),
                              ('compute','cores',args.cores),('compute','fit_cache_dir',args.cache),('recaller','order_replicates',args.robust)]:
         if value is not None: values.setdefault(group,{})[name]=value
@@ -270,7 +315,13 @@ def _main(argv=None):
                 # Independent windows are restartable work units (batch.py): each loads, analyses and marks its own
                 # directory, then drops its payload, so memory grows with --window-jobs, not with the BED rows.
                 summary,bam_outputs=_run_windows(args,out,windows,datasets,values,progress)
-                print(json.dumps(dict(status='complete',output=str(out),regions=summary,bams=bam_outputs)));return
+                failed=[r['name'] for r in summary if r['status']=='failed']
+                print(json.dumps(dict(status='incomplete' if failed else 'complete',output=str(out),regions=summary,bams=bam_outputs)))
+                if failed:
+                    print(f'error: {len(failed)} of {len(summary)} windows failed ({", ".join(failed[:10])}'
+                          f'{" ..." if len(failed)>10 else ""}); see {out}/logs. Rerun with --continue to retry them',file=sys.stderr)
+                    raise SystemExit(1)
+                return
         from .bam_export import ExportPlan
         summary=[];plan=ExportPlan(recaller_layer=args.bam_recaller_layer) if not args.no_bam else None;bam_outputs=[]
         for i,(name,payload,folder) in enumerate(jobs):
@@ -310,6 +361,52 @@ def _memory_plan(parser,args,values,options,molecules,window_bp,progress):
     values.setdefault('compute',{})['cores']=fitted
 
 
+def p_exit(args):
+    """An exit(status, message) for --max-memory-gb refusals of window runs (no parser in scope there)."""
+    def leave(status,message):
+        print(message,end='',file=sys.stderr);raise SystemExit(status)
+    return leave
+
+
+def _window_memory_plan(leave,args,windows,datasets,values,cores,window_jobs,progress):
+    """--max-memory-gb for independent windows: scan each window's molecule count (no tag decoding), estimate the
+    peak of the largest window at each concurrency, and lower --window-jobs (then compute.cores) until the estimate
+    fits. Execution only: results are unchanged and --continue accepts the new concurrency."""
+    from .memory_estimate import estimate,describe
+    from .parameters import parse_options
+    from .bam import evidence_pad
+    from .pooled_sampling import scanned_molecules
+    from .batch import plan_jobs
+    options=parse_options(values);opt=options['recaller']
+    kw=dict(discovery_cap=opt.max_discovery_molecules,quantification_cap=opt.max_quantification_molecules,pad=evidence_pad(options),read_kb=30)
+    progress.report('memory',f'--max-memory-gb {args.max_memory_gb:g}: counting molecules in {len(windows)} windows')
+    def count(w):
+        # A window the scan cannot read (e.g. a contig missing from a BAM) is left to fail as its own unit
+        # (recorded under --keep-going), not to stop the plan for every other window.
+        try: return scanned_molecules(datasets,[w],options)
+        except (ValueError,OSError) as error:
+            progress.report('memory_scan',f"{w['name']}: not counted ({error}); the window will report its own error")
+            return 0
+    largest=max(((count(w),w['end']-w['start']) for w in windows),default=(0,1))
+    def total(jobs,inner):
+        e=estimate(largest[0],largest[1],inner,**kw)
+        # Concurrent windows each run in one worker process with `inner` cores; the parent holds no evidence.
+        return (e['total_gb'] if jobs<=1 else jobs*e['total_gb']), e
+    jobs,inner=plan_jobs(len(windows),cores,window_jobs)
+    while True:
+        gb,e=total(jobs,inner)
+        if gb<=args.max_memory_gb or (jobs==1 and inner==1): break
+        if jobs>1: jobs-=1
+        else: inner-=1
+    progress.report('memory_plan',f'largest window {largest[0]:,} molecules: {describe(e)} per window x {jobs} concurrent = {gb:.1f} GB'
+                    f'; limit {args.max_memory_gb:g} GB')
+    if gb>args.max_memory_gb:
+        leave(2,f'fiberhmm-consensus: error: the largest window ({largest[0]:,} molecules) is estimated at {gb:.1f} GB with one '
+                f'window and one core, above --max-memory-gb {args.max_memory_gb:g}; set --max-discovery-molecules/'
+                '--max-quantification-molecules or a smaller --evidence-pad\n')
+    return (inner if jobs==1 else jobs*inner),jobs
+
+
 def _window_task(spec):
     """One BED window in a worker process (--window-jobs > 1); all output goes to the window's log."""
     from . import bam
@@ -337,6 +434,9 @@ def _run_windows(args,out,windows,datasets,values,progress):
         # The staged engine treats compute.maximum_matrix_mb (default: a quarter of RAM) as a hard per-window budget;
         # automatic concurrency would multiply it. An explicit --window-jobs is honoured.
         window_jobs=1
+    if args.max_memory_gb:
+        cores,window_jobs=_window_memory_plan(p_exit(args),args,windows,datasets,values,cores,window_jobs,progress)
+        values.setdefault('compute',{})['cores']=cores
     # One window at a time runs in this process; the loader and engine are looked up when each window starts.
     serial=lambda spec:run_unit(spec,load=bam.load_bam_payload,run=run_analysis,forward=progress)
     try:
@@ -344,8 +444,10 @@ def _run_windows(args,out,windows,datasets,values,progress):
             daf_mask=effective_daf_mask(args),
             options=dict(no_bam=args.no_bam,bam_scope=args.bam_scope,bam_grouping=args.bam_grouping,
                          bam_recaller_layer=args.bam_recaller_layer),
-            serial_task=serial,parallel_task=_window_task,progress=progress,
-            export=dict(no_bam=args.no_bam,recaller_layer=args.bam_recaller_layer,grouping=args.bam_grouping,scope=args.bam_scope))
+            serial_task=serial,parallel_task=_window_task,progress=progress,keep_going=args.keep_going,
+            export=dict(no_bam=args.no_bam,recaller_layer=args.bam_recaller_layer,grouping=args.bam_grouping,scope=args.bam_scope,
+                        read_table=dict(rules=args.role_rules,anchor_offset=args.anchor_offset,nfr_states=args.nfr_states)
+                        if values.get('recaller',{}).get('read_table') else None))
     except ContinueRefused as error:
         print(f'error: {error}',file=sys.stderr);raise SystemExit(2)
 

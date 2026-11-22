@@ -32,7 +32,7 @@ RUN_LOCK = '.consensus_run.lock'
 RUN_SCHEMA = 'fiberhmm.consensus.run.v1'
 UNIT_SCHEMA = 'fiberhmm.consensus.unit.v1'
 # Top-level outputs rebuilt from the units at the end of every run.
-AGGREGATES = ('bams', 'regions.json', 'report.html')
+AGGREGATES = ('bams', 'regions.json', 'report.html', 'read_table')
 # Run-level entries that never belong to a unit (kept when a single-window unit is redone in place).
 PROTECTED = (RUN_MANIFEST, LOG_DIR, RUN_LOCK)
 # Execution-only controls: they never change a result, so --continue may change them.
@@ -236,6 +236,9 @@ def run_unit(spec, *, load, run, forward=None, isolate=False):
                       status=manifest.get('status'), seconds=manifest.get('seconds'),
                       has_input_files=bool(payload.get('input_files')), files=_unit_files(folder, single))
         del result, payload
+        # Free the window's evidence and results before the next window starts in this process (a reused worker
+        # otherwise carries the last window's cyclic garbage into the next one's peak).
+        import gc; gc.collect()
         write_json(folder/UNIT_MARKER, marker)       # atomic, and last: the unit is complete only now
         print(f'=== complete in {marker["seconds"] or 0:.1f}s', file=handle, flush=True)
     return marker
@@ -247,10 +250,17 @@ def _eta(seconds):
     return f' ETA {h}:{m:02d}:{s:02d}' if h else f' ETA {m}:{s:02d}'
 
 
-def dispatch(specs, completed, *, jobs, serial_task, parallel_task, progress):
+def dispatch(specs, completed, *, jobs, serial_task, parallel_task, progress, failed=None):
     """Run the pending units (in-process when jobs == 1) with concise progress: units done/total and an ETA
-    from this attempt's throughput. The first failure stops the run and kills the other units' workers."""
+    from this attempt's throughput. The first failure stops the run and kills the other units' workers, unless
+    ``failed`` is a dict (--keep-going): a failing unit (an Exception, not an interrupt) is then recorded there
+    ({index: message}), writes no completion marker, and the other units keep running."""
     total = len(specs); reused = len(completed); pending = [s for s in specs if s['index'] not in completed]
+
+    def failure(spec, error):
+        failed[spec['index']] = f'{type(error).__name__}: {error}'
+        print(f"windows: {spec['name']} failed ({failed[spec['index']]}); see {spec['log']}. The other windows keep "
+              'running (--keep-going); rerun the same command with --continue to retry it', file=sys.stderr, flush=True)
     started = time.monotonic(); fresh = 0
     progress.report('windows', f'{reused} complete from an earlier attempt; {len(pending)} to run '
                     f'({jobs} at a time)' if reused else f'{len(pending)} to run ({jobs} at a time)',
@@ -268,7 +278,12 @@ def dispatch(specs, completed, *, jobs, serial_task, parallel_task, progress):
         for spec in pending:
             progress.report('windows', f"{spec['name']} running (log {spec['log']})", completed=len(completed), total=total,
                             reused=reused)
-            finished(serial_task(spec))
+            try:
+                marker = serial_task(spec)
+            except Exception as error:
+                if failed is None: raise
+                failure(spec, error); continue
+            finished(marker)
         return completed
     from concurrent.futures import as_completed
     from .execution import shared_worker_pool
@@ -279,6 +294,12 @@ def dispatch(specs, completed, *, jobs, serial_task, parallel_task, progress):
             spec = futures[future]
             try:
                 marker = future.result()
+            except Exception as error:
+                if failed is None:
+                    print(f"windows: {spec['name']} failed; see {spec['log']}. Completed windows are kept: fix the cause "
+                          'and rerun the same command with --continue', file=sys.stderr, flush=True)
+                    raise
+                failure(spec, error); continue
             except BaseException:
                 print(f"windows: {spec['name']} failed; see {spec['log']}. Completed windows are kept: fix the cause "
                       'and rerun the same command with --continue', file=sys.stderr, flush=True)
@@ -295,19 +316,26 @@ def plan_jobs(pending, cores, window_jobs):
     return jobs, max(1, cores//jobs)
 
 
-def rebuild_aggregates(out, specs, completed, *, no_bam, recaller_layer, grouping, scope, progress):
-    """regions.json, report.html and BAM export from the units' saved artifacts, in BED order."""
+def rebuild_aggregates(out, specs, completed, *, no_bam, recaller_layer, grouping, scope, progress, read_table=None):
+    """regions.json, report.html, BAM export and (``read_table``: dict(rules, anchor_offset, nfr_states)) the merged
+    per-read tables from the units' saved artifacts, in BED order. Every aggregate streams one unit at a time."""
     count = len(specs)
     summary = [dict(name=s['name'], output=s['folder'], status=completed[s['index']]['status'],
-                    seconds=completed[s['index']]['seconds']) for s in specs]
+                    seconds=completed[s['index']]['seconds']) if s['index'] in completed else
+               dict(name=s['name'], output=s['folder'], status='failed', seconds=None) for s in specs]
+    specs = [s for s in specs if s['index'] in completed]       # aggregates use completed windows only
     bam_outputs = []
     if count > 1:
         for name in AGGREGATES:
             path = out/name
             if path.is_dir(): shutil.rmtree(path)
             elif path.exists(): path.unlink()
-    elif (out/'bams').exists():
-        shutil.rmtree(out/'bams')
+    else:
+        for name in ('bams', 'read_table'):
+            if (out/name).exists():
+                shutil.rmtree(out/name)
+    if read_table is not None:
+        write_read_tables(out, specs, read_table, progress)
     if not no_bam:
         from .bam_export import ExportPlan, export_bams
         plan = ExportPlan(recaller_layer=recaller_layer)
@@ -321,19 +349,45 @@ def rebuild_aggregates(out, specs, completed, *, no_bam, recaller_layer, groupin
         write_json(out/'regions.json', summary)
         import html
         (out/'report.html').write_text('<!doctype html><meta charset="utf-8"><h1>Consensus windows</h1>'+''.join(
-            '<p><a href="'+str(Path(r['output']).relative_to(out))+'/report.html">'+html.escape(r['name'])+'</a></p>' for r in summary))
+            ('<p><a href="'+str(Path(r['output']).relative_to(out))+'/report.html">'+html.escape(r['name'])+'</a></p>')
+            if r['status'] != 'failed' else '<p>'+html.escape(r['name'])+' (failed; see logs/)</p>' for r in summary))
     return summary, bam_outputs
 
 
-def finish_run(out):
+def write_read_tables(out, specs, settings, progress):
+    """read_table/: the windows' read tables merged with window columns and roles, and (with nfr_states) the
+    class prevalence per NFR state. Written to a temporary directory and renamed, so it is never half-written."""
+    from .read_table import aggregate, parse_role_rules
+    folder = out/'read_table'; tmp = out/'.read_table.partial'
+    if tmp.exists(): shutil.rmtree(tmp)
+    tmp.mkdir()
+    rules = parse_role_rules(settings['rules']) if settings.get('rules') else []
+    summary = aggregate(tmp, specs, rules=rules, anchor_offset=int(settings.get('anchor_offset') or 0), progress=progress)
+    summary.update(rules_file=str(Path(settings['rules']).resolve()) if settings.get('rules') else None)
+    if settings.get('nfr_states'):
+        from .nfr_states import class_by_state
+        summary['nfr_states'] = class_by_state(tmp, specs, settings['nfr_states'], rules=rules,
+                                               anchor_offset=int(settings.get('anchor_offset') or 0), progress=progress)
+    write_json(tmp/'read_table.json', dict(schema='fiberhmm.consensus.read_table.v1', **summary))
+    if folder.exists(): shutil.rmtree(folder)
+    tmp.replace(folder)
+    return summary
+
+
+def finish_run(out, failed=None):
     path = out/RUN_MANIFEST
-    value = read_json(path); value['status'] = 'complete'
+    value = read_json(path); value['status'] = 'incomplete' if failed else 'complete'
+    if failed:
+        value['failed_windows'] = [dict(index=i, message=m) for i, m in sorted(failed.items())]
+    else:
+        value.pop('failed_windows', None)
     write_json(path, value)
 
 
 def run_windows(out, windows, datasets, values, *, continue_run, cores, window_jobs, daf_mask, options,
-                serial_task, parallel_task, progress, export):
-    """The whole multi-window run: manifest, unit scheduling, and aggregate rebuild. Returns (summary, bam_outputs)."""
+                serial_task, parallel_task, progress, export, keep_going=False):
+    """The whole multi-window run: manifest, unit scheduling, and aggregate rebuild. Returns (summary, bam_outputs);
+    with ``keep_going`` failed windows are listed in the summary with status 'failed'."""
     lock = DirectoryLock(out/RUN_LOCK, 'fiberhmm-consensus output directory', remove=True)
     try:
         lock.acquire()
@@ -343,13 +397,13 @@ def run_windows(out, windows, datasets, values, *, continue_run, cores, window_j
         return _run_windows_locked(out, windows, datasets, values, continue_run=continue_run, cores=cores,
                                    window_jobs=window_jobs, daf_mask=daf_mask, options=options,
                                    serial_task=serial_task, parallel_task=parallel_task, progress=progress,
-                                   export=export)
+                                   export=export, keep_going=keep_going)
     finally:
         lock.release()
 
 
 def _run_windows_locked(out, windows, datasets, values, *, continue_run, cores, window_jobs, daf_mask, options,
-                        serial_task, parallel_task, progress, export):
+                        serial_task, parallel_task, progress, export, keep_going=False):
     count = len(windows)
     memo = previous_digests(out) if continue_run else DigestMemo()
     record = run_record(datasets, windows, values, dict(options, daf_mask=list(daf_mask) if daf_mask else None), memo)
@@ -371,7 +425,9 @@ def _run_windows_locked(out, windows, datasets, values, *, continue_run, cores, 
         # Each concurrent window gets its own share of the worker budget (execution only: results do not change).
         for s in specs:
             s['values'] = deepcopy(values); s['values'].setdefault('compute', {})['cores'] = inner
-    dispatch(specs, completed, jobs=jobs, serial_task=serial_task, parallel_task=parallel_task, progress=progress)
+    failed = {} if keep_going else None
+    dispatch(specs, completed, jobs=jobs, serial_task=serial_task, parallel_task=parallel_task, progress=progress,
+             failed=failed)
     summary, bam_outputs = rebuild_aggregates(out, specs, completed, progress=progress, **export)
-    finish_run(out)
+    finish_run(out, failed)
     return summary, bam_outputs

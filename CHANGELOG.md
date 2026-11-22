@@ -76,6 +76,10 @@
   query-to-reference projection, and a tree copy replaces `deepcopy`. Results
   are unchanged.
 
+- `fiberhmm-consensus` runs without the new batch, cross-fit and role
+  options record the same parameters, manifests and digests as before; the
+  new parameters are written to receipts only when used.
+
 ### Added
 
 - `fiberhmm-consensus` and BAM-based `fiberhmm-transfer` accept
@@ -187,6 +191,35 @@
   `--continue`, a per-window completion marker, per-window `failed` and
   `no_molecules` statuses (other windows keep running), `regions.tsv`, the
   combined `variants.tsv`/`configurations.tsv`, and progress with an ETA.
+- **Per-read class posteriors.** `fiberhmm-consensus --read-table` writes
+  `read_posteriors.tsv.gz`: every read × discovered class, with the posterior,
+  label, the group's broader / other-shape / accessible posteriors, the EM
+  log-likelihoods and the read's hash fold. Over `--bed` windows, the windows
+  are merged into `read_table/` keyed by read name and window. Positions there
+  are relative to each window's anchor (`--anchor-offset`, strand-aware), and a
+  per-read role table is included.
+- **Cross-fitted discovery.** `--discover-fold-spec "hash=md5,mod=10,discover=0-4"`
+  (`recaller.discover_fold_spec`) discovers classes on the listed read-name
+  hash folds only and scores every read. It uses the same fold helper
+  (`fiberhmm.io.folds`) and syntax as `fiberhmm-nfr`. `--fold-weights heldout`
+  fits the scoring on the held-out folds. Molecule caps apply within the
+  discovery folds.
+- **Role rules.** `--role-rules FILE` labels classes, and a group's
+  broader-protection component, from user rules on position and width relative
+  to the anchor (schema `fiberhmm.consensus.roles.v1`). No roles are built in.
+  Roles are applied when `read_table/` is built, so `--continue` with a new
+  rule file relabels without recomputing.
+- **NFR-state conditioning.** `--nfr-states DIR` joins `fiberhmm-nfr` variant
+  states by read name. `read_table/class_by_nfr_state.tsv` gives each class's
+  prevalence refitted by EM within each state, with the classes fixed.
+- **`--max-memory-gb` for independent windows.** It counts each window's
+  molecules and lowers `--window-jobs`, then `--cores`, so the largest window
+  fits. Before, it applied to `--pool-loci` runs only.
+
+- **`--keep-going` for window batches.** A failing window is logged and
+  skipped, and the other windows finish. The aggregates cover the completed
+  windows, the command exits 1 listing the failures, and `--continue` retries
+  them. By default the first failure still stops the run.
 
 ### Fixed
 

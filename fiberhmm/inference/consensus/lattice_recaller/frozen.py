@@ -189,7 +189,7 @@ def score_channel(units, gs, f, opt, fixed):
             gain += Mo.loglik(te, wf) - Mo.loglik(np.delete(te, c, axis=1), wd)
         gains.append(gain)
     log_bfs = Mo.log_bayes_factors(M, w)
-    return dict(w=w, P=P, log_bf=log_bfs, units=keep, spots=prof, support_gain=gains, resolution=info, n=len(M), gs=gs, edges=list(fixed['edges']),
+    return dict(w=w, P=P, M=M, log_bf=log_bfs, units=keep, spots=prof, support_gain=gains, resolution=info, n=len(M), gs=gs, edges=list(fixed['edges']),
                 tiers=Mo.prevalence_tiers(sc.keep, P, w, gs, prof, opt.bf_threshold, log_bfs),
                 calls=[dict(classes=[Mo.molecule_edges(it, c, gs[c], prof[c]) for c in range(len(gs))], broader=it['broader'],
                             tiers=Mo.molecule_tiers(u, gs, prof))

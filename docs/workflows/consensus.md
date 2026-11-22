@@ -408,8 +408,8 @@ fiberhmm-consensus --bam calls.bam --bed sites.bed --cores 8 --output out/sites 
 - Windows whose marker matches and whose files still have their recorded
   digests are kept; missing, partial, damaged or altered windows and windows
   computed by other code are rerun.
-- `regions.json`, the top-level `report.html` and the family-tagged BAMs are
-  rebuilt from all completed windows at the end, so the outputs are the same
+- `regions.json`, the top-level `report.html`, the family-tagged BAMs and
+  `read_table/` are rebuilt from all completed windows at the end, so the outputs are the same
   whether windows ran one at a time, in parallel, or across an interrupted
   and continued run (apart from timing fields and the per-window
   `compute.cores`).
@@ -421,7 +421,12 @@ fiberhmm-consensus --bam calls.bam --bed sites.bed --cores 8 --output out/sites 
 - Without `--continue` the output directory must be empty, as always.
 - A failing window stops the run and the other windows' workers; completed
   windows are kept for `--continue` once the cause is fixed. The failing
-  window's log is named in the error.
+  window's log is named in the error. With `--keep-going`, a failing window
+  is logged and left without a completion marker, the other windows keep
+  running, the aggregates cover the completed windows (`regions.json` lists
+  the failed ones with status `failed`, `consensus_run.json` has status
+  `incomplete` and `failed_windows`), and the command exits 1. `--continue`
+  retries the failed windows.
 
 !!! note "`--continue` versus `--resume`"
     `--continue` finishes an interrupted multi-window run **in place**, in
@@ -430,6 +435,30 @@ fiberhmm-consensus --bam calls.bam --bed sites.bed --cores 8 --output out/sites 
     example with different `--parameters`; see [Replay](#replay)).
     `--continue` does not apply to `--pool-loci`, `--evidence` or `--resume`
     runs, which are single analyses: rerun them.
+
+## Per-read tables and promoter batches
+
+`--read-table` writes every read's posterior for every class
+(`read_posteriors.tsv.gz` in each window). Over a BED of promoter windows, the
+windows are also merged into `read_table/`, keyed by read name and window, with
+positions relative to each window's TSS (`--anchor-offset`). Optional extras:
+
+- `--discover-fold-spec "hash=md5,mod=10,discover=0-4"`: discover classes on
+  some read-name hash folds only and score every read. The folds are the same
+  as `fiberhmm-nfr`'s.
+- `--role-rules roles.json`: your own rule file mapping class position and
+  width to role names.
+- `--nfr-states DIR`: class prevalence refitted within each `fiberhmm-nfr`
+  variant state.
+
+```bash
+fiberhmm-consensus --bam calls.bam --bed promoters.bed --cores 8 --no-bam \
+  --read-table --discover-fold-spec "hash=md5,mod=10,discover=0-4" \
+  --role-rules roles.json --anchor-offset 300 --output out/promoters
+```
+
+See [Per-read tables, cross-fitting and role rules](../reference/consensus-read-table.md)
+for the columns, the rule-file format and the cross-fitting semantics.
 
 ## Pooling loci (CL-CR)
 

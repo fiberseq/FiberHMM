@@ -36,6 +36,35 @@ def em(M, iters=1000):
     return w, P
 
 
+def posteriors(M, w):
+    """Per-molecule posteriors of a molecules x hypotheses log-likelihood matrix under fixed mixture weights w (the
+    E-step of em(), with its weight floor). Rows sum to 1."""
+    A = M + np.log(np.maximum(w, EM_WEIGHT_FLOOR)); A -= A.max(1, keepdims=True); P = np.exp(A); P /= P.sum(1, keepdims=True)
+    return P
+
+
+def fit_channel_heldout(units, gs, f, opt, fit_uids):
+    """fit_channel on the molecules named in fit_uids only (cross-fitting, recaller.fold_weights='heldout'), then every
+    molecule's posterior under that fit: the fitted geometry (edge contraction), learned spots and EM weights are fixed
+    and applied to all units. Prevalence (and its tiers), support gain and resolution are those of the fitted molecules (n); n_scored
+    counts every molecule that received a posterior."""
+    fit_units = [u for u in units if u['uid'] in fit_uids]
+    res = fit_channel(fit_units, gs, f, opt) if fit_units else None
+    if res is None:
+        return None
+    gs2 = res['gs']; prof = [dict(s) for s in res['spots']]; w = res['w']
+    sc = Scorer(units, gs2, f, opt)
+    M, keep = sc.rows(prof)
+    if not len(M):
+        return None
+    P = posteriors(M, w); log_bfs = log_bayes_factors(M, w)
+    # Prevalence tiers stay those of the fitted molecules (res['tiers']), like the EM weights.
+    return dict(res, P=P, M=M, log_bf=log_bfs, units=keep, n_scored=len(M),
+                calls=[dict(classes=[molecule_edges(it, c, gs2[c], prof[c]) for c in range(len(gs2))], broader=it['broader'],
+                            tiers=molecule_tiers(u, gs2, prof))
+                       for it, u in zip(sc.items, sc.keep)])
+
+
 def loglik(M, w):
     X = M + np.log(np.maximum(w, EM_WEIGHT_FLOOR)); m = X.max(1)
     return float(np.sum(m + np.log(np.exp(X - m[:, None]).sum(1))))
@@ -534,7 +563,7 @@ def fit_channel(units, gs, f, opt):
             gain += loglik(te, wf) - loglik(np.delete(te, c, axis=1), wd)
         gains.append(gain)
     log_bfs = log_bayes_factors(M, w)
-    return dict(w=w, P=P, log_bf=log_bfs, units=keep, spots=[{int(x): prof[c][x] for x in sorted(acc[c])} for c in range(len(gs))],
+    return dict(w=w, P=P, M=M, log_bf=log_bfs, units=keep, spots=[{int(x): prof[c][x] for x in sorted(acc[c])} for c in range(len(gs))],
                 support_gain=gains, resolution=info, n=len(M), gs=gs, edges=edges, tiers=prevalence_tiers(sc.keep, P, w, gs, prof, opt.bf_threshold, log_bfs),
                 # Per molecule (aligned with P / units): its own edges for each class, and its best broader stretch.
                 calls=[dict(classes=[molecule_edges(it, c, gs[c], prof[c]) for c in range(len(gs))], broader=it['broader'],

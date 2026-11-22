@@ -239,6 +239,9 @@ class RecallerOptions:
     minimum_channel_units: int = control(20, 'Minimum molecules per channel', 'Channels with fewer molecules in a tile are not quantified.', 1, 100000, 1)
     order_replicates: int = control(0, 'Read-order robustness check (extra orderings)', 'Optional and slower: rerun discovery and scoring N more times with the molecules in other deterministic orders (and so other split-halves and folds), and report for each class the fraction of the N+1 orderings that find it supported. Takes about N+1 times as long. 0 (default) = off; the classes themselves are always those of the default order.', 0, 20, 1)
     order_robust_fraction: float = control(1.0, 'Read-order check: robust fraction', 'With the read-order check on, a class is marked robust when at least this fraction of the orderings (the default order included) find it supported. 1 (default) = every ordering; 0.5 = half of them.', 0.05, 1.0, 0.05)
+    discover_fold_spec: str = control('', 'Cross-fitted discovery folds', 'Optional. Discover classes only from reads whose read-name hash fold is listed, then score every read against them (fiberhmm.io.folds syntax, shared with fiberhmm-nfr: "hash=md5,mod=10,discover=0-4", where fold = int(md5(read_name), 16) % 10). Empty (default) = every read discovers. Molecule caps then apply within the discovery folds.')
+    fold_weights: str = control('all', 'Cross-fitting: reads that fit scoring', 'With discover_fold_spec: fit each scoring group\'s EM weights (and learned spots and edge contraction) on all reads (default) or on the held-out folds only; every read\'s posterior then uses that fit. As fiberhmm-nfr --fold-weights.', choices=['all', 'heldout'])
+    read_table: bool = control(False, 'Write the per-read posterior table', 'Also write read_posteriors.tsv.gz: one row per read x class with its posterior, label and the group\'s broader / other-shape / accessible posteriors, keyed by read name, with the read\'s hash fold. Output only; the classes and estimates do not change.')
 
 
 GROUPS = dict(input=InputOptions, sr=SROptions, cr=CROptions, families=FamilyStageOptions, recaller=RecallerOptions, rescue=RescueOptions,
@@ -360,6 +363,14 @@ def parse_options(values=None):
                              'raise tile_bp or lower tile_step_bp, or a wide footprint straddling a tile overlap is never discovered')
         if result['compute'].predictive_stopping!='full':
             raise ValueError('compute.predictive_stopping applies only to staged native families')
+        if r.discover_fold_spec:
+            from fiberhmm.io.folds import FoldSpec
+            r.discover_fold_spec = FoldSpec.parse(r.discover_fold_spec).canonical()
+        if r.fold_weights == 'heldout':
+            from fiberhmm.io.folds import FoldSpec
+            spec = FoldSpec.parse(r.discover_fold_spec or None)
+            if spec is None or spec.all_folds:
+                raise ValueError("recaller.fold_weights 'heldout' needs a recaller.discover_fold_spec that holds folds out")
         _reject_inactive(result, ACTIVE_CONTROLS['lattice_recaller'], 'the lattice recaller',
                          'the recaller\'s own controls are in the recaller group')
     else:
@@ -390,15 +401,19 @@ def parse_options(values=None):
 
 # The optional read-order check is recorded only when it is on, so a run without it records exactly the parameters
 # (and so the manifest, result and frozen-catalog digests) it did before the option existed.
-OFF_WHEN_UNUSED = dict(recaller=('order_replicates', ('order_replicates', 'order_robust_fraction')))
+OFF_WHEN_UNUSED = dict(recaller=[('order_replicates', ('order_replicates', 'order_robust_fraction')),
+                                  # Cross-fitting and the per-read table (3.3.x): absent from receipts unless used.
+                                  ('discover_fold_spec', ('discover_fold_spec', 'fold_weights')),
+                                  ('read_table', ('read_table',))])
 
 
 def options_dict(options):
     out = {name: asdict(value) for name, value in options.items()}
-    for group, (switch, names) in OFF_WHEN_UNUSED.items():
-        if group in out and not out[group].get(switch):
-            for name in names:
-                out[group].pop(name, None)
+    for group, switches in OFF_WHEN_UNUSED.items():
+        for switch, names in switches:
+            if group in out and not out[group].get(switch):
+                for name in names:
+                    out[group].pop(name, None)
     if 'recaller' in out and (out.get('cr', {}).get('engine') != 'lattice_recaller' or
                               not any(out['recaller'].get(n) for n in ('max_discovery_molecules', 'max_quantification_molecules'))):
         for name in ('max_discovery_molecules', 'max_quantification_molecules', 'sample_seed'):

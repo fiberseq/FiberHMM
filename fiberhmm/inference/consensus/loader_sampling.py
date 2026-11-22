@@ -23,6 +23,10 @@ def policy(options):
     # An uncapped active phase requires the complete evidence population.
     if not all(caps) or opt.efficiency_calibration:
         return None
+    # Cross-fitting: the discovery cap applies within the discovery folds, which a read-name hash prefix of the
+    # whole population cannot guarantee to fill; load every molecule and apply the caps in memory.
+    if getattr(opt, 'discover_fold_spec', ''):
+        return None
     return dict(cap=max(caps), discovery_cap=caps[0], quantification_cap=caps[1], seed=opt.sample_seed, mode='recaller',
                 tile_bp=opt.tile_bp, tile_step_bp=opt.tile_step_bp)
 

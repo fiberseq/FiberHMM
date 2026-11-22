@@ -115,6 +115,7 @@ nav:
       - Bundled models: reference/models.md
       - Shared defaults: reference/shared-defaults.md
       - Consensus output files: reference/consensus-outputs.md
+      - Consensus per-read tables and roles: reference/consensus-read-table.md
       - Scan directory format: reference/scan-format.md
       - Scan performance: reference/scan-performance.md
       - Python API: reference/python-api.md

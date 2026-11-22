@@ -20,7 +20,11 @@ out/classes/
   evidence.json.gz     the complete prepared payload, for replay
   result.json.gz       the frozen result
   bams/                family-tagged BAMs (unless --no-bam)
+  read_posteriors.tsv.gz  with --read-table: every read x class posterior
 ```
+
+With `--read-table`, BED/`--region` runs also write the merged `read_table/`
+directory; see [Per-read tables, cross-fitting and role rules](consensus-read-table.md).
 
 With several BED windows the top level holds `report.html`, `regions.json`
 (one entry per window: `name`, `output`, `status`, `seconds`) and one

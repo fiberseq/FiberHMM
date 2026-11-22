@@ -108,8 +108,33 @@ def _jitter(g, chemistry, opt):
     return dict(L=[g['L'][0] - J, g['L'][1]], R=[g['R'][0], g['R'][1] + J], span=g['span'])
 
 
+def fold_spec(opt):
+    """recaller.discover_fold_spec as a fiberhmm.io.folds.FoldSpec, or None (every read discovers)."""
+    from fiberhmm.io.folds import FoldSpec
+    return FoldSpec.parse(getattr(opt, 'discover_fold_spec', '') or None)
+
+
+def discovery_sources(sources, opt):
+    """The sources discovery sees: under cross-fitting only the units whose read name hashes to a discovery fold
+    (DAF strands of one read share its name, so they share its fold). Scoring always uses every unit."""
+    spec = fold_spec(opt)
+    if spec is None or spec.all_folds:
+        return sources
+    return [dict(s, units=[u for u in s['units'] if spec.discovers(u.get('read_name') or u['unit_id'])]) for s in sources]
+
+
+def heldout_unit_ids(sources, opt):
+    """unit_ids of the held-out folds (recaller.fold_weights='heldout'), else None."""
+    spec = fold_spec(opt)
+    if getattr(opt, 'fold_weights', 'all') != 'heldout' or spec is None:
+        return None
+    return frozenset(u['unit_id'] for s in sources for u in s['units'] if not spec.discovers(u.get('read_name') or u['unit_id']))
+
+
 def discover(sources, region, opt, progress, cores=1, sampling=None):
     tiles = _tiles(region['start'], region['end'], opt.tile_bp, opt.tile_step_bp)
+    # Cross-fitting: classes come from the discovery folds only; the molecule cap then applies within them.
+    sources = discovery_sources(sources, opt)
     found, diagnostics, tasks, which = [], [], [], []
     for t, (w0, w1) in enumerate(tiles):
         counts = []
@@ -230,11 +255,17 @@ def scoring_windows(sources, classes, tiles, opt, frozen=None, sampling=None):
         yield gi, grp, window, bounds
 
 
-def quantify(sources, classes, tiles, opt, progress, cores=1, frozen=None, sampling=None):
+def quantify(sources, classes, tiles, opt, progress, cores=1, frozen=None, sampling=None, components=None):
     """Per class x channel estimates. frozen: a frozen.FrozenClasses (transfer); each channel is then scored with its
     fixed boxes and spots, no fitting. Returns (rows, molecules, broader, unscored): unscored lists the class x channel
     pairs no estimate exists for, with the reason (too few molecules in the window, or none spanning the scoring
-    window), so a class near a data end is reported as unscored rather than as unsupported."""
+    window), so a class near a data end is reported as unscored rather than as unsupported.
+
+    components: optional list; each scored molecule appends (group, channel, unit_id, P(broader), P(other shape),
+    P(accessible), log-likelihood row): the non-class parts of its group posterior (with its class posteriors they sum
+    to 1) and its log-likelihood under [class_1..k, broader, other shape, accessible].
+    Under cross-fitting with recaller.fold_weights='heldout' (discovery runs only) each channel is fitted on the
+    held-out folds and every molecule is scored under that fit (model.fit_channel_heldout)."""
     rows, mols, broad, unscored = [], [], [], []
     efficiency = Un.efficiency_factors(sources) if opt.efficiency_calibration else None
     chem = {s['dataset_id']: s['chemistry'] for s in sources}
@@ -277,6 +308,10 @@ def quantify(sources, classes, tiles, opt, progress, cores=1, frozen=None, sampl
             meta.append((gi, grp, ch, len(pairs), f))
     done = lambda i: progress('recaller_quantify', f'group {meta[i][0] + 1}/{len(groups)} ({len(meta[i][1])} classes), {meta[i][2]}: {meta[i][3]} molecules')
     fit = Mo.fit_channel if frozen is None else frozen.score
+    heldout = heldout_unit_ids(sources, opt) if frozen is None else None
+    if heldout is not None:
+        fit = Mo.fit_channel_heldout
+        tasks = [lambda t=t: (*(t() if callable(t) else t), heldout) for t in tasks]
     for (gi, grp, ch, n_units, f), res in zip(meta, _run_all(fit, tasks, cores, done)):
         if res is None:
             unscored += [_unscored_row(classes[x], gi, ch, f'no_spanning_molecules (none of {n_units} molecules has sites beyond '
@@ -313,6 +348,10 @@ def quantify(sources, classes, tiles, opt, progress, cores=1, frozen=None, sampl
                 mols.append(dict(class_id=g['id'], channel=ch, unit_id=u['uid'], posterior=round(float(p), 4), log_bf=round(lbf, 3), label=lab,
                                  tier=tier, start=edges[0] if edges else None, end=edges[1] if edges else None,
                                  edge_range=[list(edges[2]), list(edges[3])] if edges else None))
+        if components is not None:
+            for u, pr, mr in zip(res['units'], res['P'], res['M']):
+                components.append((gi + 1, ch, u['uid'], float(pr[k]), float(pr[k + 1]), float(pr[k + 2]),
+                                   [float(x) for x in mr]))
         # Molecules best explained by protection wider than every class of the group (e.g. a nucleosome over it).
         for u, pb, call in zip(res['units'], res['P'][:, k], res['calls']):
             if pb >= .5 and call['broader'] is not None:
@@ -540,7 +579,9 @@ def run_lattice_recaller(payload, options, output_dir=None, progress=None, froze
                     source['load'] = deepcopy(loads[source['dataset_id']])
             before = digest(payload)
             write_json(out/'evidence.json.gz', payload)
-        rows, mols, broad, unscored = quantify(sources, classes, tiles, opt, progress, cores, frozen=frozen, sampling=sampling) if classes else ([], [], [], [])
+        components = [] if getattr(opt, 'read_table', False) else None
+        rows, mols, broad, unscored = quantify(sources, classes, tiles, opt, progress, cores, frozen=frozen, sampling=sampling,
+                                               components=components) if classes else ([], [], [], [])
         # Optional (recaller.order_replicates > 0, discovery runs only): which classes survive other read orders.
         robustness = order_robustness(sources, region, opt, progress, cores, classes, rows) if frozen is None and opt.order_replicates and classes else None
     if robustness is not None:
@@ -593,6 +634,14 @@ def run_lattice_recaller(payload, options, output_dir=None, progress=None, froze
                                     or any(r['reads_decoded'] < r['eligible_reads'] for r in loader_records))
         receipt['read_sample_cap'] = {n: getattr(opt, n) for n in Cap.NAMES}
         warnings.extend(Cap.notes(sampling))
+    spec = fold_spec(opt) if frozen is None else None
+    if spec is not None:
+        disc = sum(len(x['units']) for x in discovery_sources(sources, opt))
+        receipt['cross_fit'] = dict(discover_fold_spec=spec.canonical(), hash=spec.hash, mod=spec.mod,
+                                    discover_folds=list(spec.discover), fold_weights=opt.fold_weights,
+                                    discovery_units=disc, heldout_units=sum(len(x['units']) for x in sources) - disc,
+                                    semantics='classes discovered on the discovery folds only; every unit is scored. '
+                                              'fold = int(<hash>(read_name), 16) % mod')
     if frozen is not None:
         receipt['transfer'] = frozen.provenance()
     result = dict(schema=SCHEMA, cr_mode=MODE, manifest=receipt, stages=stages, stage_results={'resolved': snap}, final_stage='resolved',
@@ -610,6 +659,10 @@ def run_lattice_recaller(payload, options, output_dir=None, progress=None, froze
                CLASS_FIELDS + (ROBUST_FIELDS if robustness is not None else []))
     _write_tsv(out/'molecules.tsv.gz', _tsv_rows(mols), MOLECULE_FIELDS, compress=True)
     _write_tsv(out/'broader.tsv.gz', _tsv_rows(broad), BROADER_FIELDS, compress=True)
+    if components is not None:
+        from .. import read_table as RT
+        RT.write_window_table(out/RT.READ_TABLE, RT.window_rows(sources, classes, rows, unscored, mols, components,
+                                                                 fold_spec(opt)))
     from ..report import write_report
     write_report(result, out)
     progress('complete', f'{len(classes)} classes; {len(rows)} class x channel estimates')
