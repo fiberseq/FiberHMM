@@ -126,6 +126,7 @@ python_functions = ["test_*"]
 addopts = "-v --tb=short -m 'not benchmark'"
 markers = [
     "benchmark: performance benchmark (run with '-m benchmark tests/benchmarks')",
+    "fibertools: runs the real fibertools-rs ``ft`` binary (skips when ft >= 0.13 is not installed)",
 ]
 
 [tool.coverage.run]

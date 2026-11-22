@@ -22,6 +22,11 @@ env:
   MINIMAP2_VERSION: "2.30"
   MINIMAP2_SHA256: "b4c0677f282f448dac7bc1cd2fe5a45d12cb07a8b1edc316a45a26bbf75b7f07"
   MINIMAP2_227_SHA256: "a8971db6fbde47bdb4cab505dc2c1b099c77c2343e80d9549ed9b39a99867a60"
+  # fibertools-rs release binary for tests/test_ft_fire_integration.py
+  # (ft fire on FiberHMM's MA-only default output).
+  FIBERTOOLS_VERSION: "0.13.0"
+  FIBERTOOLS_LINUX_SHA256: "1d2ee98e76b0a5feb36384aa47d4659038b6f9a979d05740acb01a859d314faf"
+  FIBERTOOLS_MACOS_ARM64_SHA256: "f555cd5bc62cadc898d8be9eb204894b40f828dd4015c28e3a3b330412bfd8a0"
 
 jobs:
   test:
@@ -59,6 +64,20 @@ jobs:
       - name: Install minimap2 and samtools (macOS)
         if: runner.os == 'macOS'
         run: brew install minimap2 samtools
+      - name: Install pinned fibertools-rs (ft)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            target=x86_64-unknown-linux-gnu; sha="$FIBERTOOLS_LINUX_SHA256"
+          else
+            target=aarch64-apple-darwin; sha="$FIBERTOOLS_MACOS_ARM64_SHA256"
+          fi
+          tarball="fibertools-rs-${target}.tar.xz"
+          curl -fsSL -o "$RUNNER_TEMP/$tarball" \
+            "https://github.com/fiberseq/fibertools-rs/releases/download/v${FIBERTOOLS_VERSION}/$tarball"
+          echo "$sha  $RUNNER_TEMP/$tarball" | shasum -a 256 -c -
+          tar -xJf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/fibertools-rs-${target}" >> "$GITHUB_PATH"
       - name: Install FiberHMM with all optional features and test tools
         run: |
           python -m pip install --upgrade pip
@@ -67,7 +86,8 @@ jobs:
         run: |
           minimap2 --version
           samtools --version | head -1
-          python -m pytest tests -q -p no:cacheprovider
+          ft --version
+          FIBERHMM_REQUIRE_FT=1 python -m pytest tests -q -p no:cacheprovider
 
   package:
     name: wheel smoke (${{ matrix.os }}, Python ${{ matrix.python-version }})
