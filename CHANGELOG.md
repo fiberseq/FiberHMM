@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.2.2
+
+### Fixed
+
+- `fiberhmm-scan` peaks builds its read rows from the `MA` tag first, as
+  FiberBrowser 3.1.1 does: footprints from the `MA` `nuc` group and
+  accessible stretches from the `MA` `msp` group, per family; the legacy
+  `ns`/`nl` and `as`/`al` tags fill only a family `MA` does not carry. A
+  record whose `MA` holds calls but no legacy tags used to give one neutral
+  row, and stale legacy tags beside a newer `MA` were read instead of it.
+  Peak scores change on such files; the browser parity golden is
+  regenerated from FiberBrowser 3.1.1.
+- An installed FiberHMM never runs `git`. The NFR/accessibility analysis and
+  the consensus frozen catalogue ran `git rev-parse` to record the commit
+  wherever the package was installed; on a Mac without the command-line
+  developer tools that opened macOS's "install developer tools" dialog on
+  every run. git now runs only from a source checkout; installed wheels use
+  the commit recorded at build time.
+
 ## 3.2.1
 
 ### Fixed
