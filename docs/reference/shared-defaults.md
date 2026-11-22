@@ -28,6 +28,7 @@ thinning) are listed per chemistry in
 | TF minimum opportunities | 3 | `--min-opps` |
 | Nucleosome demotion threshold | 90 bp | `--unify-threshold` |
 | Nucleosome split | LLR 4.0, 3 positions | `--split-min-llr`, `--split-min-opps` |
+| Nucleosome recall policy | `auto` = conservative (all chemistries); `topology` opt-in, refused for DddA | `--nuc-recall-policy` |
 | DAF chimeras | flag (0x200 + `xc:Z:strand_swap`); min segment 5, purity 0.8 | `--chimeras` |
 | DAF duplicates | Jaccard 0.95, ≥ 10 deaminations, ends within 50 bp | `--dedup-*` |
 | DAF insert consensus | ≥ 20 carriers | `--daf-insert-min-carriers` |

@@ -136,6 +136,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--split-min-llr` | `4.0` | Min accessible-run LLR to split a nucleosome; for DddA, the molecule-local linker-residue configuration LLR (default 4.0). |
 | `--split-min-opps` | `3` | Min informative positions in a nucleosome-splitting cut or DddA linker residue (default 3). |
 | `--ddda-derived-tf-max-edge-gap` | `12` | DddA phase-aware radial recall only: TF calls exposed solely by nucleosome refinement must have a deamination hit within BP on both sides (default 12). Original HMM-accessible TF scan space is unchanged. Use -1 to disable the safeguard. |
+| `--nuc-recall-policy` | `auto` | Nucleosome recall policy: conservative (default; auto resolves to it) or topology (keeps fragment structure in nucleosome recall; works well on some ONT Hia5 datasets). Not available for DddA. Choices: `auto`, `conservative`, `topology`. |
 | `--chimeras` | `flag` | DAF strand-swap chimeras: flag (default) retains reads uncalled with SAM 0x200 and xc:Z:strand_swap; remove drops all records of the read; keep disables detection and clears earlier FiberHMM chimera marks and attempts calls; split (needs --chimera-detector strict) cuts each chimeric alignment at its breakpoint gaps into single-strand pieces, one per segment (&lt;name&gt;/c0, &lt;name&gt;/c1, ... from left to right; a read with several switches gives more than two; the gaps are dropped, pieces shorter than --min-read-length are dropped, MM/ML are re-indexed to each piece; unmapped records stay whole and flagged) that are called separately. No strand-swap detection for m6A modes. Choices: `flag`, `remove`, `keep`, `split`. |
 | `--keep-chimeras` | off | Deprecated alias for --chimeras keep (DAF only). |
 | `--chimera-detector` | `standard` | DAF strand-swap chimera detector. standard (default): one CT/GA switch with --chimera-min-seg events per segment at --chimera-purity, every deamination counted (unchanged from 3.2.1). strict (opt-in): min_seg 10 and purity 0.9 by default, plus --chimera-min-baseq, --chimera-min-span, --chimera-multi-switch and --chimera-error-mask, duplicate-flagged reads not counted, a graded chimera row in QC, and --chimeras split. Choices: `standard`, `strict`. |
@@ -268,6 +269,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--split-min-llr` | `4.0` | Min accessible-cut LLR to split a footprint; for DddA, the molecule-local linker-residue configuration LLR (default 4.0) |
 | `--split-min-opps` | `3` | Min informative positions for a split cut or DddA linker residue (default 3) |
 | `--ddda-derived-tf-max-edge-gap` | `12` | DddA phase-aware radial recall only: require TF scan space opened solely by nucleosome refinement to have a deamination hit within BP on both sides (default 12; -1 disables). |
+| `--nuc-recall-policy` | `auto` | Nucleosome recall policy: conservative (default; auto resolves to it) or topology (keeps fragment structure in nucleosome recall; works well on some ONT Hia5 datasets). Not available for DddA. Choices: `auto`, `conservative`, `topology`. |
 | `--nuc-min-size` | `85` | Min refined nucleosome size; smaller footprints are demoted to accessible/MSP (default 85) |
 | `--msp-min-size` | `0` | Min re-derived MSP size to keep (default 0) |
 
@@ -307,6 +309,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--split-min-llr` | `4.0` | Min accessible-cut LLR to split a footprint; for DddA, the molecule-local linker-residue configuration LLR (default 4.0) |
 | `--split-min-opps` | `3` | Min informative positions for a split cut or DddA linker residue (default 3) |
 | `--ddda-derived-tf-max-edge-gap` | `12` | DddA phase-aware radial recall only: require TF scan space opened solely by nucleosome refinement to have a deamination hit within BP on both sides (default 12; -1 disables). |
+| `--nuc-recall-policy` | `auto` | Nucleosome recall policy: conservative (default; auto resolves to it) or topology (keeps fragment structure in nucleosome recall; works well on some ONT Hia5 datasets). Not available for DddA. Choices: `auto`, `conservative`, `topology`. |
 | `--nuc-min-size` | `85` | Min refined nucleosome size; smaller footprints are demoted to accessible/MSP (default 85) |
 | `--msp-min-size` | `0` | Min re-derived MSP size to keep (default 0) |
 
