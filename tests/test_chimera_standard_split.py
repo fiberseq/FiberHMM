@@ -218,3 +218,129 @@ def test_call_split_with_the_standard_detector_end_to_end(tmp_path):
     _call(bam, region_parallel, '--chimeras', 'split', '--min-read-length', '500',
           '--region-parallel', '--no-qc')
     assert [r.to_string() for r in records(region_parallel)] == [r.to_string() for r in out]
+
+
+def _minority_chimera(hdr, ref, dominant, start=8000, length=3000, cigar=None):
+    """A one-switch chimera, CT then GA, with one minority event of the
+    other strand in each segment. ``dominant`` ('CT' or 'GA') has more events
+    over the whole read, so it is the strand the read is R/Y-encoded for."""
+    n_ct, n_ga = (40, 25) if dominant == 'CT' else (25, 40)
+    left = [r for r in range(start + 200, start + 1400) if ref[r] == 'C'][:n_ct]
+    right = [r for r in range(start + 1700, start + 2900) if ref[r] == 'G'][:n_ga]
+    minority = {r: 'GA' for r in [r for r in range(start + 600, start + 700)
+                                  if ref[r] == 'G'][:1]}
+    minority.update({r: 'CT' for r in [r for r in range(start + 2300, start + 2400)
+                                       if ref[r] == 'C'][:1]})
+    events = set(left) | set(right) | set(minority)
+    no_events = set(range(start, start + length)) - events
+    strand = lambda r: minority.get(r, 'CT' if r < start + 1500 else 'GA')
+    return make_read(hdr, ref, 'chim', start, cigar or [(0, length)], strand,
+                     rate=1.0, no_events=no_events)
+
+
+def _iupac_copy(read, hdr):
+    """``read`` as ``fiberhmm-daf-encode`` writes it (R/Y SEQ and ``st``)."""
+    from fiberhmm.daf.encoder import encode_read_daf
+    encoded = pysam.AlignedSegment.fromstring(read.to_string(), hdr)
+    seq, st, _ = encode_read_daf(encoded)
+    quals = encoded.query_qualities
+    encoded.query_sequence = seq
+    encoded.query_qualities = quals
+    encoded.set_tag('st', st, value_type='Z')
+    return encoded
+
+
+def _piece_evidence(piece):
+    """(strand, event positions, SEQ) of a piece, live and payload extraction."""
+    from fiberhmm.inference import engine
+    live = engine._extract_fiber_read_from_pysam(piece, 'daf', 0, filter_chimeras=False)
+    payload = engine.extract_fiber_read_from_payload(
+        engine.make_apply_payload(piece, mode='daf'), 'daf', 0)
+    out = []
+    for fiber in (live, payload):
+        fiber = {k: v for k, v in fiber.items() if k != 'read_id'}
+        out.append((fiber['_daf_strand'], sorted(fiber['m6a_query_positions']),
+                    fiber['query_sequence']))
+    return out
+
+
+@pytest.mark.parametrize('detector', ['standard', 'strict'])
+@pytest.mark.parametrize('dominant', ['CT', 'GA'])
+def test_split_pieces_of_iupac_reads_match_md_only_reads(tmp_path, detector, dominant):
+    """Pieces of an R/Y-encoded chimera give the same strand and events as
+    pieces of the same read without encoding (MD only): the other-strand
+    piece is re-encoded for its own strand, not left with the parent's
+    minority marks and no st (the minority marks then decided its strand)."""
+    ref = reference()
+    hdr = header()
+    raw = _minority_chimera(hdr, ref, dominant)
+    encoded = _iupac_copy(raw, hdr)
+    assert encoded.get_tag('st') == dominant
+    kwargs = (dict(detector='strict', min_seg=5, purity=0.8, min_baseq=0, min_span=0,
+                   multi_switch=False, error_mask=False) if detector == 'strict' else {})
+    pieces = {}
+    for label, read in (('raw', raw), ('iupac', encoded)):
+        bam = write_bam(tmp_path / f'{label}.bam', [read])
+        spool = tmp_path / f'{label}.spool.bam'
+        stats = prepare_chimeras(bam, mode='split', spool_bam=str(spool),
+                                 min_read_length=100, **kwargs)
+        assert stats['split']['n_records_split'] == 1
+        pieces[label] = sorted(records(spool), key=lambda r: r.get_tag('xi'))
+    assert len(pieces['raw']) == len(pieces['iupac']) == 2
+    for raw_piece, iupac_piece, strand in zip(pieces['raw'], pieces['iupac'], ('CT', 'GA')):
+        assert iupac_piece.get_tag('st') == strand
+        assert (iupac_piece.query_sequence.count('Y' if strand == 'GA' else 'R') == 0)
+        assert iupac_piece.get_tag('MD') == raw_piece.get_tag('MD')
+        raw_evidence = _piece_evidence(raw_piece)
+        assert raw_evidence[0][0] == ('+' if strand == 'CT' else '-')
+        assert _piece_evidence(iupac_piece) == raw_evidence
+
+
+def test_split_pieces_of_iupac_reads_without_reference_evidence_keep_marks(tmp_path):
+    """With no MD and no reference the piece cannot be re-encoded: its marks
+    are kept as cut."""
+    from fiberhmm.inference.chimeras import _reencode_piece
+    from fiberhmm.inference.chimera_split import split_record
+    ref = reference()
+    hdr = header()
+    raw = _minority_chimera(hdr, ref, 'CT')
+    ct, ga, _ = get_daf_positions(raw, force_strand='CT')
+    seq = list(raw.query_sequence)
+    for i in ct:
+        seq[i] = 'Y'
+    for i in ga:
+        seq[i] = 'R'
+    encoded = pysam.AlignedSegment.fromstring(raw.to_string(), hdr)
+    encoded.query_sequence = ''.join(seq)
+    encoded.query_qualities = raw.query_qualities
+    encoded.set_tag('MD', None)
+    split = standard_breakpoints(encoded, None, 5, 0.8)
+    assert split is not None
+    pieces, _ = split_record(encoded, hdr, split)
+    assert len(pieces) == 2
+    for piece in pieces:
+        assert _reencode_piece(piece, None) is piece
+        assert 'Y' in piece.query_sequence or 'R' in piece.query_sequence
+
+
+def test_split_pieces_of_iupac_reads_keep_marks_on_inserted_bases():
+    """Re-encoding decodes aligned bases only: a mark on an inserted base has
+    no reference to re-derive it from and stays as cut."""
+    from fiberhmm.inference.chimeras import _reencode_piece
+    from fiberhmm.inference.chimera_split import split_record
+    ref = reference()
+    hdr = header()
+    raw = _minority_chimera(hdr, ref, 'CT', cigar=[(0, 1000), (1, 20), (0, 2000)])
+    encoded = _iupac_copy(raw, hdr)
+    seq = list(encoded.query_sequence)
+    seq[1005] = 'Y'                       # inside the insertion (query 1000-1019)
+    quals = encoded.query_qualities
+    encoded.query_sequence = ''.join(seq)
+    encoded.query_qualities = quals
+    split = standard_breakpoints(encoded, None, 5, 0.8)
+    pieces, _ = split_record(encoded, hdr, split)
+    right = _reencode_piece(pieces[1], None)
+    assert right.get_tag('st') == 'GA' and 'R' in right.query_sequence
+    offset = encoded.query_sequence.find(pieces[1].query_sequence)
+    assert offset <= 1005
+    assert right.query_sequence[1005 - offset] == 'Y'
