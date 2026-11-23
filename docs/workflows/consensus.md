@@ -499,6 +499,9 @@ saved evidence, for example with different `--parameters`, without reading
 the BAMs again. Saved evidence keeps the DddA CpG policy it was prepared
 with; evidence whose policy differs from the run's (including all DddA
 evidence written before 3.3.0) is refused, so re-extract it from the BAMs.
+DddB evidence written before 3.3.0 is refused for the same reason: it read
+DAF evidence in another order (MM/ML before `MD`; 3.3 reads R/Y, then `MD`,
+then MM/ML, as `fiberhmm-call` does).
 `--resume` takes one window or pooled run directory, not a
 multi-window parent (to finish an interrupted multi-window run, use
 [`--continue`](#long-runs-and-resuming)). The recaller runs in one pass, so `--stop-after`,

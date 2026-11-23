@@ -387,7 +387,12 @@
   took the basecaller's methylation marks as deaminations and scored
   different evidence from the call. Those BAMs give different recall,
   consensus and strand-rescue results now; R/Y-encoded and MD-only BAMs, and
-  `fiberhmm-call` output, are unchanged.
+  `fiberhmm-call` output, are unchanged. Saved DddB consensus evidence from
+  earlier versions (`--evidence`, `--resume`, `fiberhmm-transfer
+  --evidence`) is refused (exit 2) with a message to recompute it from the
+  BAMs; new DddA/DddB evidence records `daf_evidence_order=ry,md,mm` in its
+  manifest. Saved DddA evidence was already refused (CpG policy); Hia5
+  evidence is unaffected.
 
 - Lattice-recaller BF labels now use direct log-likelihood ratios against
   the fitted alternative mixture. Clipping posterior odds could erase strong
