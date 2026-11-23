@@ -545,8 +545,14 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
                 molecules[r['uid']]['nfr'][nfr_id].update(widest=int(w), map='closed' if not r['gaps'] else f'widest {int(w)} bp')
             return nfr, None
         if opt.fold_weights == 'heldout':
-            discovery_set = {(r['dataset'], r['uid']) for r in discovery_reads if r['callable']}
-            return nfr, (discovery_reads, reads, nreg, {(r['dataset'], r['uid']) for r in reads if (r['dataset'], r['uid']) not in discovery_set})
+            # held out = not in a discovery fold (a capped discovery leaves unsampled discovery-fold reads, which are
+            # not held out); no held-out read means no held-out fit, never a silent fit on every read
+            fit = {(r['dataset'], r['uid']) for r in reads if r['callable'] and fold_of[r['uid']] not in folds.discover}
+            if not fit:
+                nfr.update(status='not_analysable', message='No callable held-out-fold read in this region: the held-out '
+                                                            'configuration fit (fold_weights heldout) has no reads.')
+                return nfr, None
+            return nfr, (discovery_reads, reads, nreg, fit)
         return nfr, (discovery_reads, reads, nreg)
 
     def assemble(ni, nfr, fitted):

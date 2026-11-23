@@ -9,8 +9,9 @@ replay are the per-window cost).
 
 A finished window writes ``window_complete.json`` last (atomic), with a digest of the run's inputs, parameters and
 window and the size and SHA-256 of each output. ``--continue`` skips windows whose marker matches and whose files are
-intact and reruns the rest; it refuses when the BAMs (path, size, mtime), windows or parameters differ from the run
-record ``nfr_run.json``. A window that fails (or has no molecules) is reported with its status and error; the others
+intact and reruns the rest; it refuses when the BAMs (path, size, mtime), the DAF SNP mask (also by content), an
+explicit DAF run mask (FIBERHMM_DAF_RUN_MASK), windows or parameters differ from the run record ``nfr_run.json``.
+Reused windows take their location from the current output directory, which may have moved. A window that fails (or has no molecules) is reported with its status and error; the others
 still run. ``regions.json``/``regions.tsv`` (one row per window) and the combined ``variants.tsv`` and
 ``configurations.tsv`` (window name and region prepended) are rebuilt from the completed windows at the end of every
 attempt.
@@ -73,21 +74,40 @@ def code_digest():
     return _CODE
 
 
+def effective_daf_run_mask():
+    """The explicit DAF run mask in force for this run (inherited FIBERHMM_DAF_RUN_MASK / FIBERHMM_DAF_RUN_POLICY, or
+    one configured in this process) as [min_run_length, policy], else None (each dataset's chemistry default). Window
+    workers inherit it from the environment."""
+    from fiberhmm.core.bam_reader import daf_run_mask_explicit, daf_run_mask_min_length, daf_run_mask_policy
+    return [daf_run_mask_min_length(), daf_run_mask_policy()] if daf_run_mask_explicit() else None
+
+
 def run_record(datasets, windows, values, nfr):
     """What --continue must match. BAMs are identified by path, size and mtime (no content hash: these BAMs are often
-    tens of GB); --cores, --window-jobs and --json-progress are execution-only."""
+    tens of GB); the DAF SNP mask (input.daf_snp_mask) by its content SHA-256 as well, and an explicit DAF run mask by
+    its effective settings (both recorded only when given, so runs without them keep their record and digests);
+    --cores, --window-jobs and --json-progress are execution-only."""
     from fiberhmm import __version__
+    from fiberhmm.inference.consensus.batch import file_identity
+    from fiberhmm.inference.consensus.bam import _flatten_paths
     values = deepcopy(values)
     values.get('compute', {}).pop('cores', None)
     files = []
     for d in datasets:
-        for p in d.get('paths') or []:
+        for p in _flatten_paths(d.get('paths') or []):       # a single path may be given as a string, as the loader reads it
             st = Path(p).stat()
             files.append(dict(dataset_id=d['dataset_id'], path=str(Path(p).resolve()), size=st.st_size, mtime_ns=st.st_mtime_ns))
-    return dict(datasets=[dict(dataset_id=d['dataset_id'], chemistry=d.get('chemistry'), paths=list(d.get('paths') or []))
-                          for d in datasets],
-                files=files, windows=[{k: w[k] for k in ('chrom', 'start', 'end', 'name')} for w in windows],
-                loader_parameters=values, nfr=nfr, fiberhmm=__version__)
+    record = dict(datasets=[dict(dataset_id=d['dataset_id'], chemistry=d.get('chemistry'),
+                                 paths=_flatten_paths(d.get('paths') or [])) for d in datasets],
+                  files=files, windows=[{k: w[k] for k in ('chrom', 'start', 'end', 'name')} for w in windows],
+                  loader_parameters=values, nfr=nfr, fiberhmm=__version__)
+    mask = (values.get('input') or {}).get('daf_snp_mask')
+    if mask:
+        record['daf_snp_mask'] = file_identity(mask)
+    run_mask = effective_daf_run_mask()
+    if run_mask is not None:
+        record['daf_run_mask'] = run_mask
+    return record
 
 
 class ContinueRefused(ValueError):
@@ -105,7 +125,8 @@ def open_run(out, record, continue_run):
             raise ContinueRefused(f'{out} has no {RUN_RECORD}; --continue needs the output directory of a fiberhmm-nfr '
                                   'BED run')
         previous = json.loads(path.read_text())
-        changed = sorted(k for k in record if json.loads(json.dumps(record[k], default=str)) != previous.get(k))
+        keys = set(record) | (set(previous) - {'schema'})      # an entry present in only one attempt differs too
+        changed = sorted(k for k in keys if json.loads(json.dumps(record.get(k), default=str)) != previous.get(k))
         if previous.get('schema') != RUN_SCHEMA or changed:
             raise ContinueRefused('--continue refused: ' + (', '.join(changed) or 'schema') + ' differ from the original run '
                                   f'in {out}. Use the original BAMs, BED and parameters, or a new --output directory '
@@ -136,7 +157,7 @@ def window_task(spec):
     import traceback
     from fiberhmm.inference.consensus.parameters import parse_options
     from fiberhmm.inference.consensus.execution import single_threaded_blas
-    from .cli import load_payload
+    from .cli import load_payload, loader_sampling
     from .workflow import NFROptions, run_accessibility
     folder = Path(spec['folder'])
     started = time.monotonic()
@@ -146,9 +167,7 @@ def window_task(spec):
             shutil.rmtree(folder)          # a partial or stale attempt
         options = parse_options(spec['values'])
         opt = NFROptions.from_params(spec['nfr'])
-        caps = [opt.max_quantification_molecules, opt.max_discovery_molecules]
-        sampling = dict(cap=max(caps) if all(caps) else 0, discovery_cap=opt.max_discovery_molecules,
-                        seed=opt.sample_seed, mode='nfr', windows=None, nfr_options=opt)
+        sampling = loader_sampling(opt)       # BED windows always detect NFRs (no nfr_regions): windows=None
         with single_threaded_blas():
             payload = load_payload(spec['datasets'], spec['region'], spec['values'], options, sampling=sampling)
             molecules = sum(len(s['units']) for s in payload['strata'])
@@ -231,7 +250,10 @@ def _run_locked(out, windows, datasets, values, nfr, *, cores, window_jobs, cont
     for s in specs:
         marker = completed(s['folder'], s['digest'])
         if marker is not None:
+            # location and window from the current spec (the output directory may have moved since); statistics only
+            # from the marker
             rows[s['index']] = {k: marker.get(k) for k in (*SUMMARY_FIELDS, 'pairs', 'warnings')}
+            rows[s['index']].update(index=s['index'], name=s['name'], folder=s['folder'], **s['region'])
     pending = [s for s in specs if s['index'] not in rows]
     total, reused = len(specs), len(rows)
     jobs = max(1, min(len(pending) or 1, cores, window_jobs or cores))

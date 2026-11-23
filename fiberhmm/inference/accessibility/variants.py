@@ -525,7 +525,9 @@ def quantify(reads, variants, es, opt, progress=None, fit=None):
     fit_rows = None
     if fit is not None:
         fit_rows = np.flatnonzero([(r['dataset'], r['uid']) in fit for r in callable_reads])
-    if fit_rows is not None and len(fit_rows):
+        if not len(fit_rows):
+            raise ValueError('quantify: no callable read is in the fit set (an empty held-out fit is not analysable)')
+    if fit_rows is not None:
         w, _ = _em(np.ascontiguousarray(LL[fit_rows]))
         P = _posteriors(LL, w)
     elif len(rows):
@@ -536,7 +538,7 @@ def quantify(reads, variants, es, opt, progress=None, fit=None):
     prev = contains @ w
     rng = np.random.default_rng(opt.seed)
     boots = []
-    LLb = LL if fit_rows is None or not len(fit_rows) else np.ascontiguousarray(LL[fit_rows])
+    LLb = LL if fit_rows is None else np.ascontiguousarray(LL[fit_rows])
     if len(rows):
         for b in range(opt.bootstrap):
             if progress and b % BOOT_CHUNK == 0:
