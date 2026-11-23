@@ -176,9 +176,12 @@ def test_recall_worker_payload_reads_ma_first(tables, reverse):
         assert got['legacy_only'] != got['full']
 
 
-def test_payload_with_undecided_legacy_frame_proceeds_on_ma_calls():
+def test_payload_with_undecided_legacy_frame_proceeds_on_ma_calls(monkeypatch):
     from fiberhmm.cli import recall_tfs
 
+    # Module-level frame state is per run; earlier in-process recall-tfs tests can leave it set.
+    monkeypatch.setitem(recall_tfs._UNDECIDED_FRAME, 'assumed', False)
+    monkeypatch.setitem(recall_tfs._UNDECIDED_FRAME, 'reason', '')
     read = _bare(reverse=True)
     read.set_tag('MA', '1000;nuc.:101-150;msp.:301-200')
     _set_legacy(read, [500], [140])
