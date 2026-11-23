@@ -267,7 +267,8 @@ automatically; each has its own section in [DAF-seq](daf-seq.md):
    `--chimera-purity` 0.8 tune it; the opt-in
    [strict detector](daf-seq.md#strict-detector-opt-in),
    `--chimera-detector strict`, adds base-quality, span, several-switch and
-   error-mask filters, a QC grade and `--chimeras split`) and
+   error-mask filters and a QC grade; `--chimeras split` works with either
+   detector) and
    [adjacent-target thinning](daf-seq.md#adjacent-target-thinning)
    (`--daf-mask-runs`, default 2 with `--daf-run-policy keep-one` for DddA,
    off for DddB).
