@@ -164,8 +164,15 @@
   datasets resolve to different masks, and refuses saved evidence that mixes
   them; a non-default `input.ddda_cpg_mask_policy` counts as explicit. A
   `fiberhmm-transfer --freeze-run` catalog fixes `input.use_m5c` to the mask
-  its source run used. Default output is unchanged. See "When to turn the
-  DddA CpG mask off" on the Calling page.
+  its source run used. Each active `@PG` history of a merged BAM is read
+  separately: histories that disagree make replays (and consensus) refuse the
+  BAM until the mask is set explicitly, and a run given it records itself on
+  the disagreeing histories. Runs that inherited or were given the setting
+  record `cpg_mask_source=inherited|explicit` in DS, so an inherited `off`
+  survives custom-model recalls; the recorded `cpg_mask=` beats the command
+  line, whose last m5C switch counts for older records.
+  `fiberhmm-posteriors -i -` (stdin) inherits the setting too. Default output
+  is unchanged. See "When to turn the DddA CpG mask off" on the Calling page.
 - `--nuc-recall-policy topology` is available again (opt-in) in
   `fiberhmm-call`, `fiberhmm-recall-nucs` and `fiberhmm-recall-tfs`. It keeps
   fragment structure in nucleosome recall and works well on some ONT Hia5
