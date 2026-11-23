@@ -1367,6 +1367,23 @@ def _drop_stale_fire_groups(groups, names, aq, msps, msp_strand: str = '.'):
     return kept_groups, kept_names, kept_aq
 
 
+def _legacy_msp_scores(read):
+    """``{(start, length): aq byte}`` of the read's legacy ``as``/``al``/``aq``
+    (one score per MSP, distinct intervals), else None."""
+    from fiberhmm.io.legacy_tags import array_tag_pair, int_array
+
+    if not read.has_tag('aq'):
+        return None
+    pair = array_tag_pair(read, 'as', 'al')
+    scores = int_array(read.get_tag('aq'))
+    if pair is None or scores is None or len(scores) != len(pair[0]):
+        return None
+    keys = list(zip(pair[0], pair[1]))
+    if len(set(keys)) != len(keys):
+        return None
+    return {key: max(0, min(255, int(q))) for key, q in zip(keys, scores)}
+
+
 def write_ma_tags(read, read_length: int,
                   tf_calls: Sequence[TFCall],
                   kept_nucs: Sequence[Tuple[int, int]],
@@ -1407,7 +1424,9 @@ def write_ma_tags(read, read_length: int,
 
     ``msps_replaced=False`` (``fiberhmm-call --hmm-only --keep-msps``) means ``msps`` are
     the record's own retained MSPs, not new calls: a legacy ``aq`` scoring
-    them (fibertools FIRE) is kept. Otherwise any ``aq`` is removed.
+    them (fibertools FIRE) is kept -- with ``also_write_legacy`` only when it
+    scored exactly the MSPs written, re-keyed onto them by interval, else it
+    is removed. Otherwise any ``aq`` is removed.
     """
     import array as pyarray
 
@@ -1449,6 +1468,10 @@ def write_ma_tags(read, read_length: int,
     # Retained MSPs (msps_replaced=False) keep their FIRE aq.
     if msps_replaced and read.has_tag('aq'):
         read.set_tag('aq', None)
+    # Retained MSPs rewritten as legacy as/al: their aq is re-keyed onto the
+    # written intervals below, so record which interval each score belongs to.
+    legacy_msp_scores = (_legacy_msp_scores(read)
+                         if also_write_legacy and not msps_replaced else None)
 
     # Default nq for kept nucs to 0 (sentinel for "unverified") if not provided.
     nq_values = list(nq_for_kept_nucs) if nq_for_kept_nucs is not None \
@@ -1679,6 +1702,17 @@ def write_ma_tags(read, read_length: int,
         if a_s:
             read.set_tag('as', pyarray.array('I', a_s))
             read.set_tag('al', pyarray.array('I', a_l))
+            if read.has_tag('aq'):
+                # A kept legacy aq (fibertools <= 0.12 FIRE) stays only when it
+                # scored exactly these MSPs, in the order now written; scores
+                # never move onto MSPs they did not score.
+                written = list(zip(a_s, a_l))
+                if (legacy_msp_scores is not None and len(written) == len(legacy_msp_scores)
+                        and all(iv in legacy_msp_scores for iv in written)):
+                    read.set_tag('aq', pyarray.array(
+                        'B', [legacy_msp_scores[iv] for iv in written]))
+                else:
+                    read.set_tag('aq', None)
         else:
             for tag in ('as', 'al', 'aq'):
                 if read.has_tag(tag):
