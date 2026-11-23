@@ -257,7 +257,10 @@
   listed read-name hash folds and assigns membership to every read. It adds
   `fold` and `discovery` columns to `molecules.tsv.gz` and a `cross_fit`
   block to `result.json`. `--fold-weights heldout` fits the EM weights on the
-  held-out folds. The fold helper is shared: `fiberhmm.io.folds`.
+  held-out folds. The fold helper is shared: `fiberhmm.io.folds`. With
+  molecule caps, every molecule is loaded and the caps apply within the
+  folds. `--fold-weights heldout` fits only reads outside the discovery folds;
+  a region without any is reported `not_analysable`.
 - **Edge consistency in `variants.tsv`:** `member_gaps`, `edge_within`
   (both edges within `--edge-tolerance-bp`, default 25, of the variant's
   edges), `edge_mad_L`, `edge_mad_R` and `edge_dispersion`. The docs now
@@ -268,6 +271,8 @@
   `--continue`, a per-window completion marker, per-window `failed` and
   `no_molecules` statuses (other windows keep running), `regions.tsv`, the
   combined `variants.tsv`/`configurations.tsv`, and progress with an ETA.
+  `--continue` also refuses a changed DAF SNP mask (by content) or DAF run
+  mask (`FIBERHMM_DAF_RUN_MASK`), and works after the output directory moves.
 - **Per-read class posteriors.** `fiberhmm-consensus --read-table` writes
   `read_posteriors.tsv.gz`: every read × discovered class, with the posterior,
   label, the group's broader / other-shape / accessible posteriors, the EM
