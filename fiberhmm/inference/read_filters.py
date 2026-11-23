@@ -450,6 +450,34 @@ def strip_stale_call_tags(read, *, legacy_tags=LEGACY_CALL_TAGS,
             _strip_tag(read, "AN")
 
 
+def _drop_legacy_msps_superseded_by_annotation(read) -> None:
+    """Fix the MSPs ``--keep-msps`` keeps BEFORE any call is stripped.
+
+    When MA/Ma holds the read's nucleosome/MSP calls (the shared MA-first
+    rule), its ``msp`` group -- possibly absent, i.e. no MSPs -- is the MSP
+    selection. Legacy ``as``/``al`` (and their ``aq``) that do not list exactly
+    those MSPs are stale and are removed here: once the ``nuc`` group is
+    stripped (MA may disappear with it) the resolver would otherwise fall back
+    to them and resurrect MSPs MA did not call. Legacy MSPs that agree with
+    MA stay, with their FIRE ``aq``. Runs after the caller has carried the
+    record into molecular frame (MA and legacy tags both molecular)."""
+    from fiberhmm.io.footprint_calls import resolve_footprint_tags
+    from fiberhmm.io.legacy_tags import array_tag_pair
+
+    if not (read.has_tag("as") or read.has_tag("al") or read.has_tag("aq")):
+        return
+    calls = resolve_footprint_tags(read, True, ma_molecular=True, ma_evidence=True)
+    if not calls or calls.get("source") == "legacy":
+        return
+    selected = sorted(zip((int(v) for v in calls.get("as", ())),
+                          (int(v) for v in calls.get("al", ()))))
+    legacy = array_tag_pair(read, "as", "al")
+    if legacy is not None and sorted(zip(legacy[0], legacy[1])) == selected:
+        return
+    for tag in ("as", "al", "aq"):
+        _strip_tag(read, tag)
+
+
 def strip_footprint_calls_keep_msps(read) -> None:
     """``strip_stale_call_tags`` for ``fiberhmm-call --hmm-only --keep-msps``:
     remove the footprint calls a new HMM pass replaces and keep the record's
@@ -466,6 +494,7 @@ def strip_footprint_calls_keep_msps(read) -> None:
     """
     if not hasattr(read, "has_tag"):
         return
+    _drop_legacy_msps_superseded_by_annotation(read)
     for tag in ("ns", "nl", "nq", HARMONIZED_LEGACY_TAG):
         _strip_tag(read, tag)
     if not read.has_tag("MA") and read.has_tag("Ma"):
