@@ -73,3 +73,42 @@ def test_no_heldout_read_is_an_unanalysable_fit_not_a_fit_on_every_read():
                                                discover_fold_spec='mod=10,discover=0-8', fold_weights='heldout'))
     assert r['nfrs'] and all(n['status'] == 'not_analysable' and 'held-out' in n['message'] for n in r['nfrs'])
     assert not any(n['variants'] for n in r['nfrs'])
+
+
+@pytest.fixture
+def no_run_mask(monkeypatch):
+    from fiberhmm.core import bam_reader
+    for name in ('FIBERHMM_DAF_RUN_MASK', 'FIBERHMM_DAF_RUN_POLICY'):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(bam_reader, '_DAF_RUN_MASK_MIN', None)
+    monkeypatch.setattr(bam_reader, '_DAF_RUN_POLICY', None)
+    monkeypatch.setattr(bam_reader, '_DAF_RUN_MASK_CONFIGURED', False)
+    return bam_reader
+
+
+def test_continue_refuses_a_changed_snp_mask_or_run_mask(tmp_path, monkeypatch, no_run_mask):
+    import os
+    bam = tmp_path/'sample.bam'; bam.write_bytes(b'not read')
+    mask = tmp_path/'mask.bed'; mask.write_text('chr1\t10\t11\n')
+    datasets, windows = [dict(dataset_id='d', paths=[str(bam)])], [dict(chrom='chr1', start=0, end=100, name='w')]
+    values = {'input': {'daf_snp_mask': str(mask)}}
+    out = tmp_path/'run'; out.mkdir()
+    first = batch.run_record(datasets, windows, values, {})
+    digest = batch.open_run(out, first, False)
+    assert batch.open_run(out, batch.run_record(datasets, windows, values, {}), True) == digest
+    # the mask edited in place, size and mtime preserved
+    st = mask.stat()
+    mask.write_text('chr1\t20\t21\n'); os.utime(mask, ns=(st.st_atime_ns, st.st_mtime_ns))
+    with pytest.raises(batch.ContinueRefused, match='daf_snp_mask'):
+        batch.open_run(out, batch.run_record(datasets, windows, values, {}), True)
+    mask.write_text('chr1\t10\t11\n'); os.utime(mask, ns=(st.st_atime_ns, st.st_mtime_ns))
+    # an explicit DAF run mask from the environment
+    monkeypatch.setenv('FIBERHMM_DAF_RUN_MASK', '6')
+    with pytest.raises(batch.ContinueRefused, match='daf_run_mask'):
+        batch.open_run(out, batch.run_record(datasets, windows, values, {}), True)
+
+
+def test_runs_without_masks_keep_their_record(tmp_path, no_run_mask):
+    bam = tmp_path/'sample.bam'; bam.write_bytes(b'not read')
+    record = batch.run_record([dict(dataset_id='d', paths=[str(bam)])], [dict(chrom='chr1', start=0, end=9, name='w')], {}, {})
+    assert set(record) == {'datasets', 'files', 'windows', 'loader_parameters', 'nfr', 'fiberhmm'}

@@ -73,10 +73,21 @@ def code_digest():
     return _CODE
 
 
+def effective_daf_run_mask():
+    """The explicit DAF run mask in force for this run (inherited FIBERHMM_DAF_RUN_MASK / FIBERHMM_DAF_RUN_POLICY, or
+    one configured in this process) as [min_run_length, policy], else None (each dataset's chemistry default). Window
+    workers inherit it from the environment."""
+    from fiberhmm.core.bam_reader import daf_run_mask_explicit, daf_run_mask_min_length, daf_run_mask_policy
+    return [daf_run_mask_min_length(), daf_run_mask_policy()] if daf_run_mask_explicit() else None
+
+
 def run_record(datasets, windows, values, nfr):
     """What --continue must match. BAMs are identified by path, size and mtime (no content hash: these BAMs are often
-    tens of GB); --cores, --window-jobs and --json-progress are execution-only."""
+    tens of GB); the DAF SNP mask (input.daf_snp_mask) by its content SHA-256 as well, and an explicit DAF run mask by
+    its effective settings (both recorded only when given, so runs without them keep their record and digests);
+    --cores, --window-jobs and --json-progress are execution-only."""
     from fiberhmm import __version__
+    from fiberhmm.inference.consensus.batch import file_identity
     from fiberhmm.inference.consensus.bam import _flatten_paths
     values = deepcopy(values)
     values.get('compute', {}).pop('cores', None)
@@ -85,10 +96,17 @@ def run_record(datasets, windows, values, nfr):
         for p in _flatten_paths(d.get('paths') or []):       # a single path may be given as a string, as the loader reads it
             st = Path(p).stat()
             files.append(dict(dataset_id=d['dataset_id'], path=str(Path(p).resolve()), size=st.st_size, mtime_ns=st.st_mtime_ns))
-    return dict(datasets=[dict(dataset_id=d['dataset_id'], chemistry=d.get('chemistry'),
-                               paths=_flatten_paths(d.get('paths') or [])) for d in datasets],
-                files=files, windows=[{k: w[k] for k in ('chrom', 'start', 'end', 'name')} for w in windows],
-                loader_parameters=values, nfr=nfr, fiberhmm=__version__)
+    record = dict(datasets=[dict(dataset_id=d['dataset_id'], chemistry=d.get('chemistry'),
+                                 paths=_flatten_paths(d.get('paths') or [])) for d in datasets],
+                  files=files, windows=[{k: w[k] for k in ('chrom', 'start', 'end', 'name')} for w in windows],
+                  loader_parameters=values, nfr=nfr, fiberhmm=__version__)
+    mask = (values.get('input') or {}).get('daf_snp_mask')
+    if mask:
+        record['daf_snp_mask'] = file_identity(mask)
+    run_mask = effective_daf_run_mask()
+    if run_mask is not None:
+        record['daf_run_mask'] = run_mask
+    return record
 
 
 class ContinueRefused(ValueError):
@@ -106,7 +124,8 @@ def open_run(out, record, continue_run):
             raise ContinueRefused(f'{out} has no {RUN_RECORD}; --continue needs the output directory of a fiberhmm-nfr '
                                   'BED run')
         previous = json.loads(path.read_text())
-        changed = sorted(k for k in record if json.loads(json.dumps(record[k], default=str)) != previous.get(k))
+        keys = set(record) | (set(previous) - {'schema'})      # an entry present in only one attempt differs too
+        changed = sorted(k for k in keys if json.loads(json.dumps(record.get(k), default=str)) != previous.get(k))
         if previous.get('schema') != RUN_SCHEMA or changed:
             raise ContinueRefused('--continue refused: ' + (', '.join(changed) or 'schema') + ' differ from the original run '
                                   f'in {out}. Use the original BAMs, BED and parameters, or a new --output directory '
