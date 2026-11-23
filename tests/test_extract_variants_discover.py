@@ -367,6 +367,86 @@ def test_cache_hit_miss_and_invalidation(fiberseq, tmp_path):
     assert meta["cache_key"] == rebuilt.key and meta["caller"] == "pileup"
 
 
+def _restore_stat(path, st):
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))
+    after = os.stat(path)
+    assert (after.st_size, after.st_mtime_ns) == (st.st_size, st.st_mtime_ns)
+
+
+def _uncompressed_bam(path, records, drop_alt_at=None, ref=None):
+    """An uncompressed BAM of ``records`` (same byte size for same-length reads); with
+    ``drop_alt_at``, every read covering that position carries the REF base there."""
+    with pysam.AlignmentFile(records) as src, pysam.AlignmentFile(str(path), "wbu", template=src) as out:
+        for a in src:
+            if drop_alt_at is not None and a.reference_start <= drop_alt_at < a.reference_end:
+                q = drop_alt_at - a.reference_start  # plain M cigar
+                seq, quals = a.query_sequence, a.query_qualities
+                a.query_sequence = seq[:q] + ref[drop_alt_at] + seq[q + 1:]
+                a.query_qualities = quals
+            out.write(a)
+    pysam.index(str(path))
+    return str(path)
+
+
+def test_cache_follows_contents_not_size_and_mtime(fiberseq, tmp_path):
+    """Replaced BAM or FASTA contents with the size and mtime restored invalidate the cached
+    VCF; unchanged files still reuse it (and are not hashed again from a fresh process)."""
+    ref, snvs, bam0, _ = fiberseq
+    site = sorted(p for p, (_a, af) in snvs.items() if af < 1.0)[0]
+    bam = _uncompressed_bam(tmp_path / "u.bam", bam0)
+    other = _uncompressed_bam(tmp_path / "other.bam", bam0, drop_alt_at=site, ref=ref)
+    assert os.path.getsize(bam) == os.path.getsize(other)
+    first = _discover(bam, tmp_path)
+    assert site in vcf_records(first.vcf)
+    assert _discover(bam, tmp_path).reused
+    st, st_bai = os.stat(bam), os.stat(bam + ".bai")
+    shutil.copyfile(other, bam)
+    shutil.copyfile(other + ".bai", bam + ".bai")
+    _restore_stat(bam, st)
+    _restore_stat(bam + ".bai", st_bai)
+    replaced = _discover(bam, tmp_path)
+    assert not replaced.reused and replaced.key != first.key
+    assert site not in vcf_records(replaced.vcf)
+    assert _discover(bam, tmp_path).reused
+
+    # the reference FASTA: one base changed, same length, mtime restored
+    plain = write_bam(tmp_path / "plain.bam", ref, simulate(ref, snvs, seed=4), md=False)
+    fasta = write_fasta(tmp_path / "ref.fa", ref)
+    base = _discover(plain, tmp_path, reference=fasta)
+    st = os.stat(fasta)
+    pos = 1000
+    with open(fasta, "r+") as handle:
+        text = handle.read()
+        offset = len(f">{CHROM}\n") + pos + pos // 60
+        assert text[offset] == ref[pos]
+        handle.seek(offset)
+        handle.write("C" if ref[pos] != "C" else "G")
+    _restore_stat(fasta, st)
+    changed = _discover(plain, tmp_path, reference=fasta)
+    assert not changed.reused and changed.key != base.key
+
+
+def test_content_digests_are_memoised_by_stat_key(fiberseq, tmp_path, monkeypatch):
+    """Unchanged inputs are not re-hashed on a later run (the digest memo lives in the
+    cache folder and follows the run_state stat-key rule)."""
+    from fiberhmm.io import run_state
+    _ref, _snvs, bam0, _ = fiberseq
+    bam = str(tmp_path / "m.bam")
+    shutil.copy(bam0, bam)
+    shutil.copy(bam0 + ".bai", bam + ".bai")
+    # files written just now are "racily clean": pretend the hashing happens later
+    later = run_state._now_ns() + 10 * run_state.RACY_MARGIN_NS
+    monkeypatch.setattr(run_state, "_now_ns", lambda: later)
+    hashed = []
+    real = run_state.sha256_file
+    monkeypatch.setattr(run_state, "sha256_file", lambda path, *a, **k: hashed.append(path) or real(path, *a, **k))
+    first = _discover(bam, tmp_path)
+    assert os.path.realpath(bam) in hashed
+    hashed.clear()
+    again = _discover(bam, tmp_path)
+    assert again.reused and again.key == first.key and hashed == []
+
+
 def test_cores_and_chunks_do_not_change_the_vcf(fiberseq, tmp_path):
     _ref, _snvs, bam, _ = fiberseq
     one = _discover(bam, tmp_path / "one", chunk_bp=5000, cores=1)
