@@ -545,17 +545,12 @@ def _cpg_branches(header) -> List[Tuple[str, Optional[str]]]:
     chain; the active histories are the chain ends (records no other record
     names as ``PP``). Each one's mask is that of the nearest caller record on
     its ``PP`` chain (None when that record does not decide); chains without a
-    caller record made no calls and are left out. A header with no ``PP``
-    links at all is one history in header order."""
+    caller record made no calls and are left out. A record without ``PP`` is
+    a root of its own history: header order cannot establish ancestry (e.g.
+    ``samtools merge --no-PG`` of two called BAMs), and FiberHMM and htslib
+    link every record they append to the one before it."""
     hd = header.to_dict() if hasattr(header, 'to_dict') else dict(header or {})
     pgs = [pg for pg in hd.get('PG', []) or [] if isinstance(pg, dict)]
-    if not any(pg.get('PP') for pg in pgs):
-        for pg in reversed(pgs):
-            decision = _cpg_record_decision(pg)
-            if decision is not _SKIP:
-                return [(str(pgs[-1].get('ID', '')),
-                         None if decision is _UNDECIDED else decision)]
-        return []
     index = {}
     for i, pg in enumerate(pgs):
         index[str(pg.get('ID', ''))] = i

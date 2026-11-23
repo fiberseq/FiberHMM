@@ -322,12 +322,12 @@ def resolve_ddda_cpg_policy(input_options, recorded=()):
         return input_options.ddda_cpg_mask_policy
     from fiberhmm.nuc.records import CPG_MASK_MIXED
     offs = {value == 'off' for value in recorded if value != CPG_MASK_MIXED}
-    if offs == {True}:
-        return 'off'
     if offs == {True, False} or CPG_MASK_MIXED in recorded:
         raise ValueError('its BAMs (or the caller histories merged into one BAM) were called with and without '
                          'the DddA CpG mask (fiberhmm-call --no-use-m5c); '
                          'set --use-m5c or --no-use-m5c (input.use_m5c) explicitly, or load them as separate datasets')
+    if offs == {True}:
+        return 'off'
     return input_options.ddda_cpg_mask_policy
 
 
