@@ -118,15 +118,18 @@ def write_plasmid_inputs(workdir: Path) -> tuple[Path, Path]:
 
 
 def footprint_reads(path: Path) -> int:
-    """Mapped reads carrying paired non-empty ns/nl and an MA tag."""
+    """Mapped reads whose MA tag carries a non-empty nuc group (FiberHMM 3.3 writes calls to MA;
+    legacy ns/nl only with --legacy-tags)."""
     n = 0
     with pysam.AlignmentFile(str(path), check_sq=False) as bam:
         for read in bam.fetch(until_eof=True):
-            if read.is_unmapped or not (read.has_tag("ns") and read.has_tag("nl")):
+            if read.is_unmapped or not read.has_tag("MA"):
                 continue
-            starts, lengths = list(read.get_tag("ns")), list(read.get_tag("nl"))
-            if starts and len(starts) == len(lengths) and read.has_tag("MA"):
-                n += 1
+            for group in str(read.get_tag("MA")).split(";")[1:]:
+                head, _, body = group.partition(":")
+                if head.startswith("nuc") and any("-" in item for item in body.split(",")):
+                    n += 1
+                    break
     return n
 
 
