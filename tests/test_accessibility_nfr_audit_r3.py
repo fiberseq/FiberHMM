@@ -112,3 +112,24 @@ def test_runs_without_masks_keep_their_record(tmp_path, no_run_mask):
     bam = tmp_path/'sample.bam'; bam.write_bytes(b'not read')
     record = batch.run_record([dict(dataset_id='d', paths=[str(bam)])], [dict(chrom='chr1', start=0, end=9, name='w')], {}, {})
     assert set(record) == {'datasets', 'files', 'windows', 'loader_parameters', 'nfr', 'fiberhmm'}
+
+
+def test_continue_after_moving_the_output_directory_keeps_reused_windows(tmp_path, capsys):
+    from fiberhmm.inference.accessibility.cli import main
+    from test_accessibility_nfr import nfr_bam
+    bam = nfr_bam(tmp_path/'nfr.bam')
+    bed = tmp_path/'w.bed'
+    bed.write_text('chr1\t700\t2400\tlocus\nchr1\t800\t2300\tinner\n')
+    common = ['--bam', str(bam), '--bed', str(bed), '--bootstrap', '0', '--cores', '1', '--fast-landscape']
+    main(common + ['--output', str(tmp_path/'run')])
+    capsys.readouterr()
+    before = (tmp_path/'run'/'variants.tsv').read_text()
+    (tmp_path/'run'/'window_000002'/'window_complete.json').unlink()        # interrupted before the second window ended
+    (tmp_path/'run').rename(tmp_path/'moved')
+    main(common + ['--output', str(tmp_path/'moved'), '--continue'])
+    capsys.readouterr()
+    summary = json.loads((tmp_path/'moved'/'regions.json').read_text())
+    assert [r['status'] for r in summary] == ['complete', 'complete']
+    assert [r['folder'] for r in summary] == [str((tmp_path/'moved'/f'window_{i:06d}').resolve()) for i in (1, 2)]
+    assert {ln.split('\t')[0] for ln in (tmp_path/'moved'/'variants.tsv').read_text().splitlines()[1:]} == {'locus', 'inner'}
+    assert (tmp_path/'moved'/'variants.tsv').read_text() == before

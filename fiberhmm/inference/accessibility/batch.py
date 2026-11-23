@@ -249,7 +249,10 @@ def _run_locked(out, windows, datasets, values, nfr, *, cores, window_jobs, cont
     for s in specs:
         marker = completed(s['folder'], s['digest'])
         if marker is not None:
+            # location and window from the current spec (the output directory may have moved since); statistics only
+            # from the marker
             rows[s['index']] = {k: marker.get(k) for k in (*SUMMARY_FIELDS, 'pairs', 'warnings')}
+            rows[s['index']].update(index=s['index'], name=s['name'], folder=s['folder'], **s['region'])
     pending = [s for s in specs if s['index'] not in rows]
     total, reused = len(specs), len(rows)
     jobs = max(1, min(len(pending) or 1, cores, window_jobs or cores))
