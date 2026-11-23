@@ -9,7 +9,7 @@ and the repository:
   title   = {FiberHMM: chromatin footprint calling from single-molecule
              Fiber-seq and DAF-seq data},
   author  = {{FiberHMM Authors}},
-  version = {3.3.0},
+  version = {3.2.2},
   year    = {2026},
   url     = {https://github.com/fiberseq/FiberHMM}
 }
