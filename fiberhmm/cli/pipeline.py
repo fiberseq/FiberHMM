@@ -152,8 +152,8 @@ def build_parser() -> argparse.ArgumentParser:
     call.add_argument("--chimeras", choices=["flag", "remove", "keep", "split"], default=None,
                       help="DAF strand-swap chimeras: flag (default) retains reads "
                            "marked and uncalled; remove drops them; keep disables detection; "
-                           "split (needs --chimera-detector strict) cuts each chimeric "
-                           "alignment into single-strand pieces, one per segment "
+                           "split cuts each chimeric alignment (either detector) into "
+                           "single-strand pieces, one per segment "
                            "(<name>/c0, <name>/c1, ...), that are called separately "
                            "(see fiberhmm-call).")
     call.add_argument("--chimera-detector", choices=["standard", "strict"], default=None,
@@ -161,7 +161,7 @@ def build_parser() -> argparse.ArgumentParser:
                            "unchanged from 3.2.1). strict is opt-in: stricter "
                            "per-segment rule, base-quality and span filters, several "
                            "switches, a chimera-only error mask, a graded QC chimera "
-                           "row; needed for --chimeras split (see fiberhmm-call).")
+                           "row (see fiberhmm-call).")
     call.add_argument("--chimera-filter", action=argparse.BooleanOptionalAction,
                       default=True,
                       help="Legacy alias: --chimera-filter means --chimeras flag; "
@@ -274,14 +274,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def parse_args(argv=None):
     parser = build_parser()
-    args = parser.parse_args(argv)
-    if args.chimeras == "split":
-        from fiberhmm.pipeline.runner import _call_arg_value
-        detector = (_call_arg_value(shlex.split(args.call_args or ""), "--chimera-detector")
-                    or args.chimera_detector)
-        if detector != "strict":
-            parser.error("--chimeras split needs --chimera-detector strict")
-    return args
+    return parser.parse_args(argv)
 
 
 def config_from_args(args):

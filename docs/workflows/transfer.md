@@ -120,6 +120,8 @@ Catalog positions are coordinates in the source frame.
   oriented pool.
   DddA evidence must have been prepared with the catalog run's CpG policy;
   evidence written before 3.3.0 is refused (re-extract it from the BAMs).
+  DddB evidence written before 3.3.0 is refused too: it read DAF evidence
+  in another order (MM/ML before `MD`).
 - `--bam` with `--bed` needs BED6 windows of the frame's width with an
   explicit `+` or `-` strand. Each window is loaded with the shared BAM loader
   and mapped into the frame: the BED start (on `+`) or end (on `-`) goes to

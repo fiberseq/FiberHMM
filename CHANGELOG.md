@@ -259,7 +259,7 @@
   `fiberhmm-call` and `fiberhmm-pipeline` print a `WARNING:` line when a
   strict call's chimera fraction is 10% or more. Standard calls get the
   QC report of 3.2.1.
-- **`--chimeras split`** (needs `--chimera-detector strict`): each chimeric
+- **`--chimeras split`** (either detector): each chimeric
   alignment is cut at its breakpoint gaps into single-strand records,
   `<name>/c0`, `<name>/c1`, ... (`xc:Z:split`, `xi`, `xn`, `xb`), which are
   called separately. The gaps are dropped and pieces shorter than
@@ -267,7 +267,14 @@
   re-indexed to the piece, with `MN` set to its length; a hard-clipped
   record or one whose `MM`/`ML` do not match SEQ gives pieces without
   them. Unmapped records are kept whole and flagged. See the DAF-seq guide
-  for the caveats.
+  for the caveats. The detector decides which reads are chimeric (the same
+  names and counts as flag mode); breakpoints come from the strict
+  segmentation applied to the flagged records only. Under the default
+  standard detector it runs on the standard detector's events and
+  thresholds (single-switch cuts, no span, base-quality or error-mask
+  filter), so every flagged record has a breakpoint and unflagged records
+  are untouched. The sidecar's `split` block records `flagged_by` and
+  `breakpoints`, and the `@PG` DS adds `chimera_split_breakpoints`.
 - `fiberhmm-export-posteriors` takes `--chimera-detector` and, with
   `strict`, the strict options and `--chimera-error-mask BED`.
   `fiberhmm-pipeline` takes `--chimera-detector` and passes it to
@@ -408,7 +415,12 @@
   took the basecaller's methylation marks as deaminations and scored
   different evidence from the call. Those BAMs give different recall,
   consensus and strand-rescue results now; R/Y-encoded and MD-only BAMs, and
-  `fiberhmm-call` output, are unchanged.
+  `fiberhmm-call` output, are unchanged. Saved DddB consensus evidence from
+  earlier versions (`--evidence`, `--resume`, `fiberhmm-transfer
+  --evidence`) is refused (exit 2) with a message to recompute it from the
+  BAMs; new DddA/DddB evidence records `daf_evidence_order=ry,md,mm` in its
+  manifest. Saved DddA evidence was already refused (CpG policy); Hia5
+  evidence is unaffected.
 
 - Lattice-recaller BF labels now use direct log-likelihood ratios against
   the fitted alternative mixture. Clipping posterior odds could erase strong
@@ -425,6 +437,12 @@
   the mask removes or leaves tied: it is skipped rather than re-read from
   retained basecaller `MM`/`ML` tags (6mA would count as G→A deamination).
   Unmasked runs are unchanged.
+- `fiberhmm-call` (and `-apply`/`-posteriors`, which share its reader) with a
+  DAF SNP mask (`--daf-snp-mask` or the automatic DddA/DddB screen) skips a
+  read whose `MD` conversions the mask removes or leaves tied, instead of
+  re-reading it from retained `MM`/`ML` tags, as consensus already did.
+  Only such reads that carry `MM`/`ML` change (they are left uncalled);
+  unmasked calls are unchanged.
 - Replaying saved masked evidence with `input.correct_native=false` is
   refused: it would combine the BAM's unmasked TF calls with the masked
   lattice. Every window of pooled (`--pool-loci`) evidence is checked, not

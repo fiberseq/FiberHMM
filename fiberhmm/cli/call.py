@@ -272,8 +272,9 @@ def parse_args():
                         'uncalled with SAM 0x200 and xc:Z:strand_swap; remove drops '
                         'all records of the read; keep disables detection and '
                         'clears earlier FiberHMM chimera marks and attempts calls; '
-                        'split (needs --chimera-detector strict) cuts each chimeric '
-                        'alignment at its breakpoint gaps into single-strand pieces, '
+                        'split cuts each chimeric alignment the detector flags at '
+                        'its breakpoint gaps (found by the strict segmentation, with '
+                        'either detector) into single-strand pieces, '
                         'one per segment (<name>/c0, <name>/c1, ... from left to '
                         'right; a read with several switches gives more than two; '
                         'the gaps are dropped, pieces shorter than --min-read-length '
@@ -290,8 +291,8 @@ def parse_args():
                         'from 3.2.1). strict (opt-in): min_seg 10 and purity 0.9 '
                         'by default, plus --chimera-min-baseq, --chimera-min-span, '
                         '--chimera-multi-switch and --chimera-error-mask, '
-                        'duplicate-flagged reads not counted, a graded chimera row '
-                        'in QC, and --chimeras split.')
+                        'duplicate-flagged reads not counted and a graded chimera '
+                        'row in QC (QC grade WARN >= 10%%, high >= 20%%).')
     p.add_argument('--chimera-min-seg', type=int, default=STANDARD_MIN_SEG,
                    action=_GivenOption,
                    help='DAF chimera: min same-strand deamination events per '
@@ -555,8 +556,9 @@ _STRICT_ONLY_CHIMERA_OPTIONS = (
 def _resolve_chimera_detector_args(parser, args):
     """Fill the chimera detector defaults of ``--chimera-detector``.
 
-    standard: min_seg/purity default 5/0.8; the strict-only options and
-    ``--chimeras split`` are refused. strict: the ``STRICT_*`` defaults.
+    standard: min_seg/purity default 5/0.8; the strict-only options are
+    refused (``--chimeras split`` works with both detectors). strict: the
+    ``STRICT_*`` defaults.
     """
     from fiberhmm.inference.chimeras import (
         STRICT_ERROR_MASK, STRICT_MULTI_SWITCH,
@@ -580,8 +582,6 @@ def _resolve_chimera_detector_args(parser, args):
              if getattr(args, key) is not None]
     if given:
         parser.error(f"{', '.join(given)} need --chimera-detector strict")
-    if args.chimeras == 'split':
-        parser.error('--chimeras split needs --chimera-detector strict')
 
 
 def _resolve_apply_model(args):
@@ -1167,7 +1167,12 @@ def _chimera_pass(args, mode, working_input, snp_mask_path, process_unmapped,
 
 def _standard_chimera_pass(args, mode, working_input, snp_mask_path,
                            process_unmapped, stdout_mode):
-    """The standard detector's decision pass (as in 3.2.1)."""
+    """The standard detector's decision pass (as in 3.2.1).
+
+    ``--chimeras split``: the standard detector flags, and its flagged
+    records are cut into a private spool (breakpoints:
+    :func:`fiberhmm.inference.chimeras.standard_breakpoints`).
+    """
     chimera_tmpdir = None
     chimeric_names = None
     chimera_stats = None
@@ -1178,7 +1183,8 @@ def _standard_chimera_pass(args, mode, working_input, snp_mask_path,
     if mode == 'daf' and args.chimeras != 'keep':
         from fiberhmm.inference.chimeras import ChimeraDecisions, prepare_chimeras, seekable_input
         spool = None
-        if not seekable_input(working_input):
+        # Split mode always writes the pieces to a private spool.
+        if args.chimeras == 'split' or not seekable_input(working_input):
             import tempfile
             from pathlib import Path
             chimera_tmpdir = tempfile.TemporaryDirectory(
@@ -1200,6 +1206,10 @@ def _standard_chimera_pass(args, mode, working_input, snp_mask_path,
               f"{chimera_stats['n_reads_checked']:,} checked reads "
               f"(mode={args.chimeras}; "
               f"{chimera_stats['n_records_affected']:,} records)", file=sys.stderr)
+        if chimera_stats.get('split'):
+            from fiberhmm.inference.chimeras import chimera_summary_lines
+            for line in chimera_summary_lines(chimera_stats, indent='    ')[1:]:
+                print(line, file=sys.stderr)
     elif mode == 'daf':
         from fiberhmm.inference.chimeras import empty_chimera_stats
         chimeric_names = set()
@@ -1855,6 +1865,12 @@ def _main(args):
                else '')
             + f"chimera_duplicates_excluded={duplicates_state} "
             if args.chimera_detector == 'strict' else '')
+        if mode == 'daf' and args.chimeras == 'split':
+            # Split mode records how its breakpoints were found (the
+            # flagging detector is chimera_detector=, absent = standard).
+            from fiberhmm.inference.chimeras import SPLIT_BREAKPOINTS_DS
+            strict_chimera_ds += ("chimera_split_breakpoints="
+                                  f"{SPLIT_BREAKPOINTS_DS[args.chimera_detector]} ")
         if snp_mask_path:
             snp_state = f"on/{snp_mask_sites}sites"
         elif snp_preflight is not None and not snp_preflight['run']:

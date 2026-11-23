@@ -122,6 +122,9 @@ with `plot: not written (install matplotlib)`.
   context. Marked chimeras are excluded from rate and footprint panels. TSV columns
   and a line beside the PDF/PNG duplication panel report the same counts.
   Detection is DAF-specific; m6A runs report mode `n/a`.
+  A split-mode BAM (`--chimeras split`, either detector) also carries the
+  sidecar's `split` statistics, including `flagged_by` and `breakpoints`;
+  with the standard detector it is not graded.
 - **DAF chimera row (strict detector only).** For a BAM called with the
   opt-in `--chimera-detector strict` (recorded in the `@PG` DS and the
   chimeras sidecar), the `chimeras` section also has a `grade` of

@@ -543,6 +543,9 @@ evidence written before 3.3.0) is refused, so re-extract it from the BAMs.
 Under `input.use_m5c: auto` evidence prepared with the mask off (inherited
 from `--no-use-m5c` BAMs) is accepted; evidence that mixes masks across
 datasets never is.
+DddB evidence written before 3.3.0 is refused for the same reason: it read
+DAF evidence in another order (MM/ML before `MD`; 3.3 reads R/Y, then `MD`,
+then MM/ML, as `fiberhmm-call` does).
 `--resume` takes one window or pooled run directory, not a
 multi-window parent (to finish an interrupted multi-window run, use
 [`--continue`](#long-runs-and-resuming)). The recaller runs in one pass, so `--stop-after`,

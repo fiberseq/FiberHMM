@@ -341,6 +341,13 @@ def _recorded_cpg_masks(ds):
     return tuple(out)
 
 
+# DAF evidence order of the BAM loader since FiberHMM 3.3.0: R/Y codes in SEQ,
+# then the reference comparison (MD, else the FASTA), then MM/ML-native calls,
+# as fiberhmm-call reads them. Recorded in DddA/DddB manifests; earlier
+# loaders read MM/ML before MD and recorded nothing.
+DAF_EVIDENCE_ORDER = 'ry,md,mm'
+
+
 def check_saved_evidence(payload, options):
     """Refuse saved evidence prepared under other replay policies than this run's.
 
@@ -354,6 +361,8 @@ def check_saved_evidence(payload, options):
     Evidence written before FiberHMM 3.3.0 records no CpG policy (it used the
     methylated-only rule); reload it from the BAMs. Unrecorded Hia5 replay
     policies were conservative, which is still fiberhmm-call's default.
+    DddB evidence must record the DAF evidence order (``daf_evidence_order``,
+    :data:`DAF_EVIDENCE_ORDER`); before 3.3.0 the loader read MM/ML before MD.
     Strata without the BAM loader's receipt (``model_manifest`` with the
     emission digest; hand-built payloads) are taken as given."""
     from fiberhmm.inference.fused_stages import resolve_nuc_recall_policy
@@ -382,6 +391,11 @@ def check_saved_evidence(payload, options):
                 raise ValueError(f'{label}: saved Hia5 Nanopore evidence was replayed with the {recorded} '
                     f'nucleosome policy, not the {expected} policy its calls use. '
                     'Reload the evidence from the BAMs.')
+        if chemistry == 'dddb' and manifest.get('daf_evidence_order') != DAF_EVIDENCE_ORDER:
+            # DddA evidence from before 3.3.0 is already refused by its CpG policy.
+            raise ValueError(f'{label}: saved DddB evidence was prepared before FiberHMM 3.3.0, '
+                'which read DAF evidence in another order (MM/ML before MD); '
+                'recompute the evidence from the BAMs.')
 
 
 def _load_payload(state,request,options,progress, *, loader_sampling=None):
@@ -592,6 +606,8 @@ def _load_payload_once(state,request,options,progress):
                     # (and family tokens) match runs made before the option existed.
                     **(dict(daf_run_mask_min_length=daf_run_mask_min_length(),daf_run_mask_policy=daf_run_mask_policy())
                        if chemistry in ('ddda','dddb') and daf_run_mask_min_length() else {}),
+                    # DAF evidence order (check_saved_evidence refuses DddB evidence without it).
+                    **(dict(daf_evidence_order=DAF_EVIDENCE_ORDER) if chemistry in ('ddda','dddb') else {}),
                     native_minimum_llr=minimum_llr if options['input'].correct_native else None,
                     replay_scope=('query_nuc_recall_then_TF_replay' if any('upstream_nuc_tf_recall' in u for u in units) else
                         'fixed_MSP_intersection_with_analysis_region' if options['cr'].engine==HARMONIZATION_MODE else 'fixed_MSP_only') if options['input'].correct_native else 'existing_calls',

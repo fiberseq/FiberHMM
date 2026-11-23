@@ -227,8 +227,14 @@ set SAM QC-fail `0x200`, and write the local tag `xc:Z:strand_swap` naming
 the reason. All supplementary and secondary records of that read receive
 the same mark. `--chimeras remove` drops all records of detected reads;
 `--chimeras keep` disables detection and attempts calls. `--keep-chimeras`
-is a deprecated alias for `--chimeras keep`. `--chimeras split` needs the
-strict detector ([Split mode](#split-mode)).
+is a deprecated alias for `--chimeras keep`. `--chimeras split` cuts the
+reads the detector flags into single-strand pieces, with either detector
+([Split mode](#split-mode)).
+
+With the standard detector, `qc/<stem>.chimeras.json` and the `@PG` DS
+record the counts and thresholds as in 3.2.1; split mode adds a `split`
+block to the sidecar and `chimera_split_breakpoints` to DS (see
+[Split mode](#split-mode)). The QC grade is a strict-detector feature.
 
 Re-running flag/remove clears earlier `xc:Z:strand_swap` marks and recomputes
 decisions using the run's alignment selection. Only the current run's decision
@@ -264,8 +270,10 @@ the DAF policy from the BAM header and the fraction of marked sampled reads.
 `--chimera-detector strict` selects a stricter detector. It is an option for
 evaluation; the standard detector stays the default, and calls made without
 this option are unchanged. The strict detector also enables the chimera-only
-error mask, leaves duplicate-flagged reads out of the count, grades the
-chimera fraction in QC and allows `--chimeras split`.
+error mask, leaves duplicate-flagged reads out of the count and grades the
+chimera fraction in QC (PASS below 10%, WARN from 10%, WARN `high` from
+20%; see [How many reads are chimeric](#how-many-reads-are-chimeric)). `--chimeras split` works
+with either detector.
 `fiberhmm-export-posteriors` and `fiberhmm-pipeline` take the same option.
 
 The strict detector orders a read's deaminations
@@ -378,15 +386,34 @@ taken with caution. Every chimera report carries this note.
 #### Split mode
 
 `--chimeras split` is an option for recovering data from chimeric reads; it
-is not the default and needs `--chimera-detector strict` (the standard
-detector does not locate breakpoints). For each alignment record that is itself chimeric, the
+is not the default. It works with either detector, and the detector alone
+decides which reads are chimeric, so the flagged read names and the counts
+are those of flag mode. Breakpoints come from the strict detector's
+segmentation, applied only to the records the detector flags:
+
+- With the standard detector (the default), the segmentation runs on the
+  standard detector's own events and thresholds (`--chimera-min-seg`,
+  `--chimera-purity`; no span or base-quality filter, no error mask,
+  single-switch cuts). Its first cut is then the standard test's own
+  breakpoint, so every flagged record gets one. Records the standard
+  detector does not flag are written unchanged.
+- With `--chimera-detector strict`, the segmentation uses all the strict
+  settings (base quality, span, several switches, error mask).
+
+The sidecar's `split` block records `flagged_by` (`standard` or `strict`)
+and `breakpoints` (how they were found), and the `@PG` DS adds
+`chimera_split_breakpoints=strict_segmentation` (standard detector) or
+`strict_detector`. Flag, remove and keep runs are unchanged.
+
+For each alignment record that is itself chimeric, the
 detector's best single switch gives a breakpoint gap: from the last
 event of the first segment's strand to the first event of the second
 segment's strand. Where the switch happened inside the gap is unknown, so
 the gap is dropped and the record is written as single-strand records. Each
 piece is tested again with its own deaminations and cut again while it is
-still chimeric; a read with several switches (found with
-`--chimera-multi-switch`) is cut at every switch. All valid pieces are
+still chimeric; a read with several switches is cut at every switch it
+shows (with the strict detector, also those found only with
+`--chimera-multi-switch`). All valid pieces are
 written:
 
 - `<name>/c0`, `<name>/c1`, ... from left to right on the reference. The
@@ -394,9 +421,9 @@ written:
   its first own-strand event, and an interior piece runs from its first to
   its last own-strand event. No piece ends in an event-free stretch made by
   the cut, so the cut does not create footprints at the inner edges.
-  Breakpoints are anchored on deaminations that pass
-  `--chimera-min-baseq`, so a low-quality basecall inside the gap does not
-  extend a piece past the switch. An anchor inside an insertion or soft
+  With the strict detector, breakpoints are anchored on deaminations that
+  pass `--chimera-min-baseq`, so a low-quality basecall inside the gap does
+  not extend a piece past the switch. An anchor inside an insertion or soft
   clip (possible with `--no-daf-mask-unaligned`) moves inward to the
   nearest aligned base, so every piece starts and ends on an aligned base.
 - CIGAR, SEQ, QUAL, MM/ML and MD are cut over the same query range, `NM` is recomputed and the
