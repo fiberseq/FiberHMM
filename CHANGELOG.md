@@ -404,6 +404,12 @@
   the mask removes or leaves tied: it is skipped rather than re-read from
   retained basecaller `MM`/`ML` tags (6mA would count as G→A deamination).
   Unmasked runs are unchanged.
+- `fiberhmm-call` (and `-apply`/`-posteriors`, which share its reader) with a
+  DAF SNP mask (`--daf-snp-mask` or the automatic DddA/DddB screen) skips a
+  read whose `MD` conversions the mask removes or leaves tied, instead of
+  re-reading it from retained `MM`/`ML` tags, as consensus already did.
+  Only such reads that carry `MM`/`ML` change (they are left uncalled);
+  unmasked calls are unchanged.
 - Replaying saved masked evidence with `input.correct_native=false` is
   refused: it would combine the BAM's unmasked TF calls with the masked
   lattice. Every window of pooled (`--pool-loci`) evidence is checked, not

@@ -769,6 +769,26 @@ def daf_reference_evidence(read, ref_fasta=None, excluded_reference_positions=No
     return md_result
 
 
+def daf_mask_emptied_reference_evidence(read, ref_fasta=None):
+    """True when the DAF SNP mask removed all of ``read``'s reference evidence.
+
+    Called once the masked reference comparison returned None. A read that
+    had reference evidence (MD or ``ref_fasta``) before masking, but none
+    once masked sites are removed (all conversions masked, or a tie left), is
+    skipped rather than read from MM/ML: retained basecaller marks (6mA)
+    would count as deaminations and switch the read's strand. Reads without
+    MM/ML, without a mask, or without reference evidence even unmasked are
+    unaffected (False). Slim payload stubs carry the producer's decision
+    (``_daf_mask_emptied``). The same rule as the consensus loader
+    (``tf_recaller.extract_modification_calls``).
+    """
+    if not hasattr(read, 'get_aligned_pairs'):
+        return bool(getattr(read, '_daf_mask_emptied', False))
+    if not _has_mm_tag(read) or not _daf_reference_mask(read):
+        return False
+    return daf_reference_evidence(read, ref_fasta=ref_fasta) is not None
+
+
 def _has_mm_tag(read):
     """True when the read has usable MM/ML deamination calls (both tags,
     non-empty), the condition of the MM/ML branch."""
@@ -897,11 +917,13 @@ class _ApplyPayloadRead:
     """
     __slots__ = ('query_name', 'query_sequence', 'is_reverse', '_tags',
                  '_daf_md_result', '_daf_excluded_query_positions',
-                 '_no_call_blocks', '_daf_insert_mods', '_daf_chimera')
+                 '_no_call_blocks', '_daf_insert_mods', '_daf_chimera',
+                 '_daf_mask_emptied')
 
     def __init__(self, query_name, query_sequence, is_reverse, tags,
                  daf_md_result=None, daf_excluded_query_positions=None,
-                 no_call_blocks=None, daf_insert_mods=None, daf_chimera=None):
+                 no_call_blocks=None, daf_insert_mods=None, daf_chimera=None,
+                 daf_mask_emptied=False):
         self.query_name = query_name
         self.query_sequence = query_sequence
         self.is_reverse = is_reverse
@@ -914,6 +936,9 @@ class _ApplyPayloadRead:
         self._daf_insert_mods = daf_insert_mods
         # The chimera filter's decision on the live record (None: not made).
         self._daf_chimera = daf_chimera
+        # The SNP mask emptied the live record's reference evidence
+        # (daf_mask_emptied_reference_evidence): skip, do not read MM/ML.
+        self._daf_mask_emptied = bool(daf_mask_emptied)
 
     def has_tag(self, t):
         return t in self._tags
@@ -984,6 +1009,8 @@ def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None,
                 excluded_reference_positions=_daf_reference_mask(read))
             if md_res is not None:
                 payload['_daf_md_result'] = md_res   # (ct_list, ga_list, strand_tag)
+            elif daf_mask_emptied_reference_evidence(read, ref_fasta):
+                payload['_daf_mask_emptied'] = True
         elif _DAF_CHIMERA_CFG['filter']:
             # R/Y input carries only the dominant flavour as IUPAC; the other
             # flavour's C->T / G->A mismatches are still raw bases, visible
@@ -1045,6 +1072,7 @@ def extract_fiber_read_from_payload(payload: dict, mode: str, prob_threshold: in
             no_call_blocks=payload.get('_no_call_blocks'),
             daf_insert_mods=payload.get('_daf_insert_mods'),
             daf_chimera=payload.get('_daf_chimera'),
+            daf_mask_emptied=payload.get('_daf_mask_emptied', False),
         ),
         mode, prob_threshold,
     )
@@ -1290,6 +1318,11 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
             md_result = daf_reference_evidence(
                 read, ref_fasta=ref_fasta,
                 excluded_reference_positions=_daf_reference_mask(read))
+        if md_result is None and daf_mask_emptied_reference_evidence(read, ref_fasta):
+            # The SNP mask removed this read's MD evidence: no usable
+            # evidence, not a fall-through to MM/ML (basecaller 6mA would
+            # be read as G->A deamination).
+            return None
         if md_result is not None:
             ct_pos, ga_pos, strand_tag = md_result
             # Strand-swap chimera filter (DAF only): a read deaminated CT in one
