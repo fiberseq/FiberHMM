@@ -162,7 +162,9 @@
   DddA dataset in `model_manifest.cpg_mask_policy` (`off`, plus
   `cpg_mask_source` when it came from the BAMs), refuses one run whose DddA
   datasets resolve to different masks, and refuses saved evidence that mixes
-  them. Default output is unchanged. See
+  them; a non-default `input.ddda_cpg_mask_policy` counts as explicit. A
+  `fiberhmm-transfer --freeze-run` catalog fixes `input.use_m5c` to the mask
+  its source run used. Default output is unchanged. See
   [Calling](docs/workflows/calling.md#when-to-turn-the-ddda-cpg-mask-off).
 - `--nuc-recall-policy topology` is available again (opt-in) in
   `fiberhmm-call`, `fiberhmm-recall-nucs` and `fiberhmm-recall-tfs`. It keeps
