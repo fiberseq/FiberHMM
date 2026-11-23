@@ -449,7 +449,13 @@ class NucModule(ScanModuleBase):
         return out
 
     # ------------------------------------------------------------------ molecule-wide outputs
-    def _record_outputs(self, read, record, settings, calibration, chemistry=None):
+    def _note_dataset_chemistry(self, dataset):
+        # The dataset's --chemistry, looked up by dataset id in _record_outputs, whose signature
+        # (read, record, settings, calibration) subclasses override (FiberBrowser's live nuc module).
+        table = self.__dict__.setdefault('_chemistry_by_dataset', {})
+        table[getattr(dataset, 'dataset_id', None)] = getattr(dataset, 'chemistry', None)
+
+    def _record_outputs(self, read, record, settings, calibration):
         from fiberhmm.nuc.scan import record_outputs
         scope = self._cache_scope
         if scope is None or scope[0] is not settings or scope[1] is not calibration:
@@ -457,6 +463,7 @@ class NucModule(ScanModuleBase):
             self._cache_scope = (settings, calibration)
         key = (record.dataset_id, record.input_index, record.record)
         if key not in self._record_cache:
+            chemistry = self.__dict__.get('_chemistry_by_dataset', {}).get(record.dataset_id)
             params = self._dataset_params(self._params(settings), chemistry, read.header)
             ctx = self._context(record.dataset_id, record.input_index, read.header, params)
             pp = self._patches(settings)
@@ -471,8 +478,8 @@ class NucModule(ScanModuleBase):
         return self._record_cache[key]
 
     def molecule_outputs(self, molecule, settings, calibration) -> Optional[MoleculeResult]:
-        return self._record_outputs(molecule.read, molecule.record, settings, calibration,
-                                    getattr(molecule.dataset, 'chemistry', None))[2]
+        self._note_dataset_chemistry(molecule.dataset)
+        return self._record_outputs(molecule.read, molecule.record, settings, calibration)[2]
 
     # ------------------------------------------------------------------ unit tracks
     def run_unit(self, unit, inputs, settings, calibration, upstream, work: Path, progress) -> UnitResult:
@@ -521,6 +528,7 @@ class NucModule(ScanModuleBase):
         geo_rep: Dict[Tuple[str, str], Optional[int]] = {}   # (dataset, mol:v1) -> geo_mols index (None: none)
         geo_alias = []                     # (record, geo_mols index): the molecule's other records
         for ds in inputs.datasets:
+            self._note_dataset_chemistry(ds)
             cal = self._cal(calibration, ds.dataset_id)
             for i, path in enumerate(ds.paths):
                 with pysam.AlignmentFile(path, 'rb') as bam:
@@ -530,7 +538,7 @@ class NucModule(ScanModuleBase):
                         if read.is_supplementary:
                             continue
                         record = record_ref(read, ds, i, _sha, _occ, unit.chrom)
-                        mol, res, _mr = self._record_outputs(read, record, settings, calibration, ds.chemistry)
+                        mol, res, _mr = self._record_outputs(read, record, settings, calibration)
                         if mol is None:
                             continue
                         if geo_on and res.patches is not None and mol.ref_end > unit.start \

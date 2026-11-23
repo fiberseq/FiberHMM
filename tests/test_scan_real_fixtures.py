@@ -116,3 +116,13 @@ def test_nfr_values_agree_between_fiberhmm_and_fibertools_calls_of_the_same_fibe
 def test_nuc_takes_the_dataset_chemistry_on_fibertools_only_output(tmp_path):
     proc = _scan(FT13_ONLY, tmp_path / 'scan', 'nuc')
     assert proc.returncode == 0, proc.stderr[-3000:]
+
+
+def test_nuc_module_record_outputs_keeps_its_four_argument_signature():
+    """FiberBrowser's live nuc module overrides NucModule._record_outputs(read, record, settings,
+    calibration) and calls super() with those four arguments; the dataset --chemistry must not be
+    added as a fifth argument."""
+    import inspect
+    from fiberhmm.scan.modules.nuc import NucModule
+    params = list(inspect.signature(NucModule._record_outputs).parameters)
+    assert params == ['self', 'read', 'record', 'settings', 'calibration']
