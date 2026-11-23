@@ -709,7 +709,6 @@ def test_standard_is_the_default_and_strict_fills_its_defaults(monkeypatch):
 @pytest.mark.parametrize('argv', [
     ('--chimera-min-baseq', '20'), ('--chimera-min-span', '0'),
     ('--chimera-multi-switch',), ('--no-chimera-error-mask',),
-    ('--chimeras', 'split'),
 ])
 def test_strict_only_options_need_the_strict_detector(monkeypatch, capsys, argv):
     with pytest.raises(SystemExit):
@@ -721,8 +720,9 @@ def test_prepare_chimeras_standard_refuses_strict_options(tmp_path):
     source = str(_flags_fixture(tmp_path / 'source.bam'))
     with pytest.raises(ValueError, match='strict chimera detector only'):
         prepare_chimeras(source, min_baseq=15)
-    with pytest.raises(ValueError, match='requires the strict detector'):
-        prepare_chimeras(source, mode='split', spool_bam=str(tmp_path / 's.bam'))
+    # Split mode works with the standard detector (it needs a spool).
+    with pytest.raises(ValueError, match='requires spool_bam'):
+        prepare_chimeras(source, mode='split')
     stats = prepare_chimeras(source)
     assert (stats['min_seg'], stats['purity']) == (5, 0.8)
     assert 'detector' not in stats and 'grade' not in stats

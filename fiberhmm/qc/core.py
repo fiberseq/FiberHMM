@@ -3333,7 +3333,8 @@ def run_qc(
                                  ('purity', 'chimera_purity', float)]:
             if key in settings:
                 chimeras[field] = cast(settings[key])
-        chimeras['detected'] = chimeras['detected'] or chimeras['mode'] in ('flag', 'remove')
+        chimeras['detected'] = (chimeras['detected']
+                                or chimeras['mode'] in ('flag', 'remove', 'split'))
     if chimeras['mode'] in ('keep', 'n/a'):
         chimeras['n_reads_checked'] = 0
         chimeras['fraction'] = None

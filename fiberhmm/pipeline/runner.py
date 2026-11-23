@@ -154,7 +154,7 @@ class PipelineConfig:
     quiet: bool = False
     chimeras: Optional[str] = None  # flag | remove | keep | split; None uses legacy bool
     # DAF chimera detector: None = fiberhmm-call's default (standard);
-    # "strict" opts in (needed for --chimeras split).
+    # "strict" opts in.
     chimera_detector: Optional[str] = None
 
     def resolved_seq(self) -> Optional[str]:
@@ -171,8 +171,6 @@ class PipelineConfig:
         mode = self.chimeras or ('flag' if self.chimera_filter else 'keep')
         if mode not in ('flag', 'remove', 'keep', 'split'):
             raise ValueError(f'Invalid chimera mode: {mode}')
-        if mode == 'split' and self.effective_chimera_detector() != 'strict':
-            raise ValueError('--chimeras split needs --chimera-detector strict')
         return mode
 
     def effective_chimera_detector(self) -> str:

@@ -238,7 +238,7 @@
   `fiberhmm-call` and `fiberhmm-pipeline` print a `WARNING:` line when a
   strict call's chimera fraction is 10% or more. Standard calls get the
   QC report of 3.2.1.
-- **`--chimeras split`** (needs `--chimera-detector strict`): each chimeric
+- **`--chimeras split`** (either detector): each chimeric
   alignment is cut at its breakpoint gaps into single-strand records,
   `<name>/c0`, `<name>/c1`, ... (`xc:Z:split`, `xi`, `xn`, `xb`), which are
   called separately. The gaps are dropped and pieces shorter than
@@ -246,7 +246,14 @@
   re-indexed to the piece, with `MN` set to its length; a hard-clipped
   record or one whose `MM`/`ML` do not match SEQ gives pieces without
   them. Unmapped records are kept whole and flagged. See the DAF-seq guide
-  for the caveats.
+  for the caveats. The detector decides which reads are chimeric (the same
+  names and counts as flag mode); breakpoints come from the strict
+  segmentation applied to the flagged records only. Under the default
+  standard detector it runs on the standard detector's events and
+  thresholds (single-switch cuts, no span, base-quality or error-mask
+  filter), so every flagged record has a breakpoint and unflagged records
+  are untouched. The sidecar's `split` block records `flagged_by` and
+  `breakpoints`, and the `@PG` DS adds `chimera_split_breakpoints`.
 - `fiberhmm-export-posteriors` takes `--chimera-detector` and, with
   `strict`, the strict options and `--chimera-error-mask BED`.
   `fiberhmm-pipeline` takes `--chimera-detector` and passes it to

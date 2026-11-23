@@ -18,8 +18,11 @@ CHIMERA_QC_TAG = 'xq'  # original QC-fail state before our mark (0 or 1)
 #   standard (default): the 3.2.1 detector, one CT/GA switch with min_seg
 #     events per segment at purity; every event counts.
 #   strict (opt-in): base-quality filter, minimum span, several switches,
-#     the chimera-only error mask, duplicates not counted, a QC grade and
-#     the optional split mode.
+#     the chimera-only error mask, duplicates not counted and a QC grade.
+# Split mode (--chimeras split) works with either: the run's detector flags
+# the reads, and the strict segmentation (daf_chimera_segments) finds the
+# breakpoints of the flagged records (:func:`standard_breakpoints` for the
+# standard detector).
 # The standard detector's code path is the 3.2.1 one (prepare_chimeras ->
 # _prepare_chimeras_standard, _is_chimeric, encoder.is_daf_chimera); the
 # strict detector has its own functions (``*_strict``).
@@ -282,6 +285,96 @@ def _is_chimeric_strict(read, ref, cfg=None):
     cfg = _active_config() if cfg is None else cfg
     events = _chimera_events(read, ref, cfg)
     return events is not None and decide_chimera(events[0], events[1], cfg)
+
+
+def _standard_events(read, ref, min_seg):
+    """(CT, GA) event query positions the standard detector tests, or None.
+
+    The events of :func:`_is_chimeric` (SNP-masked reference positions
+    excluded; R/Y input as in :func:`engine._is_iupac_daf_chimera`), no
+    chimera-only filters.
+    """
+    from . import engine
+    from fiberhmm.daf.encoder import get_daf_positions
+
+    seq = read.query_sequence
+    if not seq:
+        return None
+    if engine.has_iupac_encoding(seq):
+        return engine._iupac_chimera_events(
+            read, seq, engine._stub_or_live_excluded(read), ref, min_seg=min_seg)
+    result = get_daf_positions(
+        read, force_strand='CT', ref_fasta=ref,
+        excluded_reference_positions=engine._daf_reference_mask(read))
+    return None if result is None else (result[0], result[1])
+
+
+def standard_breakpoints(read, ref, min_seg, purity):
+    """Split mode under the standard detector: the pieces of ``read``.
+
+    The strict segmentation (:func:`~fiberhmm.daf.encoder.daf_chimera_segments`)
+    applied to the standard detector's events and thresholds (``min_seg``,
+    ``purity``; no minimum span, single-switch cuts, re-applied to each piece,
+    no base-quality filter or error mask). With these settings its first cut
+    is the standard test's own breakpoint scan, so every read the standard
+    detector flags has a breakpoint (None otherwise).
+    """
+    from fiberhmm.daf.encoder import daf_chimera_segments
+    events = _standard_events(read, ref, min_seg)
+    if events is None:
+        return None
+    return daf_chimera_segments(events[0], events[1], min_seg, purity,
+                                min_span=0, multi_switch=False)
+
+
+# Split-mode provenance (statistics ``split`` block and @PG DS).
+SPLIT_BREAKPOINTS = {
+    'standard': ('strict segmentation (daf_chimera_segments) of the reads the '
+                 'standard detector flags, on its events and thresholds '
+                 '(min_seg, purity; min_span 0, single-switch cuts re-applied '
+                 'to each piece, no base-quality filter or error mask)'),
+    'strict': ('strict detector segmentation (daf_chimera_segments with the '
+               "run's min_seg, purity, min_baseq, min_span, multi_switch and "
+               'error mask)'),
+}
+SPLIT_BREAKPOINTS_DS = {'standard': 'strict_segmentation', 'strict': 'strict_detector'}
+
+
+def _split_summary(split_info, min_read_length, gaps, piece_lengths, detector):
+    """The statistics ``split`` block of a split-mode pass."""
+    split = dict(split_info)
+    split['n_reads_split'] = len(split.pop('_names', ()))
+    split['min_piece_length'] = int(min_read_length)
+    split['fraction_bases_recovered'] = (
+        split['recovered_bases'] / split['chimeric_bases']
+        if split['chimeric_bases'] else None)
+    split['gap_reference_bp'] = _quantiles(gaps)
+    split['piece_aligned_bp'] = _quantiles(piece_lengths)
+    split['tags'] = {'xc': 'Z:split',
+                     'xi': 'i piece index, 0..n-1 from left to right on the reference',
+                     'xn': 'Z original read name',
+                     'xb': 'B:i every breakpoint gap of the original record as '
+                           '[start, end) pairs, 0-based on the reference, left to '
+                           'right; piece xi lies between gap xi-1 and gap xi'}
+    split['kept_tags'] = ('RG, ds, di, qs, du, ch, rn, fn; MM/ML (and Mm/Ml) '
+                          're-indexed to the piece, MN set to its length; '
+                          'MD/NM recomputed')
+    split['dropped_tags'] = ('every other tag; MM/ML of a piece whose record is '
+                             'hard-clipped or whose MM/ML do not parse or match '
+                             'SEQ (n_pieces_modifications_dropped)')
+    split['flagged_by'] = detector
+    split['breakpoints'] = SPLIT_BREAKPOINTS[detector]
+    return split
+
+
+def _new_split_info():
+    return dict(n_records_split=0, n_pieces_written=0, n_pieces_too_short=0,
+                n_records_kept_whole=0, n_records_unmapped_kept_whole=0,
+                n_records_paired_kept_whole=0,
+                n_pieces_still_chimeric=0,
+                n_pieces_modifications_kept=0, n_pieces_modifications_dropped=0,
+                chimeric_bases=0, recovered_bases=0,
+                n_records_several_switches=0)
 
 
 def engine_chimera_hit(read, ct, ga, ref=None):
@@ -594,8 +687,9 @@ def prepare_chimeras(input_bam, output_bam=None, *, mode='flag', daf=True,
 
     ``standard`` (default): the 3.2.1 detector (:func:`_prepare_chimeras_standard`,
     ``min_seg``/``purity`` default 5/0.8); ``min_baseq``, ``min_span``,
-    ``multi_switch``, ``error_mask`` and mode ``split`` belong to the strict
-    detector and are refused. ``strict``: :func:`_prepare_chimeras_strict`
+    ``multi_switch`` and ``error_mask`` belong to the strict detector and are
+    refused. Mode ``split`` works with both (breakpoints of standard-flagged
+    records: :func:`standard_breakpoints`). ``strict``: :func:`_prepare_chimeras_strict`
     (defaults: the ``STRICT_*`` constants). Other keywords go to both.
     """
     if detector not in DETECTORS:
@@ -615,8 +709,6 @@ def prepare_chimeras(input_bam, output_bam=None, *, mode='flag', daf=True,
     given = sorted(key for key, value in strict_only.items() if value is not None)
     if given:
         raise ValueError(f'{", ".join(given)}: strict chimera detector only')
-    if mode == 'split':
-        raise ValueError('chimera split mode requires the strict detector')
     return _prepare_chimeras_standard(
         input_bam, output_bam, mode=mode, daf=daf,
         min_seg=STANDARD_MIN_SEG if min_seg is None else min_seg,
@@ -700,13 +792,7 @@ def _prepare_chimeras_strict(input_bam, output_bam=None, *, mode='flag', daf=Tru
     stale = 0
     # Regions: one start bin per read name (its primary record if eligible).
     bin_of, bin_spans, anonymous_bins = {}, {}, {}
-    split_info = dict(n_records_split=0, n_pieces_written=0, n_pieces_too_short=0,
-                      n_records_kept_whole=0, n_records_unmapped_kept_whole=0,
-                      n_records_paired_kept_whole=0,
-                      n_pieces_still_chimeric=0,
-                      n_pieces_modifications_kept=0, n_pieces_modifications_dropped=0,
-                      chimeric_bases=0, recovered_bases=0,
-                      n_records_several_switches=0)
+    split_info = _new_split_info()
     gaps, piece_lengths, still_chimeric = [], [], set()
 
     def decide(read):
@@ -822,26 +908,8 @@ def _prepare_chimeras_strict(input_bam, output_bam=None, *, mode='flag', daf=Tru
     n_chimeric = len(chimeric - duplicates) + anonymous_chimeric
     split = None
     if splitting:
-        split = dict(split_info)
-        split['n_reads_split'] = len(split.pop('_names', ()))
-        split['min_piece_length'] = int(min_read_length)
-        split['fraction_bases_recovered'] = (
-            split['recovered_bases'] / split['chimeric_bases']
-            if split['chimeric_bases'] else None)
-        split['gap_reference_bp'] = _quantiles(gaps)
-        split['piece_aligned_bp'] = _quantiles(piece_lengths)
-        split['tags'] = {'xc': 'Z:split',
-                         'xi': 'i piece index, 0..n-1 from left to right on the reference',
-                         'xn': 'Z original read name',
-                         'xb': 'B:i every breakpoint gap of the original record as '
-                               '[start, end) pairs, 0-based on the reference, left to '
-                               'right; piece xi lies between gap xi-1 and gap xi'}
-        split['kept_tags'] = ('RG, ds, di, qs, du, ch, rn, fn; MM/ML (and Mm/Ml) '
-                              're-indexed to the piece, MN set to its length; '
-                              'MD/NM recomputed')
-        split['dropped_tags'] = ('every other tag; MM/ML of a piece whose record is '
-                                 'hard-clipped or whose MM/ML do not parse or match '
-                                 'SEQ (n_pieces_modifications_dropped)')
+        split = _split_summary(split_info, min_read_length, gaps, piece_lengths,
+                               'strict')
     stats = dict(detected=bool(daf and mode != 'keep'), mode=mode if daf else 'n/a',
                  n_reads_checked=n_checked, n_chimeric=n_chimeric,
                  fraction=n_chimeric / n_checked if n_checked else None,
@@ -925,14 +993,30 @@ def _prepare_chimeras_standard(input_bam, output_bam=None, *, mode='flag', daf=T
     policy. For streams,
     ``spool_bam`` supplies the replay path. ``output_bam`` optionally writes
     a marked/filtered BAM for standalone use. Counts precede removal.
+
+    Mode ``split`` requires ``spool_bam``. The standard detector decides
+    which read names are chimeric, as in flag mode (same names, same
+    counts). Each eligible named record that the standard test flags itself
+    is written to the spool as its single-strand pieces, cut at the
+    breakpoints of :func:`standard_breakpoints`; everything else about the
+    pieces (names, tags, dropped short pieces, unmapped and paired records
+    kept whole and flagged, a sorted indexed spool for sorted input) is as
+    in the strict detector's split mode (:func:`_prepare_chimeras_strict`).
+    Records the detector does not flag are written unchanged; other records
+    of a chimeric name are flagged as in flag mode. The statistics gain a
+    ``split`` block (``flagged_by`` 'standard', ``breakpoints``); flag,
+    remove and keep statistics are unchanged.
     """
     from . import engine
     from .read_filters import ReadFilterConfig, streaming_skip_reason
 
-    if mode not in ('flag', 'remove', 'keep'):
+    if mode not in ('flag', 'remove', 'keep', 'split'):
         raise ValueError(f'Invalid chimera mode: {mode}')
     if min_seg < 1 or not 0.5 < purity <= 1:
         raise ValueError('chimera min_seg must be >= 1 and purity in (0.5, 1]')
+    splitting = bool(daf and mode == 'split')
+    if splitting and spool_bam is None:
+        raise ValueError('chimera split mode requires spool_bam')
     engine.configure_daf_chimera_filter(daf and mode != 'keep', min_seg, purity)
     engine.configure_daf_snp_mask(snp_mask)
     config = ReadFilterConfig(min_mapq=min_mapq, min_read_length=min_read_length,
@@ -945,6 +1029,8 @@ def _prepare_chimeras_standard(input_bam, output_bam=None, *, mode='flag', daf=T
     anonymous_checked = anonymous_chimeric = 0
     counts = Counter()
     stale = 0
+    split_info = _new_split_info()
+    gaps, piece_lengths, still_chimeric = [], [], set()
     # The optional standalone writer owns its private spool. The CLI owns
     # its stream spool's lifetime, which extends through calling.
     private_spool = False
@@ -959,8 +1045,11 @@ def _prepare_chimeras_standard(input_bam, output_bam=None, *, mode='flag', daf=T
             ref = stack.enter_context(pysam.FastaFile(reference)) if reference else None
             bam = stack.enter_context(pysam.AlignmentFile(
                 input_bam, 'rb', check_sq=False, threads=io_threads))
+            sort_spool = bool(splitting and (bam.header.to_dict().get('HD') or {})
+                              .get('SO') == 'coordinate')
+            spool_target = (str(spool_bam) + '.unsorted.bam') if sort_spool else spool_bam
             out = (stack.enter_context(pysam.AlignmentFile(
-                spool_bam, 'wb', header=bam.header, threads=io_threads))
+                spool_target, 'wb', header=bam.header, threads=io_threads))
                    if spool_bam else None)
             for read in bam.fetch(until_eof=True):
                 named = read.query_name not in (None, '*', '')
@@ -968,27 +1057,51 @@ def _prepare_chimeras_standard(input_bam, output_bam=None, *, mode='flag', daf=T
                     counts[read.query_name] += 1
                 stale += int(_has_chimera_tag(read))
                 clear_chimera_mark(read)
+                pieces = None
                 if daf and mode != 'keep' and streaming_skip_reason(read, config) is None:
                     if named:
                         checked.add(read.query_name)
-                        if read.query_name not in chimeric and _is_chimeric(read, ref):
+                        if splitting:
+                            # Every record is decided: each flagged one is cut.
+                            if _is_chimeric(read, ref):
+                                chimeric.add(read.query_name)
+                                pieces = _standard_split_pieces(
+                                    read, bam.header, ref, min_seg, purity,
+                                    min_read_length, split_info, gaps,
+                                    piece_lengths, still_chimeric)
+                        elif read.query_name not in chimeric and _is_chimeric(read, ref):
                             chimeric.add(read.query_name)
                     else:
                         anonymous_checked += 1
                         anonymous_chimeric += int(_is_chimeric(read, ref))
                 if out is not None:
-                    out.write(read)
+                    if pieces:
+                        for piece in pieces:
+                            out.write(piece)
+                    else:
+                        out.write(read)
+        if sort_spool:
+            pysam.sort('-o', str(spool_bam), spool_target)
+            Path(spool_target).unlink(missing_ok=True)
+            pysam.index(str(spool_bam))
         if chimeric_names is not None:
             chimeric_names.update(chimeric)
+            # Pieces that still show a swap (several switches) are flagged
+            # like any chimera; they are not counted as new reads.
+            chimeric_names.update(still_chimeric)
             if isinstance(chimeric_names, ChimeraDecisions):
                 chimeric_names.anonymous_policy = chimeric.anonymous_policy
         if output_bam is not None:
+            decisions = chimeric
+            if still_chimeric:
+                decisions = ChimeraDecisions(chimeric | still_chimeric)
+                decisions.anonymous_policy = chimeric.anonymous_policy
             with pysam.AlignmentFile(replay, 'rb', check_sq=False) as bam, \
                     pysam.AlignmentFile(output_bam, 'wb', header=bam.header,
                                         threads=io_threads) as out:
                 for read in bam.fetch(until_eof=True):
                     clear_chimera_mark(read)
-                    if is_precalled_chimera(read, chimeric):
+                    if is_precalled_chimera(read, decisions):
                         if mode == 'remove':
                             continue
                         mark_chimera(read)
@@ -998,10 +1111,28 @@ def _prepare_chimeras_standard(input_bam, output_bam=None, *, mode='flag', daf=T
             Path(spool_bam).unlink(missing_ok=True)
     n_checked = len(checked) + anonymous_checked
     n_chimeric = len(chimeric) + anonymous_chimeric
-    return dict(detected=bool(daf and mode != 'keep'), mode=mode if daf else 'n/a',
-                n_reads_checked=n_checked, n_chimeric=n_chimeric,
-                fraction=n_chimeric / n_checked if n_checked else None,
-                min_seg=min_seg if daf else None, purity=purity if daf else None,
-                n_records_affected=sum(counts[name] for name in chimeric) + anonymous_chimeric,
-                n_stale_marks_cleared=stale, full_run=True,
-                count_unit='unique read names before removal; unnamed records counted individually')
+    stats = dict(detected=bool(daf and mode != 'keep'), mode=mode if daf else 'n/a',
+                 n_reads_checked=n_checked, n_chimeric=n_chimeric,
+                 fraction=n_chimeric / n_checked if n_checked else None,
+                 min_seg=min_seg if daf else None, purity=purity if daf else None,
+                 n_records_affected=sum(counts[name] for name in chimeric) + anonymous_chimeric,
+                 n_stale_marks_cleared=stale, full_run=True,
+                 count_unit='unique read names before removal; unnamed records counted individually')
+    if splitting:
+        stats['split'] = _split_summary(split_info, min_read_length, gaps,
+                                        piece_lengths, 'standard')
+    return stats
+
+
+def _standard_split_pieces(read, header, ref, min_seg, purity, min_read_length,
+                           info, gaps, piece_lengths, still_chimeric):
+    """Pieces of a record the standard detector flagged (None: keep it whole)."""
+    segments = standard_breakpoints(read, ref, min_seg, purity)
+    if segments is None:
+        # Not reached for a flagged record (the first cut is the standard
+        # test's own scan); kept whole and flagged if it ever is.
+        info['n_records_kept_whole'] += 1
+        return None
+    return _split_pieces(read, header, segments, min_read_length, ref,
+                         lambda piece: _is_chimeric(piece, ref), info, gaps,
+                         piece_lengths, still_chimeric)
