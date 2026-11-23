@@ -17,6 +17,22 @@ def test_run_record_accepts_a_scalar_dataset_path(tmp_path):
     assert listed == record
 
 
+def test_bed_run_with_a_scalar_dataset_path_matches_the_list_form(tmp_path, capsys):
+    from fiberhmm.inference.accessibility.cli import main
+    from test_accessibility_nfr import nfr_bam
+    bam = nfr_bam(tmp_path/'nfr.bam')
+    (tmp_path/'w.bed').write_text('chr1\t700\t2400\tlocus\n')
+    for name, paths in (('scalar', str(bam)), ('listed', [str(bam)])):
+        (tmp_path/f'{name}.json').write_text(json.dumps([dict(dataset_id='d', paths=paths)]))
+        main(['--datasets', str(tmp_path/f'{name}.json'), '--bed', str(tmp_path/'w.bed'), '--bootstrap', '0', '--cores', '1',
+              '--fast-landscape', '--output', str(tmp_path/name)])
+    capsys.readouterr()
+    rows = json.loads((tmp_path/'scalar'/'regions.json').read_text())
+    assert [r['status'] for r in rows] == ['complete']
+    for f in ('variants.tsv', 'configurations.tsv', 'molecules.tsv.gz'):
+        assert (tmp_path/'scalar'/'window_000001'/f).read_bytes() == (tmp_path/'listed'/'window_000001'/f).read_bytes()
+
+
 
 @pytest.mark.parametrize('bed', [False, True])
 def test_capped_loading_under_cross_fitting_keeps_every_discovery_fold_read(tmp_path, capsys, bed):
@@ -62,7 +78,7 @@ def test_heldout_fit_uses_fold_membership_not_the_discovery_sample(tmp_path, mon
     assert not any(spec.discovers(name[uid]) for fit in fits for _, uid in fit)   # no discovery-fold read in the fit
 
 
-def test_no_heldout_read_is_an_unanalysable_fit_not_a_fit_on_every_read():
+def test_no_heldout_read_is_an_unanalysable_fit_not_a_fit_on_every_read(tmp_path):
     from fiberhmm.inference.accessibility import run_accessibility
     from fiberhmm.io.folds import FoldSpec
     from test_accessibility_nfr import FAST, payload
@@ -70,9 +86,12 @@ def test_no_heldout_read_is_an_unanalysable_fit_not_a_fit_on_every_read():
     spec = FoldSpec.parse('mod=10,discover=0-8')
     units = [u for u in _units(n=480) if spec.discovers(u['read_name'])]
     r = run_accessibility(payload(units), dict(FAST, bootstrap=0, nfr_regions=REGIONS,
-                                               discover_fold_spec='mod=10,discover=0-8', fold_weights='heldout'))
+                                               discover_fold_spec='mod=10,discover=0-8', fold_weights='heldout'),
+                         tmp_path/'out')
     assert r['nfrs'] and all(n['status'] == 'not_analysable' and 'held-out' in n['message'] for n in r['nfrs'])
     assert not any(n['variants'] for n in r['nfrs'])
+    for name in ('variants.tsv', 'configurations.tsv', 'molecules.tsv.gz', 'coaccess.tsv', 'result.json'):
+        assert (tmp_path/'out'/name).is_file()            # every writer (and the co-accessibility stage) copes
 
 
 @pytest.fixture

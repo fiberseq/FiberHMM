@@ -9,8 +9,9 @@ replay are the per-window cost).
 
 A finished window writes ``window_complete.json`` last (atomic), with a digest of the run's inputs, parameters and
 window and the size and SHA-256 of each output. ``--continue`` skips windows whose marker matches and whose files are
-intact and reruns the rest; it refuses when the BAMs (path, size, mtime), windows or parameters differ from the run
-record ``nfr_run.json``. A window that fails (or has no molecules) is reported with its status and error; the others
+intact and reruns the rest; it refuses when the BAMs (path, size, mtime), the DAF SNP mask (also by content), an
+explicit DAF run mask (FIBERHMM_DAF_RUN_MASK), windows or parameters differ from the run record ``nfr_run.json``.
+Reused windows take their location from the current output directory, which may have moved. A window that fails (or has no molecules) is reported with its status and error; the others
 still run. ``regions.json``/``regions.tsv`` (one row per window) and the combined ``variants.tsv`` and
 ``configurations.tsv`` (window name and region prepended) are rebuilt from the completed windows at the end of every
 attempt.
