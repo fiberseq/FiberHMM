@@ -80,6 +80,20 @@ def test_legacy_only_records_keep_their_msps():
     assert list(read.get_tag("aq")) == [201]
 
 
+def test_tf_only_hmm_only_input_keeps_no_stale_legacy_msps():
+    """A --hmm-only record whose footprints are all TF-sized (lone tf group)
+    is called by MA: stale legacy MSPs beside it are not kept."""
+    global HEADER
+    saved = HEADER
+    HEADER = dict(saved, PG=[{"ID": "fiberhmm-call", "PN": "fiberhmm-call", "VN": "3.3.0",
+                              "DS": "FiberHMM HMM-only call; coord=molecular hmm_only=on"}])
+    try:
+        read = _read("1000;tf.:101-40", **{"as": [300], "al": [100]})
+    finally:
+        HEADER = saved
+    assert _kept_after_strip(read) == []
+
+
 # --- finding: legacy aq follows its MSPs or is dropped -------------------------
 
 def _write_kept(read, msps, legacy=True):

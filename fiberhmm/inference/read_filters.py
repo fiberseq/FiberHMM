@@ -461,12 +461,15 @@ def _drop_legacy_msps_superseded_by_annotation(read) -> None:
     to them and resurrect MSPs MA did not call. Legacy MSPs that agree with
     MA stay, with their FIRE ``aq``. Runs after the caller has carried the
     record into molecular frame (MA and legacy tags both molecular)."""
-    from fiberhmm.io.footprint_calls import resolve_footprint_tags
+    from fiberhmm.io.footprint_calls import hmm_only_calls, resolve_footprint_tags
     from fiberhmm.io.legacy_tags import array_tag_pair
 
     if not (read.has_tag("as") or read.has_tag("al") or read.has_tag("aq")):
         return
-    calls = resolve_footprint_tags(read, True, ma_molecular=True, ma_evidence=True)
+    # --hmm-only input: a lone tf group (all footprints TF-sized) calls the read too.
+    calls = resolve_footprint_tags(
+        read, True, ma_molecular=True, ma_evidence=True,
+        hmm_footprints=hmm_only_calls(getattr(read, "header", None)))
     if not calls or calls.get("source") == "legacy":
         return
     selected = sorted(zip((int(v) for v in calls.get("as", ())),
