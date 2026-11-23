@@ -102,8 +102,8 @@
   still exactly one of the record's MSPs. Otherwise the group is dropped with
   its `AQ` bytes and `AN` names.
 - call and apply clear the earlier run's calls from every record they write,
-  skipped and call-less reads included, as before; only DddA m5C groups stay
-  (`call --no-legacy-tags` leaves a skipped read's legacy tags in place).
+  skipped and call-less reads included, as before; only DddA m5C groups stay,
+  and legacy `ns`/`nl`/`nq`/`as`/`al`/`aq` are removed unless `--legacy-tags`.
   `call --hmm-only --keep-msps` keeps the input's MSPs (`MA`/`Ma` `msp`,
   legacy `as`/`al` and their fibertools `aq`, a fibertools 0.13 `fire`
   group). Legacy `as`/`al`/`aq` beside an `MA`/`Ma` that calls the read are

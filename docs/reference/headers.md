@@ -156,9 +156,10 @@ Written once (never duplicated on re-runs) by the commands that rewrite MSPs:
 record it writes, including reads it skips (length, MAPQ, unmapped,
 unselected contigs, chimeras) and reads that yield no calls: such a record
 leaves with no nucleosome/MSP/TF tags and no `Ma`/`Aq`/`An`, keeping only its
-DddA m5C groups (in `MA`). Two options leave legacy tags in place instead:
-`call --no-legacy-tags` keeps a skipped read's `ns`/`nl`/`as`/`al`/`nq`/`aq`
-(it never rewrites legacy tags), and `call --hmm-only --keep-msps` keeps
+DddA m5C groups (in `MA`); its legacy `ns`/`nl`/`nq`/`as`/`al`/`aq` are
+removed too unless `--legacy-tags` is given (`--no-legacy-tags` is a
+deprecated no-op). One option leaves MSP tags in place instead:
+`call --hmm-only --keep-msps` keeps
 every record's MSPs: its `MA`/`Ma` `msp` group (written back into `MA`, the
 HMM footprints beside it), legacy `as`/`al` with their `aq`, a fibertools
 0.13 `fire` group (revalidated as above, so it survives when the MSPs are
