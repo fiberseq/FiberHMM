@@ -164,8 +164,8 @@
   datasets resolve to different masks, and refuses saved evidence that mixes
   them; a non-default `input.ddda_cpg_mask_policy` counts as explicit. A
   `fiberhmm-transfer --freeze-run` catalog fixes `input.use_m5c` to the mask
-  its source run used. Default output is unchanged. See
-  [Calling](docs/workflows/calling.md#when-to-turn-the-ddda-cpg-mask-off).
+  its source run used. Default output is unchanged. See "When to turn the
+  DddA CpG mask off" on the Calling page.
 - `--nuc-recall-policy topology` is available again (opt-in) in
   `fiberhmm-call`, `fiberhmm-recall-nucs` and `fiberhmm-recall-tfs`. It keeps
   fragment structure in nucleosome recall and works well on some ONT Hia5
