@@ -43,7 +43,7 @@ import pysam
 
 from fiberhmm import defaults as D
 
-CACHE_SCHEMA = 1
+CACHE_SCHEMA = 2  # 2: input content digests
 VCF_SUFFIX = ".fhvar.vcf.gz"
 CALLERS = ("auto", "daf", "pileup")
 HOMOPOLYMER_MODES = ("auto", "on", "off")
@@ -340,10 +340,28 @@ def discovery_chunks(windows: Sequence[Tuple[str, int, int]], chunk_bp: int) -> 
 # cache key
 # ---------------------------------------------------------------------------
 
-def _file_identity(path: str, header_md5: bool = True) -> dict:
+#: The content-digest memo kept in the variant cache folder (see :func:`_file_identity`).
+DIGEST_MEMO_NAME = ".fhvar.input_digests.json"
+
+
+def _file_identity(path: str, header_md5: bool = True, memo=None) -> dict:
+    """Name, size, mtime and the sha256 of the file's bytes (with ``header_md5``, of
+    the BAM header too).
+
+    The content digest covers the whole file, so replaced contents with the size
+    and mtime restored change the key. Whole-file hashing is chosen over a partial
+    fingerprint (header + index): an index need not change when bases or
+    qualities do. ``memo`` (a :class:`fiberhmm.io.run_state.DigestMemo`, kept in
+    the cache folder by :func:`discover_variants`) makes repeat runs on unchanged
+    files free: a digest is reused only while device, inode, size, mtime and
+    ctime are unchanged and it was not taken while the timestamps were fresh, so
+    a rewrite with a restored mtime (which changes the ctime) is hashed again.
+    """
+    from fiberhmm.io.run_state import DigestMemo
     st = os.stat(path)
     ident = {"name": os.path.basename(path), "size": int(st.st_size),
-             "mtime_ns": int(st.st_mtime_ns)}
+             "mtime_ns": int(st.st_mtime_ns),
+             "sha256": (memo if memo is not None else DigestMemo()).sha256(path)}
     if header_md5:
         with pysam.AlignmentFile(path, "rb", check_sq=False) as bam:
             text = str(bam.header)
@@ -351,25 +369,47 @@ def _file_identity(path: str, header_md5: bool = True) -> dict:
     return ident
 
 
+def _load_digest_memo(cache_dir: str):
+    """The cache folder's digest memo, without entries for files gone or changed."""
+    from fiberhmm.io import run_state
+    memo = run_state.load_memo_file(os.path.join(cache_dir, DIGEST_MEMO_NAME))
+    for real, entry in list(memo.entries.items()):
+        try:
+            current = run_state.stat_key(real)
+        except OSError:
+            current = None
+        if current != entry["stat"]:
+            del memo.entries[real]
+    return memo
+
+
+def _save_digest_memo(cache_dir: str, memo) -> None:
+    from fiberhmm.io import run_state
+    run_state.save_memo_file(os.path.join(cache_dir, DIGEST_MEMO_NAME), memo)
+
+
 def cache_material(bams: Sequence[str], windows: Sequence[Tuple[str, int, int]],
                    caller: str, options: DiscoveryOptions,
-                   read_groups, platform: str) -> dict:
-    """Everything that decides the discovered VCF (hashed into the key)."""
+                   read_groups, platform: str, memo=None) -> dict:
+    """Everything that decides the discovered VCF (hashed into the key).
+    ``memo``: a digest memo for the input content digests (see :func:`_file_identity`)."""
     from fiberhmm import __version__
+    from fiberhmm.io.run_state import DigestMemo
+    memo = memo if memo is not None else DigestMemo()
     params = (dataclasses.asdict(options.pileup) if caller == "pileup"
               else dataclasses.asdict(options.daf))
     if caller == "pileup":
         params["homopolymer_active"] = homopolymer_active(options.pileup, platform)
     reference = None
     if options.reference:
-        reference = _file_identity(options.reference, header_md5=False)
+        reference = _file_identity(options.reference, header_md5=False, memo=memo)
     return {
         "schema": CACHE_SCHEMA,
         "fiberhmm_version": __version__,
         "caller": caller,
         "parameters": params,
         # Each input with the read groups kept from it (RG IDs are per BAM).
-        "inputs": sorted(({**_file_identity(p),
+        "inputs": sorted(({**_file_identity(p, memo=memo),
                            "read_groups": (sorted(read_groups[k]) if read_groups is not None
                                            else None)}
                           for k, p in enumerate(bams)),
@@ -1028,13 +1068,15 @@ def discover_variants(input_bam: str, options: DiscoveryOptions,
         sample = min(stem(p) for p in bams) + "_pool"
     else:
         sample = stem(input_bam)
-    material = cache_material(bams, windows, caller, options, read_groups, platform)
+    cache_dir = options.cache_dir or default_cache_dir or os.path.dirname(os.path.abspath(input_bam))
+    os.makedirs(cache_dir, exist_ok=True)
+    memo = _load_digest_memo(cache_dir)
+    material = cache_material(bams, windows, caller, options, read_groups, platform, memo=memo)
+    _save_digest_memo(cache_dir, memo)
     # The emitted sample name and the contig topology decide the VCF too.
     material["sample"] = str(sample)
     material["circular"] = sorted(_circular_lengths(bams[0]).items())
     key = cache_key(material)
-    cache_dir = options.cache_dir or default_cache_dir or os.path.dirname(os.path.abspath(input_bam))
-    os.makedirs(cache_dir, exist_ok=True)
     vcf, sidecar, parts_dir = cache_paths(cache_dir, sample, key)
 
     def reuse():

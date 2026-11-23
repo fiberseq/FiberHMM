@@ -302,8 +302,10 @@
   states by read name. `read_table/class_by_nfr_state.tsv` gives each class's
   prevalence refitted by EM within each state, with the classes fixed.
 - **`--max-memory-gb` for independent windows.** It counts each window's
-  molecules and lowers `--window-jobs`, then `--cores`, so the largest window
-  fits. Before, it applied to `--pool-loci` runs only.
+  molecules and lowers `--window-jobs`, then `--cores`, until every window's
+  estimated peak (which scales with molecules × width, so a wide window with
+  fewer molecules can be the largest) fits. Before, it applied to
+  `--pool-loci` runs only.
 
 - **`--keep-going` for window batches.** A failing window is logged and
   skipped, and the other windows finish. The aggregates cover the completed
@@ -326,7 +328,12 @@
   `--variants-rg-sample` restrict to read groups). The VCF is bgzipped and
   indexed in `--variant-cache DIR` (default: the output folder) under a key
   over the input BAMs, regions, caller, parameters and FiberHMM version, reused
-  while the key holds and rebuilt when anything changes (logged). Discovery
+  while the key holds and rebuilt when anything changes (logged). The key
+  includes a sha256 of each input BAM's and the `--reference` FASTA's bytes,
+  so replaced contents are caught even with the size and mtime restored; the
+  digests are remembered in the cache folder (`.fhvar.input_digests.json`) by
+  device, inode, size, mtime and ctime, so only the first run on a file reads
+  it in full. Discovery
   runs in chunks on `--cores` workers and resumes after an interruption.
   `<stem>_var.discovery.json` records the caller, VCF and key.
 - **`fiberhmm-extract --region` / `--regions-bed`** restrict every layer (and

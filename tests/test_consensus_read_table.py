@@ -375,6 +375,35 @@ def test_max_memory_gb_lowers_window_concurrency(monkeypatch):
         cli._window_memory_plan(cli.p_exit(Args), Args, windows, [], {}, 8, 0, Progress())
 
 
+def test_max_memory_gb_bounds_the_widest_window_not_the_most_molecules(monkeypatch):
+    """Heterogeneous BED windows: the estimate scales with molecules x width, so the plan must bound every
+    window's footprint, not only the window with the most molecules (2,000 in 1 kb vs 1,900 in 10 kb)."""
+    from fiberhmm.inference.consensus import cli, pooled_sampling
+    from fiberhmm.inference.consensus.memory_estimate import estimate
+
+    class Args:
+        max_memory_gb = 2.0
+    counts = {'narrow': 2000, 'wide': 1900}
+    monkeypatch.setattr(pooled_sampling, 'scanned_molecules', lambda datasets, windows, options: counts[windows[0]['name']])
+    reports = []
+
+    class Progress:
+        def report(self, stage, message, **_):
+            reports.append(message)
+    values = {'input': {'evidence_pad_bp': 250}}
+    windows = [dict(chrom='c', start=0, end=1000, name='narrow'), dict(chrom='c', start=5000, end=15000, name='wide')]
+    # the wide window alone is far over budget even with one core: the plan must refuse, naming it
+    assert estimate(1900, 10000, 1, pad=250, read_kb=30)['total_gb'] > Args.max_memory_gb
+    with pytest.raises(SystemExit):
+        cli._window_memory_plan(cli.p_exit(Args), Args, windows, [], values, 8, 0, Progress())
+    assert 'wide' in reports[-1]
+    # with room for it, every window fits at the planned concurrency
+    Args.max_memory_gb = 14.0
+    cores, jobs = cli._window_memory_plan(cli.p_exit(Args), Args, windows, [], values, 8, 0, Progress())
+    worst = max(estimate(n, w, cores//jobs, pad=250, read_kb=30)['total_gb'] for n, w in ((2000, 1000), (1900, 10000)))
+    assert jobs*worst <= Args.max_memory_gb
+
+
 def test_keep_going_records_failed_windows_and_continue_retries_them(deep, tmp_path, monkeypatch, capsys):
     run, root = deep
     real = batch.run_unit; calls = []; fail = {'w2'}
