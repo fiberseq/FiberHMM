@@ -214,8 +214,11 @@ def parse_args():
                         'calls (MA ddda_ucg from fiberhmm-tag-m5c) the input '
                         'already carries. The same mask applies in '
                         'fiberhmm-call --hmm-only, -posteriors and -pair/-merge. '
-                        'Default: on for --enzyme ddda, off otherwise; '
-                        '--no-use-m5c for an ablation.')
+                        'Default: on for --enzyme ddda, off otherwise. '
+                        '--no-use-m5c turns the mask off, for organisms without '
+                        'CpG methylation (e.g. Drosophila); it is recorded in '
+                        '@PG and inherited by recall-tfs/-nucs, pair/merge, '
+                        'posteriors and consensus.')
     p.add_argument('--cpg-mask-policy',
                    choices=('unmethylated-only', 'methylated-only'),
                    default=None,

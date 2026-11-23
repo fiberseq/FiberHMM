@@ -24,6 +24,7 @@ class InputOptions:
     legacy_hia5_annotation_frame: str = control('disabled', 'Legacy Hia5 MSP/nucleosome tag frame', 'Only for BAMs without MA/Ma: explicitly declare whether as/al and ns/nl coordinates use stored SEQ or molecular orientation. Disabled uses molecular when the header shows fibertools wrote the tags (a fibertools nucleosome command with no later FiberHMM caller), otherwise stops; it never guesses or flips REV from the data. The verified ind 2–4 h input uses seq.', choices=['disabled','seq','molecular'])
     correct_native: bool = control(True, "Replay corrected native TF decoder", "Re-score fixed MSPs with the multi-interval decoder. Original BAM calls remain untouched in the native layer.")
     ddda_m5c_correction: bool = control(True, "DddA CpG-aware scoring (as fiberhmm-call)", "Treat DddA CpGs exactly as fiberhmm-call and fiberhmm-recall-tfs do, in native replay and every downstream lattice score: CpG observations named by the CpG mask policy carry no evidence and no opportunity. Off scores every CpG at the ordinary rates (methylated CpGs then read as protection).")
+    use_m5c: str = control('auto', "DddA CpG mask (as fiberhmm-call --use-m5c)", "auto (the default): the DddA CpG mask is on, unless a dataset's BAMs record that their calls were made with fiberhmm-call --no-use-m5c, then it is off for that dataset (every DddA dataset of one run must resolve to the same policy). on/off (true/false are accepted) override the BAM records, as --use-m5c/--no-use-m5c on fiberhmm-consensus and fiberhmm-transfer. Turn it off for organisms without CpG methylation (e.g. Drosophila); keep it on in mammals, where DddA cannot deaminate methylated CpGs and they would read as protection.", choices=['auto', 'on', 'off'])
     ddda_cpg_mask_policy: str = control(CPG_MASK_POLICIES[0], "DddA CpG mask policy", "Unmethylated-only (the production default, as fiberhmm-call --cpg-mask-policy) excludes every CpG except inside confidently unmethylated ddda_ucg islands written by fiberhmm-tag-m5c; without those annotations every CpG is excluded. Methylated-only is the pre-3.0 policy that excluded CpGs only inside ddda_mcg intervals.", choices=list(CPG_MASK_POLICIES))
     minimum_mapq: int = control(0, "Minimum alignment MAPQ", "Input evidence filter, applied before within-strand duplicate collapse.", 0, 255, 1)
     minimum_nfr_length: int = control(0, "Minimum MSP length (bp; 0 = all)", "Search every supplied MSP by default. The native LLR and opportunity minimum, not a 150-bp accessible-patch gate, determine detection. A positive value explicitly restricts the search.", 0, 100000, 1)
@@ -300,6 +301,9 @@ def parse_options(values=None):
         if not isinstance(supplied, dict) or set(supplied) - set(definitions):
             raise ValueError(f"Unknown parameter in {group}")
         obj = cls()
+        if group == 'input' and isinstance(supplied, dict) and isinstance(supplied.get('use_m5c'), bool):
+            # input.use_m5c: true/false mean on/off, as --use-m5c/--no-use-m5c.
+            supplied = dict(supplied, use_m5c='on' if supplied['use_m5c'] else 'off')
         for key, value in supplied.items():
             default = getattr(obj, key)
             if isinstance(default, bool):
@@ -317,6 +321,8 @@ def parse_options(values=None):
                 raise ValueError(f"{group}.{key} outside [{meta['minimum']}, {meta['maximum']}]")
             setattr(obj, key, value)
         result[group] = obj
+    if result['input'].use_m5c == 'on' and not result['input'].ddda_m5c_correction:
+        raise ValueError('input.use_m5c=on contradicts input.ddda_m5c_correction=false; set one of them')
     if any(result[g].enabled for g in ('rescue', 'cross', 'comparability', 'split')) and not result['cr'].enabled:
         raise ValueError("Rescue, XCR, comparability and splitting require CR")
     if result['cr'].residual_update_policy=='append_frozen' and result['cr'].engine!='native_family_distribution':

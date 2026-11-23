@@ -3987,6 +3987,8 @@ def run_multi_qc(
     min_msp_bp: int = DEFAULT_MIN_MSP_BP,
     light_call_reads: int = DEFAULT_LIGHT_CALL_READS,
     light_call_seconds: float = DEFAULT_LIGHT_CALL_SECONDS,
+    use_m5c: Optional[bool] = None,
+    cpg_mask_policy: Optional[str] = None,
 ) -> dict:
     """Run per-BAM QC once, then build aggregate comparison artifacts."""
     if not input_paths:
@@ -4023,6 +4025,8 @@ def run_multi_qc(
             min_msp_bp=min_msp_bp,
             light_call_reads=light_call_reads,
             light_call_seconds=light_call_seconds,
+            use_m5c=use_m5c,
+            cpg_mask_policy=cpg_mask_policy,
         )
         results.append(result)
 

@@ -465,6 +465,73 @@ def recorded_call_masks(header, enzyme: Optional[str], mode: Optional[str]):
     return runs, policy, cpg
 
 
+_CPG_RECORD_ID = re.compile(
+    r'(fiberhmm-(?:call|recall-tfs|recall-nucs|merge))(?:\.\d+)?')
+
+
+def recorded_cpg_mask(header) -> Optional[str]:
+    """The DddA CpG mask that made the header's current calls, from the newest
+    ``fiberhmm-call`` / ``-recall-tfs`` / ``-recall-nucs`` / ``-merge`` record.
+
+    Returns ``'off'`` when that run chose no CpG mask (``--no-use-m5c`` on its
+    command line, or ``cpg_mask=off`` in a DddA record), the policy name when
+    it masked CpGs, and None when no record decides (no such record, or a
+    custom-model run whose mask was off only because it was not DddA).
+    Replays (recall-tfs/-nucs, pair/merge, fiberhmm-posteriors, consensus and
+    transfer) inherit ``'off'`` when the user passes neither ``--use-m5c``,
+    ``--no-use-m5c`` nor ``--cpg-mask-policy``; an explicit flag always wins.
+    """
+    import shlex
+    from fiberhmm.inference.tf_recaller import CPG_MASK_POLICIES
+    hd = header.to_dict() if hasattr(header, 'to_dict') else dict(header or {})
+    for pg in reversed(hd.get('PG', []) or []):
+        pn = pg.get('PN')
+        name = str(pn) if pn else str(pg.get('ID') or '')
+        if not _CPG_RECORD_ID.fullmatch(name):
+            continue
+        try:
+            toks = shlex.split(str(pg.get('CL', '')))
+        except ValueError:
+            toks = str(pg.get('CL', '')).split()
+        ds = str(pg.get('DS', ''))
+        if 'recall=off' in ds.split():
+            continue  # a merge without --recall made no calls
+        enzyme = _cl_option(toks, '--enzyme')
+        m = re.search(r'(?:^|\s)enzyme=(\S+)', ds)
+        ddda = (enzyme or (m.group(1) if m else '')).lower() == 'ddda'
+        flag = _cl_option(toks, '--cpg-mask-policy')
+        m = re.search(r'(?:^|\s)cpg_mask=(\S+)', ds)
+        if '--no-use-m5c' in toks:
+            return 'off'
+        if m:
+            value = m.group(1)
+            if value == 'off':
+                return 'off' if ddda else None
+            return value
+        if '--use-m5c' in toks or ddda:
+            return flag if flag in CPG_MASK_POLICIES else CPG_MASK_POLICIES[0]
+        return None
+    return None
+
+
+def inherit_use_m5c(use_m5c: Optional[bool], cpg_mask_policy: Optional[str],
+                    header, tool: str = 'fiberhmm', stream=None) -> Optional[bool]:
+    """``use_m5c`` for a replay of an already-called BAM: the explicit value
+    when the user gave ``--use-m5c``/``--no-use-m5c`` or ``--cpg-mask-policy``;
+    otherwise False when :func:`recorded_cpg_mask` says the calls were made
+    with the mask off (a note goes to ``stream``, default stderr); otherwise
+    None (the chemistry default)."""
+    if use_m5c is not None or cpg_mask_policy is not None or header is None:
+        return use_m5c
+    if recorded_cpg_mask(header) == 'off':
+        import sys
+        print(f"{tool}: DddA CpG mask off, as recorded by the run that made the "
+              "input's calls (--no-use-m5c); pass --use-m5c to mask CpGs",
+              file=stream or sys.stderr)
+        return False
+    return None
+
+
 def _aligned_blocks(read) -> Optional[np.ndarray]:
     cig = read.cigartuples
     if not cig or read.is_unmapped:

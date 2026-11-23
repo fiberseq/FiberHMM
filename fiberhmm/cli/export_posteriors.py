@@ -1191,7 +1191,9 @@ def main():
                      help='DddA CpG-aware calling, as in fiberhmm-call: CpGs are '
                           'hidden from the HMM except inside confident '
                           'unmethylated islands (MA ddda_ucg) the input carries. '
-                          'Default: on for --enzyme ddda, off otherwise.')
+                          'Default: on for --enzyme ddda, off otherwise, and off '
+                          'for an input whose calls were made with --no-use-m5c '
+                          '(recorded in its @PG). --no-use-m5c turns it off.')
     daf.add_argument('--cpg-mask-policy',
                      choices=('unmethylated-only', 'methylated-only'), default=None,
                      help='With CpG-aware calling: keep CpGs only inside ddda_ucg '
@@ -1329,7 +1331,9 @@ def main():
     chem_enzyme, _ = inherited_chemistry(args.enzyme, args.seq, effective_mode, args.input)
     try:
         extraction['cpg_mask_policy'] = resolve_cpg_mask_policy(
-            args.use_m5c, args.cpg_mask_policy, chem_enzyme, effective_mode,
+            _inherited_use_m5c(args.use_m5c, args.cpg_mask_policy, args.input,
+                               'fiberhmm-posteriors'),
+            args.cpg_mask_policy, chem_enzyme, effective_mode,
             tool='fiberhmm-posteriors')
     except ValueError as exc:
         parser.error(str(exc))
@@ -1377,6 +1381,20 @@ def main():
 
 
 # Python API entry point (same pipeline as the fiberhmm-posteriors command)
+def _inherited_use_m5c(use_m5c, cpg_mask_policy, input_bam, tool):
+    """Explicit flags win; otherwise an input whose calls were made with the
+    DddA CpG mask off (``recorded_cpg_mask``) keeps it off."""
+    if use_m5c is not None or cpg_mask_policy is not None or not input_bam or input_bam == '-':
+        return use_m5c
+    from fiberhmm.nuc.records import inherit_use_m5c
+    try:
+        with pysam.AlignmentFile(input_bam, 'rb', check_sq=False) as bam:
+            header = bam.header
+    except (OSError, ValueError):
+        return use_m5c
+    return inherit_use_m5c(use_m5c, cpg_mask_policy, header, tool=tool)
+
+
 def export_posteriors_from_bam(
     input_bam: str,
     model_path: str,
@@ -1428,7 +1446,9 @@ def export_posteriors_from_bam(
         run_mask = (0, 'keep-one')
     extraction = {
         'cpg_mask_policy': resolve_cpg_mask_policy(
-            use_m5c, cpg_mask_policy, enzyme, effective_mode,
+            _inherited_use_m5c(use_m5c, cpg_mask_policy, input_bam,
+                               'export_posteriors_from_bam'),
+            cpg_mask_policy, enzyme, effective_mode,
             tool='export_posteriors_from_bam'),
         'daf_run_mask': run_mask,
         'min_mapq': int(min_mapq),

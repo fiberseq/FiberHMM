@@ -73,6 +73,13 @@ EDGE_TRIM = 10
 #: ``ddda_ucg`` islands.
 CPG_MASK_POLICY = "unmethylated-only"
 
+#: DddA CpG mask switch (``--use-m5c`` / ``--no-use-m5c`` on every DddA tool;
+#: consensus/transfer ``input.use_m5c``). ``auto`` (an unset flag, None) is on
+#: for DddA in DAF mode and off otherwise; a replay of called BAMs keeps it off
+#: when their calls recorded ``--no-use-m5c``. Turn it off for organisms
+#: without CpG methylation (e.g. Drosophila).
+USE_M5C = "auto"
+
 #: DAF same-strand run thinning: (min_run_length, policy) per enzyme; 0 = off.
 DAF_RUN_MASK = {"ddda": (2, "keep-one")}
 DAF_RUN_POLICY = "keep-one"

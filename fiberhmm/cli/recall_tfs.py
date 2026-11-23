@@ -196,7 +196,8 @@ def _build_recall_pg_record(args, mode, model_path, nuc_cfg, nuc_model_path=None
             f'nuc_sha256={profile_sha256 or "off"} phase_nrl={phase_nrl} '
             f'daf_run_mask={(">=" + str(args.daf_mask_runs) + "/" + args.daf_run_policy) if getattr(args, "daf_mask_runs", 0) else "off"} '
             f'daf_unaligned_mask={("on" if getattr(args, "daf_mask_unaligned", True) else "off") if mode == "daf" else "n/a"} '
-            f'daf_insert_consensus={getattr(args, "daf_insert_state", "off" if mode == "daf" else "n/a")}'
+            f'daf_insert_consensus={getattr(args, "daf_insert_state", "off" if mode == "daf" else "n/a")} '
+            f'cpg_mask={getattr(args, "cpg_mask_state", "off")}'
         ),
     }
 
@@ -926,9 +927,13 @@ def parse_args(default_recall_nucs: bool = False):
                         '(identity). Use a pre-uplifted model file (e.g. '
                         'ddda_TF.json) for DddA rather than setting this.')
     p.add_argument('--use-m5c', action=argparse.BooleanOptionalAction, default=None,
-                   help='Enable CpG-aware DddA recall. By default, retain CpGs only inside confident ddda_ucg MA spans. Enabled '
+                   help='CpG-aware DddA recall (the DddA CpG mask). By default, retain CpGs only inside confident ddda_ucg MA spans. Enabled '
                         'automatically for DddA, disabled for other enzymes; '
-                        'use --use-m5c explicitly with a custom DddA model.')
+                        'use --use-m5c explicitly with a custom DddA model. '
+                        '--no-use-m5c turns the mask off (organisms without CpG '
+                        'methylation, e.g. Drosophila). Unset, an input whose '
+                        'calls were made with --no-use-m5c (recorded in its '
+                        '@PG) is recalled with the mask off.')
     p.add_argument('--cpg-mask-policy',
                    choices=('unmethylated-only', 'methylated-only'),
                    default=None,
@@ -1507,13 +1512,22 @@ def _recall(args, bam_in, model_path, using_bundled_model, n_cores):
 
     llr_hit, llr_miss = build_llr_tables(model)
     m5c_llr_hit = m5c_llr_miss = None
+    # Explicit --use-m5c/--no-use-m5c/--cpg-mask-policy wins; otherwise a BAM
+    # whose calls were made with the mask off (recorded) is recalled with it off.
+    from fiberhmm.nuc.records import inherit_use_m5c
+    prog = ('fiberhmm-recall-nucs' if getattr(args, 'recall_nucs', False)
+            else 'fiberhmm-recall-tfs')
+    args.use_m5c = inherit_use_m5c(
+        getattr(args, 'use_m5c', None), getattr(args, 'cpg_mask_policy', None),
+        bam_in.header, tool=prog)
     try:
         cpg_mask_policy = resolve_cpg_mask_policy(
-            getattr(args, 'use_m5c', None), getattr(args, 'cpg_mask_policy', None),
-            args.enzyme, mode, tool='fiberhmm-recall-tfs')
+            args.use_m5c, getattr(args, 'cpg_mask_policy', None),
+            args.enzyme, mode, tool=prog)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
     use_m5c = cpg_mask_policy is not None
+    args.cpg_mask_state = cpg_mask_policy or 'off'
     cpg_mask_policy = cpg_mask_policy or 'unmethylated-only'
     if use_m5c:
         m5c_llr_hit, m5c_llr_miss = build_m5c_llr_tables(

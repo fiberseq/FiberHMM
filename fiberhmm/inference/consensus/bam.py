@@ -295,6 +295,42 @@ def dataset_preparations(payload):
     return rows
 
 
+def resolve_ddda_cpg_policy(input_options, recorded=()):
+    """The DddA CpG mask of one dataset: ``'off'`` or the mask policy name.
+
+    ``input.use_m5c`` ``on``/``off`` (``--use-m5c``/``--no-use-m5c``) and
+    ``input.ddda_m5c_correction=false`` are explicit and win. ``auto`` (the
+    default) is ``input.ddda_cpg_mask_policy`` unless ``recorded`` (the
+    :func:`fiberhmm.nuc.records.recorded_cpg_mask` value of each of the
+    dataset's BAMs) says every file's calls were made with the mask off; files
+    that disagree must be given an explicit setting."""
+    use = getattr(input_options, 'use_m5c', 'auto')
+    if use == 'off' or not input_options.ddda_m5c_correction:
+        return 'off'
+    if use == 'on':
+        return input_options.ddda_cpg_mask_policy
+    offs = {value == 'off' for value in recorded}
+    if offs == {True}:
+        return 'off'
+    if offs == {True, False}:
+        raise ValueError('its BAMs were called with and without the DddA CpG mask (fiberhmm-call --no-use-m5c); '
+                         'set --use-m5c or --no-use-m5c (input.use_m5c) explicitly, or load them as separate datasets')
+    return input_options.ddda_cpg_mask_policy
+
+
+def _recorded_cpg_masks(ds):
+    """recorded_cpg_mask of each BAM of a dataset (empty for non-BAM data)."""
+    if getattr(ds, 'data_type', 'bam') != 'bam':
+        return ()
+    import pysam
+    from fiberhmm.nuc.records import recorded_cpg_mask
+    out = []
+    for path in _flatten_paths(getattr(ds, 'paths', None) or ds.path):
+        with pysam.AlignmentFile(path, 'rb', check_sq=False) as bam:
+            out.append(recorded_cpg_mask(bam.header))
+    return tuple(out)
+
+
 def check_saved_evidence(payload, options):
     """Refuse saved evidence prepared under other replay policies than this run's.
 
@@ -311,16 +347,24 @@ def check_saved_evidence(payload, options):
     Strata without the BAM loader's receipt (``model_manifest`` with the
     emission digest; hand-built payloads) are taken as given."""
     from fiberhmm.inference.fused_stages import resolve_nuc_recall_policy
+    explicit = options['input'].use_m5c != 'auto' or not options['input'].ddda_m5c_correction
+    seen = None
     for label, chemistry, manifest in dataset_preparations(payload):
         if 'emissions_sha256' not in manifest:
             continue
         if chemistry == 'ddda':
-            expected = options['input'].ddda_cpg_mask_policy if options['input'].ddda_m5c_correction else 'off'
             recorded = manifest.get('cpg_mask_policy')
-            if recorded != expected:
+            expected = resolve_ddda_cpg_policy(options['input'])
+            # auto also accepts evidence whose BAMs recorded --no-use-m5c (prepared with the mask off)
+            accepted = {expected} if explicit else {expected, 'off'}
+            if recorded not in accepted:
                 raise ValueError(f'{label}: saved DddA evidence was prepared with CpG policy '
                     f'{recorded or "unrecorded (FiberHMM before 3.3.0: methylated-only)"}, this run asks for {expected}. '
-                    'Reload the evidence from the BAMs (or set input.ddda_cpg_mask_policy / ddda_m5c_correction to match).')
+                    'Reload the evidence from the BAMs (or set input.ddda_cpg_mask_policy / input.use_m5c to match).')
+            if seen is not None and recorded != seen:
+                raise ValueError(f'{label}: saved DddA evidence mixes CpG policies ({seen} and {recorded}); '
+                    'one run uses one DddA CpG mask. Reload the evidence from the BAMs.')
+            seen = recorded
         if chemistry == 'hia5-nanopore' and manifest.get('upstream_nuc_tf_recall'):
             recorded = (manifest.get('upstream_nuc_tf_settings') or {}).get('nuc_recall_policy') or 'conservative'
             expected = manifest.get('call_nuc_recall_policy') or resolve_nuc_recall_policy('auto', 'nanopore-fiber')
@@ -348,6 +392,7 @@ def _load_payload_once(state,request,options,progress):
     from fiberhmm.inference.engine import daf_snp_mask_scope
     snp_mask,snp_receipt=read_mask(options['input'].daf_snp_mask)
     unit_hook=request.get('_unit_hook')
+    run_cpg_policy=None
     for ordinal,dsid in enumerate(request['dataset_ids']):
         ordinal=request.get('_dataset_ordinals',{}).get(dsid,ordinal)
         ds=state.get_dataset(dsid)
@@ -358,6 +403,17 @@ def _load_payload_once(state,request,options,progress):
         # >= 2) unless the caller configured one explicitly. Scoped, so mixed
         # DddA/DddB loads and concurrent Browser jobs cannot leak into each other.
         mask=_dataset_daf_run_mask(chemistry,options,ds.label,ds)
+        cpg_policy=None
+        if chemistry=='ddda':
+            # The DddA CpG mask: explicit input.use_m5c, else what the BAMs' calls recorded (--no-use-m5c = off).
+            # One policy per run: classes are pooled across datasets.
+            try:cpg_policy=resolve_ddda_cpg_policy(options['input'],_recorded_cpg_masks(ds) if options['input'].use_m5c=='auto' else ())
+            except ValueError as error:raise ValueError(f'{ds.label}: {error}') from None
+            if run_cpg_policy is not None and cpg_policy!=run_cpg_policy:
+                raise ValueError(f'{ds.label}: its BAMs record a different DddA CpG mask ({cpg_policy}) than another dataset '
+                    f'of this run ({run_cpg_policy}); one run uses one mask. Set --use-m5c or --no-use-m5c (input.use_m5c) explicitly.')
+            run_cpg_policy=cpg_policy
+        use_m5c=cpg_policy not in (None,'off')
         from fiberhmm.core.bam_reader import daf_run_mask_scope
         if snp_receipt and chemistry in ('ddda','dddb') and not options['input'].correct_native:
             raise ValueError('DAF SNP masking requires input.correct_native=true so discovery calls and scoring use the same observations')
@@ -369,7 +425,7 @@ def _load_payload_once(state,request,options,progress):
                 read_names=request.get('_read_names',{}).get(dsid),
                 decode_cache=request.get('_decode_cache',{}).get(dsid),
                 alignment_cache=(request.get('_alignment_cache',{}).get(dsid) if options['input'].correct_native
-                                 or (chemistry=='ddda' and options['input'].ddda_m5c_correction) else None),
+                                 or use_m5c else None),
                 allow_population=True,require_nucleosomes=False,tf_layer='tf',minimum_mapq=options['input'].minimum_mapq,
                 pad=evidence_pad(options),
                 **({'legacy_annotation_frame':options['input'].legacy_hia5_annotation_frame} if chemistry.startswith('hia5') and options['cr'].engine in (HARMONIZATION_MODE,*STAGED_LIKE) else {}))
@@ -385,12 +441,10 @@ def _load_payload_once(state,request,options,progress):
             projections=_projection_members(reads,representatives,exact_records=True)
             # unit_id names the dataset by its ordinal in this run and the file by its index in the dataset's paths,
             # never by label or path: the same BAM bytes must give the same classes from any location.
-            use_m5c=chemistry=='ddda' and options['input'].ddda_m5c_correction
             # m5C conditioning reads and edits the lattice fields during replay: such units take the hook after it
             early_hook=unit_hook if unit_hook is not None and not use_m5c else (lambda unit:unit)
             units=[early_hook(evidence_unit(read,model,dsid,projections.get(_projection_member_key(read),[]),start,end,dataset_ordinal=ordinal))
                    for read in representatives]
-            cpg_policy=options['input'].ddda_cpg_mask_policy
             if use_m5c and ds.data_type!='bam' and ds.available_layers.get('ddda_mcg'):
                 raise ValueError('Tagged DddA mCG conditioning currently needs BAM query coordinates; use BAM or explicitly disable that input option')
             minimum_llr=None
@@ -535,9 +589,13 @@ def _load_payload_once(state,request,options,progress):
                     **(dict(call_nuc_recall_policy='topology')
                        if options['input'].correct_native and topology_replay and any('upstream_nuc_tf_recall' in u for u in units) else {}),
                     # DddA only, so DddB/Hia5 manifests (and their digests) are unchanged.
-                    **(dict(cpg_mask_policy=cpg_policy if use_m5c else 'off',
+                    **(dict(cpg_mask_policy=cpg_policy,
                             ddda_ucg_molecules=sum(bool(u['provenance'].get('ddda_ucg_islands')) for u in units))
                        if chemistry=='ddda' else {}),
+                    # Only when the BAMs' recorded --no-use-m5c turned the mask off, so default manifests are unchanged.
+                    **(dict(cpg_mask_source='recorded --no-use-m5c')
+                       if chemistry=='ddda' and cpg_policy=='off' and options['input'].use_m5c=='auto'
+                       and options['input'].ddda_m5c_correction else {}),
                     m5c_conditioned_opportunities=sum(u['provenance'].get('native_m5c_excluded_opportunities',0) for u in units)),
                 evidence_units=dict(**collapse,physical_duplex_independence_established=bool(units) and all(u.get('physical_source_names') for u in units),joint_duplex_units=sum(bool(u.get('physical_source_names')) for u in units)),load=diagnostics))
             # Release this dataset's decoded reads before the next dataset decodes (they are not part of the payload).
