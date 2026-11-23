@@ -450,7 +450,7 @@ def recorded_call_masks(header, enzyme: Optional[str], mode: Optional[str]):
         if m:
             cpg_recorded, cpg = True, (None if m.group(1) == 'off' else m.group(1))
         else:
-            use_m5c = True if '--use-m5c' in toks else (False if '--no-use-m5c' in toks else None)
+            use_m5c = last_m5c_switch(toks)
             policy_flag = _cl_option(toks, '--cpg-mask-policy')
     try:
         runs, policy = resolve_daf_run_mask(runs, policy or 'keep-one', enzyme)
@@ -465,52 +465,86 @@ def recorded_call_masks(header, enzyme: Optional[str], mode: Optional[str]):
     return runs, policy, cpg
 
 
+def last_m5c_switch(toks) -> Optional[bool]:
+    """The last ``--use-m5c`` / ``--no-use-m5c`` in a recorded command line
+    (True / False), None when it has neither: argparse lets the last Boolean
+    switch win, so a wrapper's appended ``--use-m5c`` overrides an earlier
+    ``--no-use-m5c``."""
+    for tok in reversed(list(toks)):
+        if tok == '--use-m5c':
+            return True
+        if tok == '--no-use-m5c':
+            return False
+    return None
+
+
 _CPG_RECORD_ID = re.compile(
     r'(fiberhmm-(?:call|recall-tfs|recall-nucs|merge))(?:\.\d+)?')
+
+#: :func:`_cpg_record_decision` outcomes
+_SKIP, _UNDECIDED = object(), object()
+
+
+def _cpg_record_decision(pg):
+    """The CpG mask one ``@PG`` record decided: ``'off'``, the policy name,
+    ``_UNDECIDED`` (a caller record that does not decide) or ``_SKIP`` (not a
+    caller record, or a merge without ``--recall``, which made no calls).
+
+    The resolved ``DS cpg_mask=`` value wins; the command line is read only
+    when DS has no such token (older records), or to tell whether a
+    non-DddA record's ``off`` was the user's ``--no-use-m5c``. On the command
+    line the last Boolean switch wins, as it did for the run."""
+    import shlex
+    from fiberhmm.inference.tf_recaller import CPG_MASK_POLICIES
+    pn = pg.get('PN')
+    name = str(pn) if pn else str(pg.get('ID') or '')
+    if not _CPG_RECORD_ID.fullmatch(name):
+        return _SKIP
+    try:
+        toks = shlex.split(str(pg.get('CL', '')))
+    except ValueError:
+        toks = str(pg.get('CL', '')).split()
+    ds = str(pg.get('DS', ''))
+    if 'recall=off' in ds.split():
+        return _SKIP
+    enzyme = _cl_option(toks, '--enzyme')
+    m = re.search(r'(?:^|\s)enzyme=(\S+)', ds)
+    ddda = (enzyme or (m.group(1) if m else '')).lower() == 'ddda'
+    switch = last_m5c_switch(toks)
+    m = re.search(r'(?:^|\s)cpg_mask=(\S+)', ds)
+    if m:
+        value = m.group(1)
+        if value != 'off':
+            return value
+        return 'off' if ddda or switch is False else _UNDECIDED
+    if switch is False:
+        return 'off'
+    if switch or ddda:
+        flag = _cl_option(toks, '--cpg-mask-policy')
+        return flag if flag in CPG_MASK_POLICIES else CPG_MASK_POLICIES[0]
+    return _UNDECIDED
 
 
 def recorded_cpg_mask(header) -> Optional[str]:
     """The DddA CpG mask that made the header's current calls, from the newest
     ``fiberhmm-call`` / ``-recall-tfs`` / ``-recall-nucs`` / ``-merge`` record.
 
-    Returns ``'off'`` when that run chose no CpG mask (``--no-use-m5c`` on its
-    command line, or ``cpg_mask=off`` in a DddA record), the policy name when
-    it masked CpGs, and None when no record decides (no such record, or a
-    custom-model run whose mask was off only because it was not DddA).
+    Returns ``'off'`` when that run chose no CpG mask (``cpg_mask=off`` in a
+    DddA record, or ``--no-use-m5c`` as the last m5C switch of its command
+    line), the policy name when it masked CpGs, and None when no record
+    decides (no such record, or a custom-model run whose mask was off only
+    because it was not DddA). The resolved ``DS cpg_mask=`` value beats the
+    command line.
     Replays (recall-tfs/-nucs, pair/merge, fiberhmm-posteriors, consensus and
     transfer) inherit ``'off'`` when the user passes neither ``--use-m5c``,
     ``--no-use-m5c`` nor ``--cpg-mask-policy``; an explicit flag always wins.
     """
-    import shlex
-    from fiberhmm.inference.tf_recaller import CPG_MASK_POLICIES
     hd = header.to_dict() if hasattr(header, 'to_dict') else dict(header or {})
     for pg in reversed(hd.get('PG', []) or []):
-        pn = pg.get('PN')
-        name = str(pn) if pn else str(pg.get('ID') or '')
-        if not _CPG_RECORD_ID.fullmatch(name):
+        decision = _cpg_record_decision(pg)
+        if decision is _SKIP:
             continue
-        try:
-            toks = shlex.split(str(pg.get('CL', '')))
-        except ValueError:
-            toks = str(pg.get('CL', '')).split()
-        ds = str(pg.get('DS', ''))
-        if 'recall=off' in ds.split():
-            continue  # a merge without --recall made no calls
-        enzyme = _cl_option(toks, '--enzyme')
-        m = re.search(r'(?:^|\s)enzyme=(\S+)', ds)
-        ddda = (enzyme or (m.group(1) if m else '')).lower() == 'ddda'
-        flag = _cl_option(toks, '--cpg-mask-policy')
-        m = re.search(r'(?:^|\s)cpg_mask=(\S+)', ds)
-        if '--no-use-m5c' in toks:
-            return 'off'
-        if m:
-            value = m.group(1)
-            if value == 'off':
-                return 'off' if ddda else None
-            return value
-        if '--use-m5c' in toks or ddda:
-            return flag if flag in CPG_MASK_POLICIES else CPG_MASK_POLICIES[0]
-        return None
+        return None if decision is _UNDECIDED else decision
     return None
 
 

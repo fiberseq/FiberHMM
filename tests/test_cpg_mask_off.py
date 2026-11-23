@@ -344,3 +344,36 @@ def test_qc_light_call_inherits_off(called):
         block, _ = compute_state_rates(reads, 'daf', 'ddda', header=header, state_source='light-call',
                                        light_call_reads=2)
         assert block['definition']['hmm_cpg_mask'] == want
+
+
+# --------------------------------------------------------------------------- #
+#  recorded command lines: the resolved DS value, else the last switch          #
+# --------------------------------------------------------------------------- #
+
+def test_recorded_mask_prefers_ds_then_the_last_switch():
+    from fiberhmm.nuc.records import recorded_call_masks
+    # a wrapper appended --use-m5c after --no-use-m5c: the run masked CpGs
+    final_on = dict(CALL_ON, CL=CALL_ON['CL'] + ' --no-use-m5c --use-m5c')
+    assert recorded_cpg_mask(_header(final_on)) == 'unmethylated-only'
+    # older records without the DS token: the last Boolean switch wins
+    old = {'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call', 'CL': 'fiberhmm-call --enzyme ddda'}
+    for tail, want in ((' --no-use-m5c --use-m5c', 'unmethylated-only'),
+                       (' --use-m5c --no-use-m5c', 'off')):
+        hd = _header(dict(old, CL=old['CL'] + tail))
+        assert recorded_cpg_mask(hd) == want
+        assert recorded_call_masks(hd, 'ddda', 'daf')[2] == (None if want == 'off' else want)
+    custom = {'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call',
+              'CL': 'fiberhmm-call -m my.json --use-m5c --no-use-m5c',
+              'DS': 'mode=daf enzyme=custom cpg_mask=off'}
+    assert recorded_cpg_mask(_header(custom)) == 'off'
+
+
+def test_caller_settings_honour_the_last_switch():
+    from fiberhmm.nuc.recall import CallerSettings
+    for tail, want in ((' --no-use-m5c --use-m5c', 'unmethylated-only'),
+                       (' --use-m5c --no-use-m5c', None)):
+        pg = {'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call',
+              'CL': 'fiberhmm-call -i a.bam -o b.bam --enzyme ddda' + tail}
+        settings = CallerSettings.from_header(pysam.AlignmentHeader.from_dict(_header(pg)))
+        assert settings.cpg_mask_policy == want
+
