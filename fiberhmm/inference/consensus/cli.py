@@ -124,8 +124,8 @@ def _main(argv=None):
     p.add_argument('--cores',type=int,help='Worker processes (sets compute.cores; default 4)')
     p.add_argument('--max-memory-gb',type=float,metavar='GB',help='Refuse to start, or lower the parallelism, when the pre-run '
                    'peak-memory estimate exceeds GB: --pool-loci runs lower --cores (the estimate is always logged); independent '
-                   '--bed/--region windows count each window\'s molecules first and lower --window-jobs, then --cores, so the largest '
-                   'window fits (execution only: --continue accepts it). The estimate is a planning figure (~30%%)')
+                   '--bed/--region windows count each window\'s molecules first and lower --window-jobs, then --cores, so every '
+                   'window\'s estimated peak (molecules x width) fits (execution only: --continue accepts it). The estimate is a planning figure (~30%%)')
     p.add_argument('--evidence-pad',metavar='BP|full',help='Keep each loaded read\'s calls, MSPs, nucleosomes and aligned blocks '
                    f'that overlap the window plus BP (sets input.evidence_pad_bp; default {CLI_EVIDENCE_PAD_BP} here, whole reads in '
                    'the Python API and FiberBrowser). Calls crossing the pad boundary are kept whole. "full" keeps whole-read '
@@ -370,9 +370,10 @@ def p_exit(args):
 
 
 def _window_memory_plan(leave,args,windows,datasets,values,cores,window_jobs,progress):
-    """--max-memory-gb for independent windows: scan each window's molecule count (no tag decoding), estimate the
-    peak of the largest window at each concurrency, and lower --window-jobs (then compute.cores) until the estimate
-    fits. Execution only: results are unchanged and --continue accepts the new concurrency."""
+    """--max-memory-gb for independent windows: scan each window's molecule count (no tag decoding), estimate every
+    window's peak at each concurrency (the estimate scales with molecules x width, so the window with the most
+    molecules is not necessarily the largest), and lower --window-jobs (then compute.cores) until the largest
+    footprint fits. Execution only: results are unchanged and --continue accepts the new concurrency."""
     from .memory_estimate import estimate,describe
     from .parameters import parse_options
     from .bam import evidence_pad
@@ -388,9 +389,12 @@ def _window_memory_plan(leave,args,windows,datasets,values,cores,window_jobs,pro
         except (ValueError,OSError) as error:
             progress.report('memory_scan',f"{w['name']}: not counted ({error}); the window will report its own error")
             return 0
-    largest=max(((count(w),w['end']-w['start']) for w in windows),default=(0,1))
+    sizes=[(count(w),max(1,w['end']-w['start']),w.get('name') or '') for w in windows] or [(0,1,'')]
+    largest=sizes[0]
     def total(jobs,inner):
-        e=estimate(largest[0],largest[1],inner,**kw)
+        nonlocal largest
+        # Every window at this concurrency: the largest estimated footprint, not the most molecules, bounds the plan.
+        e,largest=max(((estimate(n,width,inner,**kw),(n,width,name)) for n,width,name in sizes),key=lambda t:t[0]['total_gb'])
         # Concurrent windows each run in one worker process with `inner` cores; the parent holds no evidence.
         return (e['total_gb'] if jobs<=1 else jobs*e['total_gb']), e
     jobs,inner=plan_jobs(len(windows),cores,window_jobs)
@@ -399,10 +403,11 @@ def _window_memory_plan(leave,args,windows,datasets,values,cores,window_jobs,pro
         if gb<=args.max_memory_gb or (jobs==1 and inner==1): break
         if jobs>1: jobs-=1
         else: inner-=1
-    progress.report('memory_plan',f'largest window {largest[0]:,} molecules: {describe(e)} per window x {jobs} concurrent = {gb:.1f} GB'
+    label=f'{largest[2]} ({largest[0]:,} molecules, {largest[1]:,} bp)' if largest[2] else f'{largest[0]:,} molecules'
+    progress.report('memory_plan',f'largest window {label}: {describe(e)} per window x {jobs} concurrent = {gb:.1f} GB'
                     f'; limit {args.max_memory_gb:g} GB')
     if gb>args.max_memory_gb:
-        leave(2,f'fiberhmm-consensus: error: the largest window ({largest[0]:,} molecules) is estimated at {gb:.1f} GB with one '
+        leave(2,f'fiberhmm-consensus: error: the largest window {label} is estimated at {gb:.1f} GB with one '
                 f'window and one core, above --max-memory-gb {args.max_memory_gb:g}; set --max-discovery-molecules/'
                 '--max-quantification-molecules or a smaller --evidence-pad\n')
     return (inner if jobs==1 else jobs*inner),jobs
