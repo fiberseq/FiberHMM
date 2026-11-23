@@ -77,15 +77,16 @@ def run_record(datasets, windows, values, nfr):
     """What --continue must match. BAMs are identified by path, size and mtime (no content hash: these BAMs are often
     tens of GB); --cores, --window-jobs and --json-progress are execution-only."""
     from fiberhmm import __version__
+    from fiberhmm.inference.consensus.bam import _flatten_paths
     values = deepcopy(values)
     values.get('compute', {}).pop('cores', None)
     files = []
     for d in datasets:
-        for p in d.get('paths') or []:
+        for p in _flatten_paths(d.get('paths') or []):       # a single path may be given as a string, as the loader reads it
             st = Path(p).stat()
             files.append(dict(dataset_id=d['dataset_id'], path=str(Path(p).resolve()), size=st.st_size, mtime_ns=st.st_mtime_ns))
-    return dict(datasets=[dict(dataset_id=d['dataset_id'], chemistry=d.get('chemistry'), paths=list(d.get('paths') or []))
-                          for d in datasets],
+    return dict(datasets=[dict(dataset_id=d['dataset_id'], chemistry=d.get('chemistry'),
+                               paths=_flatten_paths(d.get('paths') or [])) for d in datasets],
                 files=files, windows=[{k: w[k] for k in ('chrom', 'start', 'end', 'name')} for w in windows],
                 loader_parameters=values, nfr=nfr, fiberhmm=__version__)
 
