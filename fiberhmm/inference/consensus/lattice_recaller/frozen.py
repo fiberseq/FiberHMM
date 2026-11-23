@@ -100,10 +100,11 @@ def freeze_run(run_dir, output):
     units = [u for s in evidence['strata'] for u in s['units']]
     hashes = sorted(set().union(*(molecule_keys(u) for u in units))) if units else []
     pooling = manifest.get('pooling') or evidence.get('pooling')
+    parameters = _pin_ddda_cpg_mask(manifest['parameters'], evidence)
     body = dict(schema=SCHEMA, engine=MODE,
                 frame=dict(region=dict(manifest['region']), pooled=bool(pooling),
                            windows=(pooling or {}).get('windows'), coordinate_system=(pooling or {}).get('coordinate_system', 'reference')),
-                parameters=manifest['parameters'], tiles=[[int(a), int(b)] for a, b in manifest['recaller']['tiles']],
+                parameters=parameters, tiles=[[int(a), int(b)] for a, b in manifest['recaller']['tiles']],
                 classes=classes, datasets=[dict(dataset_id=d['dataset_id'], chemistry=d['chemistry'], units=d.get('units'), model=d.get('model'))
                                            for d in manifest['datasets']],
                 channels=channels, spot_precision='3_decimals' if '3_decimals' in precision else 'full',
@@ -119,6 +120,22 @@ def freeze_run(run_dir, output):
     body = dict(body, content_sha256=digest(body))
     write_json(output, body)
     return load_catalog(output)
+
+
+def _pin_ddda_cpg_mask(parameters, evidence):
+    """The source run's parameters with ``input.use_m5c`` fixed to the DddA CpG
+    mask its evidence used (``on``/``off``) when the run left it ``auto``, so a
+    transfer scores every target with the catalog's mask instead of whatever
+    the target BAMs record (and saved target evidence must match it exactly).
+    Catalogs without DddA data keep their parameters unchanged."""
+    from ..bam import dataset_preparations
+    used = {m.get('cpg_mask_policy') for _, chemistry, m in dataset_preparations(evidence)
+            if chemistry == 'ddda' and m.get('cpg_mask_policy')}
+    if len(used) != 1 or (parameters.get('input') or {}).get('use_m5c', 'auto') != 'auto':
+        return parameters
+    pinned = copy.deepcopy(parameters)
+    pinned.setdefault('input', {})['use_m5c'] = 'off' if used == {'off'} else 'on'
+    return pinned
 
 
 def load_catalog(path_or_body):

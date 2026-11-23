@@ -168,7 +168,12 @@ def run_merge(in_bam, out_bam, prob_threshold=0, pairs_only=False, io_threads=4,
     warn_if_frames_unverifiable(str(in_bam) if in_bam is not None else None)
     t0 = time.time()
     ctx = None
+    bam = pysam.AlignmentFile(in_bam, 'rb')
     if recall:
+        # Explicit flags win; otherwise calls made with --no-use-m5c (recorded
+        # in the input's @PG) are re-called with the CpG mask off.
+        from fiberhmm.nuc.records import inherit_use_m5c
+        use_m5c = inherit_use_m5c(use_m5c, cpg_mask_policy, bam.header, tool=tool)
         ctx = RecallContext(enzyme, use_m5c=use_m5c,
                             cpg_mask_policy=cpg_mask_policy, tool=tool)
         if legacy_tags is not None:
@@ -177,7 +182,6 @@ def run_merge(in_bam, out_bam, prob_threshold=0, pairs_only=False, io_threads=4,
               f"re-calling footprints (HMM + nuc + TF recallers) on both-strand "
               f"consensus reads; CpG-aware calling (HMM + recall) "
               f"{ctx.cpg_mask_policy or 'off'}", file=sys.stderr)
-    bam = pysam.AlignmentFile(in_bam, 'rb')
     header = append_ma_types(
         bam.header, ['deam', 'nuc', 'msp', 'tf'] if recall else ['deam'])
     header = _merge_output_header(
@@ -398,7 +402,9 @@ Examples:
                    help='With --recall: DddA CpG-aware calling, as in '
                         'fiberhmm-call (CpGs excluded from the joint HMM and '
                         'from recall except inside the source reads\' ddda_ucg '
-                        'islands). Default: on for --enzyme ddda.')
+                        'islands). Default: on for --enzyme ddda, unless the '
+                        'input\'s calls were made with --no-use-m5c (recorded '
+                        'in its @PG); --no-use-m5c turns the mask off.')
     p.add_argument('--cpg-mask-policy',
                    choices=('unmethylated-only', 'methylated-only'), default=None,
                    help='With CpG-aware calling: keep CpGs only inside ddda_ucg '

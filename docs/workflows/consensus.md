@@ -77,7 +77,48 @@ site at 10,040 with occupancy 0.7 and a 16 bp site at 10,110 with occupancy
   DddA CpG is neutral and the run says so in its data warnings; at CpG-island
   loci such as active promoters, run `fiberhmm-tag-m5c` on the BAM first.
   `methylated-only` reproduces the rule of FiberHMM before 3.3.0 (exclude CpGs
-  only inside `ddda_mcg`); `input.ddda_m5c_correction: false` scores every CpG.
+  only inside `ddda_mcg`); `--no-use-m5c` (`input.use_m5c: off`, see below)
+  scores every CpG. `input.ddda_m5c_correction: false` still means off.
+
+### When to turn the DddA CpG mask off
+
+DddA cannot deaminate a methylated C, so in mammals a methylated CpG reads as
+protection; the mask keeps those CpGs from creating or moving classes. In
+organisms without meaningful CpG methylation, such as *Drosophila*, CpGs carry
+ordinary footprint evidence, and the mask only discards it. Turn it off with
+the switch `fiberhmm-call` uses:
+
+```bash
+fiberhmm-consensus --bam dm_ddda.bam --region chr2L:1000000-1000300 --output out --no-use-m5c
+```
+
+`--use-m5c`/`--no-use-m5c` set `input.use_m5c` (`auto`, `on` or `off`;
+`true`/`false` are accepted in `--parameters`), on `fiberhmm-consensus` and
+on `fiberhmm-transfer` (for the target BAMs). `auto`, the default, keeps the
+mask on unless a dataset's BAMs record that their calls were made with
+`fiberhmm-call --no-use-m5c`; then that dataset is scored with the mask off,
+as it was called. An explicit `on`/`off`, `input.ddda_m5c_correction: false`
+or a non-default `input.ddda_cpg_mask_policy` wins over the record. A
+`fiberhmm-transfer --freeze-run` catalog fixes `input.use_m5c` to the mask
+its source run used, so targets are scored with the catalog's mask (override
+it with `--use-m5c`/`--no-use-m5c`). One run uses
+one DddA CpG mask: datasets (or files of one dataset) whose records disagree
+are refused under `auto` until you set it explicitly. Each DddA dataset's
+`model_manifest.cpg_mask_policy` records the mask used (`off` when off, with
+`cpg_mask_source: recorded --no-use-m5c` when it came from the BAMs).
+
+On the NAPA window `chr19:47515000-47515300` of FiberBrowser's DddA demo BAM
+(which carries no tag-m5c islands), the mask changes what is supported:
+
+| DddA CpG mask | classes | supported |
+|---|---|---|
+| `unmethylated-only` (default) | 3 | 2 |
+| `methylated-only` | 6 | 5 |
+| off (`--no-use-m5c`) | 6 | 5 |
+
+That BAM has no `ddda_mcg` spans either, so `methylated-only` masks nothing
+and gives the same classes as off. NAPA is a human locus: keep the default
+there.
 
 By default every molecule is used, and there is no cap on the number of
 classes. For deep data (thousands of reads per site),
@@ -499,6 +540,9 @@ saved evidence, for example with different `--parameters`, without reading
 the BAMs again. Saved evidence keeps the DddA CpG policy it was prepared
 with; evidence whose policy differs from the run's (including all DddA
 evidence written before 3.3.0) is refused, so re-extract it from the BAMs.
+Under `input.use_m5c: auto` evidence prepared with the mask off (inherited
+from `--no-use-m5c` BAMs) is accepted; evidence that mixes masks across
+datasets never is.
 `--resume` takes one window or pooled run directory, not a
 multi-window parent (to finish an interrupted multi-window run, use
 [`--continue`](#long-runs-and-resuming)). The recaller runs in one pass, so `--stop-after`,

@@ -49,7 +49,7 @@ CANON = {
     "edge_trim": (D.EDGE_TRIM, False),
     "context_size": (None, True),          # from the model
     "cpg_mask_policy": (D.CPG_MASK_POLICY, True),
-    "use_m5c": (None, True),
+    "use_m5c": (D.USE_M5C, True),         # None (argparse) = auto
     "daf_mask_runs": (None, True),         # chemistry default (part 2)
     "daf_run_policy": (D.DAF_RUN_POLICY, False),
     "daf_mask_unaligned": (True, False),
@@ -154,7 +154,7 @@ TOOL_MODULES = {
     "fiberhmm-recall-tfs": ("fiberhmm.cli.recall_tfs",),
     "fiberhmm-recall-nucs": ("fiberhmm.cli.recall_tfs",),
     "fiberhmm-extract": ("fiberhmm.cli.extract_tags",),
-    "fiberhmm-qc": ("fiberhmm.cli.qc", "fiberhmm.qc.core"),
+    "fiberhmm-qc": ("fiberhmm.cli.qc", "fiberhmm.qc.core", "fiberhmm.qc.states"),
     "fiberhmm-consensus": ("fiberhmm.inference.consensus.bam",
                            "fiberhmm.inference.consensus.cli"),
     "fiberhmm-train": ("fiberhmm.cli.train", "fiberhmm.core.bam_reader"),
@@ -171,6 +171,9 @@ PASSTHROUGH = {
     ("fiberhmm.pipeline.runner.PipelineConfig", "cpg_mask_policy"): "not passed: fiberhmm-call resolves it",
     ("fiberhmm.pipeline.runner.PipelineConfig", "use_m5c"): "not passed: fiberhmm-call resolves it",
     ("fiberhmm.nuc.recall.CallerSettings", "cpg_mask_policy"): "from_header resolves it (part 2)",
+    ("fiberhmm-consensus", "use_m5c"): "sets input.use_m5c (auto = D.USE_M5C, checked in part 4); "
+        "bam.resolve_ddda_cpg_policy resolves it per DddA dataset",
+    ("fiberhmm-transfer", "use_m5c"): "sets input.use_m5c, as fiberhmm-consensus",
     ("fiberhmm-strand-rescue", "prob_threshold"): (
         "the preset's threshold (strand_rescue.PRESETS; Hia5 Nanopore 248 checked in part 2); "
         "DddA/DddB presets fall back to extract_modification_calls' pinned 125"),
@@ -384,6 +387,10 @@ def check_resolvers(report):
         report.check("ENZYME_PRESETS", f"emission_uplift[{enzyme}]",
                      preset["emission_uplift"], D.EMISSION_UPLIFT)
 
+    # consensus/transfer: input.use_m5c auto resolves to the DddA CpG mask
+    from fiberhmm.inference.consensus.parameters import InputOptions
+    report.check("fiberhmm-consensus", "ddda_cpg_policy.default",
+                 consensus_bam.resolve_ddda_cpg_policy(InputOptions()), D.CPG_MASK_POLICY)
     # recall-nucs runs the same resolver; consensus chemistry presets
     report.check("fiberhmm-recall-nucs", "prob_threshold.fallback",
                  tf_recaller.RECALL_PROB_THRESHOLD, D.PROB_THRESHOLD)

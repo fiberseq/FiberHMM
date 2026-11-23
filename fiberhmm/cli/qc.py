@@ -68,6 +68,8 @@ def parse_args(argv=None):
     parser.add_argument("--min-msp-bp", type=int, default=DEFAULT_MIN_MSP_BP, help=f"Shortest MSP counted as accessible for the in-MSP rate; shorter gaps (linkers) count as outside-MSP (default {DEFAULT_MIN_MSP_BP}; the packaged references are calibrated at this value)")
     parser.add_argument("--light-call-reads", type=int, default=DEFAULT_LIGHT_CALL_READS, help=f"Most sampled reads the light call runs on (default {DEFAULT_LIGHT_CALL_READS})")
     parser.add_argument("--light-call-seconds", type=float, default=DEFAULT_LIGHT_CALL_SECONDS, help=f"Wall-time budget of the light call (default {DEFAULT_LIGHT_CALL_SECONDS:g} s)")
+    parser.add_argument("--use-m5c", action=argparse.BooleanOptionalAction, default=None, help="Light call: DddA CpG mask, as in fiberhmm-call (default: on for DddA unless the input's calls were made with --no-use-m5c; --no-use-m5c turns it off, e.g. for organisms without CpG methylation)")
+    parser.add_argument("--cpg-mask-policy", choices=("unmethylated-only", "methylated-only"), default=None, help="Light call, with the DddA CpG mask on: keep CpGs only inside ddda_ucg islands (default unmethylated-only) or mask only ddda_mcg spans, as in fiberhmm-call")
     parser.add_argument("--fail-on-qc", action="store_true", help="Exit 2 when the final status is FAIL")
     from fiberhmm.cli.common import add_version_args
     add_version_args(parser)
@@ -158,6 +160,8 @@ def main(argv=None):
         "min_msp_bp": args.min_msp_bp,
         "light_call_reads": args.light_call_reads,
         "light_call_seconds": args.light_call_seconds,
+        "use_m5c": args.use_m5c,
+        "cpg_mask_policy": args.cpg_mask_policy,
     }
     try:
         if len(input_paths) == 1:

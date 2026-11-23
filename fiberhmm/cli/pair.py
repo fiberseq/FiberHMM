@@ -390,7 +390,10 @@ Examples:
                         'fiberhmm-call -- CpG observations are excluded from '
                         'the joint HMM and from recall except inside the '
                         'source reads\' ddda_ucg islands (fiberhmm-tag-m5c). '
-                        'Default: on; --no-use-m5c for an ablation.')
+                        'Default: on for DddA, unless the input\'s calls were '
+                        'made with --no-use-m5c (recorded in its @PG); '
+                        '--no-use-m5c turns the mask off (e.g. organisms '
+                        'without CpG methylation).')
     p.add_argument('--cpg-mask-policy',
                    choices=('unmethylated-only', 'methylated-only'), default=None,
                    help='With CpG-aware calling: keep CpGs only inside ddda_ucg '

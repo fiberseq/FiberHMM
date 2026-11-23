@@ -159,6 +159,9 @@ def _main(argv=None):
     p.add_argument('--json-progress','--progress-json',action='store_true',help='Structured progress on stderr (JSON lines)')
     p.add_argument('--daf-mask-runs',type=int,default=None,metavar='N',help='DAF only: thin targets in same-strand runs of >= N original C (CT) or G (GA) bases in lattices and native replay (2 = CC/GG and longer; 0 = off). Default: per dataset chemistry, DddA keep-one on runs >= 2 (duplex-validated), DddB off')
     p.add_argument('--daf-run-policy',choices=['keep-one','drop'],default='keep-one',help="With --daf-mask-runs: keep each run's 5'-most target (default) or drop the run")
+    p.add_argument('--use-m5c',action=argparse.BooleanOptionalAction,default=None,help='DddA CpG mask, as fiberhmm-call --use-m5c (sets input.use_m5c). '
+        'Default: on, unless the BAMs record that their calls were made with fiberhmm-call --no-use-m5c. --no-use-m5c turns it off, '
+        'for organisms without CpG methylation (e.g. Drosophila)')
     p.add_argument('--daf-snp-mask',metavar='BED',help='Exclude SNP sites from DAF observations and native replay (reference-coordinate BED, e.g. fiberhmm-call QC .daf_snps.bed). Opt-in; BAM input only; no SNP discovery')
     p.add_argument('--no-bam',action='store_true',help='Save frozen results/reports without materializing family-tagged BAMs')
     p.add_argument('--bam-scope',choices=['regions','full'],default='regions',help='Export whole alignments overlapping analyzed windows (default), or the full source BAM')
@@ -219,6 +222,7 @@ def _main(argv=None):
     try: prepare_mask_option(explicit,args.daf_snp_mask,replay=bool(args.evidence or resume))
     except ValueError as error: p.error(str(error))
     for k,v in explicit.items(): values.setdefault(k,{}).update(v)
+    if args.use_m5c is not None: values.setdefault('input',{})['use_m5c']='on' if args.use_m5c else 'off'
     from ..depth_cap import NAMES
     for name in NAMES:
         if getattr(args, name) is not None:

@@ -47,6 +47,8 @@ def _main(argv=None):
     parser.add_argument('--bam-scope',choices=['regions','full'],default='regions',help='Export alignments overlapping the target windows (default), or the full source BAM')
     parser.add_argument('--bam-grouping',choices=['datasets','files'],default='datasets',help='One BAM per logical dataset (default) or per source file')
     parser.add_argument('--json-progress',action='store_true',help='Structured progress on stderr')
+    parser.add_argument('--use-m5c',action=argparse.BooleanOptionalAction,default=None,help='Target BAMs: DddA CpG mask, as fiberhmm-call --use-m5c '
+        '(sets input.use_m5c). Default: the frozen run\'s setting (auto: on unless the BAMs record fiberhmm-call --no-use-m5c)')
     parser.add_argument('--daf-snp-mask',metavar='BED',help='Exclude target SNP sites from DAF observations and native replay (reference-coordinate BED). Opt-in; BAM input only; source masks are not inherited')
     recaller=parser.add_argument_group('lattice_recaller catalogs')
     recaller.add_argument('--cores',type=int,help='Worker processes for scoring (default: this machine\'s consensus default)')
@@ -98,6 +100,7 @@ def _main(argv=None):
     from .bam import load_bam_payload
     from .parameters import parse_options
     params=read_json(args.parameters) if args.parameters else {}
+    if args.use_m5c is not None: params.setdefault('input',{})['use_m5c']='on' if args.use_m5c else 'off'
     from .snp_mask import prepare_mask_option
     try: prepare_mask_option(params,args.daf_snp_mask,replay=bool(args.evidence))
     except ValueError as error: parser.error(str(error))
@@ -211,6 +214,7 @@ def _apply_recaller(args,parser,out,progress,model_path):
     if args.evidence and args.chip_bed:parser.error('ChIP evaluation requires explicit target BED windows')
     catalog=F.load_catalog(model_path);frame=catalog['frame']['region'];width=frame['end']-frame['start']
     overrides=read_json(args.parameters) if args.parameters else {}
+    if args.use_m5c is not None: overrides.setdefault('input',{})['use_m5c']='on' if args.use_m5c else 'off'
     from .snp_mask import prepare_mask_option
     try: prepare_mask_option(overrides,args.daf_snp_mask,replay=bool(args.evidence))
     except ValueError as error: parser.error(str(error))
