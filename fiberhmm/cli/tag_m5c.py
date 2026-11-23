@@ -14,6 +14,7 @@ from fiberhmm.daf.m5c import (
     DDDA_FIVE_PRIME_FACTORS,
     annotate_bam_per_read_islands,
     estimate_bam_five_prime_factors,
+    has_footprint_structure,
     ma_group_feature,
 )
 
@@ -89,14 +90,7 @@ def _preflight_input(path: str, max_primary_reads: int = 5000) -> None:
             seen += 1
             sequence = read.query_sequence or ""
             has_iupac |= "Y" in sequence or "R" in sequence
-            has_structure |= (
-                (read.has_tag("MA") and any(
-                    ma_group_feature(group) in {"nuc", "msp", "tf"}
-                    for group in str(read.get_tag("MA")).split(";")[1:]
-                ))
-                or (read.has_tag("ns") and read.has_tag("nl"))
-                or (read.has_tag("as") and read.has_tag("al"))
-            )
+            has_structure |= has_footprint_structure(read)
             if has_iupac and has_structure:
                 return
             if seen >= max_primary_reads:

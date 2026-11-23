@@ -911,7 +911,8 @@ def _legacy_molecular(read, input_molecular_frame) -> bool:
 
 
 def ma_strand_intervals(read, feature: str,
-                        frame_context=None) -> dict[str, list[tuple[int, int]]]:
+                        frame_context=None, tag: str = "MA"
+                        ) -> dict[str, list[tuple[int, int]]]:
     """Parse one MA feature into SEQ-frame intervals grouped by qualifier.
 
     Each group's frame comes from the read's header by the shared rule
@@ -921,20 +922,23 @@ def ma_strand_intervals(read, feature: str,
     flipped. Without a header, MA is read as molecular, except that a
     ``frame_context`` resolver for a header without evidence
     (``annotation_frame.LegacyFrame``, ``assumed``) keeps '+'/'-' groups SEQ.
+    ``tag="Ma"`` reads fibertools' (>= 0.13) ``Ma`` instead, whose groups are
+    all molecular frame (``ft fire`` moves every ``MA`` group into it).
     """
     from fiberhmm.io.ma_tags import flip_interval_frame
 
-    if not read.has_tag("MA"):
+    if not read.has_tag(tag):
         return {}
     header = getattr(read, "header", None)
     group_frame = None
-    if header is not None:
+    fibertools = tag == "Ma"
+    if header is not None and not fibertools:
         from fiberhmm.io.annotation_frame import ma_group_frame_of
         group_frame = ma_group_frame_of(header)
     per_group = bool(getattr(frame_context, "assumed", False))
     read_length = read.query_length or len(read.query_sequence or "")
     intervals: dict[str, list[tuple[int, int]]] = {}
-    for group in str(read.get_tag("MA")).split(";")[1:]:
+    for group in str(read.get_tag(tag)).split(";")[1:]:
         header, sep, body = group.partition(":")
         if not sep or ma_group_feature(header) != feature:
             continue
@@ -947,7 +951,8 @@ def ma_strand_intervals(read, feature: str,
                 continue
             one_based, size = (int(v) for v in item.split("-", 1))
             interval = (one_based - 1, size)
-            molecular = (group_frame.is_molecular(feature, strand) if group_frame is not None
+            molecular = (True if fibertools
+                         else group_frame.is_molecular(feature, strand) if group_frame is not None
                          else (strand == "." or not per_group))
             if read.is_reverse and molecular:
                 interval = flip_interval_frame(*interval, read_length)
@@ -957,12 +962,13 @@ def ma_strand_intervals(read, feature: str,
     return intervals
 
 
-def ma_intervals(read, feature: str, frame_context=None) -> list[tuple[int, int]]:
+def ma_intervals(read, feature: str, frame_context=None,
+                 tag: str = "MA") -> list[tuple[int, int]]:
     """Parse all qualifiers of an MA feature as SEQ-frame intervals
-    (``frame_context``: see :func:`ma_strand_intervals`)."""
+    (``frame_context``, ``tag``: see :func:`ma_strand_intervals`)."""
     intervals = [
         interval
-        for values in ma_strand_intervals(read, feature, frame_context).values()
+        for values in ma_strand_intervals(read, feature, frame_context, tag).values()
         for interval in values
     ]
     intervals.sort()
@@ -988,16 +994,53 @@ def _header_is_hmm_only(header) -> bool:
     return cached[1]
 
 
-def _footprint_ma_intervals(read, frame_context=None) -> list[tuple[int, int]]:
-    """The read's MA footprints that mask accessibility, SEQ frame: ``nuc``,
-    plus ``tf`` when the file is ``fiberhmm-call --hmm-only`` output (its
-    ``tf`` group is the HMM's TF-sized footprints, so ``nuc`` + ``tf`` are
-    every HMM footprint -- the mask the integrated caller and legacy apply
-    ``ns/nl`` give)."""
-    intervals = ma_intervals(read, "nuc", frame_context)
+def _footprint_ma_intervals(read, frame_context=None,
+                            tag: str = "MA") -> list[tuple[int, int]]:
+    """The read's MA (or fibertools ``Ma``) footprints that mask
+    accessibility, SEQ frame: ``nuc``, plus ``tf`` when the file is
+    ``fiberhmm-call --hmm-only`` output (its ``tf`` group is the HMM's
+    TF-sized footprints, so ``nuc`` + ``tf`` are every HMM footprint -- the
+    mask the integrated caller and legacy apply ``ns/nl`` give)."""
+    intervals = ma_intervals(read, "nuc", frame_context, tag)
     if _header_is_hmm_only(getattr(read, "header", None)):
-        intervals = sorted(intervals + ma_intervals(read, "tf", frame_context))
+        intervals = sorted(intervals + ma_intervals(read, "tf", frame_context, tag))
     return intervals
+
+
+#: Annotation groups that mark a read as called (its nucleosome/MSP/TF
+#: structure), in FiberHMM's ``MA`` or fibertools' ``Ma``.
+STRUCTURE_FEATURES = frozenset({"nuc", "msp", "tf"})
+
+
+def has_footprint_structure(read) -> bool:
+    """True when ``read`` carries FiberHMM call structure: a ``nuc``/``msp``/
+    ``tf`` group in ``MA`` or fibertools' (>= 0.13) ``Ma`` (``ft fire`` moves
+    every ``MA`` group into ``Ma``), or a legacy ``ns/nl`` or ``as/al`` pair."""
+    for tag in ("MA", "Ma"):
+        if read.has_tag(tag) and any(
+            ma_group_feature(group) in STRUCTURE_FEATURES
+            for group in str(read.get_tag(tag)).split(";")[1:]
+        ):
+            return True
+    return ((read.has_tag("ns") and read.has_tag("nl")) or
+            (read.has_tag("as") and read.has_tag("al")))
+
+
+def deam_coverage_tag(read):
+    """``'MA'`` or ``'Ma'``: the annotation tag holding the read's duplex
+    ``deam+``/``deam-`` coverage (MA first), or None."""
+    for tag in ("MA", "Ma"):
+        if read.has_tag(tag) and any(
+            ma_group_feature(group) == "deam"
+            for group in str(read.get_tag(tag)).split(";")[1:]
+        ):
+            return tag
+    return None
+
+
+def _deam_coverage(read) -> dict[str, list[tuple[int, int]]]:
+    tag = deam_coverage_tag(read)
+    return ma_strand_intervals(read, "deam", tag=tag) if tag else {}
 
 
 def collect_bam_observations(bam, fasta, chrom: str, start: int, end: int,
@@ -1047,16 +1090,7 @@ def collect_read_observations(read, fasta, chrom: str | None = None,
     """
     if read.is_unmapped or read.query_sequence is None:
         return []
-    has_ma_structure = False
-    if read.has_tag("MA"):
-        has_ma_structure = any(
-            ma_group_feature(group) in {"nuc", "msp", "tf"}
-            for group in str(read.get_tag("MA")).split(";")[1:]
-        )
-    has_structure = (has_ma_structure or
-                     (read.has_tag("ns") and read.has_tag("nl")) or
-                     (read.has_tag("as") and read.has_tag("al")))
-    if not has_structure:
+    if not has_footprint_structure(read):
         return []
     chrom = chrom or read.reference_name
     start = read.reference_start if start is None else int(start)
@@ -1073,18 +1107,7 @@ def collect_read_observations(read, fasta, chrom: str | None = None,
     original_base = ord("C") if top else ord("G")
     deamination_mark = ord("Y") if top else ord("R")
     excluded = np.zeros(len(sequence), dtype=bool)
-    from_ma = footprint_annotation_tag(read) == "MA"   # MA first; legacy only without nuc/msp groups
-    nuc_intervals = _footprint_ma_intervals(read, input_molecular_frame) if from_ma else []
-    legacy_nucs = None if from_ma else array_tag_pair(read, "ns", "nl")
-    if legacy_nucs is not None:
-        starts, lengths = legacy_nucs
-        if _legacy_molecular(read, input_molecular_frame):
-            from fiberhmm.io.ma_tags import flip_intervals_to_seq
-            starts, lengths = flip_intervals_to_seq(starts, lengths, read)
-        nuc_intervals = [
-            (int(lo), int(lo) + int(size))
-            for lo, size in zip(starts, lengths) if int(size) > 0
-        ]
+    nuc_intervals = _nucleosome_intervals_seq(read, input_molecular_frame)
     for lo, hi in nuc_intervals:
         excluded[max(0, lo):min(len(sequence), hi)] = True
     from fiberhmm.core.bam_reader import cigar_to_query_ref
@@ -1143,9 +1166,13 @@ def _interval_mask(length: int, intervals: Sequence[tuple[int, int]]) -> np.ndar
 
 
 def _nucleosome_intervals_seq(read, input_molecular_frame: bool) -> list[tuple[int, int]]:
-    from_ma = footprint_annotation_tag(read) == "MA"   # MA first; legacy only without nuc/msp groups
-    intervals = _footprint_ma_intervals(read, input_molecular_frame) if from_ma else []
-    legacy_nucs = None if from_ma else array_tag_pair(read, "ns", "nl")
+    """The read's accessibility-masking footprints in SEQ frame: MA, else
+    fibertools ``Ma`` (molecular), else legacy ``ns/nl`` -- the shared
+    :func:`fiberhmm.io.footprint_calls.footprint_annotation_tag` rule."""
+    source = footprint_annotation_tag(read)   # MA first; legacy only without nuc/msp groups
+    intervals = (_footprint_ma_intervals(read, input_molecular_frame, source)
+                 if source else [])
+    legacy_nucs = None if source else array_tag_pair(read, "ns", "nl")
     if legacy_nucs is not None:
         starts, lengths = legacy_nucs
         if _legacy_molecular(read, input_molecular_frame):
@@ -1178,18 +1205,10 @@ def collect_paired_read_observations(
     """
     if read.is_unmapped or read.query_sequence is None:
         return [], []
-    coverage = ma_strand_intervals(read, "deam")
+    coverage = _deam_coverage(read)
     if "+" not in coverage and "-" not in coverage:
         return [], []
-    has_structure = (
-        (read.has_tag("MA") and any(
-            ma_group_feature(group) in {"nuc", "msp", "tf"}
-            for group in str(read.get_tag("MA")).split(";")[1:]
-        ))
-        or (read.has_tag("ns") and read.has_tag("nl"))
-        or (read.has_tag("as") and read.has_tag("al"))
-    )
-    if not has_structure:
+    if not has_footprint_structure(read):
         return [], []
 
     sequence = read.query_sequence.upper()
@@ -1285,7 +1304,7 @@ def collect_read_m5c_channels(
     input_molecular_frame: bool = True,
 ) -> tuple[list[M5CObservation], list[M5CObservation], bool]:
     """Return C observations, G observations, and cross-strand status."""
-    coverage = ma_strand_intervals(read, "deam") if read.has_tag("MA") else {}
+    coverage = _deam_coverage(read)
     is_cross_strand = "+" in coverage or "-" in coverage
     if is_cross_strand:
         c_observations, g_observations = collect_paired_read_observations(
@@ -1969,10 +1988,11 @@ def write_cpg_island_bed(
 
 
 def _initial_msp_intervals_seq(read, input_molecular_frame: bool) -> list[tuple[int, int]]:
-    """Return initial MSPs in SEQ coordinates from MA or legacy as/al tags."""
-    from_ma = footprint_annotation_tag(read) == "MA"   # MA first; legacy only without nuc/msp groups
-    intervals = ma_intervals(read, "msp", input_molecular_frame) if from_ma else []
-    legacy_msps = None if from_ma else array_tag_pair(read, "as", "al")
+    """Return initial MSPs in SEQ coordinates from MA, else fibertools ``Ma``
+    (molecular), else legacy as/al tags."""
+    source = footprint_annotation_tag(read)   # MA first; legacy only without nuc/msp groups
+    intervals = ma_intervals(read, "msp", input_molecular_frame, source) if source else []
+    legacy_msps = None if source else array_tag_pair(read, "as", "al")
     if legacy_msps is None:
         return intervals
     starts, lengths = legacy_msps
