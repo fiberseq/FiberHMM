@@ -121,7 +121,7 @@ but no longer written.
 
 | Tag | Type | Writer | Content |
 |---|---|---|---|
-| `st` | `Z` | `fiberhmm-daf-encode` | conversion flavour: `CT` or `GA`; `SEQ` then carries Y/R codes. `fiberhmm-call`'s one-pass DAF path derives the flavour internally and does not write it |
+| `st` | `Z` | `fiberhmm-daf-encode` | conversion flavour: `CT` or `GA`; `SEQ` then carries Y/R codes. `fiberhmm-call`'s one-pass DAF path derives the flavour internally and does not write it, except on `--chimeras split` pieces of R/Y-encoded records, which are re-encoded for their own strand with a new `st` |
 | `di` | `i` | `fiberhmm-dedup`, integrated dedup | duplicate-cluster id, on every member of a cluster of two or more |
 | `ds` | `i` | same | cluster size (copies of the molecule in the input) |
 | `xc` | `Z` | `fiberhmm-call` | local lowercase tag: `strand_swap` identifies DAF strand-swap evidence meeting the run's `chimera_min_seg` / `chimera_purity` thresholds in @PG DS (with the opt-in strict detector, also its `chimera_min_baseq`, `chimera_min_span`, `chimera_multi_switch` and `chimera_error_mask` settings); paired with SAM QC-fail 0x200, including supplementary/secondary records. `split` marks a piece written by `--chimeras split` (either detector), with `xi:i` (piece index), `xn:Z` (original read name) and `xb:B:i` (breakpoint gaps); unmapped and paired (0x1) records are never split and are flagged whole instead; see [Split mode](../workflows/daf-seq.md#split-mode) |

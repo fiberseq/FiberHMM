@@ -940,8 +940,9 @@ def _reencode_piece(piece, ref):
     The parent was encoded for one strand (``st``), so a piece from its
     other-strand segment keeps only the parent strand's minority Y (or R)
     marks, while its dominant deaminations are raw mismatches. Every piece
-    of an R/Y record (also one left with no mark) is decoded (Y -> T,
-    R -> A: the raw read) and encoded again as ``fiberhmm-daf-encode``
+    of an R/Y record (also one left with no mark) is decoded on its aligned
+    bases (Y -> T, R -> A: the raw read; marks on inserted or soft-clipped
+    bases stay as cut) and encoded again as ``fiberhmm-daf-encode``
     encodes a read: the strand with more events
     (SNP-masked sites do not vote, as in calling an MD-only read) gets its
     events written as Y (C->T) or R (G->A), and ``st`` is set. A tie or no
@@ -958,8 +959,14 @@ def _reencode_piece(piece, ref):
     if not seq:
         return piece
     quals = piece.query_qualities
+    # Only aligned bases are decoded: a mark on an inserted or soft-clipped
+    # base has no reference to re-derive it from, so it stays as cut.
+    from .chimera_split import _aligned_query_positions
+    decoded = list(seq)
+    for position in _aligned_query_positions(piece):
+        decoded[position] = decoded[position].translate(_DECODE_IUPAC)
     raw = copy.copy(piece)
-    raw.query_sequence = seq.translate(_DECODE_IUPAC)
+    raw.query_sequence = ''.join(decoded)
     raw.query_qualities = quals
     events = get_daf_positions(raw, force_strand='CT', ref_fasta=ref,
                                excluded_reference_positions=engine._daf_reference_mask(raw))

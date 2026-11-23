@@ -220,7 +220,7 @@ def test_call_split_with_the_standard_detector_end_to_end(tmp_path):
     assert [r.to_string() for r in records(region_parallel)] == [r.to_string() for r in out]
 
 
-def _minority_chimera(hdr, ref, dominant, start=8000, length=3000):
+def _minority_chimera(hdr, ref, dominant, start=8000, length=3000, cigar=None):
     """A one-switch chimera, CT then GA, with one minority event of the
     other strand in each segment. ``dominant`` ('CT' or 'GA') has more events
     over the whole read, so it is the strand the read is R/Y-encoded for."""
@@ -234,8 +234,8 @@ def _minority_chimera(hdr, ref, dominant, start=8000, length=3000):
     events = set(left) | set(right) | set(minority)
     no_events = set(range(start, start + length)) - events
     strand = lambda r: minority.get(r, 'CT' if r < start + 1500 else 'GA')
-    return make_read(hdr, ref, 'chim', start, [(0, length)], strand, rate=1.0,
-                     no_events=no_events)
+    return make_read(hdr, ref, 'chim', start, cigar or [(0, length)], strand,
+                     rate=1.0, no_events=no_events)
 
 
 def _iupac_copy(read, hdr):
@@ -270,8 +270,7 @@ def test_split_pieces_of_iupac_reads_match_md_only_reads(tmp_path, detector, dom
     """Pieces of an R/Y-encoded chimera give the same strand and events as
     pieces of the same read without encoding (MD only): the other-strand
     piece is re-encoded for its own strand, not left with the parent's
-    minority marks (before 3.3.0 its st was dropped and the minority marks
-    decided the strand)."""
+    minority marks and no st (the minority marks then decided its strand)."""
     ref = reference()
     hdr = header()
     raw = _minority_chimera(hdr, ref, dominant)
@@ -322,3 +321,26 @@ def test_split_pieces_of_iupac_reads_without_reference_evidence_keep_marks(tmp_p
     for piece in pieces:
         assert _reencode_piece(piece, None) is piece
         assert 'Y' in piece.query_sequence or 'R' in piece.query_sequence
+
+
+def test_split_pieces_of_iupac_reads_keep_marks_on_inserted_bases():
+    """Re-encoding decodes aligned bases only: a mark on an inserted base has
+    no reference to re-derive it from and stays as cut."""
+    from fiberhmm.inference.chimeras import _reencode_piece
+    from fiberhmm.inference.chimera_split import split_record
+    ref = reference()
+    hdr = header()
+    raw = _minority_chimera(hdr, ref, 'CT', cigar=[(0, 1000), (1, 20), (0, 2000)])
+    encoded = _iupac_copy(raw, hdr)
+    seq = list(encoded.query_sequence)
+    seq[1005] = 'Y'                       # inside the insertion (query 1000-1019)
+    quals = encoded.query_qualities
+    encoded.query_sequence = ''.join(seq)
+    encoded.query_qualities = quals
+    split = standard_breakpoints(encoded, None, 5, 0.8)
+    pieces, _ = split_record(encoded, hdr, split)
+    right = _reencode_piece(pieces[1], None)
+    assert right.get_tag('st') == 'GA' and 'R' in right.query_sequence
+    offset = encoded.query_sequence.find(pieces[1].query_sequence)
+    assert offset <= 1005
+    assert right.query_sequence[1005 - offset] == 'Y'

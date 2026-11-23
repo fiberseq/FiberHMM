@@ -444,9 +444,11 @@ written:
   length. A piece of a hard-clipped record, or of one whose `MM`/`ML` do not
   parse or do not match SEQ, gets no `MM`/`ML` (counted as
   `n_pieces_modifications_dropped`). Every other position-dependent tag
-  (`SA`, the DAF strand tag `st`, earlier FiberHMM calls) is dropped.
+  (`SA`, earlier FiberHMM calls, and the record's DAF strand tag `st`) is
+  dropped.
 - A piece of an R/Y-encoded record is re-encoded for its own segment:
-  Y/R are decoded to the raw bases and the piece is encoded again as
+  Y/R on aligned bases are decoded to the raw bases (marks on inserted or
+  soft-clipped bases stay) and the piece is encoded again as
   `fiberhmm-daf-encode` would encode it (the strand with more events gets
   its events as Y or R, and `st` is set). A piece from the segment the
   record was not encoded for therefore gets its own strand and events, the
