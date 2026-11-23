@@ -259,6 +259,65 @@ def cut_modifications(read, qs, qe, mm_tag='MM', ml_tag='ML'):
     return ''.join(texts), (array('B', values) if has_ml else None)
 
 
+def rebase_modifications(read, old_seq, mm_tag='MM', ml_tag='ML'):
+    """``(mm, ml, n_dropped)``: ``read``'s MM/ML, written for ``old_seq``,
+    rebuilt for its current SEQ (same length), or None (drop them).
+
+    Every call keeps its query position and its ML values. MM skip counts
+    run over the entry's base in the read's original orientation, so a SEQ
+    edit that turns bases into or out of that base (R/Y re-encoding: A <-> R,
+    T <-> Y) shifts them; they are recomputed over the new SEQ. A call whose
+    base is no longer the entry's base cannot be written and is dropped with
+    its ML values (``n_dropped``). Bases that became the entry's base are
+    not listed (implicitly unmodified, or unknown with ``?``). ``ml`` is None
+    when the record has no ML. None when MM/ML do not parse, a skip runs past
+    SEQ or the ML length disagrees with MM.
+    """
+    new_seq = read.query_sequence
+    entries = _parse_mm(read.get_tag(mm_tag))
+    if not new_seq or not old_seq or len(new_seq) != len(old_seq) or entries is None:
+        return None
+    has_ml = read.has_tag(ml_tag)
+    try:
+        ml = [int(value) for value in (read.get_tag(ml_tag) if has_ml else [])]
+    except (TypeError, ValueError):
+        return None
+
+    def oriented(seq):
+        seq = seq.upper()
+        return seq.translate(_COMPLEMENT)[::-1] if read.is_reverse else seq
+
+    old, new = oriented(old_seq), oriented(new_seq)
+    texts, values, offset, dropped = [], [], 0, 0
+    for head, base, n_codes, skips in entries:
+        if base == 'N':
+            old_occurrences = range(len(old))
+            rank = {i: i for i in old_occurrences}
+        else:
+            old_occurrences = [i for i, b in enumerate(old) if b == base]
+            rank = {i: k for k, i in enumerate(i for i, b in enumerate(new) if b == base)}
+        text, previous, index = [head], -1, -1
+        for skip in skips:
+            index += skip + 1
+            if index >= len(old_occurrences):
+                return None
+            call = ml[offset:offset + n_codes]
+            offset += n_codes
+            new_index = rank.get(old_occurrences[index])
+            if new_index is None:
+                dropped += 1
+                continue
+            text.append(f',{new_index - previous - 1}')
+            previous = new_index
+            values.extend(call)
+        if has_ml and offset > len(ml):
+            return None
+        texts.append(''.join(text) + ';')
+    if has_ml and offset != len(ml):
+        return None
+    return ''.join(texts), (array('B', values) if has_ml else None), dropped
+
+
 def make_piece(read, header, qs, qe, index, gap):
     """One piece of ``read`` (query ``[qs, qe)``), or None if it cannot be cut."""
     seq = read.query_sequence

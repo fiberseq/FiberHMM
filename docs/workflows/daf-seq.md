@@ -453,7 +453,11 @@ written:
   its events as Y or R, and `st` is set). A piece from the segment the
   record was not encoded for therefore gets its own strand and events, the
   same as a piece of the equivalent MD-only record. With no MD and no
-  `--reference` the piece keeps the marks as cut.
+  `--reference` the piece keeps the marks as cut. `MM`/`ML` are rebuilt on
+  the re-encoded SEQ, each call on its query position with its ML values; a
+  call on a base that became an R/Y mark (for example an `A+a` call on an A
+  now written R) cannot be represented and is dropped, counted as
+  `n_modification_calls_dropped`.
 - Pieces keep the record's flags and are not QC-fail. Pieces shorter than
   `--min-read-length` (aligned bases) are dropped and counted; a record with
   no piece left is kept whole and flagged.

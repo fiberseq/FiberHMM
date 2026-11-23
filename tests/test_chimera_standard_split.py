@@ -319,7 +319,7 @@ def test_split_pieces_of_iupac_reads_without_reference_evidence_keep_marks(tmp_p
     pieces, _ = split_record(encoded, hdr, split)
     assert len(pieces) == 2
     for piece in pieces:
-        assert _reencode_piece(piece, None) is piece
+        assert _reencode_piece(piece, None) == (piece, 0)
         assert 'Y' in piece.query_sequence or 'R' in piece.query_sequence
 
 
@@ -339,8 +339,50 @@ def test_split_pieces_of_iupac_reads_keep_marks_on_inserted_bases():
     encoded.query_qualities = quals
     split = standard_breakpoints(encoded, None, 5, 0.8)
     pieces, _ = split_record(encoded, hdr, split)
-    right = _reencode_piece(pieces[1], None)
+    right, _ = _reencode_piece(pieces[1], None)
     assert right.get_tag('st') == 'GA' and 'R' in right.query_sequence
     offset = encoded.query_sequence.find(pieces[1].query_sequence)
     assert offset <= 1005
     assert right.query_sequence[1005 - offset] == 'Y'
+
+
+@pytest.mark.parametrize('reverse', [False, True])
+@pytest.mark.parametrize('dominant', ['CT', 'GA'])
+def test_split_pieces_of_iupac_reads_keep_modification_positions(tmp_path, dominant,
+                                                                 reverse):
+    """Re-encoding a piece changes the canonical bases MM counts over; every
+    retained call stays on its query position with its ML values, and a call
+    on a base that became an R/Y mark is dropped and counted."""
+    ref = reference()
+    hdr = header()
+    raw = _minority_chimera(hdr, ref, dominant)
+    raw.flag = 16 if reverse else 0
+    encoded = _with_modifications(_iupac_copy(raw, hdr), seed=7)
+    source = _calls(encoded)
+    assert {key[0] for key in source if source[key]} >= {'A', 'C', 'G', 'N'}
+    bam = write_bam(tmp_path / 'mods.bam', [encoded])
+    spool = tmp_path / 'spool.bam'
+    stats = prepare_chimeras(bam, mode='split', spool_bam=str(spool), min_read_length=100)
+    split = stats['split']
+    pieces = sorted(records(spool), key=lambda r: r.get_tag('xi'))
+    assert len(pieces) == 2 and split['n_pieces_modifications_kept'] == 2
+    dropped = 0
+    for piece in pieces:
+        qs = piece.reference_start - encoded.reference_start     # M-only CIGAR
+        qe = qs + piece.query_length
+        old = encoded.query_sequence[qs:qe]
+        changed = {i for i, (a, b) in enumerate(zip(old, piece.query_sequence)) if a != b}
+        expected = {key: [(pos, qual) for pos, qual in calls
+                          if key[0] == 'N' or pos not in changed]
+                    for key, calls in _expected_calls(encoded, qs, qe).items()}
+        dropped += sum(len(calls) for calls in _expected_calls(encoded, qs, qe).values()) \
+            - sum(len(calls) for calls in expected.values())
+        got = _calls(piece)
+        assert ({k: v for k, v in got.items() if v}
+                == {k: v for k, v in expected.items() if v})
+        assert piece.get_tag('MN') == piece.query_length
+    assert split['n_modification_calls_dropped'] == dropped
+    # A+a calls are dropped where the other-strand piece marks an A of the
+    # original orientation: query A -> R (forward, CT-encoded parent) or
+    # query T -> Y (reverse, GA-encoded parent).
+    assert (dropped > 0) == ((dominant == 'CT') != reverse)
