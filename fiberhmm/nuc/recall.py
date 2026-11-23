@@ -148,8 +148,8 @@ class CallerSettings:
             if m:
                 kw['cpg_mask_policy'] = None if m.group(1) == 'off' else m.group(1)
             else:
-                use = True if '--use-m5c' in toks else (False if '--no-use-m5c' in toks else None)
-                kw['_use_m5c'] = use
+                from fiberhmm.nuc.records import last_m5c_switch
+                kw['_use_m5c'] = last_m5c_switch(toks)
                 kw['_policy_flag'] = opt('--cpg-mask-policy')
             kw['source'] = 'header'
         use_m5c = kw.pop('_use_m5c', None)

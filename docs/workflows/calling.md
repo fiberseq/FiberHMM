@@ -241,7 +241,17 @@ caller and consensus/transfer all keep the mask off for that BAM unless you
 pass `--use-m5c` (or `--cpg-mask-policy`), which always wins over the record.
 The record they read is the newest `fiberhmm-call`, `-recall-tfs`,
 `-recall-nucs` or `-merge` `@PG` line (the nucleosome caller reads the last
-`fiberhmm-call` line, whose settings it replays).
+`fiberhmm-call` line, whose settings it replays); its resolved `cpg_mask=`
+value counts, and for older records without it the last `--use-m5c` /
+`--no-use-m5c` on its command line. A run whose mask is off by inheritance or
+by `--no-use-m5c` also records `cpg_mask_source=inherited|explicit`, so an
+inherited `off` survives custom-model recalls. A BAM merged from inputs called
+with and without the mask keeps both `@PG` histories: DddA replays
+(recall-tfs/-nucs, pair/merge, posteriors, consensus/transfer) refuse it until
+you pass `--use-m5c`, `--no-use-m5c` or `--cpg-mask-policy`, and the qc light
+call is skipped. A run given the setting records itself on both histories, so
+later replays inherit it. The nucleosome caller still replays the last
+`fiberhmm-call` line.
 
 ## Nucleosome recall options
 

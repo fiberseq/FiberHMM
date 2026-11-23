@@ -1434,6 +1434,10 @@ def _main(args):
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(2)
+    from fiberhmm.nuc.records import cpg_mask_source_ds
+    # '' for the default (headers unchanged); explicit when the user set it
+    cpg_source_ds = cpg_mask_source_ds(args.use_m5c, args.cpg_mask_policy, False,
+                                       cpg_mask_policy)
     _validate_model_context(
         [('apply model', apply_model_path), ('recall model', recall_model_path)],
         k,
@@ -1915,6 +1919,7 @@ def _main(args):
                 f"daf_run_mask={('>=' + str(args.daf_mask_runs) + '/' + args.daf_run_policy) if args.daf_mask_runs else 'off'} "
                 f"cpg_mask={cpg_mask_policy or 'off'} "
                 f"hmm_cpg_mask={'on' if cpg_mask_policy and not ddda_mcg else 'off'}"
+                + cpg_source_ds
                 + " " + basecaller_ds_tokens(basecaller))
         pg_record = {
             'PN': 'fiberhmm-call',
@@ -1957,6 +1962,7 @@ def _main(args):
                    f"daf_run_mask={('>=' + str(args.daf_mask_runs) + '/' + args.daf_run_policy) if args.daf_mask_runs else 'off'} "
                    f"cpg_mask={cpg_mask_policy or 'off'} "
                    f"hmm_cpg_mask={'on' if cpg_mask_policy and not ddda_mcg else 'off'}"
+                   + cpg_source_ds
                    # Basecaller provenance (fiberhmm.io.provenance.ds_tokens).
                    + " " + basecaller_ds_tokens(basecaller)),
         }

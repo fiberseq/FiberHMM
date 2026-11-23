@@ -314,16 +314,19 @@ def resolve_ddda_cpg_policy(input_options, recorded=()):
     default) is ``input.ddda_cpg_mask_policy`` unless ``recorded`` (the
     :func:`fiberhmm.nuc.records.recorded_cpg_mask` value of each of the
     dataset's BAMs) says every file's calls were made with the mask off; files
-    that disagree must be given an explicit setting."""
+    that disagree, or one file whose merged caller histories disagree
+    (``'mixed'``), must be given an explicit setting."""
     if ddda_cpg_mask_explicit(input_options):
         if getattr(input_options, 'use_m5c', 'auto') == 'off' or not input_options.ddda_m5c_correction:
             return 'off'
         return input_options.ddda_cpg_mask_policy
-    offs = {value == 'off' for value in recorded}
+    from fiberhmm.nuc.records import CPG_MASK_MIXED
+    offs = {value == 'off' for value in recorded if value != CPG_MASK_MIXED}
     if offs == {True}:
         return 'off'
-    if offs == {True, False}:
-        raise ValueError('its BAMs were called with and without the DddA CpG mask (fiberhmm-call --no-use-m5c); '
+    if offs == {True, False} or CPG_MASK_MIXED in recorded:
+        raise ValueError('its BAMs (or the caller histories merged into one BAM) were called with and without '
+                         'the DddA CpG mask (fiberhmm-call --no-use-m5c); '
                          'set --use-m5c or --no-use-m5c (input.use_m5c) explicitly, or load them as separate datasets')
     return input_options.ddda_cpg_mask_policy
 

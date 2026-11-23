@@ -481,6 +481,10 @@ def _process_regions(regions, input_bam, model_path, params,
         pbar.close()
 
 
+#: standard input opened early to read its header (see _inherited_use_m5c)
+_OPEN_STDIN: dict = {}
+
+
 def _process_streaming(input_bam, model_path, params, verbose, result_callback,
                        stats=None, chroms=None, skip_scaffolds=False,
                        batch_size=1000):
@@ -507,7 +511,10 @@ def _process_streaming(input_bam, model_path, params, verbose, result_callback,
             result_callback(batch_chrom, batch)
             batch = []
 
-    with pysam.AlignmentFile(input_bam, "rb", check_sq=False) as bam:
+    # Standard input whose header was already read (recorded CpG mask) is
+    # read on from the same open file.
+    opened = _OPEN_STDIN.pop(input_bam, None) if input_bam == '-' else None
+    with (opened or pysam.AlignmentFile(input_bam, "rb", check_sq=False)) as bam:
         if chroms is not None:
             unknown = sorted(set(chroms) - set(bam.references))
             if unknown:
@@ -1332,7 +1339,7 @@ def main():
     try:
         extraction['cpg_mask_policy'] = resolve_cpg_mask_policy(
             _inherited_use_m5c(args.use_m5c, args.cpg_mask_policy, args.input,
-                               'fiberhmm-posteriors'),
+                               'fiberhmm-posteriors', chem_enzyme, effective_mode),
             args.cpg_mask_policy, chem_enzyme, effective_mode,
             tool='fiberhmm-posteriors')
     except ValueError as exc:
@@ -1381,18 +1388,34 @@ def main():
 
 
 # Python API entry point (same pipeline as the fiberhmm-posteriors command)
-def _inherited_use_m5c(use_m5c, cpg_mask_policy, input_bam, tool):
+def _inherited_use_m5c(use_m5c, cpg_mask_policy, input_bam, tool, enzyme, mode):
     """Explicit flags win; otherwise an input whose calls were made with the
-    DddA CpG mask off (``recorded_cpg_mask``) keeps it off."""
-    if use_m5c is not None or cpg_mask_policy is not None or not input_bam or input_bam == '-':
+    DddA CpG mask off (``recorded_cpg_mask``) keeps it off.
+
+    Standard input (``-``) can be opened only once: it is opened here, its
+    header read, and the open file handed to the streaming reader
+    (:data:`_OPEN_STDIN`), so the setting is known before extraction and the
+    output metadata are configured."""
+    if use_m5c is not None or cpg_mask_policy is not None or not input_bam:
         return use_m5c
     from fiberhmm.nuc.records import inherit_use_m5c
+    if input_bam == '-':
+        bam = _OPEN_STDIN.get('-')
+        if bam is None:
+            try:
+                bam = pysam.AlignmentFile('-', 'rb', check_sq=False)
+            except (OSError, ValueError):
+                return use_m5c
+            _OPEN_STDIN['-'] = bam
+        return inherit_use_m5c(use_m5c, cpg_mask_policy, bam.header, tool=tool,
+                               enzyme=enzyme, mode=mode)
     try:
         with pysam.AlignmentFile(input_bam, 'rb', check_sq=False) as bam:
             header = bam.header
     except (OSError, ValueError):
         return use_m5c
-    return inherit_use_m5c(use_m5c, cpg_mask_policy, header, tool=tool)
+    return inherit_use_m5c(use_m5c, cpg_mask_policy, header, tool=tool,
+                           enzyme=enzyme, mode=mode)
 
 
 def export_posteriors_from_bam(
@@ -1447,7 +1470,7 @@ def export_posteriors_from_bam(
     extraction = {
         'cpg_mask_policy': resolve_cpg_mask_policy(
             _inherited_use_m5c(use_m5c, cpg_mask_policy, input_bam,
-                               'export_posteriors_from_bam'),
+                               'export_posteriors_from_bam', enzyme, effective_mode),
             cpg_mask_policy, enzyme, effective_mode,
             tool='export_posteriors_from_bam'),
         'daf_run_mask': run_mask,

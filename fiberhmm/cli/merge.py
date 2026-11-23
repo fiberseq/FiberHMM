@@ -105,7 +105,8 @@ def _merged_bp(intervals):
 
 
 def _merge_output_header(header, *, recall, enzyme, prob_threshold, pairs_only,
-                         nuc_recall_policy, phase_nrl, cpg_mask_policy):
+                         nuc_recall_policy, phase_nrl, cpg_mask_policy,
+                         cpg_mask_source=''):
     """Input header plus this merge's @PG and, with recall, its chemistry.
 
     The joint recall calls footprints with the bundled ``enzyme`` tables, so
@@ -135,7 +136,8 @@ def _merge_output_header(header, *, recall, enzyme, prob_threshold, pairs_only,
             f"pairs_only={'on' if pairs_only else 'off'}"
             + (f" nuc_recall_policy={nuc_recall_policy} phase_nrl={phase_nrl} "
                f"cpg_mask={cpg_mask_policy or 'off'} "
-               f"hmm_cpg_mask={'on' if cpg_mask_policy else 'off'}" if recall else ''),
+               f"hmm_cpg_mask={'on' if cpg_mask_policy else 'off'}{cpg_mask_source}"
+               if recall else ''),
             pass_through_frame(header)),
     }
     if recall:
@@ -172,10 +174,18 @@ def run_merge(in_bam, out_bam, prob_threshold=0, pairs_only=False, io_threads=4,
     if recall:
         # Explicit flags win; otherwise calls made with --no-use-m5c (recorded
         # in the input's @PG) are re-called with the CpG mask off.
-        from fiberhmm.nuc.records import inherit_use_m5c
-        use_m5c = inherit_use_m5c(use_m5c, cpg_mask_policy, bam.header, tool=tool)
-        ctx = RecallContext(enzyme, use_m5c=use_m5c,
+        from fiberhmm.nuc.records import cpg_mask_source_ds, resolve_replay_use_m5c
+        try:
+            resolved_use_m5c, inherited = resolve_replay_use_m5c(
+                use_m5c, cpg_mask_policy, bam.header, tool=tool,
+                enzyme=enzyme, mode='daf')
+        except ValueError as exc:
+            bam.close()
+            raise SystemExit(f"error: {exc}") from exc
+        ctx = RecallContext(enzyme, use_m5c=resolved_use_m5c,
                             cpg_mask_policy=cpg_mask_policy, tool=tool)
+        cpg_source = cpg_mask_source_ds(use_m5c, cpg_mask_policy, inherited,
+                                        ctx.cpg_mask_policy)
         if legacy_tags is not None:
             ctx.write_legacy = bool(legacy_tags)
         print(f"merge-recall: loaded {enzyme} apply+recall models (k={ctx.k}); "
@@ -187,7 +197,8 @@ def run_merge(in_bam, out_bam, prob_threshold=0, pairs_only=False, io_threads=4,
     header = _merge_output_header(
         header, recall=recall, enzyme=enzyme, prob_threshold=prob_threshold,
         pairs_only=pairs_only, nuc_recall_policy=nuc_recall_policy,
-        phase_nrl=phase_nrl, cpg_mask_policy=ctx.cpg_mask_policy if ctx else None)
+        phase_nrl=phase_nrl, cpg_mask_policy=ctx.cpg_mask_policy if ctx else None,
+        cpg_mask_source=cpg_source if ctx else '')
 
     # Records are written unsorted to a hidden sibling, sorted into another
     # hidden sibling and only then renamed to out_bam; the unsorted file is

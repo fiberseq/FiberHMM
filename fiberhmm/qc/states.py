@@ -570,7 +570,12 @@ def compute_state_rates(
         context_size = caller.context_size
         from fiberhmm.inference.tf_recaller import resolve_cpg_mask_policy
         from fiberhmm.nuc.records import inherit_use_m5c
-        use_m5c = inherit_use_m5c(use_m5c, cpg_mask_policy, header, tool="fiberhmm-qc")
+        try:
+            use_m5c = inherit_use_m5c(use_m5c, cpg_mask_policy, header, tool="fiberhmm-qc",
+                                      enzyme=enzyme, mode=mode)
+        except ValueError as exc:
+            block["note"] = f"light call unavailable: {exc}"
+            return block, {}
         light_cpg_policy = resolve_cpg_mask_policy(
             use_m5c, cpg_mask_policy, enzyme, mode, tool="fiberhmm-qc")
         block["definition"]["hmm_cpg_mask"] = light_cpg_policy or "off"

@@ -344,3 +344,255 @@ def test_qc_light_call_inherits_off(called):
         block, _ = compute_state_rates(reads, 'daf', 'ddda', header=header, state_source='light-call',
                                        light_call_reads=2)
         assert block['definition']['hmm_cpg_mask'] == want
+
+
+# --------------------------------------------------------------------------- #
+#  recorded command lines: the resolved DS value, else the last switch          #
+# --------------------------------------------------------------------------- #
+
+def test_recorded_mask_prefers_ds_then_the_last_switch():
+    from fiberhmm.nuc.records import recorded_call_masks
+    # a wrapper appended --use-m5c after --no-use-m5c: the run masked CpGs
+    final_on = dict(CALL_ON, CL=CALL_ON['CL'] + ' --no-use-m5c --use-m5c')
+    assert recorded_cpg_mask(_header(final_on)) == 'unmethylated-only'
+    # older records without the DS token: the last Boolean switch wins
+    old = {'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call', 'CL': 'fiberhmm-call --enzyme ddda'}
+    for tail, want in ((' --no-use-m5c --use-m5c', 'unmethylated-only'),
+                       (' --use-m5c --no-use-m5c', 'off')):
+        hd = _header(dict(old, CL=old['CL'] + tail))
+        assert recorded_cpg_mask(hd) == want
+        assert recorded_call_masks(hd, 'ddda', 'daf')[2] == (None if want == 'off' else want)
+    custom = {'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call',
+              'CL': 'fiberhmm-call -m my.json --use-m5c --no-use-m5c',
+              'DS': 'mode=daf enzyme=custom cpg_mask=off'}
+    assert recorded_cpg_mask(_header(custom)) == 'off'
+
+
+def test_caller_settings_honour_the_last_switch():
+    from fiberhmm.nuc.recall import CallerSettings
+    for tail, want in ((' --no-use-m5c --use-m5c', 'unmethylated-only'),
+                       (' --use-m5c --no-use-m5c', None)):
+        pg = {'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call',
+              'CL': 'fiberhmm-call -i a.bam -o b.bam --enzyme ddda' + tail}
+        settings = CallerSettings.from_header(pysam.AlignmentHeader.from_dict(_header(pg)))
+        assert settings.cpg_mask_policy == want
+
+
+# --------------------------------------------------------------------------- #
+#  an inherited / explicit off survives successive recalls                      #
+# --------------------------------------------------------------------------- #
+
+def test_inherited_off_is_recorded_and_read_back():
+    custom_call = {'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call',
+                   'CL': 'fiberhmm-call -i a.bam -o b.bam -m my.json --no-use-m5c',
+                   'DS': 'mode=daf enzyme=custom cpg_mask=off cpg_mask_source=explicit'}
+    custom_recall = {'ID': 'fiberhmm-recall-tfs', 'PN': 'fiberhmm-recall-tfs',
+                     'CL': 'fiberhmm-recall-tfs -i b.bam -o c.bam -m my.json',
+                     'DS': 'mode=daf enzyme=custom cpg_mask=off cpg_mask_source=inherited'}
+    assert recorded_cpg_mask(_header(custom_call)) == 'off'
+    assert recorded_cpg_mask(_header(custom_call, custom_recall)) == 'off'
+    second = dict(custom_recall, ID='fiberhmm-recall-tfs.2')
+    assert recorded_cpg_mask(_header(custom_call, custom_recall, second)) == 'off'
+    # an off that was only the non-DddA default is still undecided
+    default = dict(custom_recall, DS='mode=daf enzyme=custom cpg_mask=off')
+    assert recorded_cpg_mask(_header(CALL_OFF, default)) is None
+
+
+def test_source_token_only_for_an_explicit_or_inherited_off():
+    from fiberhmm.nuc.records import cpg_mask_source_ds
+    assert cpg_mask_source_ds(False, None, False, None) == ' cpg_mask_source=explicit'
+    assert cpg_mask_source_ds(None, None, True, None) == ' cpg_mask_source=inherited'
+    # on (default or passed explicitly) and a non-DddA default off: no token
+    assert cpg_mask_source_ds(None, None, False, 'unmethylated-only') == ''
+    assert cpg_mask_source_ds(True, None, False, 'unmethylated-only') == ''
+    assert cpg_mask_source_ds(None, 'methylated-only', False, 'methylated-only') == ''
+    assert cpg_mask_source_ds(None, 'methylated-only', False, None) == ''
+    assert cpg_mask_source_ds(None, None, False, None) == ''
+
+
+def test_off_survives_a_custom_model_recall(called):
+    # a custom-model call with --no-use-m5c (no DddA declaration), a custom
+    # recall that inherits off, then a DddA replay: still off
+    from fiberhmm.models import get_model_path
+    root = called['root']
+    common = ('-c', '1', '--io-threads', '1')
+    call = root / 'c_custom.bam'
+    _run('fiberhmm.cli.call', '-i', root / 'ddda.bam', '-o', call, '-m',
+         get_model_path('ddda', tool='apply'), '--no-use-m5c', '--no-qc', *common)
+    pysam.index(str(call))
+    assert 'cpg_mask_source=explicit' in _ds(call, 'fiberhmm-call').split()
+    custom = root / 'r_custom.bam'
+    proc = _run('fiberhmm.cli.recall_tfs', '-i', call, '-o', custom,
+                '-m', get_model_path('ddda', tool='recall'), *common)
+    ds = _ds(custom, 'fiberhmm-recall-tfs').split()
+    assert 'enzyme=custom' in ds and 'cpg_mask=off' in ds
+    assert 'cpg_mask_source=inherited' in ds, proc.stderr[-2000:]
+    pysam.index(str(custom))
+    again = root / 'r_custom_ddda.bam'
+    proc = _run('fiberhmm.cli.recall_tfs', '-i', custom, '-o', again, '--enzyme', 'ddda',
+                '--replace-chemistry', *common)
+    assert 'as recorded by the run' in proc.stderr
+    ds = _ds(again, 'fiberhmm-recall-tfs').split()
+    assert 'cpg_mask=off' in ds and 'cpg_mask_source=inherited' in ds
+    # the default output records no source token
+    assert not any(t.startswith('cpg_mask_source=') for t in _ds(called['on'], 'fiberhmm-call').split())
+    assert 'cpg_mask_source=explicit' in _ds(called['off'], 'fiberhmm-call').split()
+
+
+# --------------------------------------------------------------------------- #
+#  caller histories merged into one header                                      #
+# --------------------------------------------------------------------------- #
+
+def _branch(tag, call):
+    mm2 = {'ID': f'minimap2{tag}', 'PN': 'minimap2', 'CL': f'minimap2 {tag}'}
+    return [mm2, dict(call, ID=f'fiberhmm-call{tag}', PP=mm2['ID'])]
+
+
+def _merged(first, second, per_leaf):
+    a, b = _branch('', first), _branch('-B', second)
+    pgs = a + b
+    if per_leaf:   # htslib (samtools merge) adds its record to every chain end
+        pgs += [{'ID': 'samtools', 'PN': 'samtools', 'PP': a[-1]['ID'], 'CL': 'samtools merge'},
+                {'ID': 'samtools.1', 'PN': 'samtools', 'PP': b[-1]['ID'], 'CL': 'samtools merge'}]
+    return _header(*pgs)
+
+
+@pytest.mark.parametrize('per_leaf', [False, True])
+@pytest.mark.parametrize('order', ['off-first', 'on-first'])
+def test_merged_histories_with_and_without_the_mask_are_mixed(order, per_leaf):
+    from fiberhmm.nuc.records import CPG_MASK_MIXED, MixedCpgMaskError
+    pair = (CALL_OFF, CALL_ON) if order == 'off-first' else (CALL_ON, CALL_OFF)
+    hd = _merged(*pair, per_leaf)
+    assert recorded_cpg_mask(hd) == CPG_MASK_MIXED
+    header = pysam.AlignmentHeader.from_dict(hd)
+    with pytest.raises(MixedCpgMaskError, match='with and without'):
+        inherit_use_m5c(None, None, header)
+    assert inherit_use_m5c(False, None, header) is False
+    assert inherit_use_m5c(True, None, header) is True
+    with pytest.raises(ValueError, match='with and without'):
+        resolve_ddda_cpg_policy(parse_options({})['input'], (recorded_cpg_mask(hd),))
+    # only a DddA DAF replay's default depends on the record
+    for enzyme, mode in (('dddb', 'daf'), (None, 'daf'), ('hia5', 'pacbio')):
+        assert inherit_use_m5c(None, None, header, enzyme=enzyme, mode=mode) is None
+    with pytest.raises(MixedCpgMaskError):
+        inherit_use_m5c(None, None, header, enzyme='ddda', mode='daf')
+    # agreeing histories are not mixed
+    assert recorded_cpg_mask(_merged(CALL_OFF, CALL_OFF, per_leaf)) == 'off'
+    assert recorded_cpg_mask(_merged(CALL_ON, CALL_ON, per_leaf)) == 'unmethylated-only'
+
+
+@pytest.mark.parametrize('per_leaf', [False, True])
+def test_explicit_record_written_on_every_conflicting_chain(per_leaf):
+    from fiberhmm.io.bam_header import append_pg_record
+    from fiberhmm.nuc.records import cpg_mask_parents, cpg_mask_parents_for_record
+    recall = {'PN': 'fiberhmm-recall-tfs', 'CL': 'fiberhmm-recall-tfs --enzyme ddda --no-use-m5c',
+              'DS': 'mode=daf enzyme=ddda cpg_mask=off cpg_mask_source=explicit'}
+    for pair, n_extra in (((CALL_OFF, CALL_ON), 0), ((CALL_ON, CALL_OFF), 1)):
+        # the new record chains to the last line (the second history); the
+        # first history gets a copy only when it disagrees with the new run
+        hd = _merged(*pair, per_leaf)
+        extra = cpg_mask_parents_for_record(hd, recall)
+        assert len(extra) == n_extra
+        out = append_pg_record(pysam.AlignmentHeader.from_dict(hd), recall, extra_parents=extra)
+        pgs = out.to_dict()['PG']
+        assert len(pgs) == len(hd['PG']) + 1 + n_extra
+        assert pgs[-1]['PP'] == hd['PG'][-1]['ID']
+        assert len({pg['ID'] for pg in pgs}) == len(pgs)
+        assert recorded_cpg_mask(out.to_dict()) == 'off'
+        assert inherit_use_m5c(None, None, out, tool='t') is False
+    # no conflict: one line, exactly as before
+    assert cpg_mask_parents(_header(CALL_OFF), None) == []
+    assert cpg_mask_parents(_merged(CALL_OFF, CALL_OFF, per_leaf), None) == []
+    assert cpg_mask_parents(_merged(CALL_ON, CALL_ON, per_leaf), 'unmethylated-only') == []
+    merge_off = {'PN': 'fiberhmm-merge', 'DS': 'recall=off enzyme=n/a'}
+    assert cpg_mask_parents_for_record(_merged(CALL_ON, CALL_OFF, per_leaf), merge_off) == []
+
+
+@pytest.fixture(scope='module')
+def merged(called):
+    root = called['root']
+    out = {}
+    for name, order in (('off_on', ('off', 'on')), ('on_off', ('on', 'off'))):
+        path = root / f'merged_{name}.bam'
+        pysam.merge('-f', str(path), *(str(called[k]) for k in order))
+        pysam.index(str(path))
+        out[name] = path
+    return out
+
+
+def _run_fail(module, *args):
+    env = dict(os.environ, FIBERHMM_NO_UPDATE_CHECK='1', OPENBLAS_NUM_THREADS='1')
+    env['PYTHONPATH'] = str(REPO) + os.pathsep + env.get('PYTHONPATH', '')
+    proc = subprocess.run([sys.executable, '-m', module, *map(str, args)], capture_output=True,
+                          text=True, cwd=REPO, env=env, timeout=600)
+    assert proc.returncode != 0, proc.stderr[-3000:]
+    return proc
+
+
+@pytest.mark.parametrize('name', ['off_on', 'on_off'])
+def test_merged_bam_refuses_until_the_mask_is_set(called, merged, name):
+    from fiberhmm.inference.consensus.bam import load_bam_payload
+    from fiberhmm.nuc.records import CPG_MASK_MIXED
+    path = merged[name]
+    with pysam.AlignmentFile(str(path), check_sq=False) as bam:
+        assert recorded_cpg_mask(bam.header) == CPG_MASK_MIXED
+    root = called['root']
+    common = ('--enzyme', 'ddda', '-c', '1', '--io-threads', '1')
+    proc = _run_fail('fiberhmm.cli.recall_tfs', '-i', path, '-o', root / f'x_{name}.bam', *common)
+    assert 'with and without' in proc.stderr and 'Traceback' not in proc.stderr
+    region = dict(chrom='chrDemo', start=2000, end=2600)
+    with pytest.raises(ValueError, match='with and without'):
+        load_bam_payload([dict(dataset_id='d', paths=[str(path)], chemistry='ddda')],
+                         region, parse_options({}))
+    # an explicit recall settles it for later flagless replays
+    settled = root / f'settled_{name}.bam'
+    _run('fiberhmm.cli.recall_tfs', '-i', path, '-o', settled, *common, '--no-use-m5c')
+    pysam.index(str(settled))
+    with pysam.AlignmentFile(str(settled), check_sq=False) as bam:
+        assert recorded_cpg_mask(bam.header) == 'off'
+    again = root / f'settled_again_{name}.bam'
+    proc = _run('fiberhmm.cli.recall_tfs', '-i', settled, '-o', again, *common)
+    assert 'as recorded by the run' in proc.stderr
+
+
+# --------------------------------------------------------------------------- #
+#  posteriors from stdin                                                         #
+# --------------------------------------------------------------------------- #
+
+def _posteriors_stdin(path, out, *extra):
+    import gzip
+    import json
+    env = dict(os.environ, FIBERHMM_NO_UPDATE_CHECK='1', OPENBLAS_NUM_THREADS='1')
+    env['PYTHONPATH'] = str(REPO) + os.pathsep + env.get('PYTHONPATH', '')
+    with open(path, 'rb') as fh:
+        proc = subprocess.run([sys.executable, '-m', 'fiberhmm.cli.export_posteriors', '-i', '-',
+                               '-o', str(out), '--enzyme', 'ddda', '--streaming', '--format', 'tsv',
+                               '-c', '1', *extra], stdin=fh, capture_output=True, text=True,
+                              cwd=REPO, env=env, timeout=600)
+    assert proc.returncode == 0, proc.stderr[-3000:]
+    with gzip.open(out, 'rt') as fh:
+        meta = json.loads(fh.readline().split(':', 1)[1])
+    return proc, meta
+
+
+def _rows(path):
+    import gzip
+    with gzip.open(path, 'rt') as fh:
+        return sorted(line for line in fh if not line.startswith('#'))
+
+
+def test_posteriors_from_stdin_inherit_off(called):
+    root = called['root']
+    proc, meta = _posteriors_stdin(called['off'], root / 'stdin_off.tsv.gz')
+    assert 'as recorded by the run' in proc.stderr
+    assert meta['cpg_mask_policy'] == 'off'
+    # the same posteriors as exporting the file by name
+    named = root / 'named_off.tsv.gz'
+    _run('fiberhmm.cli.export_posteriors', '-i', called['off'], '-o', named, '--enzyme', 'ddda',
+         '--streaming', '--format', 'tsv', '-c', '1')
+    assert _rows(root / 'stdin_off.tsv.gz') == _rows(named)
+    _, meta = _posteriors_stdin(called['off'], root / 'stdin_forced.tsv.gz', '--use-m5c')
+    assert meta['cpg_mask_policy'] == 'unmethylated-only'
+    proc, meta = _posteriors_stdin(called['on'], root / 'stdin_on.tsv.gz')
+    assert meta['cpg_mask_policy'] == 'unmethylated-only'
+    assert 'as recorded by the run' not in proc.stderr
