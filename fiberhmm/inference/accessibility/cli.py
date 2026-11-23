@@ -244,12 +244,7 @@ def _run(argv, stack):
         from fiberhmm.inference.consensus.execution import single_threaded_blas, shared_worker_pool
         stack.enter_context(shared_worker_pool(options['compute'].cores))
         with single_threaded_blas():
-            caps = [opt.max_quantification_molecules]
-            if opt.mode != 'depth' or not opt.nfr_regions:
-                caps.append(opt.max_discovery_molecules)
-            sampling = dict(cap=max(caps) if all(caps) else 0, discovery_cap=opt.max_discovery_molecules,
-                            seed=opt.sample_seed, mode='nfr',
-                            windows=opt.nfr_regions or None, nfr_options=opt)
+            sampling = loader_sampling(opt)
             payload = load_payload(datasets, {k: window[k] for k in ('chrom', 'start', 'end')}, values, options, progress,
                                    sampling, jobs=options['compute'].cores)
     region = payload['region']
@@ -273,6 +268,21 @@ def _run(argv, stack):
     print(json.dumps(dict(status='complete', experimental=True, output=str(out), nfrs=summary, pairs=len(result['pairs']),
                           detection={k: det.get(k) for k in ('method', 'background', 'enrichment_test', 'enrichment_gates', 'note') if k in det},
                           warnings=result['warnings'])))
+
+
+def loader_sampling(opt):
+    """The loader's preliminary hash sampling for an NFR run (cap 0 = load every molecule).
+
+    Under cross-fitting (``discover_fold_spec``) the discovery cap applies within the discovery folds, which a
+    read-name hash prefix of the whole population cannot guarantee to fill (it would keep only the discovery-fold
+    reads that happen to rank low across all folds): every molecule is loaded and the caps apply in memory, as
+    fiberhmm-consensus does."""
+    caps = [opt.max_quantification_molecules]
+    if opt.mode != 'depth' or not opt.nfr_regions:
+        caps.append(opt.max_discovery_molecules)
+    cap = max(caps) if all(caps) and not opt.discover_fold_spec else 0
+    return dict(cap=cap, discovery_cap=opt.max_discovery_molecules, seed=opt.sample_seed, mode='nfr',
+                windows=opt.nfr_regions or None, nfr_options=opt)
 
 
 def _load_dataset_task(args):

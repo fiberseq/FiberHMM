@@ -137,7 +137,7 @@ def window_task(spec):
     import traceback
     from fiberhmm.inference.consensus.parameters import parse_options
     from fiberhmm.inference.consensus.execution import single_threaded_blas
-    from .cli import load_payload
+    from .cli import load_payload, loader_sampling
     from .workflow import NFROptions, run_accessibility
     folder = Path(spec['folder'])
     started = time.monotonic()
@@ -147,9 +147,7 @@ def window_task(spec):
             shutil.rmtree(folder)          # a partial or stale attempt
         options = parse_options(spec['values'])
         opt = NFROptions.from_params(spec['nfr'])
-        caps = [opt.max_quantification_molecules, opt.max_discovery_molecules]
-        sampling = dict(cap=max(caps) if all(caps) else 0, discovery_cap=opt.max_discovery_molecules,
-                        seed=opt.sample_seed, mode='nfr', windows=None, nfr_options=opt)
+        sampling = loader_sampling(opt)       # BED windows always detect NFRs (no nfr_regions): windows=None
         with single_threaded_blas():
             payload = load_payload(spec['datasets'], spec['region'], spec['values'], options, sampling=sampling)
             molecules = sum(len(s['units']) for s in payload['strata'])
