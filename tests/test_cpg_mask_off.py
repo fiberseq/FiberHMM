@@ -537,3 +537,34 @@ def test_merged_bam_refuses_until_the_mask_is_set(called, merged, name):
     proc = _run('fiberhmm.cli.recall_tfs', '-i', settled, '-o', again, *common)
     assert 'as recorded by the run' in proc.stderr
 
+
+# --------------------------------------------------------------------------- #
+#  posteriors from stdin                                                         #
+# --------------------------------------------------------------------------- #
+
+def _posteriors_stdin(path, out, *extra):
+    import gzip
+    import json
+    env = dict(os.environ, FIBERHMM_NO_UPDATE_CHECK='1', OPENBLAS_NUM_THREADS='1')
+    env['PYTHONPATH'] = str(REPO) + os.pathsep + env.get('PYTHONPATH', '')
+    with open(path, 'rb') as fh:
+        proc = subprocess.run([sys.executable, '-m', 'fiberhmm.cli.export_posteriors', '-i', '-',
+                               '-o', str(out), '--enzyme', 'ddda', '--streaming', '--format', 'tsv',
+                               '-c', '1', *extra], stdin=fh, capture_output=True, text=True,
+                              cwd=REPO, env=env, timeout=600)
+    assert proc.returncode == 0, proc.stderr[-3000:]
+    with gzip.open(out, 'rt') as fh:
+        meta = json.loads(fh.readline().split(':', 1)[1])
+    return proc, meta
+
+
+def test_posteriors_from_stdin_inherit_off(called):
+    root = called['root']
+    proc, meta = _posteriors_stdin(called['off'], root / 'stdin_off.tsv.gz')
+    assert 'as recorded by the run' in proc.stderr
+    assert meta['cpg_mask_policy'] == 'off'
+    _, meta = _posteriors_stdin(called['off'], root / 'stdin_forced.tsv.gz', '--use-m5c')
+    assert meta['cpg_mask_policy'] == 'unmethylated-only'
+    proc, meta = _posteriors_stdin(called['on'], root / 'stdin_on.tsv.gz')
+    assert meta['cpg_mask_policy'] == 'unmethylated-only'
+    assert 'as recorded by the run' not in proc.stderr
