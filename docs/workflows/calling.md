@@ -213,6 +213,36 @@ and platform (and their defaults) when the observation mode matches.
 | `--use-m5c` / `--no-use-m5c` | on for DddA | CpG-aware calling: CpGs masked in the first-pass HMM and recall ([DAF-seq](daf-seq.md#ddda-cpg-island-methylation)) |
 | `--cpg-mask-policy` | `unmethylated-only` | `methylated-only` masks only `ddda_mcg` spans (the pre-3.0 behaviour) |
 
+### When to turn the DddA CpG mask off
+
+DddA cannot deaminate a methylated C. In mammals most CpGs are methylated, so
+an undeaminated CpG reads as protection whether or not a protein sits there.
+The DddA CpG mask therefore makes every CpG observation neutral (no evidence,
+no opportunity) except inside the confident unmethylated islands
+(`ddda_ucg`) that `fiberhmm-tag-m5c` writes. It is on by default for
+`--enzyme ddda`.
+
+In organisms without meaningful CpG methylation, such as *Drosophila*,
+undeaminated CpGs carry the same footprint information as any other C, and
+masking them throws that evidence away. Turn the mask off there:
+
+```bash
+fiberhmm-call -i aligned.bam -o calls.bam --enzyme ddda --no-use-m5c
+```
+
+`--no-use-m5c` turns the mask off in the first-pass HMM and in nucleosome and
+TF recall. It is the same switch on every DddA tool (`fiberhmm-call` and
+`--hmm-only`, `fiberhmm-recall-tfs`/`-recall-nucs`, `fiberhmm-pair`/`-merge`,
+`fiberhmm-posteriors`, `fiberhmm-qc`, `fiberhmm-consensus` and
+`fiberhmm-transfer`). The call records it in its `@PG` (`cpg_mask=off
+hmm_cpg_mask=off`), and later tools that replay the calls inherit it:
+recall-tfs/-nucs, pair/merge, posteriors, the qc light call, the nucleosome
+caller and consensus/transfer all keep the mask off for that BAM unless you
+pass `--use-m5c` (or `--cpg-mask-policy`), which always wins over the record.
+The record they read is the newest `fiberhmm-call`, `-recall-tfs`,
+`-recall-nucs` or `-merge` `@PG` line (the nucleosome caller reads the last
+`fiberhmm-call` line, whose settings it replays).
+
 ## Nucleosome recall options
 
 | Option | Default | Effect |

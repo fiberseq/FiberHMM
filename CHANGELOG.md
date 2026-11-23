@@ -145,6 +145,25 @@
 
 ### Added
 
+- **The DddA CpG mask can be turned off for organisms without CpG
+  methylation (e.g. *Drosophila*).** The mask (CpGs neutral except inside
+  tag-m5c `ddda_ucg` islands) stays the default everywhere. The existing
+  `--use-m5c`/`--no-use-m5c` switch now reaches every DddA tool:
+  `fiberhmm-qc` (its light call) and `fiberhmm-consensus`/`-transfer` gain
+  it, beside `fiberhmm-call` (and `--hmm-only`), `-recall-tfs`/`-recall-nucs`,
+  `-pair`/`-merge` and `-posteriors`. Consensus and transfer take it as the
+  new `input.use_m5c` (`auto`/`on`/`off`; `true`/`false` accepted);
+  `input.ddda_m5c_correction: false` still means off. A replay of called
+  BAMs inherits `off` from the newest `fiberhmm-call`/`-recall-tfs`/
+  `-recall-nucs`/`-merge` `@PG` record that chose it (`--no-use-m5c`, or
+  `cpg_mask=off` in a DddA record); an explicit `--use-m5c`, `--no-use-m5c`
+  or `--cpg-mask-policy` always wins. recall-tfs/-nucs now write
+  `cpg_mask=<policy|off>` into their `@PG` DS. Consensus records the mask per
+  DddA dataset in `model_manifest.cpg_mask_policy` (`off`, plus
+  `cpg_mask_source` when it came from the BAMs), refuses one run whose DddA
+  datasets resolve to different masks, and refuses saved evidence that mixes
+  them. Default output is unchanged. See
+  [Calling](docs/workflows/calling.md#when-to-turn-the-ddda-cpg-mask-off).
 - `--nuc-recall-policy topology` is available again (opt-in) in
   `fiberhmm-call`, `fiberhmm-recall-nucs` and `fiberhmm-recall-tfs`. It keeps
   fragment structure in nucleosome recall and works well on some ONT Hia5
