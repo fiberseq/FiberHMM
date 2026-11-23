@@ -33,16 +33,23 @@ NUC_MSP_GROUPS = ('nuc', 'msp')
 ANNOTATION_SOURCES = (('MA', 'AQ'), ('Ma', 'Aq'))
 
 
-def ma_has_nuc_msp_groups(value) -> bool:
+#: The source groups of ``fiberhmm-call --hmm-only`` output, whose ``tf``
+#: group is HMM footprints (a read whose footprints are all TF-sized has a
+#: ``tf`` group only).
+HMM_FOOTPRINT_GROUPS = NUC_MSP_GROUPS + ('tf',)
+
+
+def ma_has_nuc_msp_groups(value, groups=NUC_MSP_GROUPS) -> bool:
     """True when an MA/Ma tag value holds a ``nuc`` or ``msp`` group (even an
-    empty one). An unparsable value gives False."""
+    empty one; ``groups`` names other source groups). An unparsable value
+    gives False."""
     from fiberhmm.io.ma_tags import parse_ma_tag
 
     try:
         parsed = parse_ma_tag(str(value))
     except (ValueError, TypeError):
         return False
-    return any(name in NUC_MSP_GROUPS for name, *_rest in parsed['raw_types'])
+    return any(name in groups for name, *_rest in parsed['raw_types'])
 
 
 def hmm_only_calls(header) -> bool:
@@ -72,13 +79,18 @@ def hmm_only_calls(header) -> bool:
     return False
 
 
-def footprint_annotation_tag(read) -> Optional[str]:
+def footprint_annotation_tag(read, hmm_footprints: bool = False) -> Optional[str]:
     """``'MA'`` or ``'Ma'``: the annotation tag that holds the read's
     nucleosome/MSP calls (FiberHMM's MA before fibertools' Ma), or None when
-    neither has a ``nuc``/``msp`` group (legacy tags, if any, then hold them)."""
+    neither has a ``nuc``/``msp`` group (legacy tags, if any, then hold them).
+    ``hmm_footprints`` (``fiberhmm-call --hmm-only`` input, see
+    :func:`hmm_only_calls`): a ``tf`` group also makes the tag the source --
+    there it is HMM footprints, and a read whose footprints are all TF-sized
+    has nothing else."""
+    groups = HMM_FOOTPRINT_GROUPS if hmm_footprints else NUC_MSP_GROUPS
     for tag, _quality in ANNOTATION_SOURCES:
         try:
-            if read.has_tag(tag) and ma_has_nuc_msp_groups(read.get_tag(tag)):
+            if read.has_tag(tag) and ma_has_nuc_msp_groups(read.get_tag(tag), groups):
                 return tag
         except (AttributeError, KeyError, TypeError):
             continue
@@ -185,7 +197,7 @@ def resolve_footprint_tags(read, want_molecular, *, ma_molecular: Optional[bool]
     """
     from fiberhmm.io.legacy_tags import raw_array_tag_pair
 
-    tag = footprint_annotation_tag(read)
+    tag = footprint_annotation_tag(read, hmm_footprints=hmm_footprints)
     if tag is None:
         out = {}
         for start_tag, length_tag in (('ns', 'nl'), ('as', 'al')):

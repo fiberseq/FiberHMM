@@ -1169,7 +1169,10 @@ def _nucleosome_intervals_seq(read, input_molecular_frame: bool) -> list[tuple[i
     """The read's accessibility-masking footprints in SEQ frame: MA, else
     fibertools ``Ma`` (molecular), else legacy ``ns/nl`` -- the shared
     :func:`fiberhmm.io.footprint_calls.footprint_annotation_tag` rule."""
-    source = footprint_annotation_tag(read)   # MA first; legacy only without nuc/msp groups
+    # MA first; legacy only without nuc/msp groups (or, in --hmm-only
+    # output, a tf group: there the HMM footprints of a TF-sized-only read).
+    source = footprint_annotation_tag(
+        read, hmm_footprints=_header_is_hmm_only(getattr(read, "header", None)))
     intervals = (_footprint_ma_intervals(read, input_molecular_frame, source)
                  if source else [])
     legacy_nucs = None if source else array_tag_pair(read, "ns", "nl")
@@ -1990,7 +1993,8 @@ def write_cpg_island_bed(
 def _initial_msp_intervals_seq(read, input_molecular_frame: bool) -> list[tuple[int, int]]:
     """Return initial MSPs in SEQ coordinates from MA, else fibertools ``Ma``
     (molecular), else legacy as/al tags."""
-    source = footprint_annotation_tag(read)   # MA first; legacy only without nuc/msp groups
+    source = footprint_annotation_tag(   # MA first; legacy only without nuc/msp groups
+        read, hmm_footprints=_header_is_hmm_only(getattr(read, "header", None)))
     intervals = ma_intervals(read, "msp", input_molecular_frame, source) if source else []
     legacy_msps = None if source else array_tag_pair(read, "as", "al")
     if legacy_msps is None:

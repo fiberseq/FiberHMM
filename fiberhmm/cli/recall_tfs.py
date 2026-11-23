@@ -347,7 +347,8 @@ def _make_payload(read, mode=None, input_molecular_frame=True) -> dict:
     bytes is a straight memcpy vs. pickling a Python list.
     parse_mm_tag_query_positions accepts bytes directly via np.frombuffer.
     """
-    if (input_molecular_frame is None and footprint_annotation_tag(read) is None
+    if (input_molecular_frame is None
+            and footprint_annotation_tag(read, bool(_MA_FRAME.get('hmm_only', False))) is None
             and has_legacy_pair(read)):
         # Only legacy calls need the legacy-tag frame; MA calls carry their own.
         raise SystemExit("error: " + ambiguous_frame_message(

@@ -293,6 +293,81 @@ def test_recall_reads_nuc_plus_tf_only_from_hmm_only_files():
     assert 'nq' not in merged and list(merged['as']) == [150]
 
 
+def _tf_only_read(header_dict):
+    """A read whose --hmm-only footprints are all TF-sized (MA holds one tf
+    group), beside stale legacy ns/nl/as/al another tool left."""
+    import array
+
+    header = pysam.AlignmentHeader.from_dict(dict(header_dict, SQ=[{'SN': 'chr1', 'LN': 10_000}]))
+    read = pysam.AlignedSegment(header)
+    read.query_name, read.flag, read.reference_id, read.reference_start = 'r', 0, 0, 0
+    read.query_sequence, read.cigarstring = 'A' * 1000, '1000M'
+    read.set_tag('MA', '1000;tf.QQQ:101-40', value_type='Z')
+    read.set_tag('AQ', array.array('B', [9, 0, 0]))
+    for tag, value in (('ns', 500), ('nl', 147), ('as', 700), ('al', 100)):
+        read.set_tag(tag, array.array('I', [value]))
+    return read
+
+
+def test_tf_only_hmm_output_is_a_footprint_source():
+    """--hmm-only output whose only footprint group is tf (every footprint
+    shorter than --nuc-min-size) is the read's call source: the tf
+    footprints are its HMM footprints, the stale legacy tags are not read."""
+    from fiberhmm.io.footprint_calls import footprint_annotation_tag, resolve_footprint_tags
+
+    read = _tf_only_read(_hmm_only_header())
+    assert footprint_annotation_tag(read, hmm_footprints=True) == 'MA'
+    calls = resolve_footprint_tags(read, True, hmm_footprints=True)
+    assert calls['source'] == 'MA'
+    assert list(zip(calls['ns'], calls['nl'])) == [(100, 40)]
+    assert 'as' not in calls and 'nq' not in calls
+    # Outside --hmm-only output a lone tf group (recalled TFs) calls nothing.
+    assert footprint_annotation_tag(read) is None
+    assert resolve_footprint_tags(read, True)['source'] == 'legacy'
+
+
+def test_tf_only_hmm_output_masks_m5c_accessibility():
+    from fiberhmm.daf import m5c
+
+    read = _tf_only_read(_hmm_only_header())
+    assert m5c._nucleosome_intervals_seq(read, True) == [(100, 140)]
+    assert m5c._initial_msp_intervals_seq(read, True) == []
+    # Not --hmm-only output: the lone tf group is no source; legacy tags are read.
+    plain = _tf_only_read({'HD': {'VN': '1.6'}})
+    assert m5c._nucleosome_intervals_seq(plain, True) == [(500, 647)]
+
+
+def test_tf_only_hmm_output_survives_recall(tmp_path, demo):
+    """recall-tfs of --hmm-only output whose reads hold only a tf group keeps
+    (re-calls) every read; before 3.3.0's fix such reads lost their MA."""
+    import array
+
+    hmm_only, tf_only, recalled = (tmp_path / f'{n}.bam' for n in ('hmm', 'tf', 'recalled'))
+    _call(demo['hia5_pacbio'], hmm_only, 'hia5_pacbio', '--hmm-only')
+    n_tf_only = 0
+    with pysam.AlignmentFile(str(hmm_only)) as src, \
+            pysam.AlignmentFile(str(tf_only), 'wb', template=src) as dst:
+        for read in src:
+            groups = str(read.get_tag('MA')).split(';')
+            tf = [g for g in groups[1:] if g.startswith('tf')]
+            if tf:
+                n = len(tf[0].partition(':')[2].split(','))
+                read.set_tag('MA', f'{groups[0]};{tf[0]}', value_type='Z')
+                read.set_tag('AQ', array.array('B', list(read.get_tag('AQ'))[-3 * n:]))
+                if read.has_tag('AN'):
+                    read.set_tag('AN', None)
+                n_tf_only += 1
+            dst.write(read)
+    assert n_tf_only > N_READS // 2
+    pysam.index(str(tf_only))
+    _ok(_run('fiberhmm.cli.recall_tfs', '-i', tf_only, '-o', recalled,
+             *CHEMISTRY['hia5_pacbio'], '-c', '1', '--io-threads', '1'))
+    calls = _calls(recalled)
+    assert len(calls) == N_READS
+    lost = [name for name, groups in calls.items() if not (groups['nuc'] or groups['tf'])]
+    assert not lost, lost
+
+
 # --------------------------------------------------------------------------- #
 #  --keep-msps                                                                  #
 # --------------------------------------------------------------------------- #
