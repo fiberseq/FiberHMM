@@ -634,20 +634,28 @@ def cpg_mask_parents_for_record(header, record) -> List[str]:
     return cpg_mask_parents(header, None if decision is _UNDECIDED else decision)
 
 
+_UNKNOWN = object()
+
+
 def resolve_replay_use_m5c(use_m5c: Optional[bool], cpg_mask_policy: Optional[str],
-                           header, tool: str = 'fiberhmm',
-                           stream=None) -> Tuple[Optional[bool], bool]:
+                           header, tool: str = 'fiberhmm', stream=None, *,
+                           enzyme=_UNKNOWN, mode=_UNKNOWN) -> Tuple[Optional[bool], bool]:
     """``(use_m5c, inherited)`` for a replay of an already-called BAM: the
     explicit value when the user gave ``--use-m5c``/``--no-use-m5c`` or
     ``--cpg-mask-policy``; otherwise False (``inherited`` True) when
     :func:`recorded_cpg_mask` says the calls were made with the mask off (a
     note goes to ``stream``, default stderr); otherwise None (the chemistry
     default). Raises :class:`MixedCpgMaskError` when the input's merged caller
-    histories disagree and the user set nothing."""
+    histories disagree and the user set nothing, unless the replay's
+    ``enzyme``/``mode`` (when given) cannot mask CpGs by default: only a DddA
+    DAF replay's default depends on the record."""
     if use_m5c is not None or cpg_mask_policy is not None or header is None:
         return use_m5c, False
     recorded = recorded_cpg_mask(header)
     if recorded == CPG_MASK_MIXED:
+        if enzyme is not _UNKNOWN and mode is not _UNKNOWN and not (
+                str(enzyme or '').lower() == 'ddda' and mode == 'daf'):
+            return None, False
         raise MixedCpgMaskError(
             f"{tool}: the input's calls were made with and without the DddA CpG mask "
             "(caller histories merged into one BAM, some with --no-use-m5c); set "
@@ -662,24 +670,29 @@ def resolve_replay_use_m5c(use_m5c: Optional[bool], cpg_mask_policy: Optional[st
 
 
 def inherit_use_m5c(use_m5c: Optional[bool], cpg_mask_policy: Optional[str],
-                    header, tool: str = 'fiberhmm', stream=None) -> Optional[bool]:
+                    header, tool: str = 'fiberhmm', stream=None, *,
+                    enzyme=_UNKNOWN, mode=_UNKNOWN) -> Optional[bool]:
     """``use_m5c`` of :func:`resolve_replay_use_m5c`."""
-    return resolve_replay_use_m5c(use_m5c, cpg_mask_policy, header, tool, stream)[0]
+    return resolve_replay_use_m5c(use_m5c, cpg_mask_policy, header, tool, stream,
+                                  enzyme=enzyme, mode=mode)[0]
 
 
 def cpg_mask_source_ds(use_m5c: Optional[bool], cpg_mask_policy: Optional[str],
                        inherited: bool, resolved_policy: Optional[str]) -> str:
-    """The `` cpg_mask_source=...`` DS token of a caller record (``''`` for
-    the chemistry default, so default headers are unchanged): ``inherited``
-    when the mask is off because the input recorded off, ``explicit`` when the
-    user set it (``--use-m5c``/``--no-use-m5c``, or ``--cpg-mask-policy`` on a
-    run that masks). ``use_m5c``/``cpg_mask_policy`` are the user's values
-    before inheritance; ``resolved_policy`` is the run's (None = off).
-    :func:`recorded_cpg_mask` reads an explicit or inherited ``off`` as a
-    decision whatever the enzyme, so it survives custom-model recalls."""
+    """The `` cpg_mask_source=...`` DS token of a caller record whose mask is
+    off: ``inherited`` when the input recorded off, ``explicit`` for the
+    user's ``--no-use-m5c``. ``''`` otherwise (the mask on, whatever set it,
+    or off only because the run is not DddA), so default headers, and runs
+    that pass the default explicitly, are unchanged. ``use_m5c`` /
+    ``cpg_mask_policy`` are the user's values before inheritance;
+    ``resolved_policy`` is the run's (None = off). :func:`recorded_cpg_mask`
+    reads an explicit or inherited ``off`` as a decision whatever the enzyme,
+    so it survives custom-model recalls."""
+    if resolved_policy not in (None, 'off'):
+        return ''
     if inherited:
         return ' cpg_mask_source=inherited'
-    if use_m5c is not None or (cpg_mask_policy is not None and resolved_policy):
+    if use_m5c is False:
         return ' cpg_mask_source=explicit'
     return ''
 

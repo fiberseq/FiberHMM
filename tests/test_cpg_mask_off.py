@@ -398,6 +398,18 @@ def test_inherited_off_is_recorded_and_read_back():
     assert recorded_cpg_mask(_header(CALL_OFF, default)) is None
 
 
+def test_source_token_only_for_an_explicit_or_inherited_off():
+    from fiberhmm.nuc.records import cpg_mask_source_ds
+    assert cpg_mask_source_ds(False, None, False, None) == ' cpg_mask_source=explicit'
+    assert cpg_mask_source_ds(None, None, True, None) == ' cpg_mask_source=inherited'
+    # on (default or passed explicitly) and a non-DddA default off: no token
+    assert cpg_mask_source_ds(None, None, False, 'unmethylated-only') == ''
+    assert cpg_mask_source_ds(True, None, False, 'unmethylated-only') == ''
+    assert cpg_mask_source_ds(None, 'methylated-only', False, 'methylated-only') == ''
+    assert cpg_mask_source_ds(None, 'methylated-only', False, None) == ''
+    assert cpg_mask_source_ds(None, None, False, None) == ''
+
+
 def test_off_survives_a_custom_model_recall(called):
     # a custom-model call with --no-use-m5c (no DddA declaration), a custom
     # recall that inherits off, then a DddA replay: still off
@@ -459,6 +471,11 @@ def test_merged_histories_with_and_without_the_mask_are_mixed(order, per_leaf):
     assert inherit_use_m5c(True, None, header) is True
     with pytest.raises(ValueError, match='with and without'):
         resolve_ddda_cpg_policy(parse_options({})['input'], (recorded_cpg_mask(hd),))
+    # only a DddA DAF replay's default depends on the record
+    for enzyme, mode in (('dddb', 'daf'), (None, 'daf'), ('hia5', 'pacbio')):
+        assert inherit_use_m5c(None, None, header, enzyme=enzyme, mode=mode) is None
+    with pytest.raises(MixedCpgMaskError):
+        inherit_use_m5c(None, None, header, enzyme='ddda', mode='daf')
     # agreeing histories are not mixed
     assert recorded_cpg_mask(_merged(CALL_OFF, CALL_OFF, per_leaf)) == 'off'
     assert recorded_cpg_mask(_merged(CALL_ON, CALL_ON, per_leaf)) == 'unmethylated-only'
@@ -558,11 +575,22 @@ def _posteriors_stdin(path, out, *extra):
     return proc, meta
 
 
+def _rows(path):
+    import gzip
+    with gzip.open(path, 'rt') as fh:
+        return sorted(line for line in fh if not line.startswith('#'))
+
+
 def test_posteriors_from_stdin_inherit_off(called):
     root = called['root']
     proc, meta = _posteriors_stdin(called['off'], root / 'stdin_off.tsv.gz')
     assert 'as recorded by the run' in proc.stderr
     assert meta['cpg_mask_policy'] == 'off'
+    # the same posteriors as exporting the file by name
+    named = root / 'named_off.tsv.gz'
+    _run('fiberhmm.cli.export_posteriors', '-i', called['off'], '-o', named, '--enzyme', 'ddda',
+         '--streaming', '--format', 'tsv', '-c', '1')
+    assert _rows(root / 'stdin_off.tsv.gz') == _rows(named)
     _, meta = _posteriors_stdin(called['off'], root / 'stdin_forced.tsv.gz', '--use-m5c')
     assert meta['cpg_mask_policy'] == 'unmethylated-only'
     proc, meta = _posteriors_stdin(called['on'], root / 'stdin_on.tsv.gz')

@@ -177,7 +177,8 @@ def run_merge(in_bam, out_bam, prob_threshold=0, pairs_only=False, io_threads=4,
         from fiberhmm.nuc.records import cpg_mask_source_ds, resolve_replay_use_m5c
         try:
             resolved_use_m5c, inherited = resolve_replay_use_m5c(
-                use_m5c, cpg_mask_policy, bam.header, tool=tool)
+                use_m5c, cpg_mask_policy, bam.header, tool=tool,
+                enzyme=enzyme, mode='daf')
         except ValueError as exc:
             bam.close()
             raise SystemExit(f"error: {exc}") from exc

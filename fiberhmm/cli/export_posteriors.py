@@ -1339,7 +1339,7 @@ def main():
     try:
         extraction['cpg_mask_policy'] = resolve_cpg_mask_policy(
             _inherited_use_m5c(args.use_m5c, args.cpg_mask_policy, args.input,
-                               'fiberhmm-posteriors'),
+                               'fiberhmm-posteriors', chem_enzyme, effective_mode),
             args.cpg_mask_policy, chem_enzyme, effective_mode,
             tool='fiberhmm-posteriors')
     except ValueError as exc:
@@ -1388,7 +1388,7 @@ def main():
 
 
 # Python API entry point (same pipeline as the fiberhmm-posteriors command)
-def _inherited_use_m5c(use_m5c, cpg_mask_policy, input_bam, tool):
+def _inherited_use_m5c(use_m5c, cpg_mask_policy, input_bam, tool, enzyme, mode):
     """Explicit flags win; otherwise an input whose calls were made with the
     DddA CpG mask off (``recorded_cpg_mask``) keeps it off.
 
@@ -1407,13 +1407,15 @@ def _inherited_use_m5c(use_m5c, cpg_mask_policy, input_bam, tool):
             except (OSError, ValueError):
                 return use_m5c
             _OPEN_STDIN['-'] = bam
-        return inherit_use_m5c(use_m5c, cpg_mask_policy, bam.header, tool=tool)
+        return inherit_use_m5c(use_m5c, cpg_mask_policy, bam.header, tool=tool,
+                               enzyme=enzyme, mode=mode)
     try:
         with pysam.AlignmentFile(input_bam, 'rb', check_sq=False) as bam:
             header = bam.header
     except (OSError, ValueError):
         return use_m5c
-    return inherit_use_m5c(use_m5c, cpg_mask_policy, header, tool=tool)
+    return inherit_use_m5c(use_m5c, cpg_mask_policy, header, tool=tool,
+                           enzyme=enzyme, mode=mode)
 
 
 def export_posteriors_from_bam(
@@ -1468,7 +1470,7 @@ def export_posteriors_from_bam(
     extraction = {
         'cpg_mask_policy': resolve_cpg_mask_policy(
             _inherited_use_m5c(use_m5c, cpg_mask_policy, input_bam,
-                               'export_posteriors_from_bam'),
+                               'export_posteriors_from_bam', enzyme, effective_mode),
             cpg_mask_policy, enzyme, effective_mode,
             tool='export_posteriors_from_bam'),
         'daf_run_mask': run_mask,

@@ -571,7 +571,8 @@ def compute_state_rates(
         from fiberhmm.inference.tf_recaller import resolve_cpg_mask_policy
         from fiberhmm.nuc.records import inherit_use_m5c
         try:
-            use_m5c = inherit_use_m5c(use_m5c, cpg_mask_policy, header, tool="fiberhmm-qc")
+            use_m5c = inherit_use_m5c(use_m5c, cpg_mask_policy, header, tool="fiberhmm-qc",
+                                      enzyme=enzyme, mode=mode)
         except ValueError as exc:
             block["note"] = f"light call unavailable: {exc}"
             return block, {}

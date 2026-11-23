@@ -1522,7 +1522,7 @@ def _recall(args, bam_in, model_path, using_bundled_model, n_cores):
     try:
         args.use_m5c, cpg_inherited = resolve_replay_use_m5c(
             user_use_m5c, getattr(args, 'cpg_mask_policy', None),
-            bam_in.header, tool=prog)
+            bam_in.header, tool=prog, enzyme=args.enzyme, mode=mode)
     except ValueError as exc:
         raise SystemExit(f"error: {exc}") from exc
     try:

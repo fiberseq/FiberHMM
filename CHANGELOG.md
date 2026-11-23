@@ -167,8 +167,8 @@
   its source run used. Each active `@PG` history of a merged BAM is read
   separately: histories that disagree make replays (and consensus) refuse the
   BAM until the mask is set explicitly, and a run given it records itself on
-  the disagreeing histories. Runs that inherited or were given the setting
-  record `cpg_mask_source=inherited|explicit` in DS, so an inherited `off`
+  the disagreeing histories. Runs whose mask is off by inheritance or by
+  `--no-use-m5c` record `cpg_mask_source=inherited|explicit` in DS, so an inherited `off`
   survives custom-model recalls; the recorded `cpg_mask=` beats the command
   line, whose last m5C switch counts for older records.
   `fiberhmm-posteriors -i -` (stdin) inherits the setting too. Default output
