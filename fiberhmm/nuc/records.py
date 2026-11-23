@@ -516,7 +516,10 @@ def _cpg_record_decision(pg):
         value = m.group(1)
         if value != 'off':
             return value
-        return 'off' if ddda or switch is False else _UNDECIDED
+        source = re.search(r'(?:^|\s)cpg_mask_source=(\S+)', ds)
+        if ddda or switch is False or (source and source.group(1) in ('explicit', 'inherited')):
+            return 'off'
+        return _UNDECIDED
     if switch is False:
         return 'off'
     if switch or ddda:
@@ -531,7 +534,8 @@ def recorded_cpg_mask(header) -> Optional[str]:
 
     Returns ``'off'`` when that run chose no CpG mask (``cpg_mask=off`` in a
     DddA record, or ``--no-use-m5c`` as the last m5C switch of its command
-    line), the policy name when it masked CpGs, and None when no record
+    line, or ``cpg_mask=off`` with ``cpg_mask_source=explicit|inherited`` in
+    any record), the policy name when it masked CpGs, and None when no record
     decides (no such record, or a custom-model run whose mask was off only
     because it was not DddA). The resolved ``DS cpg_mask=`` value beats the
     command line.
@@ -548,22 +552,47 @@ def recorded_cpg_mask(header) -> Optional[str]:
     return None
 
 
-def inherit_use_m5c(use_m5c: Optional[bool], cpg_mask_policy: Optional[str],
-                    header, tool: str = 'fiberhmm', stream=None) -> Optional[bool]:
-    """``use_m5c`` for a replay of an already-called BAM: the explicit value
-    when the user gave ``--use-m5c``/``--no-use-m5c`` or ``--cpg-mask-policy``;
-    otherwise False when :func:`recorded_cpg_mask` says the calls were made
-    with the mask off (a note goes to ``stream``, default stderr); otherwise
-    None (the chemistry default)."""
+def resolve_replay_use_m5c(use_m5c: Optional[bool], cpg_mask_policy: Optional[str],
+                           header, tool: str = 'fiberhmm',
+                           stream=None) -> Tuple[Optional[bool], bool]:
+    """``(use_m5c, inherited)`` for a replay of an already-called BAM: the
+    explicit value when the user gave ``--use-m5c``/``--no-use-m5c`` or
+    ``--cpg-mask-policy``; otherwise False (``inherited`` True) when
+    :func:`recorded_cpg_mask` says the calls were made with the mask off (a
+    note goes to ``stream``, default stderr); otherwise None (the chemistry
+    default)."""
     if use_m5c is not None or cpg_mask_policy is not None or header is None:
-        return use_m5c
+        return use_m5c, False
     if recorded_cpg_mask(header) == 'off':
         import sys
         print(f"{tool}: DddA CpG mask off, as recorded by the run that made the "
               "input's calls (--no-use-m5c); pass --use-m5c to mask CpGs",
               file=stream or sys.stderr)
-        return False
-    return None
+        return False, True
+    return None, False
+
+
+def inherit_use_m5c(use_m5c: Optional[bool], cpg_mask_policy: Optional[str],
+                    header, tool: str = 'fiberhmm', stream=None) -> Optional[bool]:
+    """``use_m5c`` of :func:`resolve_replay_use_m5c`."""
+    return resolve_replay_use_m5c(use_m5c, cpg_mask_policy, header, tool, stream)[0]
+
+
+def cpg_mask_source_ds(use_m5c: Optional[bool], cpg_mask_policy: Optional[str],
+                       inherited: bool, resolved_policy: Optional[str]) -> str:
+    """The `` cpg_mask_source=...`` DS token of a caller record (``''`` for
+    the chemistry default, so default headers are unchanged): ``inherited``
+    when the mask is off because the input recorded off, ``explicit`` when the
+    user set it (``--use-m5c``/``--no-use-m5c``, or ``--cpg-mask-policy`` on a
+    run that masks). ``use_m5c``/``cpg_mask_policy`` are the user's values
+    before inheritance; ``resolved_policy`` is the run's (None = off).
+    :func:`recorded_cpg_mask` reads an explicit or inherited ``off`` as a
+    decision whatever the enzyme, so it survives custom-model recalls."""
+    if inherited:
+        return ' cpg_mask_source=inherited'
+    if use_m5c is not None or (cpg_mask_policy is not None and resolved_policy):
+        return ' cpg_mask_source=explicit'
+    return ''
 
 
 def _aligned_blocks(read) -> Optional[np.ndarray]:

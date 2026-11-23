@@ -377,3 +377,52 @@ def test_caller_settings_honour_the_last_switch():
         settings = CallerSettings.from_header(pysam.AlignmentHeader.from_dict(_header(pg)))
         assert settings.cpg_mask_policy == want
 
+
+# --------------------------------------------------------------------------- #
+#  an inherited / explicit off survives successive recalls                      #
+# --------------------------------------------------------------------------- #
+
+def test_inherited_off_is_recorded_and_read_back():
+    custom_call = {'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call',
+                   'CL': 'fiberhmm-call -i a.bam -o b.bam -m my.json --no-use-m5c',
+                   'DS': 'mode=daf enzyme=custom cpg_mask=off cpg_mask_source=explicit'}
+    custom_recall = {'ID': 'fiberhmm-recall-tfs', 'PN': 'fiberhmm-recall-tfs',
+                     'CL': 'fiberhmm-recall-tfs -i b.bam -o c.bam -m my.json',
+                     'DS': 'mode=daf enzyme=custom cpg_mask=off cpg_mask_source=inherited'}
+    assert recorded_cpg_mask(_header(custom_call)) == 'off'
+    assert recorded_cpg_mask(_header(custom_call, custom_recall)) == 'off'
+    second = dict(custom_recall, ID='fiberhmm-recall-tfs.2')
+    assert recorded_cpg_mask(_header(custom_call, custom_recall, second)) == 'off'
+    # an off that was only the non-DddA default is still undecided
+    default = dict(custom_recall, DS='mode=daf enzyme=custom cpg_mask=off')
+    assert recorded_cpg_mask(_header(CALL_OFF, default)) is None
+
+
+def test_off_survives_a_custom_model_recall(called):
+    # a custom-model call with --no-use-m5c (no DddA declaration), a custom
+    # recall that inherits off, then a DddA replay: still off
+    from fiberhmm.models import get_model_path
+    root = called['root']
+    common = ('-c', '1', '--io-threads', '1')
+    call = root / 'c_custom.bam'
+    _run('fiberhmm.cli.call', '-i', root / 'ddda.bam', '-o', call, '-m',
+         get_model_path('ddda', tool='apply'), '--no-use-m5c', '--no-qc', *common)
+    pysam.index(str(call))
+    assert 'cpg_mask_source=explicit' in _ds(call, 'fiberhmm-call').split()
+    custom = root / 'r_custom.bam'
+    proc = _run('fiberhmm.cli.recall_tfs', '-i', call, '-o', custom,
+                '-m', get_model_path('ddda', tool='recall'), *common)
+    ds = _ds(custom, 'fiberhmm-recall-tfs').split()
+    assert 'enzyme=custom' in ds and 'cpg_mask=off' in ds
+    assert 'cpg_mask_source=inherited' in ds, proc.stderr[-2000:]
+    pysam.index(str(custom))
+    again = root / 'r_custom_ddda.bam'
+    proc = _run('fiberhmm.cli.recall_tfs', '-i', custom, '-o', again, '--enzyme', 'ddda',
+                '--replace-chemistry', *common)
+    assert 'as recorded by the run' in proc.stderr
+    ds = _ds(again, 'fiberhmm-recall-tfs').split()
+    assert 'cpg_mask=off' in ds and 'cpg_mask_source=inherited' in ds
+    # the default output records no source token
+    assert not any(t.startswith('cpg_mask_source=') for t in _ds(called['on'], 'fiberhmm-call').split())
+    assert 'cpg_mask_source=explicit' in _ds(called['off'], 'fiberhmm-call').split()
+

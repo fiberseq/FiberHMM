@@ -198,6 +198,7 @@ def _build_recall_pg_record(args, mode, model_path, nuc_cfg, nuc_model_path=None
             f'daf_unaligned_mask={("on" if getattr(args, "daf_mask_unaligned", True) else "off") if mode == "daf" else "n/a"} '
             f'daf_insert_consensus={getattr(args, "daf_insert_state", "off" if mode == "daf" else "n/a")} '
             f'cpg_mask={getattr(args, "cpg_mask_state", "off")}'
+            f'{getattr(args, "cpg_mask_source_ds", "")}'
         ),
     }
 
@@ -1514,11 +1515,12 @@ def _recall(args, bam_in, model_path, using_bundled_model, n_cores):
     m5c_llr_hit = m5c_llr_miss = None
     # Explicit --use-m5c/--no-use-m5c/--cpg-mask-policy wins; otherwise a BAM
     # whose calls were made with the mask off (recorded) is recalled with it off.
-    from fiberhmm.nuc.records import inherit_use_m5c
+    from fiberhmm.nuc.records import cpg_mask_source_ds, resolve_replay_use_m5c
     prog = ('fiberhmm-recall-nucs' if getattr(args, 'recall_nucs', False)
             else 'fiberhmm-recall-tfs')
-    args.use_m5c = inherit_use_m5c(
-        getattr(args, 'use_m5c', None), getattr(args, 'cpg_mask_policy', None),
+    user_use_m5c = getattr(args, 'use_m5c', None)
+    args.use_m5c, cpg_inherited = resolve_replay_use_m5c(
+        user_use_m5c, getattr(args, 'cpg_mask_policy', None),
         bam_in.header, tool=prog)
     try:
         cpg_mask_policy = resolve_cpg_mask_policy(
@@ -1528,6 +1530,8 @@ def _recall(args, bam_in, model_path, using_bundled_model, n_cores):
         raise SystemExit(str(exc)) from exc
     use_m5c = cpg_mask_policy is not None
     args.cpg_mask_state = cpg_mask_policy or 'off'
+    args.cpg_mask_source_ds = cpg_mask_source_ds(
+        user_use_m5c, getattr(args, 'cpg_mask_policy', None), cpg_inherited, cpg_mask_policy)
     cpg_mask_policy = cpg_mask_policy or 'unmethylated-only'
     if use_m5c:
         m5c_llr_hit, m5c_llr_miss = build_m5c_llr_tables(
