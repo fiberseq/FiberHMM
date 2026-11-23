@@ -266,7 +266,10 @@
   `--min-read-length` are dropped. Pieces keep `MM`/`ML` (and `Mm`/`Ml`)
   re-indexed to the piece, with `MN` set to its length; a hard-clipped
   record or one whose `MM`/`ML` do not match SEQ gives pieces without
-  them. Unmapped records are kept whole and flagged. See the DAF-seq guide
+  them. A piece of an R/Y-encoded record is re-encoded for its own segment
+  (Y/R and `st` as `fiberhmm-daf-encode` writes them), so it gets the same
+  strand and events as a piece of the equivalent MD-only record. Unmapped
+  records are kept whole and flagged. See the DAF-seq guide
   for the caveats. The detector decides which reads are chimeric (the same
   names and counts as flag mode); breakpoints come from the strict
   segmentation applied to the flagged records only. Under the default

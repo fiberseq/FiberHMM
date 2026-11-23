@@ -4,6 +4,7 @@
 with 0x200 it identifies FiberHMM chimeras; unrelated QC failures are untouched.
 Detection uses the caller's extraction and masking policy, not a second test.
 """
+import copy
 from collections import Counter
 from contextlib import ExitStack
 from pathlib import Path
@@ -926,6 +927,59 @@ def _prepare_chimeras_strict(input_bam, output_bam=None, *, mode='flag', daf=Tru
     return stats
 
 
+def _has_iupac(read):
+    """Whether ``read`` carries R/Y-encoded deaminations in SEQ."""
+    from .engine import has_iupac_encoding
+    seq = read.query_sequence
+    return bool(seq) and has_iupac_encoding(seq)
+
+
+def _reencode_piece(piece, ref):
+    """``piece`` of an R/Y-encoded chimera, re-encoded for its own strand.
+
+    The parent was encoded for one strand (``st``), so a piece from its
+    other-strand segment keeps only the parent strand's minority Y (or R)
+    marks, while its dominant deaminations are raw mismatches. Every piece
+    of an R/Y record (also one left with no mark) is decoded (Y -> T,
+    R -> A: the raw read) and encoded again as ``fiberhmm-daf-encode``
+    encodes a read: the strand with more events
+    (SNP-masked sites do not vote, as in calling an MD-only read) gets its
+    events written as Y (C->T) or R (G->A), and ``st`` is set. A tie or no
+    event leaves the decoded raw piece (calling then reads its MD, as for a
+    piece of the equivalent MD-only read). Without MD or a reference to
+    compare with, the piece is returned as cut.
+    """
+    from . import engine
+    from fiberhmm.daf.encoder import (
+        _daf_positions_result, encode_read_daf, get_daf_positions,
+    )
+
+    seq = piece.query_sequence
+    if not seq:
+        return piece
+    quals = piece.query_qualities
+    raw = copy.copy(piece)
+    raw.query_sequence = seq.translate(_DECODE_IUPAC)
+    raw.query_qualities = quals
+    events = get_daf_positions(raw, force_strand='CT', ref_fasta=ref,
+                               excluded_reference_positions=engine._daf_reference_mask(raw))
+    if events is None:
+        return piece                  # no reference evidence: keep the marks
+    chosen = _daf_positions_result(events[0], events[1], None)
+    if chosen is None:
+        return raw                    # tie or no event: an MD-only piece
+    encoded = encode_read_daf(raw, force_strand=chosen[2], ref_fasta=ref)
+    if encoded is None:
+        return raw
+    raw.query_sequence = encoded[0]
+    raw.query_qualities = quals
+    raw.set_tag('st', encoded[1], value_type='Z')
+    return raw
+
+
+_DECODE_IUPAC = str.maketrans({'Y': 'T', 'y': 't', 'R': 'A', 'r': 'a'})
+
+
 def _split_pieces(read, header, split, min_read_length, ref, decide, info,
                   gaps, piece_lengths, still_chimeric):
     """Pieces to write in place of ``read`` (None: keep the record whole)."""
@@ -944,6 +998,9 @@ def _split_pieces(read, header, split, min_read_length, ref, decide, info,
         info['n_records_paired_kept_whole'] += 1
         return None
     pieces, record_gaps = split_record(read, header, split)
+    if _has_iupac(read):
+        pieces = [None if piece is None else _reencode_piece(piece, ref)
+                  for piece in pieces]
     kept = []
     for piece in pieces:
         if piece is None:

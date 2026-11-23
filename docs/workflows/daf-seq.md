@@ -445,6 +445,13 @@ written:
   parse or do not match SEQ, gets no `MM`/`ML` (counted as
   `n_pieces_modifications_dropped`). Every other position-dependent tag
   (`SA`, the DAF strand tag `st`, earlier FiberHMM calls) is dropped.
+- A piece of an R/Y-encoded record is re-encoded for its own segment:
+  Y/R are decoded to the raw bases and the piece is encoded again as
+  `fiberhmm-daf-encode` would encode it (the strand with more events gets
+  its events as Y or R, and `st` is set). A piece from the segment the
+  record was not encoded for therefore gets its own strand and events, the
+  same as a piece of the equivalent MD-only record. With no MD and no
+  `--reference` the piece keeps the marks as cut.
 - Pieces keep the record's flags and are not QC-fail. Pieces shorter than
   `--min-read-length` (aligned bases) are dropped and counted; a record with
   no piece left is kept whole and flagged.

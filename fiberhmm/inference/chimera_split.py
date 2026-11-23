@@ -26,7 +26,9 @@ legacy ``Mm``/``Ml``) are re-indexed to the piece (:func:`cut_modifications`)
 and ``MN``, if present, is set to the piece's SEQ length. They are dropped for
 a piece whose record is hard-clipped or whose MM/ML do not parse or do not
 match SEQ; an MM without ML is re-indexed on its own. Every other position-dependent tag (SA, the DAF strand tag ``st``,
-earlier FiberHMM calls) is dropped.
+earlier FiberHMM calls) is dropped. Pieces of an R/Y-encoded record are then
+re-encoded for their own strand, with ``st``, by the caller
+(:func:`fiberhmm.inference.chimeras._reencode_piece`).
 
 Unmapped records (``--process-unmapped``) are never cut: they have no CIGAR
 or reference, so a piece could carry neither a position nor ``xb`` gaps,
