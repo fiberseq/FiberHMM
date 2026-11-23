@@ -57,9 +57,13 @@
   nucleosomes from leftover `ns/nl`. On `fiberhmm-call --hmm-only` output
   (the former `fiberhmm-apply`) the HMM footprints are its `nuc` + `tf`
   groups, which recall reads together, so recall sees every HMM footprint as
-  it did in apply's legacy `ns/nl`. An `MA` that holds only m5C or FIRE groups no
+  it did in apply's legacy `ns/nl`; a read whose HMM footprints are all
+  TF-sized (a lone `tf` group) is recalled like any other. An `MA`
+  that holds only m5C or FIRE groups no
   longer hides legacy calls from the consensus loaders. `fiberhmm-scan`
-  peaks has read `MA` first since 3.2.2.
+  peaks has read `MA` first since 3.2.2. `fiberhmm-call-m5c` and
+  `fiberhmm-tag-m5c` read the calls from `Ma` too, so they take
+  `MA`-only call output run through `ft fire`.
 - **DddA consensus numbers change** because `fiberhmm-consensus` now scores
   DddA CpGs with the same unmethylated-only CpG mask as `fiberhmm-call`.
   Earlier versions excluded CpGs only inside methylated islands
@@ -102,7 +106,10 @@
   (`call --no-legacy-tags` leaves a skipped read's legacy tags in place).
   `call --hmm-only --keep-msps` keeps the input's MSPs (`MA`/`Ma` `msp`,
   legacy `as`/`al` and their fibertools `aq`, a fibertools 0.13 `fire`
-  group). Records written without rewriting their MSPs (reads recall fails
+  group). Legacy `as`/`al`/`aq` beside an `MA`/`Ma` that calls the read are
+  kept only when they list exactly its MSPs (none, for a `nuc`-only `MA`);
+  with `--legacy-tags` a kept `aq` is re-keyed onto the rewritten `as`/`al`
+  by interval and dropped if it scored other MSPs. Records written without rewriting their MSPs (reads recall fails
   on, unpaired `merge` reads, and `--keep-msps` output) lose an `aq` when the input has a
   `fiberhmm-apply` `@PG` and no contract line. Such an `aq` may be an older
   FiberHMM's posterior rather than FIRE; fibertools 0.13 `ft extract` reports

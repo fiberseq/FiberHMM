@@ -67,6 +67,9 @@ LEGACY_PAIR_READERS = {
     'pipeline/runner.py': 'presence only (was the read called)',
     'scan/reads.py': 'presence only (was the read called), MA/Ma checked first',
     'cli/recall_tfs.py': 'presence only: legacy frame needed only without MA/Ma nuc/msp',
+    'inference/read_filters.py': ('MA first: --keep-msps compares legacy as/al with the resolved '
+                                  'MA/Ma MSP selection and drops them when they disagree'),
+    'inference/tf_recaller.py': 'scores only: re-keys a kept legacy aq onto the as/al it scored',
     'scan/peaks_reads.py': ('MA first: MA nuc/msp groups before ns/nl and as/al, per family, as '
                             'FiberBrowser >= 3.1.1 builds read rows (golden from FiberBrowser 53498b566)'),
 }
