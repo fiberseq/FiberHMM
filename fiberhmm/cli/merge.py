@@ -175,8 +175,12 @@ def run_merge(in_bam, out_bam, prob_threshold=0, pairs_only=False, io_threads=4,
         # Explicit flags win; otherwise calls made with --no-use-m5c (recorded
         # in the input's @PG) are re-called with the CpG mask off.
         from fiberhmm.nuc.records import cpg_mask_source_ds, resolve_replay_use_m5c
-        resolved_use_m5c, inherited = resolve_replay_use_m5c(
-            use_m5c, cpg_mask_policy, bam.header, tool=tool)
+        try:
+            resolved_use_m5c, inherited = resolve_replay_use_m5c(
+                use_m5c, cpg_mask_policy, bam.header, tool=tool)
+        except ValueError as exc:
+            bam.close()
+            raise SystemExit(f"error: {exc}") from exc
         ctx = RecallContext(enzyme, use_m5c=resolved_use_m5c,
                             cpg_mask_policy=cpg_mask_policy, tool=tool)
         cpg_source = cpg_mask_source_ds(use_m5c, cpg_mask_policy, inherited,

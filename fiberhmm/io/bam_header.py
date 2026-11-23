@@ -33,33 +33,39 @@ def _header_to_dict(header) -> dict:
     return dict(header)
 
 
-def append_pg_record(header, record: dict):
+def append_pg_record(header, record: dict, extra_parents=()):
     """Return a copy of ``header`` with a ``@PG`` program-group line appended.
 
     ``record`` supplies ``PN``/``VN``/``CL``/``DS``; the ``ID`` is auto-assigned
     (suffixed on re-runs so it stays unique) and ``PP`` is chained to the last
-    existing ``@PG`` so the program history is well-formed.
+    existing ``@PG`` so the program history is well-formed. ``extra_parents``
+    (other chain ends of a merged header) get a copy of the record each,
+    written just before it, as htslib records one run on every chain end.
     """
     d = _header_to_dict(header)
     pgs = list(d.get('PG', []))
     existing_ids = {p.get('ID') for p in pgs}
-
     base = record.get('PN') or 'fiberhmm'
-    pid = base
-    i = 1
-    while pid in existing_ids:
-        i += 1
-        pid = f"{base}.{i}"
 
-    pg = {'ID': pid}
-    for key in ('PN', 'VN', 'CL', 'DS'):
-        val = record.get(key)
-        if val:
-            pg[key] = str(val)
-    if pgs and pgs[-1].get('ID'):
-        pg['PP'] = pgs[-1]['ID']
+    def line(parent):
+        pid = base
+        i = 1
+        while pid in existing_ids:
+            i += 1
+            pid = f"{base}.{i}"
+        existing_ids.add(pid)
+        pg = {'ID': pid}
+        for key in ('PN', 'VN', 'CL', 'DS'):
+            val = record.get(key)
+            if val:
+                pg[key] = str(val)
+        if parent:
+            pg['PP'] = parent
+        return pg
 
-    d['PG'] = pgs + [pg]
+    last = pgs[-1].get('ID') if pgs else None
+    extra = [line(parent) for parent in extra_parents if parent and parent != last]
+    d['PG'] = pgs + extra + [line(last)]
     return pysam.AlignmentHeader.from_dict(d)
 
 

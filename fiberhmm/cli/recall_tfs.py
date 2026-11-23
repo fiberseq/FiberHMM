@@ -1519,9 +1519,12 @@ def _recall(args, bam_in, model_path, using_bundled_model, n_cores):
     prog = ('fiberhmm-recall-nucs' if getattr(args, 'recall_nucs', False)
             else 'fiberhmm-recall-tfs')
     user_use_m5c = getattr(args, 'use_m5c', None)
-    args.use_m5c, cpg_inherited = resolve_replay_use_m5c(
-        user_use_m5c, getattr(args, 'cpg_mask_policy', None),
-        bam_in.header, tool=prog)
+    try:
+        args.use_m5c, cpg_inherited = resolve_replay_use_m5c(
+            user_use_m5c, getattr(args, 'cpg_mask_policy', None),
+            bam_in.header, tool=prog)
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}") from exc
     try:
         cpg_mask_policy = resolve_cpg_mask_policy(
             args.use_m5c, getattr(args, 'cpg_mask_policy', None),

@@ -426,3 +426,114 @@ def test_off_survives_a_custom_model_recall(called):
     assert not any(t.startswith('cpg_mask_source=') for t in _ds(called['on'], 'fiberhmm-call').split())
     assert 'cpg_mask_source=explicit' in _ds(called['off'], 'fiberhmm-call').split()
 
+
+# --------------------------------------------------------------------------- #
+#  caller histories merged into one header                                      #
+# --------------------------------------------------------------------------- #
+
+def _branch(tag, call):
+    mm2 = {'ID': f'minimap2{tag}', 'PN': 'minimap2', 'CL': f'minimap2 {tag}'}
+    return [mm2, dict(call, ID=f'fiberhmm-call{tag}', PP=mm2['ID'])]
+
+
+def _merged(first, second, per_leaf):
+    a, b = _branch('', first), _branch('-B', second)
+    pgs = a + b
+    if per_leaf:   # htslib (samtools merge) adds its record to every chain end
+        pgs += [{'ID': 'samtools', 'PN': 'samtools', 'PP': a[-1]['ID'], 'CL': 'samtools merge'},
+                {'ID': 'samtools.1', 'PN': 'samtools', 'PP': b[-1]['ID'], 'CL': 'samtools merge'}]
+    return _header(*pgs)
+
+
+@pytest.mark.parametrize('per_leaf', [False, True])
+@pytest.mark.parametrize('order', ['off-first', 'on-first'])
+def test_merged_histories_with_and_without_the_mask_are_mixed(order, per_leaf):
+    from fiberhmm.nuc.records import CPG_MASK_MIXED, MixedCpgMaskError
+    pair = (CALL_OFF, CALL_ON) if order == 'off-first' else (CALL_ON, CALL_OFF)
+    hd = _merged(*pair, per_leaf)
+    assert recorded_cpg_mask(hd) == CPG_MASK_MIXED
+    header = pysam.AlignmentHeader.from_dict(hd)
+    with pytest.raises(MixedCpgMaskError, match='with and without'):
+        inherit_use_m5c(None, None, header)
+    assert inherit_use_m5c(False, None, header) is False
+    assert inherit_use_m5c(True, None, header) is True
+    with pytest.raises(ValueError, match='with and without'):
+        resolve_ddda_cpg_policy(parse_options({})['input'], (recorded_cpg_mask(hd),))
+    # agreeing histories are not mixed
+    assert recorded_cpg_mask(_merged(CALL_OFF, CALL_OFF, per_leaf)) == 'off'
+    assert recorded_cpg_mask(_merged(CALL_ON, CALL_ON, per_leaf)) == 'unmethylated-only'
+
+
+@pytest.mark.parametrize('per_leaf', [False, True])
+def test_explicit_record_written_on_every_conflicting_chain(per_leaf):
+    from fiberhmm.io.bam_header import append_pg_record
+    from fiberhmm.nuc.records import cpg_mask_parents, cpg_mask_parents_for_record
+    recall = {'PN': 'fiberhmm-recall-tfs', 'CL': 'fiberhmm-recall-tfs --enzyme ddda --no-use-m5c',
+              'DS': 'mode=daf enzyme=ddda cpg_mask=off cpg_mask_source=explicit'}
+    for pair, n_extra in (((CALL_OFF, CALL_ON), 0), ((CALL_ON, CALL_OFF), 1)):
+        # the new record chains to the last line (the second history); the
+        # first history gets a copy only when it disagrees with the new run
+        hd = _merged(*pair, per_leaf)
+        extra = cpg_mask_parents_for_record(hd, recall)
+        assert len(extra) == n_extra
+        out = append_pg_record(pysam.AlignmentHeader.from_dict(hd), recall, extra_parents=extra)
+        pgs = out.to_dict()['PG']
+        assert len(pgs) == len(hd['PG']) + 1 + n_extra
+        assert pgs[-1]['PP'] == hd['PG'][-1]['ID']
+        assert len({pg['ID'] for pg in pgs}) == len(pgs)
+        assert recorded_cpg_mask(out.to_dict()) == 'off'
+        assert inherit_use_m5c(None, None, out, tool='t') is False
+    # no conflict: one line, exactly as before
+    assert cpg_mask_parents(_header(CALL_OFF), None) == []
+    assert cpg_mask_parents(_merged(CALL_OFF, CALL_OFF, per_leaf), None) == []
+    assert cpg_mask_parents(_merged(CALL_ON, CALL_ON, per_leaf), 'unmethylated-only') == []
+    merge_off = {'PN': 'fiberhmm-merge', 'DS': 'recall=off enzyme=n/a'}
+    assert cpg_mask_parents_for_record(_merged(CALL_ON, CALL_OFF, per_leaf), merge_off) == []
+
+
+@pytest.fixture(scope='module')
+def merged(called):
+    root = called['root']
+    out = {}
+    for name, order in (('off_on', ('off', 'on')), ('on_off', ('on', 'off'))):
+        path = root / f'merged_{name}.bam'
+        pysam.merge('-f', str(path), *(str(called[k]) for k in order))
+        pysam.index(str(path))
+        out[name] = path
+    return out
+
+
+def _run_fail(module, *args):
+    env = dict(os.environ, FIBERHMM_NO_UPDATE_CHECK='1', OPENBLAS_NUM_THREADS='1')
+    env['PYTHONPATH'] = str(REPO) + os.pathsep + env.get('PYTHONPATH', '')
+    proc = subprocess.run([sys.executable, '-m', module, *map(str, args)], capture_output=True,
+                          text=True, cwd=REPO, env=env, timeout=600)
+    assert proc.returncode != 0, proc.stderr[-3000:]
+    return proc
+
+
+@pytest.mark.parametrize('name', ['off_on', 'on_off'])
+def test_merged_bam_refuses_until_the_mask_is_set(called, merged, name):
+    from fiberhmm.inference.consensus.bam import load_bam_payload
+    from fiberhmm.nuc.records import CPG_MASK_MIXED
+    path = merged[name]
+    with pysam.AlignmentFile(str(path), check_sq=False) as bam:
+        assert recorded_cpg_mask(bam.header) == CPG_MASK_MIXED
+    root = called['root']
+    common = ('--enzyme', 'ddda', '-c', '1', '--io-threads', '1')
+    proc = _run_fail('fiberhmm.cli.recall_tfs', '-i', path, '-o', root / f'x_{name}.bam', *common)
+    assert 'with and without' in proc.stderr and 'Traceback' not in proc.stderr
+    region = dict(chrom='chrDemo', start=2000, end=2600)
+    with pytest.raises(ValueError, match='with and without'):
+        load_bam_payload([dict(dataset_id='d', paths=[str(path)], chemistry='ddda')],
+                         region, parse_options({}))
+    # an explicit recall settles it for later flagless replays
+    settled = root / f'settled_{name}.bam'
+    _run('fiberhmm.cli.recall_tfs', '-i', path, '-o', settled, *common, '--no-use-m5c')
+    pysam.index(str(settled))
+    with pysam.AlignmentFile(str(settled), check_sq=False) as bam:
+        assert recorded_cpg_mask(bam.header) == 'off'
+    again = root / f'settled_again_{name}.bam'
+    proc = _run('fiberhmm.cli.recall_tfs', '-i', settled, '-o', again, *common)
+    assert 'as recorded by the run' in proc.stderr
+

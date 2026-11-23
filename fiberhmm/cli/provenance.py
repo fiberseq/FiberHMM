@@ -314,7 +314,11 @@ def output_header_with_provenance(input_header, pg_record):
             header = strip_chemistry_declarations(input_header)
     chemistry = record.pop("chemistry", None)
     # Every producer here rewrites MSPs under the v2 annotation contract.
-    output = append_annotation_contract(append_pg_record(header, record))
+    # A caller run over a merged BAM whose histories disagree on the DddA
+    # CpG mask also records itself on the disagreeing chains (usually none).
+    from fiberhmm.nuc.records import cpg_mask_parents_for_record
+    output = append_annotation_contract(append_pg_record(
+        header, record, extra_parents=cpg_mask_parents_for_record(header, record)))
     if not chemistry:
         return output
     # Link the declaration to the @PG line of this run (IDs are made unique
