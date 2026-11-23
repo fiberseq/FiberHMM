@@ -362,7 +362,10 @@ def _split_summary(split_info, min_read_length, gaps, piece_lengths, detector):
                           'MD/NM recomputed')
     split['dropped_tags'] = ('every other tag; MM/ML of a piece whose record is '
                              'hard-clipped or whose MM/ML do not parse or match '
-                             'SEQ (n_pieces_modifications_dropped)')
+                             'SEQ (n_pieces_modifications_dropped); on a piece '
+                             'of an R/Y record re-encoded for its strand, a '
+                             'modification call on a base that became an R/Y '
+                             'mark (n_modification_calls_dropped)')
     split['flagged_by'] = detector
     split['breakpoints'] = SPLIT_BREAKPOINTS[detector]
     return split
@@ -374,6 +377,7 @@ def _new_split_info():
                 n_records_paired_kept_whole=0,
                 n_pieces_still_chimeric=0,
                 n_pieces_modifications_kept=0, n_pieces_modifications_dropped=0,
+                n_modification_calls_dropped=0,
                 chimeric_bases=0, recovered_bases=0,
                 n_records_several_switches=0)
 
@@ -935,7 +939,8 @@ def _has_iupac(read):
 
 
 def _reencode_piece(piece, ref):
-    """``piece`` of an R/Y-encoded chimera, re-encoded for its own strand.
+    """``(piece, n_dropped)``: ``piece`` of an R/Y-encoded chimera,
+    re-encoded for its own strand.
 
     The parent was encoded for one strand (``st``), so a piece from its
     other-strand segment keeps only the parent strand's minority Y (or R)
@@ -949,6 +954,13 @@ def _reencode_piece(piece, ref):
     event leaves the decoded raw piece (calling then reads its MD, as for a
     piece of the equivalent MD-only read). Without MD or a reference to
     compare with, the piece is returned as cut.
+
+    MM/ML (and Mm/Ml) count canonical bases of SEQ, which the new SEQ
+    changes, so they are rebuilt on it with every call kept on its query
+    position and ML values (:func:`~.chimera_split.rebase_modifications`).
+    A call on a base that is now an R/Y mark (an A that became R) cannot be
+    written and is dropped; ``n_dropped`` counts those calls. Modifications
+    that cannot be rebuilt are removed with MN.
     """
     from . import engine
     from fiberhmm.daf.encoder import (
@@ -971,17 +983,39 @@ def _reencode_piece(piece, ref):
     events = get_daf_positions(raw, force_strand='CT', ref_fasta=ref,
                                excluded_reference_positions=engine._daf_reference_mask(raw))
     if events is None:
-        return piece                  # no reference evidence: keep the marks
+        return piece, 0               # no reference evidence: keep the marks
     chosen = _daf_positions_result(events[0], events[1], None)
-    if chosen is None:
-        return raw                    # tie or no event: an MD-only piece
-    encoded = encode_read_daf(raw, force_strand=chosen[2], ref_fasta=ref)
-    if encoded is None:
-        return raw
-    raw.query_sequence = encoded[0]
-    raw.query_qualities = quals
-    raw.set_tag('st', encoded[1], value_type='Z')
-    return raw
+    # A tie or no event leaves the decoded, MD-only piece.
+    encoded = (None if chosen is None
+               else encode_read_daf(raw, force_strand=chosen[2], ref_fasta=ref))
+    if encoded is not None:
+        raw.query_sequence = encoded[0]
+        raw.query_qualities = quals
+        raw.set_tag('st', encoded[1], value_type='Z')
+    return raw, _rebase_piece_modifications(raw, seq)
+
+
+def _rebase_piece_modifications(piece, old_seq):
+    """Rebuild ``piece``'s MM/ML on its new SEQ; the number of calls dropped."""
+    from .chimera_split import MODIFICATION_TAGS, rebase_modifications
+    dropped, kept = 0, False
+    for mm_tag, ml_tag in MODIFICATION_TAGS:
+        if not piece.has_tag(mm_tag):
+            continue
+        rebuilt = rebase_modifications(piece, old_seq, mm_tag, ml_tag)
+        if rebuilt is None:
+            piece.set_tag(mm_tag, None)
+            piece.set_tag(ml_tag, None)
+            continue
+        mm, ml, n = rebuilt
+        piece.set_tag(mm_tag, mm, value_type='Z')
+        if ml is not None:
+            piece.set_tag(ml_tag, ml)
+        dropped += n
+        kept = True
+    if not kept and piece.has_tag('MN'):
+        piece.set_tag('MN', None)
+    return dropped
 
 
 _DECODE_IUPAC = str.maketrans({'Y': 'T', 'y': 't', 'R': 'A', 'r': 'a'})
@@ -1006,8 +1040,13 @@ def _split_pieces(read, header, split, min_read_length, ref, decide, info,
         return None
     pieces, record_gaps = split_record(read, header, split)
     if _has_iupac(read):
-        pieces = [None if piece is None else _reencode_piece(piece, ref)
-                  for piece in pieces]
+        rebuilt = []
+        for piece in pieces:
+            if piece is not None:
+                piece, n_dropped = _reencode_piece(piece, ref)
+                info['n_modification_calls_dropped'] += n_dropped
+            rebuilt.append(piece)
+        pieces = rebuilt
     kept = []
     for piece in pieces:
         if piece is None:

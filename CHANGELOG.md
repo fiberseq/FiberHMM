@@ -275,7 +275,9 @@
   record or one whose `MM`/`ML` do not match SEQ gives pieces without
   them. A piece of an R/Y-encoded record is re-encoded for its own segment
   (Y/R and `st` as `fiberhmm-daf-encode` writes them), so it gets the same
-  strand and events as a piece of the equivalent MD-only record. Unmapped
+  strand and events as a piece of the equivalent MD-only record; its
+  `MM`/`ML` are rebuilt on the new SEQ (a call on a base that became R/Y is
+  dropped, `n_modification_calls_dropped`). Unmapped
   records are kept whole and flagged. See the DAF-seq guide
   for the caveats. The detector decides which reads are chimeric (the same
   names and counts as flag mode); breakpoints come from the strict
