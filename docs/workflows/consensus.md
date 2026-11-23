@@ -97,14 +97,18 @@ fiberhmm-consensus --bam dm_ddda.bam --region chr2L:1000000-1000300 --output out
 on `fiberhmm-transfer` (for the target BAMs). `auto`, the default, keeps the
 mask on unless a dataset's BAMs record that their calls were made with
 `fiberhmm-call --no-use-m5c`; then that dataset is scored with the mask off,
-as it was called. An explicit `on`/`off` wins over the record. One run uses
+as it was called. An explicit `on`/`off`, `input.ddda_m5c_correction: false`
+or a non-default `input.ddda_cpg_mask_policy` wins over the record. A
+`fiberhmm-transfer --freeze-run` catalog fixes `input.use_m5c` to the mask
+its source run used, so targets are scored with the catalog's mask (override
+it with `--use-m5c`/`--no-use-m5c`). One run uses
 one DddA CpG mask: datasets (or files of one dataset) whose records disagree
 are refused under `auto` until you set it explicitly. Each DddA dataset's
 `model_manifest.cpg_mask_policy` records the mask used (`off` when off, with
 `cpg_mask_source: recorded --no-use-m5c` when it came from the BAMs).
 
-On the NAPA demo window `chr19:47515000-47515300` (the bundled DddA BAM,
-which carries no tag-m5c islands), the mask changes what is supported:
+On the NAPA window `chr19:47515000-47515300` of FiberBrowser's DddA demo BAM
+(which carries no tag-m5c islands), the mask changes what is supported:
 
 | DddA CpG mask | classes | supported |
 |---|---|---|

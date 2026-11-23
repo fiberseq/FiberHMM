@@ -295,19 +295,29 @@ def dataset_preparations(payload):
     return rows
 
 
+def ddda_cpg_mask_explicit(input_options):
+    """Whether the run states the DddA CpG mask itself, so BAM records are not
+    consulted: ``input.use_m5c`` on/off, ``ddda_m5c_correction=false``, or a
+    non-default ``ddda_cpg_mask_policy`` (as ``--cpg-mask-policy`` on the
+    command-line tools)."""
+    from fiberhmm.inference.tf_recaller import CPG_MASK_POLICIES
+    return (getattr(input_options, 'use_m5c', 'auto') != 'auto' or not input_options.ddda_m5c_correction
+            or input_options.ddda_cpg_mask_policy != CPG_MASK_POLICIES[0])
+
+
 def resolve_ddda_cpg_policy(input_options, recorded=()):
     """The DddA CpG mask of one dataset: ``'off'`` or the mask policy name.
 
-    ``input.use_m5c`` ``on``/``off`` (``--use-m5c``/``--no-use-m5c``) and
-    ``input.ddda_m5c_correction=false`` are explicit and win. ``auto`` (the
+    ``input.use_m5c`` ``on``/``off`` (``--use-m5c``/``--no-use-m5c``),
+    ``input.ddda_m5c_correction=false`` and a non-default
+    ``input.ddda_cpg_mask_policy`` are explicit and win. ``auto`` (the
     default) is ``input.ddda_cpg_mask_policy`` unless ``recorded`` (the
     :func:`fiberhmm.nuc.records.recorded_cpg_mask` value of each of the
     dataset's BAMs) says every file's calls were made with the mask off; files
     that disagree must be given an explicit setting."""
-    use = getattr(input_options, 'use_m5c', 'auto')
-    if use == 'off' or not input_options.ddda_m5c_correction:
-        return 'off'
-    if use == 'on':
+    if ddda_cpg_mask_explicit(input_options):
+        if getattr(input_options, 'use_m5c', 'auto') == 'off' or not input_options.ddda_m5c_correction:
+            return 'off'
         return input_options.ddda_cpg_mask_policy
     offs = {value == 'off' for value in recorded}
     if offs == {True}:
@@ -347,7 +357,7 @@ def check_saved_evidence(payload, options):
     Strata without the BAM loader's receipt (``model_manifest`` with the
     emission digest; hand-built payloads) are taken as given."""
     from fiberhmm.inference.fused_stages import resolve_nuc_recall_policy
-    explicit = options['input'].use_m5c != 'auto' or not options['input'].ddda_m5c_correction
+    explicit = ddda_cpg_mask_explicit(options['input'])
     seen = None
     for label, chemistry, manifest in dataset_preparations(payload):
         if 'emissions_sha256' not in manifest:
@@ -407,8 +417,13 @@ def _load_payload_once(state,request,options,progress):
         if chemistry=='ddda':
             # The DddA CpG mask: explicit input.use_m5c, else what the BAMs' calls recorded (--no-use-m5c = off).
             # One policy per run: classes are pooled across datasets.
-            try:cpg_policy=resolve_ddda_cpg_policy(options['input'],_recorded_cpg_masks(ds) if options['input'].use_m5c=='auto' else ())
+            cpg_explicit=ddda_cpg_mask_explicit(options['input'])
+            try:cpg_policy=resolve_ddda_cpg_policy(options['input'],() if cpg_explicit else _recorded_cpg_masks(ds))
             except ValueError as error:raise ValueError(f'{ds.label}: {error}') from None
+            if cpg_policy=='off' and not cpg_explicit:
+                from fiberhmm.inference.consensus.progress import report
+                report(progress,'loading',f'{ds.label}: DddA CpG mask off, as recorded by the run that made its calls '
+                       '(--no-use-m5c); pass --use-m5c to mask CpGs',dataset_id=dsid)
             if run_cpg_policy is not None and cpg_policy!=run_cpg_policy:
                 raise ValueError(f'{ds.label}: its BAMs record a different DddA CpG mask ({cpg_policy}) than another dataset '
                     f'of this run ({run_cpg_policy}); one run uses one mask. Set --use-m5c or --no-use-m5c (input.use_m5c) explicitly.')
@@ -594,8 +609,7 @@ def _load_payload_once(state,request,options,progress):
                        if chemistry=='ddda' else {}),
                     # Only when the BAMs' recorded --no-use-m5c turned the mask off, so default manifests are unchanged.
                     **(dict(cpg_mask_source='recorded --no-use-m5c')
-                       if chemistry=='ddda' and cpg_policy=='off' and options['input'].use_m5c=='auto'
-                       and options['input'].ddda_m5c_correction else {}),
+                       if chemistry=='ddda' and cpg_policy=='off' and not ddda_cpg_mask_explicit(options['input']) else {}),
                     m5c_conditioned_opportunities=sum(u['provenance'].get('native_m5c_excluded_opportunities',0) for u in units)),
                 evidence_units=dict(**collapse,physical_duplex_independence_established=bool(units) and all(u.get('physical_source_names') for u in units),joint_duplex_units=sum(bool(u.get('physical_source_names')) for u in units)),load=diagnostics))
             # Release this dataset's decoded reads before the next dataset decodes (they are not part of the payload).

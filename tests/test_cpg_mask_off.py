@@ -294,3 +294,53 @@ def test_consensus_replay_inherits_off_and_explicit_wins(called):
         load_bam_payload([dict(dataset_id='a', paths=[str(called['off'])], chemistry='ddda'),
                           dict(dataset_id='b', paths=[str(called['on'])], chemistry='ddda')],
                          region, parse_options({}))
+
+
+def test_consensus_precedence_matches_the_command_line_tools():
+    # a non-default ddda_cpg_mask_policy is explicit, as --cpg-mask-policy is
+    meth = parse_options({'input': {'ddda_cpg_mask_policy': 'methylated-only'}})
+    assert resolve_ddda_cpg_policy(meth['input'], ('off',)) == 'methylated-only'
+    with pytest.raises(ValueError, match='this run asks for methylated-only'):
+        check_saved_evidence(_saved('off'), meth)
+
+
+def test_frozen_catalog_pins_the_source_mask():
+    from fiberhmm.inference.consensus.lattice_recaller.frozen import _pin_ddda_cpg_mask
+    auto = {'input': {'use_m5c': 'auto'}, 'cr': {'engine': 'lattice_recaller'}}
+    assert _pin_ddda_cpg_mask(auto, _saved('off'))['input']['use_m5c'] == 'off'
+    assert _pin_ddda_cpg_mask(auto, _saved('unmethylated-only'))['input']['use_m5c'] == 'on'
+    assert auto['input']['use_m5c'] == 'auto'                       # not edited in place
+    explicit = {'input': {'use_m5c': 'off'}}
+    assert _pin_ddda_cpg_mask(explicit, _saved('off')) is explicit
+    hia5 = {'strata': [{'dataset_id': 'h', 'chemistry': 'hia5-pacbio', 'model_manifest': {'emissions_sha256': 'x'}}]}
+    assert _pin_ddda_cpg_mask(auto, hia5) is auto
+    # a pinned catalog makes transfer strict in both directions
+    pinned_on = parse_options(_pin_ddda_cpg_mask(auto, _saved('unmethylated-only')))
+    with pytest.raises(ValueError, match='this run asks for unmethylated-only'):
+        check_saved_evidence(_saved('off'), pinned_on)
+    pinned_off = parse_options(_pin_ddda_cpg_mask(auto, _saved('off')))
+    with pytest.raises(ValueError, match='this run asks for off'):
+        check_saved_evidence(_saved('unmethylated-only'), pinned_off)
+
+
+def test_posteriors_inherit_off(called):
+    import gzip
+    import json
+    out = called['root'] / 'post_off.tsv.gz'
+    proc = _run('fiberhmm.cli.export_posteriors', '-i', called['off'], '-o', out, '--enzyme', 'ddda',
+                '--format', 'tsv', '-c', '1')
+    assert 'as recorded by the run' in proc.stderr
+    with gzip.open(out, 'rt') as fh:
+        meta = json.loads(fh.readline().split(':', 1)[1])
+    assert meta['cpg_mask_policy'] == 'off'
+
+
+def test_qc_light_call_inherits_off(called):
+    from fiberhmm.qc.states import compute_state_rates
+    for name, want in (('off', 'off'), ('on', 'unmethylated-only')):
+        with pysam.AlignmentFile(str(called[name]), check_sq=False) as bam:
+            header = bam.header
+            reads = [r for _, r in zip(range(5), bam.fetch(until_eof=True))]
+        block, _ = compute_state_rates(reads, 'daf', 'ddda', header=header, state_source='light-call',
+                                       light_call_reads=2)
+        assert block['definition']['hmm_cpg_mask'] == want
